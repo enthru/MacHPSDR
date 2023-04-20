@@ -990,6 +990,12 @@ void ozy_send_buffer() {
     if(radio->adc[0].preamp) {
       output_buffer[C3]|=LT2208_GAIN_ON;
     }
+    if(radio->adc[0].att10) {
+      output_buffer[C3]|=ALEX_ATTENUATION_10DB;
+    }
+    if(radio->adc[0].att20) {
+      output_buffer[C3]|=ALEX_ATTENUATION_20DB;
+    }
 
     switch(radio->adc[0].antenna) {
       case 0:  // ANT 1
@@ -1107,7 +1113,7 @@ void ozy_send_buffer() {
             
             long long rx_frequency=0;
             if(rx!=NULL) {
-              rx_frequency=rx->frequency_a-rx->lo_a+rx->error_a;
+              rx_frequency=rx->frequency_a-rx->lo_a+rx->error_a+(long long)(rx->frequency_a-rx->lo_a)/1000000*radio->ppm_correction_value;
               if(rx->rit_enabled) {
                 rx_frequency+=rx->rit;
               }

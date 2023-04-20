@@ -100,7 +100,8 @@ typedef struct _radio {
   gdouble panadapter_calibration;
   gdouble swr_alarm_value;
   gint temperature_alarm_value;
-  
+  int ppm_correction_value;
+
   gint cw_keyer_sidetone_frequency;
   gint cw_keyer_sidetone_volume;
   gboolean cw_keys_reversed;

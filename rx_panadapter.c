@@ -671,49 +671,121 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   
     
       
-    if(rx->panadapter_filled) {
-      cairo_close_path (cr);
-      cairo_pattern_t *pat=cairo_pattern_create_linear(0.624,	0.427,	0.690,(rx->panadapter_height-20));     
-      cairo_pattern_add_color_stop_rgba(pat,0.0,0.804,	0.635,	0.859,0.5);
-      cairo_pattern_add_color_stop_rgba(pat,1.0,0.804,	0.635,	0.859,0.5);
-      cairo_set_source (cr, pat);
-      cairo_fill_preserve(cr);
-      cairo_pattern_destroy(pat);
-    }
-    cairo_set_source_rgb(cr, 0.804,	0.635,	0.859);
-    cairo_stroke(cr);
-    
+    if(rx->panadapter_single_color == 0) {
+        cairo_pattern_t *gradient;
+        if(rx->panadapter_gradient) {
+            gradient = cairo_pattern_create_linear(0.0, rx->panadapter_height-20, 0.0, 0.0);
+            // calculate where S9 is
+            double S9=-73;
+            if(rx->frequency_a>30000000LL) {
+                S9=-93;
+            }
+            S9 = floor((rx->panadapter_high - S9)
+                       * (double)(rx->panadapter_height-20)
+                            / (rx->panadapter_high - rx->panadapter_low));
+            S9 = 1.0-(S9/(double)(rx->panadapter_height-20));
 
-    
-    if (radio->divmixer[rx->dmix_id] != NULL) {
-      if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error)) {
+            cairo_pattern_add_color_stop_rgb (gradient,0.0,0.0,1.0,0.0); // Green
+            cairo_pattern_add_color_stop_rgb (gradient,S9/3.0,1.0,0.65,0.0); // Orange
+            cairo_pattern_add_color_stop_rgb (gradient,(S9/3.0)*2.0,1.0,1.0,0.0); // Yellow
+            cairo_pattern_add_color_stop_rgb (gradient,S9,1.0,0.0,0.0); // Red
+            cairo_set_source(cr, gradient);
+        } else {
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0,0.5);
+        }
 
-        // signal - hidden_rx
-        double s2_hidden_rx;
+        if(rx->panadapter_filled) {
+            cairo_close_path (cr);
+            /*
+              cairo_pattern_t *pat=cairo_pattern_create_linear(0.624,	0.427,	0.690,(rx->panadapter_height-20));     
+              cairo_pattern_add_color_stop_rgba(pat,0.0,0.804,	0.635,	0.859,0.5);
+              cairo_pattern_add_color_stop_rgba(pat,1.0,0.804,	0.635,	0.859,0.5);
+              cairo_set_source (cr, pat);
+            */
+            cairo_fill_preserve(cr);
+            //cairo_pattern_destroy(pat);
+        }
+        //cairo_set_source_rgb(cr, 0.804,	0.635,	0.859);
+        cairo_stroke(cr);
+        if(rx->panadapter_gradient) {
+            cairo_pattern_destroy(gradient);
+        }
         
-        samples_hidden_rx[display_width-1+offset]=-200;
+   }
+    else {
+      if(rx->panadapter_filled) {
+        cairo_close_path (cr);
+        cairo_pattern_t *pat=cairo_pattern_create_linear(0.624,	0.427,	0.690,(rx->panadapter_height-20));  
         
-        cairo_move_to(cr, 0.0, display_height-20);
-
-        for(i = 1; i < display_width; i++) {
-          s2_hidden_rx = (double)samples_hidden_rx[i+offset]+attenuation+radio->panadapter_calibration;
-          s2_hidden_rx = floor((rx->panadapter_high - s2_hidden_rx) *dbm_per_line);
-          if (s2_hidden_rx >= rx->panadapter_height-20) {
-            s2_hidden_rx = rx->panadapter_height-20;
-          }
-          cairo_line_to(cr, (double)i, s2_hidden_rx);
+        switch(rx->panadapter_single_color) {
+          case  2: //red
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.769, 0.117,0.227);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.769, 0.117, 0.227);
+            break;
+          case  3: // orange
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 1.0, 0.459, 0.095);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 1.0, 0.459, 0.095);
+            break;
+          case  4: // yellow
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 1.0, 0.850, 0.0);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 1.0, 0.850, 0.0);
+            break;
+          case  5: // green
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.133, 0.545, 0.133);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.133, 0.545, 0.133);
+            break;
+          case  6: // blue
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.0, 0.184, 0.655);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.0, 0.184, 0.655);
+            break;
+          case  7: // violet
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.4, 0.0, 0.6);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.4, 0.0, 0.6);
+            break;
+          case  8: // magenta (darker)
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.90, 0.0, 0.90);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.90, 0.0, 0.90);
+            break;
+          case  9: // cyan (darker)
+            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.0, 0.9, 0.9);
+            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.0, 0.9, 0.9);
+            break;
+          case 1:
+            default:
+              cairo_pattern_add_color_stop_rgba(pat,0.0,0.804, 0.635,0.859,0.5);
+                        cairo_pattern_add_color_stop_rgba(pat,1.0,0.804, 0.635,0.859,0.5);
+        }
+            cairo_set_source (cr, pat);
+            cairo_fill_preserve(cr);
+            cairo_pattern_destroy(pat);
         }
         // turquoise
-        cairo_set_source_rgb(cr, 0.259, 0.960, 0.950);
+        cairo_set_source_rgb(cr, 0.804,	0.635,	0.859);
         cairo_stroke(cr);
-      }
-    }
-    
-    
-    //SetColour(cr, BACKGROUND);
-    //cairo_rectangle(cr,0,(rx->panadapter_height - 18),display_width,18);
-    //cairo_fill(cr);
+                if (radio->divmixer[rx->dmix_id] != NULL) {
+            if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error)) {
 
+                // signal - hidden_rx
+                double s2_hidden_rx;
+
+                samples_hidden_rx[display_width-1+offset]=-200;
+
+                cairo_move_to(cr, 0.0, display_height-20);
+
+                for(i = 1; i < display_width; i++) {
+                    s2_hidden_rx = (double)samples_hidden_rx[i+offset]+attenuation+radio->panadapter_calibration;
+                    s2_hidden_rx = floor((rx->panadapter_high - s2_hidden_rx) *dbm_per_line);
+                    if (s2_hidden_rx >= rx->panadapter_height-20) {
+                        s2_hidden_rx = rx->panadapter_height-20;
+                    }
+                    cairo_line_to(cr, (double)i, s2_hidden_rx);
+                }
+                // turquoise
+                cairo_set_source_rgb(cr, 0.259, 0.960, 0.950);
+                cairo_stroke(cr);
+            }
+        }
+    }
     cairo_destroy (cr);
     gtk_widget_queue_draw (rx->panadapter);
   }

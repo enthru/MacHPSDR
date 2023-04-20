@@ -62,6 +62,8 @@ typedef struct _adc {
   gboolean dither;
   gboolean random;
   gboolean preamp;
+  gboolean att10;
+  gboolean att20;
   gint attenuation;
   gboolean enable_step_attenuation;
 #ifdef SOAPYSDR

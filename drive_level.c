@@ -62,7 +62,7 @@ static gboolean drive_level_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data)
   level_meter_draw(cr, x, width, height, TEXT_A);
   
   SetColour(cr, TEXT_B);
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);  
+  cairo_select_font_face(cr, "w", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);  
   cairo_set_font_size(cr,10);
   cairo_text_extents(cr, title, &extents);
   sprintf(t,"%s (%d%%)",title,(int)radio->transmitter->drive);

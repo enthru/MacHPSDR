@@ -19,6 +19,7 @@
 */
 
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,6 +121,9 @@ void receiver_save_state(RECEIVER *rx) {
   setProperty(name,value);
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
   sprintf(value,"%d",rx->panadapter_agc_line);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_single_color",rx->channel);
+  sprintf(value,"%d",rx->panadapter_single_color);
   setProperty(name,value);
 
   if(rx->waterfall_automatic == FALSE) {
@@ -610,6 +614,11 @@ void receiver_restore_state(RECEIVER *rx) {
   value=getProperty(name);
   if(value) rx->panadapter_filled=atoi(value);
   sprintf(name,"receiver[%d].panadapter_gradient",rx->channel);
+  
+  sprintf(name,"receiver[%d].panadapter_single_color",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_single_color=atoi(value);
+
   value=getProperty(name);
   if(value) rx->panadapter_gradient=atoi(value);
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
@@ -944,6 +953,33 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
   }
 }
 
+gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  g_print("Pressed: ");
+  g_print(gdk_keyval_name(event->keyval));
+  g_print("\n");
+  switch(event->keyval) {
+    case GDK_KEY_space:
+        set_mox(radio,TRUE);
+      break;
+  }
+  return TRUE;
+}
+
+gboolean receiver_key_release_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  g_print("Released:");
+  g_print(gdk_keyval_name(event->keyval));
+  g_print("\n");
+  switch(event->keyval) {
+    case GDK_KEY_space:
+      g_print("test");
+      set_mox(radio,FALSE);
+      break;
+  }
+  return TRUE;
+}
+
 gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   gint64 hz;
   RECEIVER *rx=(RECEIVER *)data;
@@ -1007,7 +1043,9 @@ gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *even
       //receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),FALSE);
       receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),TRUE);
       rx->last_x=x;
-      rx->has_moved=TRUE;
+      if (moved > 1 || moved < -1) {
+        rx->has_moved=TRUE;
+      }
     } else {
       if(event->x>4 && event->x<35) {
         gdk_window_set_cursor(gtk_widget_get_window(widget),gdk_cursor_new(GDK_DOUBLE_ARROW));
@@ -1493,6 +1531,8 @@ static void create_visual(RECEIVER *rx) {
   g_signal_connect(rx->window,"configure-event",G_CALLBACK(receiver_configure_event_cb),rx);
   g_signal_connect(rx->window,"focus_in_event",G_CALLBACK(focus_in_event_cb),rx);
   g_signal_connect(rx->window,"delete-event",G_CALLBACK (window_delete), rx);
+  g_signal_connect(rx->window,"key-press-event",G_CALLBACK(receiver_key_press_event),rx);
+  g_signal_connect(rx->window,"key-release-event",G_CALLBACK(receiver_key_release_event),rx);
 
   receiver_update_title(rx);
 
@@ -1800,8 +1840,8 @@ fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
 
   rx->output_started=FALSE;
 
-  rx->fps=10;
-  rx->display_average_time=170.0;
+  rx->fps=25;
+  rx->display_average_time=40.0;
 
 #ifdef SOAPYSDR
   if(radio->discovered->device==DEVICE_SOAPYSDR) {
@@ -1841,6 +1881,8 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
   rx->panadapter_filled=TRUE;
   rx->panadapter_gradient=TRUE;
   rx->panadapter_agc_line=TRUE;
+
+  rx->panadapter_single_color=TRUE;
 
   rx->waterfall_automatic=TRUE;
   rx->waterfall_ft8_marker=FALSE;

@@ -182,7 +182,8 @@ typedef struct _receiver {
   gint panadapter_step;
   gboolean panadapter_filled;
   gboolean panadapter_gradient;
-  gboolean panadapter_agc_line;  
+  gboolean panadapter_agc_line;
+  gint panadapter_single_color;  
 
   GtkWidget *waterfall;
   gint waterfall_width;
@@ -304,6 +305,8 @@ extern void full_diviqrx_buffer(RECEIVER *rx);
 extern gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
 extern gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
 extern gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data);
+extern gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data);
+extern gboolean receiver_key_release_event(GtkWidget *widget, GdkEventKey *event, gpointer data);
 extern gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data);
 
 extern void receiver_filter_changed(RECEIVER *rx,int filter);

@@ -609,6 +609,8 @@ g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   } 
 
+  row += 3;
+
   GtkWidget *compressor_frame=gtk_frame_new("Speech Processing");
   GtkWidget *compressor_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(compressor_grid),TRUE);

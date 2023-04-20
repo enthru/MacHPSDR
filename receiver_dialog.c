@@ -813,6 +813,12 @@ static void panadapter_agc_line_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_agc_line=rx->panadapter_agc_line==TRUE?FALSE:TRUE;
 }
 
+
+static void panadapter_single_color_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_single_color=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
+}
+
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_high=gtk_range_get_value(GTK_RANGE(widget));
@@ -1383,6 +1389,16 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panadapter_agc_line), rx->panadapter_agc_line);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_agc_line,0,7,2,1);
   g_signal_connect(panadapter_agc_line,"toggled",G_CALLBACK(panadapter_agc_line_changed_cb),rx);
+
+  GtkWidget *panadapter_single_color_label=gtk_label_new("Panadapter Color (0=Grad):");
+  gtk_widget_show(panadapter_single_color_label);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,0,8,1,1);
+
+  GtkWidget *panadapter_single_color_b=gtk_spin_button_new_with_range(0,9,1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(panadapter_single_color_b),rx->panadapter_single_color);
+  gtk_widget_show(panadapter_single_color_b);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,0,9,1,1);
+  g_signal_connect(panadapter_single_color_b,"value_changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
   GtkWidget *waterfall_grid=gtk_grid_new();
