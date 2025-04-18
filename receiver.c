@@ -1206,7 +1206,12 @@ fprintf(stderr,"set_deviation: %d\n",rx->deviation);
 void set_squelch(RECEIVER *rx) {
   double fm_sq=pow(10.0, -2.0*rx->squelch);
   SetRXAFMSQThreshold(rx->channel, fm_sq);
-  rx->squelch_enable = TRUE;
+  if(fm_sq > 1) {
+    rx->squelch_enable = FALSE;
+  }
+  else {
+    rx->squelch_enable = TRUE;
+  }
   SetRXAFMSQRun(rx->channel, rx->squelch_enable);
   g_print("Set squelch %f %f\n", rx->squelch, fm_sq);
 }
@@ -1233,6 +1238,12 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
 //fprintf(stderr,"receiver_filter_changed: %d\n",filter);
   rx->filter_a=filter;
   if(rx->mode_a==FMN) {
+    if(filter == 0) {
+      rx->deviation = 2500;
+    }
+    else {
+      rx->deviation = 5000;
+    }
     switch(rx->deviation) {
       case 2500:
         set_filter(rx,-4000,4000);
@@ -1252,6 +1263,11 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
 
 void receiver_mode_changed(RECEIVER *rx,int mode) {
   set_mode(rx,mode);
+  fprintf(stderr,"mode_changed: %d\n",mode);
+  if(mode != 5) { 
+    rx->squelch_enable = FALSE;
+    SetRXAFMSQRun(rx->channel, rx->squelch_enable);
+  }
   receiver_filter_changed(rx,rx->filter_a);
 }
 

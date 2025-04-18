@@ -624,11 +624,11 @@ g_print("audio_open_input: format=%d\n",record_audio_format);
       switch(record_audio_format) {
         case SND_PCM_FORMAT_S16_LE:
 g_print("audio_open_input: mic_buffer: size=%d channels=%d sample=%ld bytes\n",r->local_microphone_buffer_size,channels,sizeof(gint16));
-          r->local_microphone_buffer=g_new(gint16, r->local_microphone_buffer_size);
+          r->local_microphone_buffer = g_new(float, r->local_microphone_buffer_size);
           break;
         case SND_PCM_FORMAT_S32_LE:
 g_print("audio_open_input: mic_buffer: size=%d channels=%d sample=%ld bytes\n",r->local_microphone_buffer_size,channels,sizeof(gint32));
-          r->local_microphone_buffer=g_new(gint32, r->local_microphone_buffer_size);
+          r->local_microphone_buffer = g_new(float, r->local_microphone_buffer_size);
           break;
         case SND_PCM_FORMAT_FLOAT_LE:
 g_print("audio_open_input: mic_buffer: size=%d channels=%d sample=%ld bytes\n",r->local_microphone_buffer_size,channels,sizeof(gfloat));

@@ -1120,7 +1120,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_widget_show(ppm_correction_label);
   gtk_grid_attach(GTK_GRID(config_grid),ppm_correction_label,2,0,1,1);
 
-  ppm_correction_b=gtk_spin_button_new_with_range(-100, 100, 1);
+  ppm_correction_b=gtk_spin_button_new_with_range(-500, 500, 1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_correction_b), radio->ppm_correction_value);
   gtk_widget_show(ppm_correction_b);
   gtk_grid_attach(GTK_GRID(config_grid),ppm_correction_b,3,0,1,1);

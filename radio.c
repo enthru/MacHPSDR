@@ -64,6 +64,8 @@
 #include "subrx.h"
 #include "hl2.h"
 
+#include "cwdaemon.h"
+
 #ifdef MIDI
 #include "midi.h"
 #include "midi_dialog.h"

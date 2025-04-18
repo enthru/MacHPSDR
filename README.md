@@ -11,13 +11,11 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
 5) Trigger waterfall drag event only when we moving mouse more that for a one pixel to prevent unwanted drag event caused by mouse jitter.
 6) As I'm using TRX-DUO (Red Pitaya clone)  I'm using att10 and att20 outputs to control filters. So I've just added checkboxes in the configuration window to control those outputs - enable them or disable.
 7) Added ppm correction setting.
-
-### TODO for this fork
-
-1) Add font change setting.
-2) Fix waterfall drag (sometimes it jumps on a wrong freq. can be a GTK issue on Mac OS)
-3) Save receiver settings when closing window.
-4) Pack resources and binary into mac os application.
+8) Auto disabling squelch when non FM mode choosen
+9) Disable squelch in NFM mode if setting for squelch of too low (there is no button for squelch so using just squelch bar to disable it)
+10) Fixed deviation for NFM in receiver window
+11) Fix switch tx mode to receiving when changing transmiter
+12) Ignore SOAPY protocol for PA calibration settings (display all bands)
 
 ### Development environment
 
@@ -116,7 +114,7 @@ Development and testing has been run on MacOS Sierra 10.12.6 and MacOS high Sier
 ```
   git clone https://github.com/g0orx/wdsp.git
   cd wdsp
-  make -f Makefile.mac install
+  make install
 ```
 
 ### To download, compile and install linHPSDR
@@ -124,7 +122,7 @@ Development and testing has been run on MacOS Sierra 10.12.6 and MacOS high Sier
 ```
   git clone https://github.com/m5evt/linhpsdr.git
   cd linhpsdr
-  make -f Makefile.mac install
+  make install
 ```
 
 The build installs linHPSDR into `/usr/local/bin`. To run it, type `linhpsdr` on the command line.

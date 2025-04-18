@@ -115,9 +115,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
 
   int stop_at = bandGen;
   #ifdef SOAPYSDR
-  if(radio->discovered->protocol == PROTOCOL_SOAPYSDR) {
     stop_at = bandAIR;
-  }
   #endif
 
   for(i=0; i <= stop_at; i++) {
