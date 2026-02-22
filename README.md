@@ -16,6 +16,7 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
 10) Fixed deviation for NFM in receiver window
 11) Fix switch tx mode to receiving when changing transmiter
 12) Ignore SOAPY protocol for PA calibration settings (display all bands)
+13) Added freetune mode
 
 ### Development environment
 

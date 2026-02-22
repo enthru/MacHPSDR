@@ -93,20 +93,6 @@ static GtkWidget *cwport;
 
 static GtkWidget *audio_backend_combo_box;
 
-/* TO REMOVE
-static gboolean close_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
-  RADIO *radio=(RADIO *)data;
-  radio->dialog=NULL;
-  return TRUE;
-}
-
-static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
-  RADIO *radio=(RADIO *)data;
-  radio->dialog=NULL;
-  return FALSE;
-}
-*/
-
 static void radio_dialog_update_controls() {
 	g_print("%s: model=%d\n",__FUNCTION__,radio->model);
   switch(radio->model) {
@@ -122,8 +108,6 @@ static void radio_dialog_update_controls() {
       radio->filter_board=ALEX;
       break;
     case HERMES_LITE_2:
-      //radio->filter_board=N2ADR;
-      //radio->filter_board=HL2_MRF101;
       break;
     case ATLAS:
       radio->filter_board=ALEX;
@@ -234,7 +218,6 @@ static void sample_rate_cb(GtkComboBoxText *widget,gpointer data) {
       break;
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      //soapy_protocol_stop();
       break;
 #endif
   }
@@ -268,7 +251,7 @@ static void filter_board_cb(GtkComboBox *widget,gpointer data) {
   radio->filter_board=gtk_combo_box_get_active(widget);
 
   change_filters();
-  
+
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
@@ -300,7 +283,6 @@ static void dac0_antenna_cb(GtkComboBox *widget,gpointer data) {
   radio->dac[0].antenna=gtk_combo_box_get_active(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
-
   } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
     soapy_protocol_set_tx_antenna(radio->transmitter,radio->dac[0].antenna);
   }
@@ -349,7 +331,6 @@ static void adc1_filters_cb(GtkComboBox *widget,gpointer data) {
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
-
 }
 
 static void adc1_hpf_cb(GtkComboBox *widget,gpointer data) {
@@ -455,7 +436,7 @@ static void cw_breakin_cb(GtkWidget *widget, gpointer data) {
 #ifdef CWDAEMON
 static void cw_gen_cb(GtkWidget *widget, gpointer data) {
   radio->cw_generation_mode = gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
-  radio_change_cwgeneration(radio);  
+  radio_change_cwgeneration(radio);
 }
 
 static void cw_cwd_sidetone_cb(GtkWidget *widget, gpointer data) {
@@ -545,7 +526,6 @@ static void adc_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
   }
 }
 
-
 static void agc_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   gboolean agc=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
@@ -566,15 +546,10 @@ static void iqswap_changed_cb(GtkWidget *widget, gpointer data) {
   r->iqswap=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
 }
 
-//static void enablepa_changed_cb(GtkWidget *widget, gpointer data) {
-//  BAND *band = (BAND *)data; 
-//  band->disablePA = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
-//}
-
 static void attenuation_value_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   adc->attenuation=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
-    
+
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
@@ -584,7 +559,7 @@ static void lna2_value_changed_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
   if (r->hl2 != NULL) {
     r->hl2->adc2_lna_gain = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
-    r->hl2->adc2_value_to_send = TRUE;     
+    r->hl2->adc2_value_to_send = TRUE;
   }
 }
 
@@ -596,6 +571,13 @@ static void enable_step_attenuation_cb(GtkWidget *widget,gpointer data) {
   }
 }
 
+static void freetune_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx = (RECEIVER *)data;
+  gboolean enable = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  receiver_set_freetune(rx, enable);
+  g_print("radio_dialog: freetune rx=%d enable=%d\n", rx->channel, enable);
+}
+
 #ifdef CWDAEMON
 static void cwdaemon_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
@@ -603,30 +585,28 @@ static void cwdaemon_cb(GtkWidget *widget, gpointer data) {
   if(radio->cwdaemon) {
     printf("Starting CWdaemon\n");
     radio->cwdaemon = cwdaemon_start();
-    // CWdaemon now has control over keyer settings, user can't modify
-    gtk_widget_set_sensitive(cw_keyer_speed_b, FALSE);    
+    gtk_widget_set_sensitive(cw_keyer_speed_b, FALSE);
     gtk_widget_set_sensitive(cw_keyer_sidetone_frequency_b, FALSE);
     gtk_widget_set_sensitive(cw_keyer_weight_b, FALSE);
-    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, FALSE);  
-    gtk_widget_set_sensitive(cw_cwd_sidetone_b, FALSE);         
-    gtk_widget_set_sensitive(cwport, FALSE);  
-  } 
+    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, FALSE);
+    gtk_widget_set_sensitive(cw_cwd_sidetone_b, FALSE);
+    gtk_widget_set_sensitive(cwport, FALSE);
+  }
   else {
     cwdaemon_stop();
     gtk_widget_set_sensitive(cw_keyer_speed_b, TRUE);
     gtk_widget_set_sensitive(cw_keyer_sidetone_frequency_b, TRUE);
     gtk_widget_set_sensitive(cw_keyer_weight_b, TRUE);
-    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, TRUE);    
-    gtk_widget_set_sensitive(cw_cwd_sidetone_b, TRUE);  
-    gtk_widget_set_sensitive(cwport, TRUE); 
+    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, TRUE);
+    gtk_widget_set_sensitive(cw_cwd_sidetone_b, TRUE);
+    gtk_widget_set_sensitive(cwport, TRUE);
   }
 }
 
 static void cwport_value_changed_cb(GtkWidget *widget, gpointer data) {
-  RADIO *radio=(RADIO *)data;  
+  RADIO *radio=(RADIO *)data;
   radio->cwd_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
 }
-
 #endif
 
 GtkWidget *create_radio_dialog(RADIO *radio) {
@@ -673,11 +653,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(model_grid),model_combo_box,x,0,1,1);
   x++;
   if ((radio->discovered->device == DEVICE_HERMES_LITE2) || (radio->discovered->device == DEVICE_HERMES_LITE)) {
-    
-    //GtkWidget *paswap=gtk_check_button_new_with_label("Disable PA");
-    //gtk_grid_attach(GTK_GRID(model_grid),paswap,x,0,1,1);
-    //gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(paswap),radio->enable_pa);
-    //g_signal_connect(paswap,"toggled",G_CALLBACK(enablepa_changed_cb),band);
+    /* no IQ swap for Hermes Lite */
   }
   else {
     GtkWidget *iqswap=gtk_check_button_new_with_label("Swap I & Q");
@@ -696,8 +672,8 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"APOLLO FILTERS");
     if(radio->discovered->device==DEVICE_HERMES_LITE2) {
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"N2ADR FILTERS");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"HL2-MRF101");       
-    }    
+      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"HL2-MRF101");
+    }
     gtk_combo_box_set_active(GTK_COMBO_BOX(filter_board_combo_box),radio->filter_board);
     g_signal_connect(filter_board_combo_box,"changed",G_CALLBACK(filter_board_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),filter_board_combo_box,x,0,1,1);
@@ -764,7 +740,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_set_column_homogeneous(GTK_GRID(adc0_grid),TRUE);
   gtk_container_add(GTK_CONTAINER(adc0_frame),adc0_grid);
   gtk_grid_attach(GTK_GRID(grid),adc0_frame,col,row++,1,1);
- 
+
   switch(radio->discovered->device) {
 
 #ifdef SOAPYSDR
@@ -820,7 +796,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         gtk_grid_attach(GTK_GRID(adc0_grid),disable_fpgaclk_b,0,1,1,1);
         g_signal_connect(disable_fpgaclk_b,"toggled",G_CALLBACK(psu_clk_cb),radio);
       }
-      break;    
+      break;
 
     case DEVICE_HERMES_LITE:
       attenuation_label=gtk_label_new("LNA gain (dB):");
@@ -829,18 +805,15 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(attenuation_b),(double)radio->adc[0].attenuation);
       gtk_grid_attach(GTK_GRID(adc0_grid),attenuation_b,2,0,1,1);
       g_signal_connect(attenuation_b,"value_changed",G_CALLBACK(attenuation_value_changed_cb),&radio->adc[0]);
-      
+
       enable_attenuation_b=gtk_check_button_new_with_label("Enable 20dB Attenuation");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_attenuation_b), radio->adc[0].dither);
       gtk_grid_attach(GTK_GRID(adc0_grid),enable_attenuation_b,0,1,1,1);
-      //g_signal_connect(enable_attenuation_b,"toggled",G_CALLBACK(enable_step_attenuation_cb),&radio->adc[0]);
       g_signal_connect(enable_attenuation_b,"toggled",G_CALLBACK(dither_cb),&radio->adc[0]);
-      
       break;
-    
+
     default:
       adc0_antenna_combo_box=gtk_combo_box_text_new();
-      // Row 1
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_1");
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_2");
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_3");
@@ -868,7 +841,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_hpf_combo_box),radio->adc[0].hpf);
       g_signal_connect(adc0_hpf_combo_box,"changed",G_CALLBACK(adc0_hpf_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_hpf_combo_box,2,0,1,1);
-  
+
       adc0_lpf_combo_box=gtk_combo_box_text_new();
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"160m LPF");
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"80m LPF");
@@ -881,22 +854,21 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       g_signal_connect(adc0_lpf_combo_box,"changed",G_CALLBACK(adc0_lpf_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_lpf_combo_box,3,0,1,1);
 
-      // Row 2
       dither_b=gtk_check_button_new_with_label("Dither");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (dither_b), radio->adc[0].dither);
       gtk_grid_attach(GTK_GRID(adc0_grid),dither_b,0,1,1,1);
       g_signal_connect(dither_b,"toggled",G_CALLBACK(dither_cb),&radio->adc[0]);
-  
+
       random_b=gtk_check_button_new_with_label("Random");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (random_b), radio->adc[0].random);
       gtk_grid_attach(GTK_GRID(adc0_grid),random_b,1,1,1,1);
       g_signal_connect(random_b,"toggled",G_CALLBACK(random_cb),&radio->adc[0]);
-  
+
       preamp_b=gtk_check_button_new_with_label("Preamp");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (preamp_b), radio->adc[0].preamp);
       gtk_grid_attach(GTK_GRID(adc0_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[0]);
-  
+
       att10_b=gtk_check_button_new_with_label("Att10");
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att10_b), radio->adc[0].att10);
       gtk_grid_attach(GTK_GRID(adc0_grid),att10_b,3,1,1,1);
@@ -909,7 +881,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 
       attenuation_label=gtk_label_new("Attenuation (dB):");
       gtk_grid_attach(GTK_GRID(adc0_grid),attenuation_label,5,1,1,1);
-  
+
       attenuation_b=gtk_spin_button_new_with_range(0.0,31.0,1.0);
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(attenuation_b),(double)radio->adc[0].attenuation);
       gtk_grid_attach(GTK_GRID(adc0_grid),attenuation_b,6,1,1,1);
@@ -986,16 +958,16 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc1_grid),attenuation_b,6,1,1,1);
       g_signal_connect(attenuation_b,"value_changed",G_CALLBACK(attenuation_value_changed_cb),&radio->adc[1]);
       break;
-      
+
     case DEVICE_HERMES_LITE2:
-      if ((radio->hl2 != NULL) && (radio->diversity_mixers > 0)) {    
+      if ((radio->hl2 != NULL) && (radio->diversity_mixers > 0)) {
         adc1_frame = gtk_frame_new("ADC-1");
         GtkWidget *adc1_grid = gtk_grid_new();
         gtk_grid_set_row_homogeneous(GTK_GRID(adc1_grid), TRUE);
         gtk_grid_set_column_homogeneous(GTK_GRID(adc1_grid), TRUE);
         gtk_container_add(GTK_CONTAINER(adc1_frame), adc1_grid);
-        gtk_grid_attach(GTK_GRID(grid), adc1_frame, col, row++, 1, 1);    
-    
+        gtk_grid_attach(GTK_GRID(grid), adc1_frame, col, row++, 1, 1);
+
         attenuation_label = gtk_label_new("LNA gain (dB):");
         gtk_grid_attach(GTK_GRID(adc1_grid), attenuation_label, 0, 0, 1, 1);
         attenuation_b = gtk_spin_button_new_with_range(-12.0, 48.0, 1.0);
@@ -1003,8 +975,8 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         gtk_grid_attach(GTK_GRID(adc1_grid), attenuation_b, 2, 0, 1, 1);
         g_signal_connect(attenuation_b, "value_changed", G_CALLBACK(lna2_value_changed_cb), radio);
       }
-      break;         
-      
+      break;
+
     default:
       break;
   }
@@ -1067,7 +1039,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_set_column_homogeneous(GTK_GRID(mic_grid),FALSE);
     gtk_container_add(GTK_CONTAINER(mic_frame),mic_grid);
     gtk_grid_attach(GTK_GRID(grid),mic_frame,col,row++,1,1);
-   
+
     x=0;
     y=0;
 
@@ -1104,7 +1076,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_container_add(GTK_CONTAINER(config_frame),config_grid);
   gtk_grid_attach(GTK_GRID(grid),config_frame,col,row++,1,1);
 
-  // SWR alarm threshold
+  /* Row 0: SWR alarm + PPM correction */
   GtkWidget *swr_alarm_label=gtk_label_new("SWR alarm at ");
   gtk_widget_show(swr_alarm_label);
   gtk_grid_attach(GTK_GRID(config_grid),swr_alarm_label,0,0,1,1);
@@ -1115,7 +1087,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(config_grid),swr_alarm_b,1,0,1,1);
   g_signal_connect(swr_alarm_b,"value_changed",G_CALLBACK(swr_alarm_changed_cb),radio);
 
-  // PPM correction
   GtkWidget *ppm_correction_label=gtk_label_new("PPM correction ");
   gtk_widget_show(ppm_correction_label);
   gtk_grid_attach(GTK_GRID(config_grid),ppm_correction_label,2,0,1,1);
@@ -1126,7 +1097,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(config_grid),ppm_correction_b,3,0,1,1);
   g_signal_connect(ppm_correction_b,"value_changed",G_CALLBACK(ppm_correction_changed_cb),radio);
 
-  // Temperature alarm threshold
   if (radio->discovered->device == DEVICE_HERMES_LITE2) {
     GtkWidget *temp_alarm_label=gtk_label_new("Temp alarm at ");
     gtk_widget_show(temp_alarm_label);
@@ -1138,6 +1108,33 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(config_grid),temperature_alarm_b,5,0,1,1);
     g_signal_connect(temperature_alarm_b,"value_changed",G_CALLBACK(temperature_alarm_changed_cb),radio);
   }
+
+  {
+    int ft_col = 0;
+
+    GtkWidget *freetune_label = gtk_label_new("Freetune:");
+    gtk_widget_show(freetune_label);
+    gtk_grid_attach(GTK_GRID(config_grid), freetune_label, ft_col++, 1, 1, 1);
+
+    for (int i = 0; i < radio->discovered->supported_receivers; i++) {
+      if (radio->receiver[i] == NULL) continue;
+
+      gchar label_text[32];
+      g_snprintf(label_text, sizeof(label_text), "RX-%d", i);
+
+      GtkWidget *freetune_b = gtk_check_button_new_with_label(label_text);
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(freetune_b),
+                                   radio->receiver[i]->freetune);
+      gtk_widget_show(freetune_b);
+      gtk_widget_set_tooltip_text(freetune_b,
+        "Freeze the waterfall/panadapter centre frequency.\n"
+        "Tuning moves only within the visible span.");
+      gtk_grid_attach(GTK_GRID(config_grid), freetune_b, ft_col++, 1, 1, 1);
+      g_signal_connect(freetune_b, "toggled",
+                       G_CALLBACK(freetune_cb), radio->receiver[i]);
+    }
+  }
+  /* -------------------------------------------------------------- */
 
   GtkWidget *audio_frame=gtk_frame_new("Audio");
   GtkWidget *audio_grid=gtk_grid_new();
@@ -1185,7 +1182,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *panadapter_label=gtk_label_new(" Panadapter:");
   gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_label,0,2,1,1);
 
- GtkWidget *panadapter_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(radio->panadapter_calibration, -100.0, 100.0, 1.0, 1.0, 1.0));
+  GtkWidget *panadapter_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(radio->panadapter_calibration, -100.0, 100.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_scale,200,30);
   gtk_range_set_value (GTK_RANGE(panadapter_scale),radio->panadapter_calibration);
   gtk_widget_show(panadapter_scale);
@@ -1203,7 +1200,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   y=0;
 
   if (radio->discovered->device != DEVICE_HERMES_LITE2) {
-    
+
     GtkWidget *cw_keyer_mode_label=gtk_label_new("Keyer Mode:");
     gtk_widget_show(cw_keyer_mode_label);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_mode_label,x++,y,1,1);
@@ -1215,8 +1212,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_combo_box_set_active(GTK_COMBO_BOX(cw_keyer_combo_box),radio->cw_keyer_mode);
     g_signal_connect(cw_keyer_combo_box,"changed",G_CALLBACK(cw_keyer_cb),radio);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_combo_box,x++,y,1,1);
-    
-    
+
     GtkWidget *cw_keyer_reversed_label=gtk_label_new("Keys Reversed:");
     gtk_widget_show(cw_keyer_reversed_label);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_reversed_label,x++,y,1,1);
@@ -1225,26 +1221,25 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cw_keys_reversed_b), radio->cw_keys_reversed);
     gtk_widget_show(cw_keys_reversed_b);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keys_reversed_b,x,y,1,1);
-    g_signal_connect(cw_keys_reversed_b,"toggled",G_CALLBACK(cw_keys_reversed_cb),radio);    
+    g_signal_connect(cw_keys_reversed_b,"toggled",G_CALLBACK(cw_keys_reversed_cb),radio);
   }
 
   if (radio->discovered->device == DEVICE_HERMES_LITE2) {
     #ifdef CWDAEMON
     GtkWidget *cw_gen_label = gtk_label_new("CW generation:");
     gtk_widget_show(cw_gen_label);
-    gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_label, x++,y, 1, 1); 
-    
+    gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_label, x++,y, 1, 1);
+
     GtkWidget *cw_gen_combo = gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "Radio");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "linHPSDR");
     gtk_combo_box_set_active(GTK_COMBO_BOX(cw_gen_combo), radio->cw_generation_mode);
     g_signal_connect(cw_gen_combo, "changed", G_CALLBACK(cw_gen_cb), radio);
-    gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_combo, x, y, 1, 1);    
-    
+    gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_combo, x, y, 1, 1);
+
     y++;
     x = 0;
-    // New line
-    
+
     GtkWidget *cwdaemon_label=gtk_label_new("CWdaemon enabled:");
     gtk_widget_show(cwdaemon_label);
     gtk_grid_attach(GTK_GRID(cw_grid),cwdaemon_label,x++,y,1,1);
@@ -1253,12 +1248,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cwdaemon_tick), radio->cwdaemon);
     gtk_widget_show(cwdaemon_tick);
     gtk_grid_attach(GTK_GRID(cw_grid),cwdaemon_tick,x++,y,1,1);
-    g_signal_connect(cwdaemon_tick,"toggled",G_CALLBACK(cwdaemon_cb),radio);    
-        
+    g_signal_connect(cwdaemon_tick,"toggled",G_CALLBACK(cwdaemon_cb),radio);
+
     GtkWidget *cwport_label=gtk_label_new("Port:");
     gtk_widget_show(cwport_label);
     gtk_grid_attach(GTK_GRID(cw_grid),cwport_label,x++,y,1,1);
-  
+
     cwport=gtk_spin_button_new_with_range(50000.0,52000.0,1.0);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(cwport), radio->cwd_port);
     gtk_grid_attach(GTK_GRID(cw_grid),cwport,x,y,1,1);
@@ -1269,11 +1264,9 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   x=0;
   y++;
 
-
   GtkWidget *cw_speed_label=gtk_label_new("CW Speed (WPM)");
   gtk_widget_show(cw_speed_label);
   gtk_grid_attach(GTK_GRID(cw_grid),cw_speed_label,x++,y,1,1);
-
 
   cw_keyer_speed_b=gtk_spin_button_new_with_range(1.0,60.0,1.0);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(cw_keyer_speed_b),(double)radio->cw_keyer_speed);
@@ -1317,7 +1310,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   x=0;
   y++;
 
-
   if(radio->discovered->protocol==PROTOCOL_2) {
     GtkWidget *cw_keyer_breakin_label=gtk_label_new("CW Break In:");
     gtk_widget_show(cw_keyer_breakin_label);
@@ -1331,7 +1323,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   }
   #ifdef CWDAEMON
   else {
-    if (radio->discovered->device == DEVICE_HERMES_LITE2) { 
+    if (radio->discovered->device == DEVICE_HERMES_LITE2) {
       GtkWidget *cw_cwd_sidetone_label = gtk_label_new("CWdaemon sidetone:");
       gtk_widget_show(cw_cwd_sidetone_label);
       gtk_grid_attach(GTK_GRID(cw_grid),cw_cwd_sidetone_label,x++,y,1,1);
@@ -1340,21 +1332,20 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cw_cwd_sidetone_b), radio->cwd_sidetone);
       gtk_widget_show(cw_cwd_sidetone_b);
       gtk_grid_attach(GTK_GRID(cw_grid),cw_cwd_sidetone_b,x++,y,1,1);
-      g_signal_connect(cw_cwd_sidetone_b,"toggled",G_CALLBACK(cw_cwd_sidetone_cb),radio);      
+      g_signal_connect(cw_cwd_sidetone_b,"toggled",G_CALLBACK(cw_cwd_sidetone_cb),radio);
     }
   }
-  
-  if(radio->cwdaemon) {   
-    // CWdaemon now has control over keyer settings, user can't modify
-    gtk_widget_set_sensitive(cw_keyer_speed_b, FALSE);    
+
+  if(radio->cwdaemon) {
+    gtk_widget_set_sensitive(cw_keyer_speed_b, FALSE);
     gtk_widget_set_sensitive(cw_keyer_sidetone_frequency_b, FALSE);
     gtk_widget_set_sensitive(cw_keyer_weight_b, FALSE);
-    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, FALSE);  
-    gtk_widget_set_sensitive(cw_cwd_sidetone_b, FALSE);         
-    gtk_widget_set_sensitive(cwport, FALSE);  
-  }   
-  
+    gtk_widget_set_sensitive(cw_keyer_sidetone_level_b, FALSE);
+    gtk_widget_set_sensitive(cw_cwd_sidetone_b, FALSE);
+    gtk_widget_set_sensitive(cwport, FALSE);
+  }
   #endif
+
   GtkWidget *cw_keyer_delay_label=gtk_label_new("Break In Delay (Ms):");
   gtk_widget_show(cw_keyer_delay_label);
   gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_delay_label,x++,y,1,1);
@@ -1381,10 +1372,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_combo_box_set_active(GTK_COMBO_BOX(region_combo),radio->region);
   gtk_grid_attach(GTK_GRID(region_grid),region_combo,0,0,1,1);
   g_signal_connect(region_combo,"changed",G_CALLBACK(region_cb),radio);
-
-  x=0;
-  y=0;
-
 
   return grid;
 }

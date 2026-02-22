@@ -127,7 +127,7 @@ void radio_save_state(RADIO *radio) {
   gint width,height;
   char filename[128];
   switch(radio->discovered->protocol) {
-    
+
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
       sprintf(filename,"%s/.local/share/linhpsdr/%s.props",
@@ -153,7 +153,7 @@ g_print("radio_save_state: %s\n",filename);
   sprintf(value,"%d",radio->model);
   setProperty("radio.model",value);
   sprintf(value,"%d",radio->filter_board);
-  setProperty("radio.filter_board",value);  
+  setProperty("radio.filter_board",value);
   sprintf(value,"%d",radio->sample_rate);
   setProperty("radio.sample_rate",value);
   sprintf(value,"%d",radio->buffer_size);
@@ -188,13 +188,13 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.cw_breakin",value);
   #ifdef CWDAEMON
   sprintf(value,"%d",radio->cwd_port);
-  setProperty("radio.cwd_port",value);  
+  setProperty("radio.cwd_port",value);
   sprintf(value,"%d",radio->cwd_sidetone);
-  setProperty("radio.cwd_sidetone",value);    
+  setProperty("radio.cwd_sidetone",value);
   sprintf(value,"%d",radio->cw_generation_mode);
-  setProperty("radio.cw_generation_mode",value);    
+  setProperty("radio.cw_generation_mode",value);
   sprintf(value,"%d",radio->cwdaemon_running);
-  setProperty("radio.cwdaemon_running",value);    
+  setProperty("radio.cwdaemon_running",value);
   #endif
   sprintf(value,"%d",radio->local_microphone);
   setProperty("radio.local_microphone",value);
@@ -396,14 +396,14 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->cw_breakin=atoi(value);
   #ifdef CWDAEMON
   value=getProperty("radio.cwd_sidetone");
-  if(value!=NULL) radio->cwd_sidetone=atoi(value);  
+  if(value!=NULL) radio->cwd_sidetone=atoi(value);
   value=getProperty("radio.cwd_port");
-  if(value!=NULL) radio->cwd_port=atoi(value);   
+  if(value!=NULL) radio->cwd_port=atoi(value);
   value=getProperty("radio.cw_generation_mode");
-  if(value!=NULL) radio->cw_generation_mode = atoi(value);   
+  if(value!=NULL) radio->cw_generation_mode = atoi(value);
   value=getProperty("radio.cwdaemon_running");
-  if(value!=NULL) radio->cwdaemon_running = atoi(value);   
-  #endif  
+  if(value!=NULL) radio->cwdaemon_running = atoi(value);
+  #endif
 
   for(int i=0;i<radio->discovered->adcs;i++) {
     sprintf(name,"radio.adc[%d].filters",i);
@@ -461,7 +461,7 @@ void radio_restore_state(RADIO *radio) {
 
   if(radio->hl2 != NULL) {
     value=getProperty("radio.hl2.tx_buffer_size");
-    if(value!=NULL) radio->hl2->hl2_tx_buffer_size = atoi(value);  
+    if(value!=NULL) radio->hl2->hl2_tx_buffer_size = atoi(value);
   }
 
   value=getProperty("radio.local_microphone");
@@ -484,7 +484,7 @@ void radio_restore_state(RADIO *radio) {
   value=getProperty("radio.linein_gain");
   if(value!=NULL) radio->linein_gain=atoi(value);
   value=getProperty("radio.filter_board");
-  if(value!=NULL) radio->filter_board=atoi(value);  
+  if(value!=NULL) radio->filter_board=atoi(value);
   value=getProperty("radio.region");
   if(value!=NULL) radio->region=atoi(value);
   value=getProperty("radio.classE");
@@ -623,30 +623,30 @@ void vox_changed(RADIO *r) {
 }
 
 void frequency_changed(RECEIVER *rx) {
-    
+
     // Diversity mixer hidden rx synced to the rx which is
-    // visualised    
+    // visualised
     if (radio->divmixer[rx->dmix_id] != NULL) {
       if (radio->divmixer[rx->dmix_id]->rx_visual == rx) {
-        radio->divmixer[rx->dmix_id]->rx_hidden->frequency_a = rx->frequency_a;    
-        radio->divmixer[rx->dmix_id]->rx_hidden->frequency_b = rx->frequency_b;  
+        radio->divmixer[rx->dmix_id]->rx_hidden->frequency_a = rx->frequency_a;
+        radio->divmixer[rx->dmix_id]->rx_hidden->frequency_b = rx->frequency_b;
       }
-    }  
-    
-    if (radio->hl2 != NULL) {     
+    }
+
+    if (radio->hl2 != NULL) {
       if (rx->lo_a != 0) {
         radio->hl2->xvtr = TRUE;
         gtk_widget_set_sensitive(add_receiver_b, FALSE);
         HL2clock2Status(radio->hl2, TRUE, &rx->lo_a);
       }
-      else { 
-        gtk_widget_set_sensitive(add_receiver_b, TRUE);              
-        radio->hl2->xvtr = FALSE;        
-        HL2clock2Status(radio->hl2, FALSE, &rx->lo_a);        
+      else {
+        gtk_widget_set_sensitive(add_receiver_b, TRUE);
+        radio->hl2->xvtr = FALSE;
+        HL2clock2Status(radio->hl2, FALSE, &rx->lo_a);
       }
     }
-    
-  if(rx->ctun) {
+
+  if(rx->ctun || rx->freetune) {
     gint64 offset;
     rx->ctun_offset=rx->ctun_frequency-rx->frequency_a;
     offset=rx->ctun_offset;
@@ -662,19 +662,19 @@ void frequency_changed(RECEIVER *rx) {
     }
     SetRXAShiftFreq(rx->channel, (double)offset);
     RXANBPSetShiftFrequency(rx->channel, (double)offset);
-    
-    
+
+
     // Diversity mixer hidden rx synced to the rx which is
-    // visualised, this allow CTUN to work       
+    // visualised, this allow CTUN to work
     if (radio->divmixer[rx->dmix_id] != NULL) {
-      if (radio->divmixer[rx->dmix_id]->rx_visual == rx) {      
+      if (radio->divmixer[rx->dmix_id]->rx_visual == rx) {
         int channel = radio->divmixer[rx->dmix_id]->rx_hidden->channel;
-                 
+
         SetRXAShiftFreq(channel, (double)offset);
-        RXANBPSetShiftFrequency(channel, (double)offset);      
+        RXANBPSetShiftFrequency(channel, (double)offset);
       }
     }
-    
+
 #ifdef SOAPYSDR
     if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
       // delay setting tx frequency until transmit
@@ -726,28 +726,28 @@ void delete_wideband(WIDEBAND *w) {
     gtk_widget_destroy(radio->dialog);
     radio->dialog=NULL;
   }
-  protocol1_stop();  
-  protocol1_run();  
+  protocol1_stop();
+  protocol1_run();
 }
 
 void delete_receiver(RECEIVER *rx) {
-  
-  g_mutex_lock(&radio->delete_rx_mutex);  
-  
+
+  g_mutex_lock(&radio->delete_rx_mutex);
+
   // Receiver may have a diveristy mixer connected,
   // this removes the mixer and hidden rx for that mixer
   if (radio->divmixer[rx->dmix_id] != NULL) {
     g_print("Not null, delete the hidden rx\n");
     delete_diversity_mixer(radio->divmixer[rx->dmix_id]);
   }
- 
+
   int reopen_rx = 0;
 #ifdef PURESIGNAL
   if (radio->transmitter->puresignal != NULL) {
     if (rx->show_rx == TRUE) reopen_rx = 1;
   }
 #endif
-  
+
   int i;
   for(i=0;i<radio->discovered->supported_receivers;i++) {
     if(radio->receiver[i]==rx) {
@@ -794,9 +794,9 @@ g_print("delete_receiver: receivers now %d\n",radio->receivers);
   if (reopen_rx == 1) add_receiver(radio, 0);
 
   g_idle_add(radio_restart,(void *)radio);
- 
 
-  g_mutex_unlock(&radio->delete_rx_mutex);  
+
+  g_mutex_unlock(&radio->delete_rx_mutex);
 }
 
 void delete_diversity_mixer(DIVMIXER *dmix) {
@@ -805,11 +805,11 @@ void delete_diversity_mixer(DIVMIXER *dmix) {
   for (int i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
     if(radio->divmixer[i] == dmix) {
       g_print("delete div mixer %d\n", i);
-      radio->divmixer[i]->rx_visual->dmix_id = MAX_DIVERSITY_MIXERS+1;     
-      radio->divmixer[i]->rx_hidden->dmix_id = MAX_DIVERSITY_MIXERS+1; 
+      radio->divmixer[i]->rx_visual->dmix_id = MAX_DIVERSITY_MIXERS+1;
+      radio->divmixer[i]->rx_hidden->dmix_id = MAX_DIVERSITY_MIXERS+1;
       // Store the hidden channel before we delete the
       // mixer
-      hidden_channel = radio->divmixer[i]->rx_hidden->channel;           
+      hidden_channel = radio->divmixer[i]->rx_hidden->channel;
       radio->divmixer[i]=NULL;
       radio->diversity_mixers--;
 
@@ -831,7 +831,7 @@ g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
     for(i=0;i<r->discovered->supported_receivers;i++) {
       if(r->receiver[i]!=NULL) {
         if(!r->receiver[i]->duplex) {
-          SetChannelState(r->receiver[i]->channel,0,1);        
+          SetChannelState(r->receiver[i]->channel,0,1);
         }
       }
     }
@@ -929,7 +929,7 @@ void set_tune(RADIO *r,gboolean state) {
     gettimeofday(&te,NULL);
     long long now=te.tv_sec*1000LL+te.tv_usec/1000 + r->OCfull_tune_time;
     r->tune_timeout = now;
-    
+
     switch(r->transmitter->rx->mode_a) {
       case CWL:
         SetTXAMode(r->transmitter->channel, LSB);
@@ -958,11 +958,11 @@ void set_tune(RADIO *r,gboolean state) {
     switch(r->transmitter->rx->mode_a) {
       case CWL:
       case CWU:
-        SetTXAMode(r->transmitter->channel, r->transmitter->rx->mode_a); 
+        SetTXAMode(r->transmitter->channel, r->transmitter->rx->mode_a);
         #ifdef CWDAEMON
         if (r->cw_generation_mode == CWGEN_RADIO) r->cw_keyer_internal=TRUE;
         #else
-        r->cw_keyer_internal=TRUE;        
+        r->cw_keyer_internal=TRUE;
         #endif
         break;
     }
@@ -990,9 +990,9 @@ int add_receiver(void *data, gboolean show_rx) {
   }
   if(i<r->discovered->supported_receivers) {
 g_print("add_receiver: using receiver %d\n",i);
-    
+
     if (!show_rx) {
-      g_print("add_receiver: no visuals %d\n",i);      
+      g_print("add_receiver: no visuals %d\n",i);
       r->receiver[i]=create_receiver(i,r->sample_rate, FALSE);
     } else {
       r->receiver[i]=create_receiver(i,r->sample_rate, TRUE);
@@ -1014,7 +1014,7 @@ g_print("add_receiver: receivers now %d\n",r->receivers);
         soapy_protocol_set_automatic_gain(radio->receiver[i],radio->adc[adc].agc);
         for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
           soapy_protocol_set_gain(&radio->adc[adc]);
-        } 
+        }
         soapy_protocol_start_receiver(rx);
         break;
 #endif
@@ -1039,20 +1039,20 @@ g_print("add_receiver: no receivers available\n");
   return i;
 }
 
-int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden) { 
+int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden) {
   RADIO *r=(RADIO *)data;
   int i = 0;
-  
+
   for (i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
     if(r->divmixer[i]==NULL) {
       break;
     }
   }
-  
+
   if (i < MAX_DIVERSITY_MIXERS) {
-  
-g_print("add_diversity_mixer: using diversity mixer %d\n",i);  
-  
+
+g_print("add_diversity_mixer: using diversity mixer %d\n",i);
+
     r->divmixer[i] = create_diversity_mixer(i, rx_visual, rx_hidden);
     rx_visual->dmix_id = i;
     rx_hidden->dmix_id = i;
@@ -1061,8 +1061,8 @@ g_print("add_diversity_mixer: using diversity mixer %d\n",i);
 g_print("add_diversity_mixer: no diversity mixers available\n");
     i = -1;
   }
-  
-  return i;  
+
+  return i;
 }
 
 void add_receivers(RADIO *r) {
@@ -1143,10 +1143,10 @@ void add_transmitter(RADIO *r) {
 int add_wideband(void *data) {
   RADIO *r=(RADIO *)data;
   r->wideband=create_wideband(WIDEBAND_CHANNEL);
-  
-  protocol1_stop();  
+
+  protocol1_stop();
   protocol1_run();
-  
+
   if(r->discovered->protocol==PROTOCOL_2) {
     protocol2_start_wideband(r->wideband);
   }
@@ -1213,7 +1213,7 @@ static void create_visual(RADIO *r) {
     r->mic_level=create_mic_level(radio->transmitter);
     gtk_grid_attach(GTK_GRID(r->visual),r->mic_level,col,row,3,1);
     row++;
-  
+
     r->mic_gain=create_mic_gain(radio->transmitter);
     gtk_grid_attach(GTK_GRID(r->visual),r->mic_gain,col,row,3,1);
     row++;
@@ -1223,7 +1223,7 @@ static void create_visual(RADIO *r) {
 
     col++;
     row=0;
-  
+
     r->tune_button=gtk_toggle_button_new_with_label("Tune");
     gtk_widget_set_name(r->tune_button,"transmit-warning");
     //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->tune_button)),"circular");
@@ -1250,11 +1250,11 @@ static void create_visual(RADIO *r) {
     gtk_grid_attach(GTK_GRID(r->visual),add_receiver_b,col,row,1,1);
 
     if (radio->hl2 != NULL) {
-      if (radio->hl2->xvtr == FALSE) {      
+      if (radio->hl2->xvtr == FALSE) {
         gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
       }
       else {
-        gtk_widget_set_sensitive(add_receiver_b, FALSE);        
+        gtk_widget_set_sensitive(add_receiver_b, FALSE);
       }
     }
     row++;
@@ -1277,7 +1277,7 @@ static void create_visual(RADIO *r) {
   row=0;
 
   gtk_widget_show_all(r->visual);
-  
+
 }
 
 RADIO *create_radio(DISCOVERED *d) {
@@ -1313,9 +1313,9 @@ g_print("create_radio for %s %d\n",d->name,d->device);
       break;
     case DEVICE_HERMES_LITE2:
       r->model=HERMES_LITE_2;
-      break;      
-      
-      
+      break;
+
+
 #ifdef SOAPYSDR
     case DEVICE_SOAPYSDR:
       r->model=SOAPYSDR;
@@ -1363,17 +1363,17 @@ g_print("create_radio for %s %d\n",d->name,d->device);
       r->panadapter_calibration=0.0;
       break;
   }
-  
+
   for(i=0;i<r->receivers;i++) {
     r->receiver[i]=NULL;
   }
   r->active_receiver=NULL;
   r->transmitter=NULL;
-  
+
   r->diversity_mixers = 0;
   for(i=0;i< r->diversity_mixers; i++) {
     r->divmixer[i] = NULL;
-  }  
+  }
   r->divmixer[MAX_DIVERSITY_MIXERS+1] = NULL;
 
   r->can_transmit=TRUE;
@@ -1382,7 +1382,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     r->can_transmit=r->discovered->info.soapy.tx_channels>0;
   }
 #endif
-  
+
   r->mox=FALSE;
   r->tune=FALSE;
   r->vox=FALSE;
@@ -1405,18 +1405,18 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->cw_keyer_hang_time=300;
   r->cw_keys_reversed=FALSE;
   r->cw_breakin=FALSE;
-  
+
   r->protocol1_timer = 0;
   r->hang_time_ctr = 0;
   r->cwdaemon=FALSE;
-  
+
   #ifdef CWDAEMON
-  r->cw_generation_mode = CWGEN_RADIO;  
+  r->cw_generation_mode = CWGEN_RADIO;
   r->cwdaemon_running=FALSE;
   r->cwd_port = 51000;
   r->cwd_sidetone = FALSE;
   #endif
-  
+
   r->display_filled=TRUE;
 
   r->mic_boost=FALSE;
@@ -1436,16 +1436,16 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   g_mutex_init(&r->local_microphone_mutex);
 
   g_mutex_init(&r->ring_buffer_mutex);
-  
+
   g_mutex_init(&r->delete_rx_mutex);
-  
+
   g_cond_init(&r->ring_buffer_cond);
 
   r->filter_board=ALEX;
-    
+
   r->oc_tx_signal_id = g_new0(gulong, BANDS * 8);
-  r->oc_rx_signal_id = g_new0(gulong, BANDS * 8);  
-  
+  r->oc_rx_signal_id = g_new0(gulong, BANDS * 8);
+
   r->adc[0].id=0;
   r->adc[0].antenna=ANTENNA_1;
   r->adc[0].filters=AUTOMATIC;
@@ -1458,7 +1458,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->adc[0].att20=FALSE;
   r->adc[0].attenuation=0;
   r->adc_overload = 0;
-  
+
 #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {
     r->adc[0].gain=20;
@@ -1515,18 +1515,18 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
   r->swr_alarm_value = 2.0;
   r->ppm_correction_value = 0;
-  r->temperature_alarm_value = 50;  
+  r->temperature_alarm_value = 50;
   r->qos_flag = FALSE;
-  
+
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/linhpsdr/midi.props", g_get_home_dir());
-  
+
   r->dialog=NULL;
 
   if (radio->discovered->device==DEVICE_HERMES_LITE2) {
     r->hl2 = create_hl2();
   }
- 
+
   radio_restore_state(r);
 
   if (radio->hl2 != NULL) hl2_init(r->hl2);
@@ -1582,14 +1582,14 @@ g_print("create_radio for %s %d\n",d->name,d->device);
       soapy_protocol_set_rx_antenna(radio->receiver[0],radio->adc[0].antenna);
       for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
         soapy_protocol_set_gain(&radio->adc[0]);
-      } 
+      }
       RECEIVER *rx=r->receiver[0];
       double f=(double)(rx->frequency_a-rx->lo_a+rx->error_a);
       soapy_protocol_set_rx_frequency(radio->receiver[0]);
       soapy_protocol_set_automatic_gain(radio->receiver[0],radio->adc[0].agc);
       for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
         soapy_protocol_set_gain(&radio->adc[0]);
-      } 
+      }
       soapy_protocol_start_receiver(rx);
       if(r->can_transmit) {
         if(r->transmitter!=NULL && r->transmitter->rx==rx) {
@@ -1614,7 +1614,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     }
   }
   */
-  
+
   //
   // MIDIstartup must not be called before the radio is completely set up, since
   // then MIDI can asynchronously trigger actions which require the radio already
@@ -1631,8 +1631,8 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   } else {
     r->midi_enabled=false;
   }
-#endif  
-  
+#endif
+
   g_idle_add(radio_start,(gpointer)r);
 
 
@@ -1655,4 +1655,3 @@ void update_radio(RADIO *r) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(r->vox_button),r->vox_enabled);
   g_signal_handlers_unblock_by_func(r->vox_button,G_CALLBACK(vox_cb),r);
 }
-

@@ -30,7 +30,7 @@
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
 typedef struct _receiver {
-  
+
   gint channel; // WDSP channel
 
   gint adc;
@@ -47,8 +47,8 @@ typedef struct _receiver {
 
   guint32 iq_sequence;
   gdouble *iq_input_buffer;
-  gdouble *diviq_input_buffer;  
-  
+  gdouble *diviq_input_buffer;
+
   guint32 audio_sequence;
   gdouble *audio_output_buffer;
   gint audio_buffer_size;
@@ -62,7 +62,7 @@ typedef struct _receiver {
   gint pixels;
   gint fps;
   gdouble display_average_time;
-  
+
   gboolean ctun;
   gint64 ctun_frequency;
   gint64 ctun_offset;
@@ -145,8 +145,8 @@ typedef struct _receiver {
   GtkWidget *meter;
   cairo_surface_t *meter_surface;
   GtkWidget *radio_info;
-  cairo_surface_t *radio_info_surface;  
-  
+  cairo_surface_t *radio_info_surface;
+
   gint vfo_a_x;
   gint vfo_a_digits;
   gint vfo_a_width;
@@ -183,7 +183,7 @@ typedef struct _receiver {
   gboolean panadapter_filled;
   gboolean panadapter_gradient;
   gboolean panadapter_agc_line;
-  gint panadapter_single_color;  
+  gint panadapter_single_color;
 
   GtkWidget *waterfall;
   gint waterfall_width;
@@ -199,7 +199,7 @@ typedef struct _receiver {
   gboolean waterfall_ft8_marker;
   gint64 waterfall_frequency;
   gint waterfall_sample_rate;
-  
+
   gdouble hz_per_pixel;
 
   gboolean is_panning;
@@ -218,7 +218,7 @@ typedef struct _receiver {
   GMutex local_audio_mutex;
   gint local_audio_latency;
   gint audio_channels;
-  
+
   gchar *audio_name;
   int output_index;
   gboolean mute_when_not_active;
@@ -231,7 +231,7 @@ typedef struct _receiver {
 #ifndef __APPLE__
   pa_simple* playstream;
   snd_pcm_t *playback_handle;
-  snd_pcm_format_t local_audio_format;  
+  snd_pcm_format_t local_audio_format;
 #endif
 
   GtkWidget *toolbar;
@@ -269,7 +269,7 @@ typedef struct _receiver {
   gulong tx_control_signal_id;
 
   gboolean show_rx;
-  gboolean diversity; 
+  gboolean diversity;
   gint diversity_hidden_rx;
   gint dmix_id;
 
@@ -282,10 +282,11 @@ typedef struct _receiver {
   char rigctl_serial_port[80];
   gint rigctl_serial_baudrate;
   gboolean rigctl_serial_enable;
-  
+
 
   gboolean rigctl_debug;
   void *rigctl;
+  gboolean freetune;
 
 } RECEIVER;
 
@@ -332,5 +333,6 @@ extern void receiver_move_to(RECEIVER *rx,long long hz);
 extern void receiver_set_volume(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);
+extern void receiver_set_freetune(RECEIVER *rx, gboolean enable);
 extern void set_band(RECEIVER *rx,int band,int entry);
 #endif
