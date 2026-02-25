@@ -2,9 +2,8 @@
 UNAME_S := $(shell uname -s)
 
 # Get git commit version and date
-#GIT_VERSION := $(shell git --no-pager describe --tags --always --dirty)
 GIT_DATE := $(firstword $(shell git --no-pager show --date=short --format="%ai" --name-only))
-GIT_VERSION := $(shell git describe --abbrev=0 --tags)
+GIT_VERSION := $(shell git describe --abbrev=0 --tags 2>/dev/null || echo "unknown")
 
 CC=gcc
 LINK=gcc
@@ -19,12 +18,12 @@ GTKLIBS=`pkg-config --libs gtk+-3.0`
 ifeq ($(UNAME_S), Linux)
 AUDIO_LIBS=-lasound -lpulse-simple -lpulse -lpulse-mainloop-glib -lsoundio
 AUDIO_SOURCES=audio.c
-AUDIO_HEADRERS=audio.h
+AUDIO_HEADERS=audio.h
 endif
 ifeq ($(UNAME_S), Darwin)
 AUDIO_LIBS=-lsoundio
 AUDIO_SOURCES=portaudio.c
-AUDIO_HEADRERS=portaudio.h
+AUDIO_HEADERS=portaudio.h
 endif
 
 # uncomment the line below to include SoapySDR support
@@ -54,7 +53,7 @@ soapy_discovery.o \
 soapy_protocol.o
 endif
 
-# PureSignal adaptive distortion for HPSDR radios 
+# PureSignal adaptive distortion for HPSDR radios
 # (currently only protocol1)
 #PURESIGNAL_INCLUDE=PURESIGNAL
 
@@ -106,19 +105,17 @@ MIDI_LIBS= -lasound
 endif
 endif
 
-CFLAGS=	-g -Wno-deprecated-declarations -O3
-OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS)  $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-         $(CWDAEMON_OPTIONS)  $(OPENGL_OPTIONS) \
+CFLAGS= -g -Wno-deprecated-declarations -O3
+OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
-         -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
-#OPTIONS=-g -Wno-deprecated-declarations $(AUDIO_OPTIONS) -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"' -O3 -D FT8_MARKER
-
+          -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
 ifeq ($(UNAME_S), Linux)
 LIBS=-lrt -lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS)
 endif
 ifeq ($(UNAME_S), Darwin)
-LIBS=-lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) 
+LIBS=-lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS)
 endif
 
 INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES)
@@ -309,15 +306,16 @@ tx_info.o \
 tx_info_meter.o \
 peak_detect.o \
 subrx.o \
-actions.o
+actions.o \
+waterfall_theme.o
 
 
-$(PROGRAM):  $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS)
 	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(LIBS)
 
 
-all: prebuild  $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
-							 $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES)
+all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
+                         $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES)
 
 prebuild:
 	rm -f version.o
@@ -326,21 +324,226 @@ prebuild:
 clean:
 	-rm -f *.o
 	-rm -f $(PROGRAM)
+	-rm -rf $(APP_NAME).app
 
-install: $(PROGRAM)
-	cp $(PROGRAM) /usr/local/bin
-	if [ ! -d /usr/share/linhpsdr ]; then mkdir /usr/share/linhpsdr; fi
-	cp hpsdr.png /usr/share/linhpsdr
-	cp hpsdr_icon.png /usr/share/linhpsdr
-	cp hpsdr_small.png /usr/share/linhpsdr
-	cp linhpsdr.desktop /usr/share/applications
+APP_NAME=LinHPSDR
+APP_BUNDLE=$(APP_NAME).app
 
-debian:
-	cp $(PROGRAM) pkg/linhpsdr/usr/local/bin
-	cp /usr/local/lib/libwdsp.so pkg/linhpsdr/usr/local/lib
-	cp hpsdr.png pkg/linhpsdr/usr/share/linhpsdr
-	cp hpsdr_icon.png pkg/linhpsdr/usr/share/linhpsdr
-	cp hpsdr_small.png pkg/linhpsdr/usr/share/linhpsdr
-	cp linhpsdr.desktop pkg/linhpsdr/usr/share/applications
-	cd pkg; dpkg-deb --build linhpsdr
+app: $(PROGRAM)
+	@echo "Building fully self-contained macOS .app bundle..."
+	@if [ ! -f "$(PROGRAM)" ]; then \
+		echo "Error: $(PROGRAM) not found."; exit 1; \
+	fi
+	@if ! command -v dylibbundler >/dev/null 2>&1; then \
+		echo "Error: dylibbundler not found! Install: brew install dylibbundler"; \
+		exit 1; \
+	fi
 
+	@# Clean and create bundle structure
+	rm -rf $(APP_BUNDLE)
+	mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	mkdir -p $(APP_BUNDLE)/Contents/Resources
+	mkdir -p $(APP_BUNDLE)/Contents/Frameworks
+	mkdir -p $(APP_BUNDLE)/Contents/Resources/lib
+	mkdir -p $(APP_BUNDLE)/Contents/Resources/share
+	mkdir -p $(APP_BUNDLE)/Contents/Resources/etc
+
+	@# Copy main executable
+	cp $(PROGRAM) $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin
+	chmod +x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin
+
+	@# Bundle all dynamic libraries
+	@echo "Bundling dynamic libraries..."
+	@dylibbundler -of -b \
+		-x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin \
+		-d $(APP_BUNDLE)/Contents/Frameworks/ \
+		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
+
+	@# Copy and fix gdk-pixbuf loaders
+	@echo "Copying gdk-pixbuf loaders..."
+	@if [ -d "/usr/local/lib/gdk-pixbuf-2.0" ]; then \
+		cp -r /usr/local/lib/gdk-pixbuf-2.0 $(APP_BUNDLE)/Contents/Resources/lib/; \
+		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 -name "*.dylib" | while read lib; do \
+			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
+				-p @executable_path/../Frameworks/ 2>/dev/null || true; \
+		done; \
+		if [ -f "$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]; then \
+			sed -i '' 's|/usr/local/.*lib|@executable_path/../Resources/lib|g' \
+				$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache; \
+		fi; \
+	fi
+
+	@# Copy GLib schemas
+	@echo "Copying GLib schemas..."
+	@if [ -d "/usr/local/share/glib-2.0/schemas" ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/glib-2.0; \
+		cp -r /usr/local/share/glib-2.0/schemas $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/; \
+		glib-compile-schemas $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/schemas 2>/dev/null || true; \
+	fi
+
+	@# Copy GTK themes
+	@echo "Copying GTK themes..."
+	@if [ -d "/usr/local/share/themes" ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/themes; \
+		for theme in Adwaita Default; do \
+			if [ -d "/usr/local/share/themes/$$theme" ]; then \
+				cp -r /usr/local/share/themes/$$theme $(APP_BUNDLE)/Contents/Resources/share/themes/ 2>/dev/null || true; \
+			fi; \
+		done; \
+	fi
+
+	@# Copy icon themes
+	@echo "Copying icon themes..."
+	@if [ -d "/usr/local/share/icons" ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/icons; \
+		for icon_theme in gnome Adwaita hicolor; do \
+			if [ -d "/usr/local/share/icons/$$icon_theme" ]; then \
+				echo "  Copying $$icon_theme icon theme..."; \
+				cp -r /usr/local/share/icons/$$icon_theme $(APP_BUNDLE)/Contents/Resources/share/icons/ 2>/dev/null || true; \
+			fi; \
+		done; \
+		if command -v gtk-update-icon-cache >/dev/null 2>&1; then \
+			for icon_dir in $(APP_BUNDLE)/Contents/Resources/share/icons/*; do \
+				gtk-update-icon-cache -f "$$icon_dir" 2>/dev/null || true; \
+			done; \
+		fi; \
+	fi
+
+	@# Copy GTK im modules (input methods)
+	@echo "Copying GTK modules..."
+	@if [ -d "/usr/local/lib/gtk-3.0" ]; then \
+		cp -r /usr/local/lib/gtk-3.0 $(APP_BUNDLE)/Contents/Resources/lib/ 2>/dev/null || true; \
+		find $(APP_BUNDLE)/Contents/Resources/lib/gtk-3.0 -name "*.so" -o -name "*.dylib" | while read lib; do \
+			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
+				-p @executable_path/../Frameworks/ 2>/dev/null || true; \
+		done; \
+	fi
+
+	@# Copy GTK settings
+	@if [ -f "/usr/local/etc/gtk-3.0/settings.ini" ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0; \
+		cp /usr/local/etc/gtk-3.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0/ 2>/dev/null || true; \
+	fi
+
+	@# Copy application PNG resources
+	@echo "Copying application resources..."
+	@mkdir -p $(APP_BUNDLE)/Contents/Resources/share/linhpsdr
+	@for png in hpsdr.png hpsdr_icon.png hpsdr_small.png; do \
+		if [ -f "$$png" ]; then \
+			cp "$$png" $(APP_BUNDLE)/Contents/Resources/; \
+			cp "$$png" $(APP_BUNDLE)/Contents/Resources/share/linhpsdr/; \
+			cp "$$png" $(APP_BUNDLE)/Contents/MacOS/; \
+		fi; \
+	done
+
+	@# Create app icon
+	@echo "Creating app icon..."
+	@if [ -f "hpsdr_icon.png" ]; then \
+		mkdir -p $(APP_NAME).iconset; \
+		sips -z 16 16     hpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16.png >/dev/null 2>&1; \
+		sips -z 32 32     hpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16@2x.png >/dev/null 2>&1; \
+		sips -z 32 32     hpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32.png >/dev/null 2>&1; \
+		sips -z 64 64     hpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32@2x.png >/dev/null 2>&1; \
+		sips -z 128 128   hpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128.png >/dev/null 2>&1; \
+		sips -z 256 256   hpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128@2x.png >/dev/null 2>&1; \
+		sips -z 256 256   hpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
+		sips -z 512 512   hpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
+		sips -z 512 512   hpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
+		sips -z 1024 1024 hpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
+		iconutil -c icns $(APP_NAME).iconset -o $(APP_BUNDLE)/Contents/Resources/$(APP_NAME).icns 2>/dev/null || true; \
+		rm -rf $(APP_NAME).iconset; \
+	fi
+
+	@# Create launcher script
+	@echo "Creating launcher script..."
+	@echo '#!/bin/bash' > $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'DIR="$$(cd "$$(dirname "$$0")" && pwd)"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'RES="$$DIR/../Resources"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# Library paths' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export DYLD_LIBRARY_PATH="$$DIR/../Frameworks:$$RES/lib"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export DYLD_FALLBACK_LIBRARY_PATH="$$DIR/../Frameworks"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# GTK and GLib paths' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export XDG_DATA_DIRS="$$RES/share:/usr/local/share:/usr/share"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export XDG_DATA_HOME="$$RES/share"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export XDG_CONFIG_HOME="$$RES/etc"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_DATA_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_EXE_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_PATH="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# GTK theme and modules' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_THEME="Adwaita"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_IM_MODULE_FILE="$$RES/lib/gtk-3.0/3.0.0/immodules.cache"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GTK_EXE_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# GDK Pixbuf' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GDK_PIXBUF_MODULE_FILE="$$RES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GDK_PIXBUF_MODULEDIR="$$RES/lib/gdk-pixbuf-2.0/2.10.0/loaders"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# Icon theme' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export GSETTINGS_SCHEMA_DIR="$$RES/share/glib-2.0/schemas"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# Launch application' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'cd "$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'exec "$$DIR/$(APP_NAME)-bin" "$$@"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@chmod +x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+
+	@# Create Info.plist
+	@echo "Creating Info.plist..."
+	@echo '<?xml version="1.0" encoding="UTF-8"?>' > $(APP_BUNDLE)/Contents/Info.plist
+	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '<plist version="1.0">' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '<dict>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleExecutable</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>$(APP_NAME)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleName</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>$(APP_NAME)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleDisplayName</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>LinHPSDR</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleIdentifier</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>com.linhpsdr.app</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleVersion</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>$(GIT_VERSION)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleShortVersionString</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>$(GIT_VERSION)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundlePackageType</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>APPL</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleIconFile</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>$(APP_NAME)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>CFBundleSignature</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>????</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>NSHighResolutionCapable</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <true/>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>LSMinimumSystemVersion</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>10.13</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>NSPrincipalClass</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>NSApplication</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <key>LSApplicationCategoryType</key>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>public.app-category.utilities</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '</dict>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '</plist>' >> $(APP_BUNDLE)/Contents/Info.plist
+
+	@# Fix permissions and extended attributes
+	@echo "Fixing permissions and clearing extended attributes..."
+	@find $(APP_BUNDLE) -type f -name "*.dylib" -exec chmod 755 {} \;
+	@find $(APP_BUNDLE) -type f -name "*.so" -exec chmod 755 {} \;
+	@xattr -cr $(APP_BUNDLE)
+	@touch $(APP_BUNDLE)
+
+	@# Summary
+	@echo ""
+	@echo "=========================================="
+	@echo "  Bundle created: $(APP_BUNDLE)"
+	@echo "=========================================="
+	@du -sh $(APP_BUNDLE)
+	@echo ""
+	@echo "Contents:"
+	@echo "  - Frameworks: $$(ls $(APP_BUNDLE)/Contents/Frameworks | wc -l | xargs) libraries"
+	@echo "  - Icon themes: $$(ls -d $(APP_BUNDLE)/Contents/Resources/share/icons/* 2>/dev/null | wc -l | xargs)"
+	@echo "  - GTK themes: $$(ls -d $(APP_BUNDLE)/Contents/Resources/share/themes/* 2>/dev/null | wc -l | xargs)"
+	@echo "  - GLib schemas: $$(ls $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/schemas/*.compiled 2>/dev/null | wc -l | xargs)"
+	@echo ""
+	@echo "Test with: open $(APP_BUNDLE)"
+	@echo "Install with: make install"
+	@echo "=========================================="

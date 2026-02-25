@@ -70,7 +70,7 @@ const long long ll_step[13]= {
 
 gint64 steps[STEPS]={1,10,25,50,100,250,500,1000,5000,9000,10000,12500,100000,250000,500000,1000000};
 char *step_labels[STEPS]={"1 Hz","10 Hz","25 Hz","50 Hz","100 Hz","250 Hz","500 Hz","1 kHz","5 kHz","9 kHz","10 kHz","12.5 kHz", "100 kHz","250 kHz","500 kHz","1 MHz"};
-   
+
 static gboolean pressed=FALSE;
 static gdouble last_x;
 static gboolean has_moved=FALSE;
@@ -205,7 +205,7 @@ static void aswapb_cb(GtkButton *widget,gpointer user_data) {
 static void EnableSplitSubRX(gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   vfo_a2b(rx);
-  
+
   // Split mode in CW, RX on VFO A, TX on VFO B.
   // When mode turned on, default to VFO A +1 kHz
   if (rx->mode_a == CWL || rx->mode_a == CWU) {
@@ -213,7 +213,7 @@ static void EnableSplitSubRX(gpointer user_data) {
     rx->frequency_b = rx->frequency_a + 1000;
   }
   else if (rx->mode_a == LSB || rx->mode_a == USB) {
-    rx->frequency_b = rx->frequency_a + 5000;    
+    rx->frequency_b = rx->frequency_a + 5000;
   }
   else {
     return;
@@ -235,7 +235,7 @@ static void DisableSplitSubRX(gpointer user_data) {
       rx->subrx=NULL;
       printf("Destroy subrx subrx\n");
     }
-  } 
+  }
 }
 
 static void split_b_cb(GtkToggleButton *widget,gpointer user_data) {
@@ -276,7 +276,7 @@ void split_cb(GtkWidget *menu_item,gpointer data) {
         break;
       case SPLIT_ON:
         transmitter_set_mode(radio->transmitter,rx->mode_b);
-        EnableSplitSubRX(rx);        
+        EnableSplitSubRX(rx);
         break;
       case SPLIT_SAT:
       case SPLIT_RSAT:
@@ -284,8 +284,8 @@ void split_cb(GtkWidget *menu_item,gpointer data) {
         break;
     }
   }
-  frequency_changed(rx);  
-  update_vfo(rx);  
+  frequency_changed(rx);
+  update_vfo(rx);
   g_free(choice);
 }
 
@@ -294,7 +294,7 @@ static gboolean split_b_press_cb(GtkWidget *widget,GdkEvent *event, gpointer use
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
-  
+
   switch(((GdkEventButton*)event)->button) {
     case 1:  // LEFT
       if(rx->split!=SPLIT_OFF) {
@@ -302,16 +302,16 @@ static gboolean split_b_press_cb(GtkWidget *widget,GdkEvent *event, gpointer use
         DisableSplitSubRX(rx);
         rx->split=SPLIT_OFF;
       } else {
-        EnableSplitSubRX(rx); 
+        EnableSplitSubRX(rx);
         transmitter_set_mode(radio->transmitter,rx->mode_b);
         rx->split=SPLIT_ON;
-      }  
-      frequency_changed(rx);  
-      update_vfo(rx);      
-        
+      }
+      frequency_changed(rx);
+      update_vfo(rx);
+
       return TRUE;
-      break; 
-      
+      break;
+
     case 3:  // RIGHT
       menu=gtk_menu_new();
       menu_item=gtk_menu_item_new_with_label("Off");
@@ -348,7 +348,7 @@ static gboolean split_b_press_cb(GtkWidget *widget,GdkEvent *event, gpointer use
 #else
       gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
 #endif
-      frequency_changed(rx); 
+      frequency_changed(rx);
       return TRUE;
       break;
   }
@@ -491,23 +491,23 @@ static void div_b_cb(GtkToggleButton *widget,gpointer user_data) {
     int this_mixer = rx->dmix_id;
     delete_diversity_mixer(radio->divmixer[this_mixer]);
     rx->diversity = FALSE;
-  } else { 
+  } else {
     g_print("Add new rx\n");
-    int new_hidden_rx = add_receiver(radio, FALSE);            
+    int new_hidden_rx = add_receiver(radio, FALSE);
     if (new_hidden_rx > 0) {
       g_print("-----------Hidden RX added %d\n", new_hidden_rx);
       int dmix_num = add_diversity_mixer(radio, rx, radio->receiver[new_hidden_rx]);
       if (dmix_num > -1) {
         g_print("Vis mix chan %d\n", rx->dmix_id);
-        g_print("Hid mix chan %d\n", radio->receiver[new_hidden_rx]->dmix_id); 
-        g_print("channel %d\n", radio->divmixer[dmix_num]->rx_hidden->channel);            
+        g_print("Hid mix chan %d\n", radio->receiver[new_hidden_rx]->dmix_id);
+        g_print("channel %d\n", radio->divmixer[dmix_num]->rx_hidden->channel);
         rx->diversity = TRUE;
       }
     } else {
       g_print("Failed to add new rx\n");
     }
-  }    
-  g_print("Diversity rx %d\n", rx->diversity);  
+  }
+  g_print("Diversity rx %d\n", rx->diversity);
 }
 
 
@@ -517,7 +517,7 @@ static void ps_press_cb(GtkToggleButton *widget,gpointer user_data) {
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     TRANSMITTER *tx=radio->transmitter;
     int state = gtk_toggle_button_get_active(widget);
- 
+
     if (state) {
       if (radio->receivers <= (radio->discovered->ps_tx_fdbk_chan - 1)) {
         transmitter_set_ps(tx, 1);
@@ -647,7 +647,7 @@ static gboolean nb_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer
 void nb_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)choice->rx->vfo,"vfo_data");
-    
+
   switch(choice->selection) {
     case 0:
       choice->rx->nb=FALSE;
@@ -670,7 +670,7 @@ void nb_cb(GtkWidget *menu_item,gpointer data) {
   g_signal_handlers_unblock_by_func(v->nb_b,G_CALLBACK(nb_b_pressed_cb),data);
 
   update_noise(choice->rx);
-  
+
   g_free(choice);
 }
 
@@ -783,7 +783,7 @@ static gboolean nr_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer
 static void snb_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   rx->snb=gtk_toggle_button_get_active(widget);
-  update_noise(rx);  
+  update_noise(rx);
 }
 
 static void anf_b_cb(GtkToggleButton *widget,gpointer user_data) {
@@ -811,7 +811,7 @@ static void ant_b_cb(GtkToggleButton *widget,gpointer user_data) {
     radio->adc[0].antenna = 3;
   }
   else {
-    radio->adc[0].antenna = 0;    
+    radio->adc[0].antenna = 0;
   }
 }
 
@@ -833,7 +833,7 @@ static gboolean rit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gp
     rx->rit=rx->rit-rx->rit_step;
     if(rx->rit<-10000) rx->rit=-10000;
   }
-  sprintf(text,"%+05ld",rx->rit); 
+  sprintf(text,"%+05ld",rx->rit);
   gtk_label_set_text(GTK_LABEL(v->rit_value),text);
   frequency_changed(rx);
   update_frequency(rx);
@@ -977,7 +977,7 @@ static gboolean xit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gp
       radio->transmitter->xit=radio->transmitter->xit-radio->transmitter->xit_step;
       if(radio->transmitter->xit<-10000) radio->transmitter->xit=-10000;
     }
-    sprintf(text,"%+05ld",radio->transmitter->xit); 
+    sprintf(text,"%+05ld",radio->transmitter->xit);
     gtk_label_set_text(GTK_LABEL(v->xit_value),text);
   }
   return TRUE;
@@ -1283,8 +1283,8 @@ static gboolean agcgain_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *
   return TRUE;
 }
 
-//********************************************************************************** 
-//********************************************************************************** 
+//**********************************************************************************
+//**********************************************************************************
 static gboolean squelch_press_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   pressed=TRUE;
@@ -1347,8 +1347,8 @@ static gboolean squelch_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *
   return TRUE;
 }
 
-//********************************************************************************** 
-//********************************************************************************** 
+//**********************************************************************************
+//**********************************************************************************
 void band_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   set_band(choice->rx,choice->selection,choice->sub_selection);
@@ -1423,10 +1423,10 @@ static gboolean frequency_a_scroll_event_cb(GtkWidget *widget,GdkEventScroll *ev
     }
     if(event->direction==GDK_SCROLL_DOWN && rx->ctun) {
       step=-step;
-    }                    
+    }
     if(event->direction==GDK_SCROLL_UP && !rx->ctun) {
       step=-step;
-    }                    
+    }
 //g_print("%s: digit=%d step=%lld\n",__FUNCTION__,digit,step);
     receiver_move(rx,step,FALSE);
   }
@@ -1595,7 +1595,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_size_request(v->step_b,70,15);
   g_signal_connect(v->step_b, "pressed",G_CALLBACK(step_b_cb),rx);
   gtk_layout_put(GTK_LAYOUT(v->vfo),v->step_b,x,y);
-  
+
 
   x = 630;
   v->tx_label=gtk_label_new("");
@@ -1607,7 +1607,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
       gtk_label_set_text(GTK_LABEL(v->tx_label),"ASSIGNED TX");
     }
   }
-#ifdef PURESIGNAL 
+#ifdef PURESIGNAL
   x+=93;
 
   v->ps_b=gtk_toggle_button_new_with_label("PS");
@@ -1628,7 +1628,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   long long af=rx->frequency_a;
   if(rx->ctun) af=rx->ctun_frequency;
   if(rx->entering_frequency) af=rx->entered_frequency;
-    
+
   sprintf(temp,"%05lld.%03lld.%03lld",af/(long long)1000000,(af%(long long)1000000)/(long long)1000,af%(long long)1000);
   v->frequency_a_text=gtk_label_new(temp);
   rx->vfo_a_digits=strlen(temp);
@@ -1701,11 +1701,11 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   x=x+105;
   y=21;
-  
+
   v->squelch_label=gtk_label_new("SQL");
   gtk_widget_set_name(v->squelch_label,"squelch-text");
   gtk_layout_put(GTK_LAYOUT(v->vfo),v->squelch_label,x,y);
-  
+
   x+=22;
   y=18;
 
@@ -1774,7 +1774,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   x=x+40;
 
   FILTER *band_filters=filters[rx->mode_a];
-  
+
   if(rx->mode_a==FMN) {
     if(rx->deviation==2500) {
       strcpy(temp,"8000");
@@ -1868,7 +1868,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_layout_put(GTK_LAYOUT(v->vfo),v->rit_b,x,y);
   x=x+40;
 
-  sprintf(temp,"%+05ld",rx->rit); 
+  sprintf(temp,"%+05ld",rx->rit);
   v->rit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->rit_value,"rit-value");
 
@@ -1894,9 +1894,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
 
   if(radio->transmitter!=NULL) {
-    sprintf(temp,"%+05ld",radio->transmitter->xit); 
+    sprintf(temp,"%+05ld",radio->transmitter->xit);
   } else {
-    sprintf(temp,"%+05ld",0L); 
+    sprintf(temp,"%+05ld",0L);
   }
   v->xit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->xit_value,"xit-value");
@@ -1928,7 +1928,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_layout_put(GTK_LAYOUT(v->vfo),v->dup_b,x,y);
   x=x+40;
 
-  
+
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
     v->ant_b=gtk_toggle_button_new_with_label("RXANT");
     gtk_widget_set_name(v->ant_b,"vfo-toggle");
@@ -1936,7 +1936,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ant_b),radio->adc[0].antenna!=0);
     gtk_widget_set_size_request(v->ant_b,35,6);
     g_signal_connect(v->ant_b, "toggled", G_CALLBACK(ant_b_cb),rx);
-    gtk_layout_put(GTK_LAYOUT(v->vfo),v->ant_b,x,y);    
+    gtk_layout_put(GTK_LAYOUT(v->vfo),v->ant_b,x,y);
   }
   else {
     v->bpsk_b=gtk_toggle_button_new_with_label("BPSK");
@@ -1955,8 +1955,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(v->bmk_b, "button-press-event", G_CALLBACK(bmk_b_pressed_cb),rx);
   gtk_layout_put(GTK_LAYOUT(v->vfo),v->bmk_b,x,y);
   x=x+40;
-  
-  if(radio->discovered->protocol == PROTOCOL_1) {  
+
+  if(radio->discovered->protocol == PROTOCOL_1) {
     v->div_b=gtk_toggle_button_new_with_label("DIV");
     gtk_widget_set_name(v->div_b,"vfo-toggle");
     gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->div_b),FALSE);
@@ -1966,7 +1966,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
     gtk_layout_put(GTK_LAYOUT(v->vfo),v->div_b,x,y);
     x=x+40;
   }
-  
+
   gtk_widget_show_all(v->vfo);
 
   g_object_set_data ((GObject *)v->vfo,"vfo_data",v);
@@ -1985,7 +1985,7 @@ void update_vfo(RECEIVER *rx) {
 
   // VFO A
   long long af=rx->frequency_a;
-  if(rx->ctun) af=rx->ctun_frequency;
+  if(rx->ctun || rx->freetune) af=rx->ctun_frequency;
   if(rx->entering_frequency) af=rx->entered_frequency;
 
   sprintf(temp,"%05lld.%03lld.%03lld",af/(long long)1000000,(af%(long long)1000000)/(long long)1000,af%(long long)1000);
@@ -2105,12 +2105,12 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_block_by_func(v->snb_b,G_CALLBACK(snb_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->snb_b),rx->snb);
   g_signal_handlers_unblock_by_func(v->snb_b,G_CALLBACK(snb_b_cb),rx);
- 
+
   // update ANF button
   g_signal_handlers_block_by_func(v->anf_b,G_CALLBACK(anf_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->anf_b),rx->anf);
   g_signal_handlers_unblock_by_func(v->anf_b,G_CALLBACK(anf_b_cb),rx);
- 
+
   // update AGC button
   switch(rx->agc) {
     case AGC_OFF:
@@ -2157,7 +2157,7 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_unblock_by_func(v->dup_b,G_CALLBACK(dup_b_cb),rx);
 
   // update RXANT button
-  if(radio->discovered->device==DEVICE_HERMES_LITE2) {  
+  if(radio->discovered->device==DEVICE_HERMES_LITE2) {
     g_signal_handlers_block_by_func(v->ant_b,G_CALLBACK(ant_b_cb),rx);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ant_b),radio->adc[0].antenna!=0);
     g_signal_handlers_unblock_by_func(v->ant_b,G_CALLBACK(ant_b_cb),rx);
@@ -2166,7 +2166,7 @@ void update_vfo(RECEIVER *rx) {
   //g_signal_handlers_block_by_func(v->bpsk_b,G_CALLBACK(bpsk_b_cb),rx);
   //gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->bpsk_b),rx->bpsk_enable);
   //g_signal_handlers_unblock_by_func(v->bpsk_b,G_CALLBACK(bpsk_b_cb),rx);
- 
+
   // update ZOOM button
   sprintf(temp,"ZOOM x%d",rx->zoom);
   gtk_button_set_label(GTK_BUTTON(v->zoom_b),temp);
@@ -2196,12 +2196,11 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_block_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),rx->subrx!=NULL);
   g_signal_handlers_unblock_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
-  
+
   // Diversity mixer
   if(radio->discovered->protocol == PROTOCOL_1) {
     g_signal_handlers_block_by_func(v->div_b, G_CALLBACK(div_b_cb), rx);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b), rx->diversity);
-    g_signal_handlers_unblock_by_func(v->div_b, G_CALLBACK(div_b_cb), rx);  
+    g_signal_handlers_unblock_by_func(v->div_b, G_CALLBACK(div_b_cb), rx);
   }
 }
-

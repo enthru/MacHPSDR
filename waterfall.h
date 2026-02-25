@@ -17,5 +17,16 @@
 *
 */
 
+#ifndef _WATERFALL_H
+#define _WATERFALL_H
+
+#include <gtk/gtk.h>
+
+// Forward declaration
+typedef struct _receiver RECEIVER;
+
 extern GtkWidget *create_waterfall(RECEIVER *rx);
 extern void update_waterfall(RECEIVER *rx);
+extern void waterfall_set_theme(RECEIVER *rx, int theme);
+
+#endif

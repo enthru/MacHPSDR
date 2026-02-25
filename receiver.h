@@ -287,6 +287,7 @@ typedef struct _receiver {
   gboolean rigctl_debug;
   void *rigctl;
   gboolean freetune;
+  int waterfall_color_theme;
 
 } RECEIVER;
 

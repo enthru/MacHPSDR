@@ -78,7 +78,11 @@ GtkWidget *create_about_dialog(RADIO *r) {
   gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
   gtk_grid_attach(GTK_GRID(grid),label,1,row,1,1);
   row++;
-
+  snprintf(text,sizeof(text),"    Gleb Sushko, enthru, New features, mostly for Mac OS");
+  label=gtk_label_new(text);
+  gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
+  gtk_grid_attach(GTK_GRID(grid),label,1,row,1,1);
+  row++;
   snprintf(text,sizeof(text),"Build date: %s", build_date);
   label=gtk_label_new(text);
   gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
@@ -129,7 +133,7 @@ GtkWidget *create_about_dialog(RADIO *r) {
   row++;
       } else {
 #endif
-        
+
         strcpy(addr,inet_ntoa(r->discovered->info.network.address.sin_addr));
         strcpy(interface_addr,inet_ntoa(r->discovered->info.network.interface_address.sin_addr));
         snprintf(text,sizeof(text),"Device Mac Address: %02X:%02X:%02X:%02X:%02X:%02X",

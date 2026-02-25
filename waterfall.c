@@ -29,6 +29,7 @@
 #include "transmitter.h"
 #include "radio.h"
 #include "waterfall.h"
+#include "waterfall_theme.h"
 #include "main.h"
 
 static int colorLowR=0; // black
@@ -86,13 +87,19 @@ static gboolean waterfall_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
 GtkWidget *create_waterfall(RECEIVER *rx) {
   GtkWidget *waterfall;
 
+  // Инициализация тем (один раз)
+  static gboolean themes_initialized = FALSE;
+  if(!themes_initialized) {
+    init_waterfall_themes();
+    themes_initialized = TRUE;
+  }
+
   rx->waterfall_width=0;
   rx->waterfall_height=0;
   rx->waterfall_resize_timer=-1;
   rx->waterfall_pixbuf=NULL;
 
   waterfall = gtk_drawing_area_new ();
-  //gtk_widget_set_size_request (waterfall, rx->width, rx->height/3);
 
   g_signal_connect(waterfall,"configure-event",G_CALLBACK (waterfall_configure_event_cb),(gpointer)rx);
   g_signal_connect(waterfall,"draw",G_CALLBACK (waterfall_draw_cb),(gpointer)rx);
@@ -123,11 +130,11 @@ void update_waterfall(RECEIVER *rx) {
     int width=gdk_pixbuf_get_width(rx->waterfall_pixbuf);
     int height=gdk_pixbuf_get_height(rx->waterfall_pixbuf);
     int rowstride=gdk_pixbuf_get_rowstride(rx->waterfall_pixbuf);
-    
+
     if(rx->waterfall_frequency!=0 && (rx->sample_rate==rx->waterfall_sample_rate)) {
       if(rx->waterfall_frequency!=rx->frequency_a) {
         // scrolled or band change
-        long long half=((long long)(rx->sample_rate/2))/(rx->zoom);      
+        long long half=((long long)(rx->sample_rate/2))/(rx->zoom);
         if(rx->waterfall_frequency<(rx->frequency_a-half) || rx->waterfall_frequency>(rx->frequency_a+half)) {
           // outside of the range - blank waterfall
           memset(pixels, 0, width*height*3);
@@ -164,62 +171,35 @@ void update_waterfall(RECEIVER *rx) {
     guchar *p;
     p=pixels;
     samples=rx->pixel_samples;
-    //int offset=((rx->zoom-1)/2)*rx->panadapter_width;
     int offset=rx->pan;
+
     for(i=0;i<width;i++) {
-            sample=samples[i+offset]+radio->adc[rx->adc].attenuation;
-            if(i>1 || i<(width-1)) {
-              average+=(int)sample;
-            }
-            if(sample<(float)rx->waterfall_low) {
-                *p++=colorLowR;
-                *p++=colorLowG;
-                *p++=colorLowB;
-            } else if(sample>(float)rx->waterfall_high) {
-                *p++=colorHighR;
-                *p++=colorHighG;
-                *p++=colorHighB;
-            } else {
-                float range=(float)rx->waterfall_high-(float)rx->waterfall_low;
-                float offset=sample-(float)rx->waterfall_low;
-                float percent=offset/range;
-                if(percent<(2.0f/9.0f)) {
-                    float local_percent = percent / (2.0f/9.0f);
-                    *p++ = (int)((1.0f-local_percent)*colorLowR);
-                    *p++ = (int)((1.0f-local_percent)*colorLowG);
-                    *p++ = (int)(colorLowB + local_percent*(255-colorLowB));
-                } else if(percent<(3.0f/9.0f)) {
-                    float local_percent = (percent - 2.0f/9.0f) / (1.0f/9.0f);
-                    *p++ = 0;
-                    *p++ = (int)(local_percent*255);
-                    *p++ = (char)255;
-                } else if(percent<(4.0f/9.0f)) {
-                     float local_percent = (percent - 3.0f/9.0f) / (1.0f/9.0f);
-                     *p++ = 0;
-                     *p++ = (char)255;
-                     *p++ = (int)((1.0f-local_percent)*255);
-                } else if(percent<(5.0f/9.0f)) {
-                     float local_percent = (percent - 4.0f/9.0f) / (1.0f/9.0f);
-                     *p++ = (int)(local_percent*255);
-                     *p++ = (char)255;
-                     *p++ = 0;
-                } else if(percent<(7.0f/9.0f)) {
-                     float local_percent = (percent - 5.0f/9.0f) / (2.0f/9.0f);
-                     *p++ = (char)255;
-                     *p++ = (int)((1.0f-local_percent)*255);
-                     *p++ = 0;
-                } else if(percent<(8.0f/9.0f)) {
-                     float local_percent = (percent - 7.0f/9.0f) / (1.0f/9.0f);
-                     *p++ = (char)255;
-                     *p++ = 0;
-                     *p++ = (int)(local_percent*255);
-                } else {
-                     float local_percent = (percent - 8.0f/9.0f) / (1.0f/9.0f);
-                     *p++ = (int)((0.75f + 0.25f*(1.0f-local_percent))*255.0f);
-                     *p++ = (int)(local_percent*255.0f*0.5f);
-                     *p++ = (char)255;
-                }
-            }
+        sample=samples[i+offset]+radio->adc[rx->adc].attenuation;
+        if(i>1 || i<(width-1)) {
+          average+=(int)sample;
+        }
+
+        // Нормализуем sample в диапазон 0-255
+        int level;
+        if(sample < (float)rx->waterfall_low) {
+            level = 0;
+        } else if(sample > (float)rx->waterfall_high) {
+            level = 255;
+        } else {
+            float range = (float)rx->waterfall_high - (float)rx->waterfall_low;
+            float offset_val = sample - (float)rx->waterfall_low;
+            level = (int)((offset_val / range) * 255.0f);
+            if(level < 0) level = 0;
+            if(level > 255) level = 255;
+        }
+
+        // Получаем цвет из выбранной темы
+        unsigned char r, g, b;
+        get_waterfall_color(rx->waterfall_color_theme, level, &r, &g, &b);
+
+        *p++ = r;
+        *p++ = g;
+        *p++ = b;
     }
 
     if(rx->waterfall_ft8_marker) {
@@ -238,7 +218,7 @@ void update_waterfall(RECEIVER *rx) {
         } else {
           tim0=0;
         }
-    } 
+    }
 
     if(rx->waterfall_automatic) {
       rx->waterfall_low=(average/(width-2))-14;
@@ -247,4 +227,13 @@ void update_waterfall(RECEIVER *rx) {
 
     gtk_widget_queue_draw (rx->waterfall);
   }
+}
+
+void waterfall_set_theme(RECEIVER *rx, int theme) {
+    if(theme >= 0 && theme < get_theme_count()) {
+        rx->waterfall_color_theme = theme;
+        if(rx->waterfall != NULL) {
+            gtk_widget_queue_draw(rx->waterfall);
+        }
+    }
 }

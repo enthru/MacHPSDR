@@ -17,6 +17,8 @@
 *
 */
 
+#include "waterfall.h"
+#include "waterfall_theme.h"
 #include <gtk/gtk.h>
 #include <string.h>
 #include <stdint.h>
@@ -368,6 +370,13 @@ static void waterfall_automatic_cb(GtkWidget *widget, gpointer data) {
 static void waterfall_ft8_marker_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_ft8_marker=rx->waterfall_ft8_marker==TRUE?FALSE:TRUE;
+}
+
+static void waterfall_theme_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  int theme = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  rx->waterfall_color_theme = theme;
+  waterfall_set_theme(rx, theme);
 }
 
 static void remote_audio_cb(GtkWidget *widget, gpointer data) {
@@ -737,11 +746,11 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *audio_channels_combo=gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Stereo");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Left");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Right");    
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Right");
     gtk_combo_box_set_active(GTK_COMBO_BOX(audio_channels_combo),rx->audio_channels);
     gtk_grid_attach(GTK_GRID(audio_grid),audio_channels_combo,0,1,2,1);
     g_signal_connect(audio_channels_combo,"changed",G_CALLBACK(audio_channels_cb),rx);
-    
+
     GtkWidget *tx_mute_b = gtk_check_button_new_with_label("Mute while TX");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(tx_mute_b), rx->mute_while_transmitting);
     gtk_grid_attach(GTK_GRID(audio_grid),tx_mute_b,0,3,1,1);
@@ -860,7 +869,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row,1,3);
   row+=3;
 
-  
+
   GtkWidget *fps_label=gtk_label_new("FPS:");
   gtk_grid_attach(GTK_GRID(panadapter_grid),fps_label,0,0,1,1);
 
@@ -869,7 +878,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_show(fps_scale);
   g_signal_connect(G_OBJECT(fps_scale),"value_changed",G_CALLBACK(fps_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),fps_scale,1,0,1,1);
-  
+
   GtkWidget *average_label=gtk_label_new("Average:");
   gtk_grid_attach(GTK_GRID(panadapter_grid),average_label,0,1,1,1);
 
@@ -896,7 +905,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_show(panadapter_low_scale);
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,3,1,1);
-  
+
   GtkWidget *step_label=gtk_label_new("Step:");
   gtk_grid_attach(GTK_GRID(panadapter_grid),step_label,0,4,1,1);
 
@@ -905,7 +914,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_show(panadapter_step_scale);
   g_signal_connect(G_OBJECT(panadapter_step_scale),"value_changed",G_CALLBACK(panadapter_step_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_step_scale,1,4,1,1);
-  
+
   GtkWidget *panadapter_filled=gtk_check_button_new_with_label("Panadapter Filled");
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panadapter_filled), rx->panadapter_filled);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_filled,0,5,2,1);
@@ -932,40 +941,51 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   g_signal_connect(panadapter_single_color_b,"value_changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
-  GtkWidget *waterfall_grid=gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),FALSE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
-  gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
-  gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row,1,2);
-  row+=2;
+    GtkWidget *waterfall_grid=gtk_grid_new();
+    gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),FALSE);
+    gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
+    gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
+    gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row,1,2);
+    row+=2;
 
-  GtkWidget *waterfall_high_label=gtk_label_new("High:");
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_label,0,0,1,1);
+    GtkWidget *waterfall_high_label=gtk_label_new("High:");
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_label,0,0,1,1);
 
-  GtkWidget *waterfall_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_high,-200.0, 20.0, 1.0, 1.0, 1.0));
-  gtk_widget_set_size_request(waterfall_high_scale,200,30);
-  gtk_widget_show(waterfall_high_scale);
-  g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_scale,1,0,1,1);
+    GtkWidget *waterfall_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_high,-200.0, 20.0, 1.0, 1.0, 1.0));
+    gtk_widget_set_size_request(waterfall_high_scale,200,30);
+    gtk_widget_show(waterfall_high_scale);
+    g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),rx);
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_scale,1,0,1,1);
 
-  GtkWidget *waterfall_low_label=gtk_label_new("Low:");
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_label,0,1,1,1);
+    GtkWidget *waterfall_low_label=gtk_label_new("Low:");
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_label,0,1,1,1);
 
-  GtkWidget *waterfall_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_low,-200.0, 20.0, 1.0, 1.0, 1.0));
-  gtk_widget_set_size_request(waterfall_low_scale,200,30);
-  gtk_widget_show(waterfall_low_scale);
-  g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
+    GtkWidget *waterfall_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_low,-200.0, 20.0, 1.0, 1.0, 1.0));
+    gtk_widget_set_size_request(waterfall_low_scale,200,30);
+    gtk_widget_show(waterfall_low_scale);
+    g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),rx);
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
 
-  GtkWidget *waterfall_automatic=gtk_check_button_new_with_label("Waterfall Automatic");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_automatic), rx->waterfall_automatic);
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_automatic,0,2,2,1);
-  g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),rx);
+    GtkWidget *waterfall_automatic=gtk_check_button_new_with_label("Waterfall Automatic");
+    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_automatic), rx->waterfall_automatic);
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_automatic,0,2,2,1);
+    g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),rx);
 
-  GtkWidget *waterfall_ft8_marker=gtk_check_button_new_with_label("Waterfall FT8 Marker");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
-  gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_ft8_marker,0,3,2,1);
-  g_signal_connect(waterfall_ft8_marker,"toggled",G_CALLBACK(waterfall_ft8_marker_cb),rx);
+    GtkWidget *waterfall_ft8_marker=gtk_check_button_new_with_label("Waterfall FT8 Marker");
+    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_ft8_marker,0,3,2,1);
+    g_signal_connect(waterfall_ft8_marker,"toggled",G_CALLBACK(waterfall_ft8_marker_cb),rx);
+
+    GtkWidget *waterfall_theme_label=gtk_label_new("Color Theme:");
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_theme_label,0,4,1,1);
+
+    GtkWidget *waterfall_theme_combo=gtk_combo_box_text_new();
+    for(i=0; i<get_theme_count(); i++) {
+      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(waterfall_theme_combo), NULL, get_theme_name(i));
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(waterfall_theme_combo), rx->waterfall_color_theme);
+    gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_theme_combo,1,4,1,1);
+    g_signal_connect(waterfall_theme_combo,"changed",G_CALLBACK(waterfall_theme_cb),rx);
 
   col++;
   row=0;

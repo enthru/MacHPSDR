@@ -53,6 +53,10 @@
 #include "rigctl.h"
 #include "version.h"
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 GtkWidget *main_window;
 static GtkWidget *grid;
 
@@ -102,7 +106,7 @@ static gboolean main_delete (GtkWidget *widget) {
     }
     audio_close_input(radio);
     //audio_close_output(radio);
-  }    
+  }
   _exit(0);
 }
 
@@ -280,7 +284,7 @@ g_print("discovered: %d device=%d\n",i,discovered[i].device);
       } else {
         strcpy(protocol,"UNKNOWN");
       }
-     
+
 
 g_print("adding %s\n",d->name);
       gtk_list_store_append(store,i==0?&iter0:&iter);
@@ -297,7 +301,7 @@ g_print("adding %s\n",d->name);
 
     gtk_tree_view_set_model(GTK_TREE_VIEW(view), GTK_TREE_MODEL(store));
 
-    gtk_grid_attach(GTK_GRID(grid), view, 1, 0, 4, 1); 
+    gtk_grid_attach(GTK_GRID(grid), view, 1, 0, 4, 1);
     GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
     gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
 
@@ -308,7 +312,7 @@ g_print("adding %s\n",d->name);
   } else {
     gtk_widget_set_sensitive(start, FALSE);
     none_found=gtk_label_new("No HPSDR devices found");
-    gtk_grid_attach(GTK_GRID(grid), none_found, 1, 0, 4, 1); 
+    gtk_grid_attach(GTK_GRID(grid), none_found, 1, 0, 4, 1);
   }
 
   //gtk_widget_show_all(grid);
@@ -387,7 +391,7 @@ gboolean retry_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
-gboolean start_cb(GtkWidget *widget,gpointer data) { 
+gboolean start_cb(GtkWidget *widget,gpointer data) {
   char v[32];
   char mac[32];
   char ip[32];
@@ -472,7 +476,7 @@ g_print("moving main_window to x=%d y=%d\n",x,y);
 static void activate_hpsdr(GtkApplication *app, gpointer data) {
   struct utsname unameData;
   char title[64];
-  char png_path[128];
+  char png_path[256];
 
   g_print("Build: %s %s\n",build_date,version);
   g_print("GTK+ version %d.%d.%d\n", gtk_major_version, gtk_minor_version, gtk_micro_version);
@@ -501,15 +505,30 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   g_print("opengl: %d\n",opengl);
 
 #ifdef __APPLE__
-  sprintf(png_path,"/usr/local/share/linhpsdr/hpsdr.png");
+  // On macOS, find resources relative to executable in .app bundle
+  char exe_path[1024];
+  uint32_t size = sizeof(exe_path);
+  if (_NSGetExecutablePath(exe_path, &size) == 0) {
+    char *last_slash = strrchr(exe_path, '/');
+    if (last_slash) {
+      *last_slash = '\0';
+      sprintf(png_path, "%s/../Resources/hpsdr.png", exe_path);
+    } else {
+      strcpy(png_path, "hpsdr.png");
+    }
+  } else {
+    strcpy(png_path, "hpsdr.png");
+  }
+  g_print("PNG path (macOS): %s\n", png_path);
 #else
-  sprintf(png_path,"/usr/share/linhpsdr/hpsdr.png");
+  sprintf(png_path, "/usr/share/linhpsdr/hpsdr.png");
 #endif
+
   main_window = gtk_application_window_new (app);
   sprintf(title,"LinHPSDR (%s)",version);
   gtk_window_set_title (GTK_WINDOW (main_window), title);
   gtk_window_set_resizable(GTK_WINDOW(main_window), FALSE);
-  GError *error;
+  GError *error = NULL;
   if(!gtk_window_set_icon_from_file (GTK_WINDOW(main_window), png_path, &error)) {
     g_print("Warning: failed to set icon for main_window: %s\n",png_path);
     if(error!=NULL) {

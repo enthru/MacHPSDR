@@ -141,6 +141,10 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->waterfall_ft8_marker);
   setProperty(name,value);
 
+  sprintf(name,"receiver[%d].waterfall_color_theme",rx->channel);
+  sprintf(value,"%d",rx->waterfall_color_theme);
+  setProperty(name,value);
+
   sprintf(name,"receiver[%d].frequency_a",rx->channel);
   sprintf(value,"%" G_GINT64_FORMAT,rx->frequency_a);
   setProperty(name,value);
@@ -392,6 +396,10 @@ void receiver_save_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].show_rx",rx->channel);
   sprintf(value,"%i", rx->show_rx);
+  setProperty(name,value);
+
+  sprintf(name,"receiver[%d].waterfall_color_theme",rx->channel);
+  sprintf(value,"%d",rx->waterfall_color_theme);
   setProperty(name,value);
 
 fprintf(stderr,"receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
@@ -648,6 +656,10 @@ void receiver_restore_state(RECEIVER *rx) {
   value=getProperty(name);
   if(value) rx->waterfall_ft8_marker=atoi(value);
 
+  sprintf(name,"receiver[%d].waterfall_color_theme",rx->channel);
+  value=getProperty(name);
+  if(value) rx->waterfall_color_theme=atoi(value);
+
   sprintf(name,"receiver[%d].split",rx->channel);
   value=getProperty(name);
   if(value) rx->split=atoi(value);
@@ -685,6 +697,10 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].show_rx",rx->channel);
   value=getProperty(name);
   if(value) rx->show_rx=atoi(value);
+
+  sprintf(name,"receiver[%d].waterfall_color_theme",rx->channel);
+  value=getProperty(name);
+  if(value) rx->waterfall_color_theme=atoi(value);
 }
 
 void receiver_xvtr_changed(RECEIVER *rx) {
@@ -1769,6 +1785,9 @@ g_print("%s: %d\n",__FUNCTION__,zoom);
 
 
 RECEIVER *create_receiver(int channel,int sample_rate, gboolean show_rx) {
+
+
+
   RECEIVER *rx=g_new0(RECEIVER,1);
   char name [80];
   char *value;
@@ -1990,6 +2009,7 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->waterfall_automatic=TRUE;
   rx->waterfall_ft8_marker=FALSE;
+  rx->waterfall_color_theme=1;
 
   rx->vfo_surface=NULL;
   rx->meter_surface=NULL;
