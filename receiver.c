@@ -404,6 +404,11 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->waterfall_color_theme);
   setProperty(name,value);
 
+  // A live receiver is active; receiver_close overrides this with 0 so the
+  // settings are retained but the receiver is not auto-recreated on start-up.
+  sprintf(name,"receiver[%d].active",rx->channel);
+  setProperty(name,"1");
+
 fprintf(stderr,"receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
 }
 
@@ -773,6 +778,15 @@ void receiver_close(RECEIVER *rx) {
     gtk_widget_destroy(rx->bookmark_dialog);
     rx->bookmark_dialog=NULL;
   }
+  // Persist this receiver's current settings so they survive the close, then
+  // mark the slot inactive: the settings are kept but the receiver is not
+  // auto-recreated on the next start-up (and are restored if it is re-added).
+  {
+    char name[80];
+    receiver_save_state(rx);
+    sprintf(name,"receiver[%d].active",rx->channel);
+    setProperty(name,"0");
+  }
   delete_receiver(rx);
   // delete_receiver has set radio->receiver[i]=NULL for this rx; if it was the
   // active receiver, hand focus to the first remaining live receiver.
@@ -1077,6 +1091,13 @@ gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointe
   g_print("Pressed: ");
   g_print(gdk_keyval_name(event->keyval));
   g_print("\n");
+  // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
+  // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
+  if((event->keyval==GDK_KEY_q || event->keyval==GDK_KEY_Q) &&
+     (event->state & (GDK_META_MASK|GDK_MOD2_MASK|GDK_CONTROL_MASK))) {
+    main_delete(NULL);
+    return TRUE;
+  }
   switch(event->keyval) {
     case GDK_KEY_space:
         set_mox(radio,TRUE);

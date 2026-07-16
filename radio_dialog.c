@@ -41,6 +41,7 @@
 #include "soapy_protocol.h"
 #endif
 #include "audio.h"
+#include "settings_ui.h"
 #include "receiver_dialog.h"
 //#include "rigctl.h"
 
@@ -614,7 +615,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
-  gtk_grid_set_column_spacing(GTK_GRID(grid),5);
+  sui_style_page(grid);
 
   int row=0;
   int col=0;
@@ -623,6 +624,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *model_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(model_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(model_grid),TRUE);
+  sui_style_group(model_grid);
   gtk_container_add(GTK_CONTAINER(model_frame),model_grid);
   gtk_grid_attach(GTK_GRID(grid),model_frame,col,row++,1,1);
 
@@ -738,6 +740,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *adc0_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(adc0_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(adc0_grid),TRUE);
+  sui_style_group(adc0_grid);
   gtk_container_add(GTK_CONTAINER(adc0_frame),adc0_grid);
   gtk_grid_attach(GTK_GRID(grid),adc0_frame,col,row++,1,1);
 
@@ -869,15 +872,17 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc0_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[0]);
 
-      att10_b=gtk_check_button_new_with_label("Att10");
+      att10_b=gtk_check_button_new_with_label(radio->att10_label);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att10_b), radio->adc[0].att10);
       gtk_grid_attach(GTK_GRID(adc0_grid),att10_b,3,1,1,1);
       g_signal_connect(att10_b,"toggled",G_CALLBACK(att10_cb),&radio->adc[0]);
+      radio->att10_check=att10_b;
 
-      att20_b=gtk_check_button_new_with_label("Att20");
+      att20_b=gtk_check_button_new_with_label(radio->att20_label);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att20_b), radio->adc[0].att20);
       gtk_grid_attach(GTK_GRID(adc0_grid),att20_b,4,1,1,1);
       g_signal_connect(att20_b,"toggled",G_CALLBACK(att20_cb),&radio->adc[0]);
+      radio->att20_check=att20_b;
 
       attenuation_label=gtk_label_new("Attenuation (dB):");
       gtk_grid_attach(GTK_GRID(adc0_grid),attenuation_label,5,1,1,1);
@@ -898,6 +903,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       GtkWidget *adc1_grid=gtk_grid_new();
       gtk_grid_set_row_homogeneous(GTK_GRID(adc1_grid),TRUE);
       gtk_grid_set_column_homogeneous(GTK_GRID(adc1_grid),TRUE);
+      sui_style_group(adc1_grid);
       gtk_container_add(GTK_CONTAINER(adc1_frame),adc1_grid);
       gtk_grid_attach(GTK_GRID(grid),adc1_frame,col,row++,1,1);
 
@@ -940,12 +946,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc1_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[1]);
 
-      att10_b=gtk_check_button_new_with_label("Att10");
+      att10_b=gtk_check_button_new_with_label(radio->att10_label);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att10_b), radio->adc[1].att10);
       gtk_grid_attach(GTK_GRID(adc1_grid),att10_b,3,1,1,1);
       g_signal_connect(att10_b,"toggled",G_CALLBACK(att10_cb),&radio->adc[1]);
 
-      att20_b=gtk_check_button_new_with_label("Att20");
+      att20_b=gtk_check_button_new_with_label(radio->att20_label);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att20_b), radio->adc[1].att20);
       gtk_grid_attach(GTK_GRID(adc1_grid),att20_b,4,1,1,1);
       g_signal_connect(att20_b,"toggled",G_CALLBACK(att20_cb),&radio->adc[1]);
@@ -965,6 +971,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         GtkWidget *adc1_grid = gtk_grid_new();
         gtk_grid_set_row_homogeneous(GTK_GRID(adc1_grid), TRUE);
         gtk_grid_set_column_homogeneous(GTK_GRID(adc1_grid), TRUE);
+        sui_style_group(adc1_grid);
         gtk_container_add(GTK_CONTAINER(adc1_frame), adc1_grid);
         gtk_grid_attach(GTK_GRID(grid), adc1_frame, col, row++, 1, 1);
 
@@ -992,6 +999,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         GtkWidget *dac0_grid=gtk_grid_new();
         gtk_grid_set_row_homogeneous(GTK_GRID(dac0_grid),TRUE);
         gtk_grid_set_column_homogeneous(GTK_GRID(dac0_grid),TRUE);
+        sui_style_group(dac0_grid);
         gtk_container_add(GTK_CONTAINER(dac0_frame),dac0_grid);
         gtk_grid_attach(GTK_GRID(grid),dac0_frame,col,row++,1,1);
 
@@ -1037,6 +1045,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     GtkWidget *mic_grid=gtk_grid_new();
     gtk_grid_set_row_homogeneous(GTK_GRID(mic_grid),TRUE);
     gtk_grid_set_column_homogeneous(GTK_GRID(mic_grid),FALSE);
+    sui_style_group(mic_grid);
     gtk_container_add(GTK_CONTAINER(mic_frame),mic_grid);
     gtk_grid_attach(GTK_GRID(grid),mic_frame,col,row++,1,1);
 
@@ -1073,6 +1082,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *config_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(config_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(config_grid),FALSE);
+  sui_style_group(config_grid);
   gtk_container_add(GTK_CONTAINER(config_frame),config_grid);
   gtk_grid_attach(GTK_GRID(grid),config_frame,col,row++,1,1);
 
@@ -1140,6 +1150,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *audio_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
+  sui_style_group(audio_grid);
   gtk_container_add(GTK_CONTAINER(audio_frame),audio_grid);
   gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row++,1,1);
 
@@ -1167,6 +1178,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *calibration_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(calibration_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(calibration_grid),FALSE);
+  sui_style_group(calibration_grid);
   gtk_container_add(GTK_CONTAINER(calibration_frame),calibration_grid);
   gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1);
 
@@ -1193,6 +1205,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *cw_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(cw_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(cw_grid),FALSE);
+  sui_style_group(cw_grid);
   gtk_container_add(GTK_CONTAINER(cw_frame),cw_grid);
   gtk_grid_attach(GTK_GRID(grid),cw_frame,col,row++,1,1);
 
@@ -1363,6 +1376,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   GtkWidget *region_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(region_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(region_grid),FALSE);
+  sui_style_group(region_grid);
   gtk_container_add(GTK_CONTAINER(region_frame),region_grid);
   gtk_grid_attach(GTK_GRID(grid),region_frame,col,row++,1,1);
 

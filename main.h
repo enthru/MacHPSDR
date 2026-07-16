@@ -21,5 +21,7 @@
 #define max(x,y) (x<y?y:x)
 
 extern GtkWidget *main_window;
+
+extern gboolean main_delete(GtkWidget *widget);
 extern RADIO *radio;
 extern gboolean opengl;

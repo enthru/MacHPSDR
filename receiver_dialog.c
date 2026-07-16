@@ -39,6 +39,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "receiver_dialog.h"
 #include "vfo.h"
 #include "audio.h"
@@ -595,6 +596,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   SELECT *select;
 
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
@@ -607,6 +609,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *adc_grid=gtk_grid_new();
     gtk_grid_set_row_homogeneous(GTK_GRID(adc_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(adc_grid),FALSE);
+    sui_style_group(adc_grid);
     gtk_container_add(GTK_CONTAINER(adc_frame),adc_grid);
     gtk_grid_attach(GTK_GRID(grid),adc_frame,col,row++,1,1);
 
@@ -641,6 +644,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       GtkWidget *sample_rate_grid=gtk_grid_new();
       gtk_grid_set_row_homogeneous(GTK_GRID(sample_rate_grid),FALSE);
       gtk_grid_set_column_homogeneous(GTK_GRID(sample_rate_grid),FALSE);
+      sui_style_group(sample_rate_grid);
       gtk_container_add(GTK_CONTAINER(sample_rate_frame),sample_rate_grid);
       gtk_grid_attach(GTK_GRID(grid),sample_rate_frame,col,row,1,2);
       row+=2;
@@ -719,6 +723,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *audio_grid=gtk_grid_new();
     gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
+    sui_style_group(audio_grid);
     gtk_container_add(GTK_CONTAINER(audio_frame),audio_grid);
     gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row,1,1);
     row++;
@@ -764,6 +769,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *equalizer_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(equalizer_grid),FALSE);
+  sui_style_group(equalizer_grid);
   gtk_container_add(GTK_CONTAINER(equalizer_frame),equalizer_grid);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row,1,4);
   row+=4;
@@ -854,6 +860,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *tx_grid=gtk_grid_new();
     gtk_grid_set_row_homogeneous(GTK_GRID(tx_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(tx_grid),FALSE);
+    sui_style_group(tx_grid);
     gtk_container_add(GTK_CONTAINER(tx_frame),tx_grid);
     gtk_grid_attach(GTK_GRID(grid),tx_frame,col,row,1,1);
     row++;
@@ -868,6 +875,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
+  sui_style_group(panadapter_grid);
   gtk_container_add(GTK_CONTAINER(panadapter_frame),panadapter_grid);
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row,1,3);
   row+=3;
@@ -947,6 +955,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *waterfall_grid=gtk_grid_new();
     gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
+    sui_style_group(waterfall_grid);
     gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
     gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row,1,2);
     row+=2;
@@ -997,6 +1006,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *cat_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(cat_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(cat_grid),FALSE);
+  sui_style_group(cat_grid);
   gtk_container_add(GTK_CONTAINER(cat_frame),cat_grid);
   gtk_grid_attach(GTK_GRID(grid),cat_frame,col,row,1,3);
   row++;

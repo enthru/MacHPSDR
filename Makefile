@@ -168,6 +168,7 @@ wideband.c\
 vox.c\
 ext.c\
 configure_dialog.c\
+labels_dialog.c\
 bookmark_dialog.c\
 puresignal_dialog.c\
 oc_dialog.c\
@@ -229,6 +230,7 @@ wideband.h\
 vox.h\
 ext.h\
 configure_dialog.h\
+labels_dialog.h\
 bookmark_dialog.h\
 puresignal_dialog.h\
 oc_dialog.h\
@@ -252,6 +254,7 @@ actions.h
 OBJS=\
 main.o\
 css.o\
+settings_ui.o\
 audio.o\
 version.o\
 discovered.o\
@@ -290,6 +293,7 @@ wideband.o\
 vox.o\
 ext.o\
 configure_dialog.o\
+labels_dialog.o\
 bookmark_dialog.o\
 puresignal_dialog.o\
 oc_dialog.o\

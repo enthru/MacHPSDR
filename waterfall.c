@@ -22,6 +22,7 @@
 
 #include "discovered.h"
 #include "bpsk.h"
+#include "mode.h"
 #include "adc.h"
 #include "dac.h"
 #include "wideband.h"
@@ -86,6 +87,41 @@ static gboolean waterfall_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
     gdk_cairo_set_source_pixbuf (cr, rx->waterfall_pixbuf, 0, 0);
     cairo_paint (cr);
   }
+
+  // Overlay the receive passband and centre-frequency cursor, using the same
+  // x-mapping as the panadapter so the marker lines up column-for-column.
+  if(rx->hz_per_pixel!=0.0) {
+    double height=(double)rx->waterfall_height;
+
+    // CW sidetone offset (cursor sits on the tone, matching the panadapter)
+    double cw_offset=0.0;
+    if(rx->mode_a==CWL) {
+      cw_offset=+radio->cw_keyer_sidetone_frequency;
+    } else if(rx->mode_a==CWU) {
+      cw_offset=-radio->cw_keyer_sidetone_frequency;
+    }
+
+    double centre=((double)rx->pixels/2.0)-(double)rx->pan
+                  +(rx->ctun_offset/rx->hz_per_pixel)
+                  -(cw_offset/rx->hz_per_pixel);
+    double filter_left=((double)rx->pixels/2.0)-(double)rx->pan
+                       +(((double)rx->filter_low_a+rx->ctun_offset)/rx->hz_per_pixel);
+    double filter_right=((double)rx->pixels/2.0)-(double)rx->pan
+                        +(((double)rx->filter_high_a+rx->ctun_offset)/rx->hz_per_pixel);
+
+    // passband band
+    cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.30);
+    cairo_rectangle(cr, filter_left, 0.0, filter_right-filter_left, height);
+    cairo_fill(cr);
+
+    // centre cursor
+    cairo_set_line_width(cr, 1.0);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.85);
+    cairo_move_to(cr, centre, 0.0);
+    cairo_line_to(cr, centre, height);
+    cairo_stroke(cr);
+  }
+
   return FALSE;
 }
 

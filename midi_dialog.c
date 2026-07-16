@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "midi.h"
 #include "alsa_midi.h"
 #include "midi_dialog.h"
@@ -634,26 +635,24 @@ static void delete_cb(GtkButton *widget,gpointer user_data) {
 }
 
 GtkWidget *create_midi_dialog(RADIO *r) {
-  int i;
-  int col=0;
-  int row=0;
   GtkCellRenderer *renderer;
 
-  GtkWidget *midi_frame=gtk_frame_new("MIDI");
-  GtkWidget *grid=gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
-  gtk_grid_set_column_spacing(GTK_GRID(grid),5);
-  gtk_container_add(GTK_CONTAINER(midi_frame),grid);
+  GtkWidget *page=gtk_grid_new();
+  sui_style_page(page);
+  int prow=0;
 
-  row=0;
-  col=0;
+  /* ---- MIDI Device ---------------------------------------------------- */
+  GtkWidget *dev_frame=gtk_frame_new("MIDI Device");
+  GtkWidget *dev_grid=gtk_grid_new();
+  sui_style_group(dev_grid);
+  gtk_container_add(GTK_CONTAINER(dev_frame),dev_grid);
+  gtk_grid_attach(GTK_GRID(page),dev_frame,0,prow++,1,1);
 
   get_midi_devices();
   if(n_midi_devices>0) {
-    GtkWidget *devices_label=gtk_label_new("Select MIDI device: ");
-    gtk_grid_attach(GTK_GRID(grid),devices_label,col,row,1,1);
-    col++;
+    GtkWidget *devices_label=gtk_label_new("Device:");
+    gtk_widget_set_halign(devices_label,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(dev_grid),devices_label,0,0,1,1);
 
     GtkWidget *devices=gtk_combo_box_text_new();
     for(int i=0;i<n_midi_devices;i++) {
@@ -664,116 +663,102 @@ GtkWidget *create_midi_dialog(RADIO *r) {
         }
       }
     }
-    gtk_grid_attach(GTK_GRID(grid),devices,col,row,6,1);
+    gtk_widget_set_hexpand(devices,TRUE);
+    gtk_grid_attach(GTK_GRID(dev_grid),devices,1,0,1,1);
     gtk_combo_box_set_active(GTK_COMBO_BOX(devices),device);
     g_signal_connect(devices,"changed",G_CALLBACK(device_changed_cb),r);
   } else {
     GtkWidget *message=gtk_label_new("No MIDI devices found!");
-    gtk_grid_attach(GTK_GRID(grid),message,col,row,1,1);
+    gtk_widget_set_halign(message,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(dev_grid),message,0,0,2,1);
   }
-  row++;
-  col=0;
 
   midi_enable_b=gtk_check_button_new_with_label("MIDI Enable");
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (midi_enable_b), r->midi_enabled);
-  gtk_grid_attach(GTK_GRID(grid),midi_enable_b,col,row,1,1);
+  gtk_grid_attach(GTK_GRID(dev_grid),midi_enable_b,0,1,2,1);
   g_signal_connect(midi_enable_b,"toggled",G_CALLBACK(midi_enable_cb),r);
-
-  row++;
-  col=0;
-
-  GtkWidget *clear_b=gtk_button_new_with_label("Clear");
-  gtk_grid_attach(GTK_GRID(grid),clear_b,col,row,1,1);
-  g_signal_connect(clear_b,"clicked",G_CALLBACK(clear_cb),r);
-  col++;
-
-  GtkWidget *save_b=gtk_button_new_with_label("Save");
-  gtk_grid_attach(GTK_GRID(grid),save_b,col,row,1,1);
-  g_signal_connect(save_b,"clicked",G_CALLBACK(save_cb),r);
-  col++;
-
-  GtkWidget *load_b=gtk_button_new_with_label("Load");
-  gtk_grid_attach(GTK_GRID(grid),load_b,col,row,1,1);
-  g_signal_connect(load_b,"clicked",G_CALLBACK(load_cb),r);
-  col++;
-
-  GtkWidget *load_original_b=gtk_button_new_with_label("Load Original");
-  gtk_grid_attach(GTK_GRID(grid),load_original_b,col,row,1,1);
-  g_signal_connect(load_original_b,"clicked",G_CALLBACK(load_original_cb),r);
-  col++;
-
-  row++;
-  col=0;
 
   configure_b=gtk_check_button_new_with_label("MIDI Configure");
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (configure_b), false);
-  gtk_grid_attach(GTK_GRID(grid),configure_b,col,row,1,1);
+  gtk_grid_attach(GTK_GRID(dev_grid),configure_b,0,2,2,1);
   g_signal_connect(configure_b,"toggled",G_CALLBACK(configure_cb),r);
-  col++;
 
+  /* ---- New Mapping ---------------------------------------------------- */
+  // Header labels and the entry widgets live in their own grid, so their
+  // column widths only depend on each other and the header lines up over
+  // the fields (the old single grid shared widths with the treeview).
+  GtkWidget *map_frame=gtk_frame_new("New Mapping");
+  GtkWidget *map_grid=gtk_grid_new();
+  sui_style_group(map_grid);
+  gtk_container_add(GTK_CONTAINER(map_frame),map_grid);
+  gtk_grid_attach(GTK_GRID(page),map_frame,0,prow++,1,1);
 
-  row++;
-  col=0;
-  GtkWidget *label=gtk_label_new("Event");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Channel");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Note");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Type");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Value");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Min");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Max");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
-  label=gtk_label_new("Action");
-  gtk_grid_attach(GTK_GRID(grid),label,col++,row,1,1);
+  const char *hdr[8]={"Event","Channel","Note","Type","Value","Min","Max","Action"};
+  for(int c=0;c<8;c++) {
+    GtkWidget *label=gtk_label_new(hdr[c]);
+    gtk_widget_set_halign(label,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(map_grid),label,c,0,1,1);
+  }
 
-
-  row++;
-  col=0;
   newEvent=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newEvent,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newEvent,0,1,1,1);
   newChannel=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newChannel,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newChannel,1,1,1,1);
   newNote=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newNote,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newNote,2,1,1,1);
   newType=gtk_combo_box_text_new();
-  gtk_grid_attach(GTK_GRID(grid),newType,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newType,3,1,1,1);
   g_signal_connect(newType,"changed",G_CALLBACK(type_changed_cb),NULL);
   newVal=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newVal,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newVal,4,1,1,1);
   newMin=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newMin,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newMin,5,1,1,1);
   newMax=gtk_label_new("");
-  gtk_grid_attach(GTK_GRID(grid),newMax,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newMax,6,1,1,1);
   newAction=gtk_combo_box_text_new();
   gtk_combo_box_set_wrap_width(GTK_COMBO_BOX(newAction),5);
-  gtk_grid_attach(GTK_GRID(grid),newAction,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),newAction,7,1,1,1);
 
   add_b=gtk_button_new_with_label("Add");
   g_signal_connect(add_b, "pressed", G_CALLBACK(add_cb),NULL);
-  gtk_grid_attach(GTK_GRID(grid),add_b,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),add_b,8,1,1,1);
   gtk_widget_set_sensitive(add_b,false);
-
 
   update_b=gtk_button_new_with_label("Update");
   g_signal_connect(update_b, "pressed", G_CALLBACK(update_cb),NULL);
-  gtk_grid_attach(GTK_GRID(grid),update_b,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),update_b,9,1,1,1);
   gtk_widget_set_sensitive(update_b,false);
 
   delete_b=gtk_button_new_with_label("Delete");
   g_signal_connect(delete_b, "pressed", G_CALLBACK(delete_cb),NULL);
-  gtk_grid_attach(GTK_GRID(grid),delete_b,col++,row,1,1);
+  gtk_grid_attach(GTK_GRID(map_grid),delete_b,10,1,1,1);
   gtk_widget_set_sensitive(delete_b,false);
-  row++;
-  col=0;
+
+  /* ---- Mappings ------------------------------------------------------- */
+  GtkWidget *table_frame=gtk_frame_new("Mappings");
+  GtkWidget *table_grid=gtk_grid_new();
+  sui_style_group(table_grid);
+  gtk_container_add(GTK_CONTAINER(table_frame),table_grid);
+  gtk_grid_attach(GTK_GRID(page),table_frame,0,prow++,1,1);
+
+  GtkWidget *clear_b=gtk_button_new_with_label("Clear");
+  gtk_grid_attach(GTK_GRID(table_grid),clear_b,0,0,1,1);
+  g_signal_connect(clear_b,"clicked",G_CALLBACK(clear_cb),r);
+  GtkWidget *save_b=gtk_button_new_with_label("Save");
+  gtk_grid_attach(GTK_GRID(table_grid),save_b,1,0,1,1);
+  g_signal_connect(save_b,"clicked",G_CALLBACK(save_cb),r);
+  GtkWidget *load_b=gtk_button_new_with_label("Load");
+  gtk_grid_attach(GTK_GRID(table_grid),load_b,2,0,1,1);
+  g_signal_connect(load_b,"clicked",G_CALLBACK(load_cb),r);
+  GtkWidget *load_original_b=gtk_button_new_with_label("Load Original");
+  gtk_grid_attach(GTK_GRID(table_grid),load_original_b,3,0,1,1);
+  g_signal_connect(load_original_b,"clicked",G_CALLBACK(load_original_cb),r);
 
   scrolled_window=gtk_scrolled_window_new (NULL, NULL);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_ALWAYS);
   gtk_widget_set_size_request(scrolled_window,400,400);
+  gtk_widget_set_hexpand(scrolled_window,TRUE);
+  gtk_widget_set_vexpand(scrolled_window,TRUE);
 
   view=gtk_tree_view_new();
 
@@ -800,7 +785,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
 
   gtk_container_add(GTK_CONTAINER(scrolled_window),view);
 
-  gtk_grid_attach(GTK_GRID(grid), scrolled_window, col, row, 6, 10);
+  gtk_grid_attach(GTK_GRID(table_grid), scrolled_window, 0, 1, 4, 1);
 
   model=gtk_tree_view_get_model(GTK_TREE_VIEW(view));
   g_signal_connect(model,"row-inserted",G_CALLBACK(row_inserted_cb),NULL);
@@ -810,7 +795,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
 
   selection_signal_id=g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(tree_selection_changed_cb),NULL);
 
-  return midi_frame;
+  return page;
 }
 
 static int update(void *data) {

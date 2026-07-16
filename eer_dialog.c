@@ -35,6 +35,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
@@ -85,12 +86,16 @@ static void eer_pwm_min_cb(GtkWidget *widget, gpointer data) {
 GtkWidget *create_eer_dialog(RADIO *r) {
   TRANSMITTER *tx=(TRANSMITTER *)r->transmitter;
 
+  GtkWidget *page=gtk_grid_new();
+  sui_style_page(page);
+
   GtkWidget *eer_frame=gtk_frame_new("EER");
   GtkWidget *eer_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(eer_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(eer_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(eer_grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(eer_grid),5);
+  sui_style_group(eer_grid);
   gtk_container_add(GTK_CONTAINER(eer_frame),eer_grid);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Transmit in EER mode");
@@ -148,8 +153,8 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   GtkWidget *eer_pwm_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(eer_pwm_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(eer_pwm_grid),FALSE);
+  sui_style_group(eer_pwm_grid);
   gtk_container_add(GTK_CONTAINER(eer_pwm_frame),eer_pwm_grid);
-  gtk_grid_attach(GTK_GRID(eer_grid),eer_pwm_frame,2,0,1,1);
 
   GtkWidget *eer_pwm_max_label=gtk_label_new("Maximum (0 - 1023)");
   gtk_widget_show(eer_pwm_max_label);
@@ -168,5 +173,12 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(eer_pwm_grid),eer_pwm_min,2,1,1,1);
   g_signal_connect(eer_pwm_min,"value-changed",G_CALLBACK(eer_pwm_min_cb),tx);
 
-  return eer_frame;
+  gtk_widget_set_halign(eer_frame,GTK_ALIGN_START);
+  gtk_widget_set_halign(eer_pwm_frame,GTK_ALIGN_START);
+  gtk_widget_set_valign(eer_frame,GTK_ALIGN_START);
+  gtk_widget_set_valign(eer_pwm_frame,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(page),eer_frame,0,0,1,1);
+  gtk_grid_attach(GTK_GRID(page),eer_pwm_frame,1,0,1,1);
+
+  return page;
 }

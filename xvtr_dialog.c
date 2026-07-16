@@ -38,6 +38,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "vfo.h"
 #include "main.h"
 #include "protocol1.h"
@@ -242,6 +243,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
   char temp[32];
 
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_column_spacing (GTK_GRID(grid),10);
 
   row=0;

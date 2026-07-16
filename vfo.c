@@ -1518,6 +1518,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   VFO_DATA *v=g_new(VFO_DATA,1);
 
   v->vfo=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
+  gtk_widget_set_margin_start(v->vfo,10);
 
   GtkWidget *vfo_row_top=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);
   GtkWidget *vfo_row_freq=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);

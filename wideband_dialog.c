@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "receiver_dialog.h"
 #include "vfo.h"
 #include "audio.h"
@@ -85,6 +86,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   int row=0;
 
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
@@ -96,6 +98,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   GtkWidget *panadapter_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(panadapter_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
+  sui_style_group(panadapter_grid);
   gtk_container_add(GTK_CONTAINER(panadapter_frame),panadapter_grid);
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row++,1,1);
 
@@ -123,6 +126,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   GtkWidget *waterfall_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
+  sui_style_group(waterfall_grid);
   gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
   gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row++,1,1);
 

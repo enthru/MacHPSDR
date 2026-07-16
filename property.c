@@ -24,6 +24,10 @@
 
 PROPERTY* properties;
 
+// Stash of properties temporarily moved aside so they survive an
+// initProperties() wipe during a full re-serialization (radio_save_state).
+static PROPERTY* retained=NULL;
+
 static double version=0.0;
 
 void initProperties() {
@@ -33,6 +37,37 @@ void initProperties() {
     free(properties);
     properties=next;
   }
+}
+
+// Move every property whose name begins with prefix out of the active list
+// into the retained stash. The stash is not touched by initProperties(), so
+// this is used to keep the settings of an inactive (user-closed) receiver
+// across the full save/re-serialize in radio_save_state.
+void retainProperties(char* prefix) {
+    PROPERTY** pp=&properties;
+    size_t plen=strlen(prefix);
+    while(*pp) {
+        PROPERTY* p=*pp;
+        if(strncmp(p->name,prefix,plen)==0) {
+            *pp=p->next_property;      // unlink from active list
+            p->next_property=retained; // push onto stash
+            retained=p;
+        } else {
+            pp=&p->next_property;
+        }
+    }
+}
+
+// Merge all retained properties back into the active list and clear the stash.
+void releaseRetainedProperties() {
+    while(retained) {
+        PROPERTY* p=retained;
+        retained=p->next_property;
+        setProperty(p->name,p->value);
+        free(p->name);
+        free(p->value);
+        free(p);
+    }
 }
 
 /* --------------------------------------------------------------------------*/

@@ -215,6 +215,13 @@ typedef struct _radio {
   GtkWidget *mic_gain;
   GtkWidget *drive_level;
 
+  GtkWidget *att10_button;
+  GtkWidget *att20_button;
+  GtkWidget *att10_check;   // ADC-0 "Att10" check button on the Radio config page
+  GtkWidget *att20_check;   // ADC-0 "Att20" check button on the Radio config page
+  char att10_label[32];
+  char att20_label[32];
+
   GtkWidget *dialog;
   
   GtkWidget *txmeter_info;

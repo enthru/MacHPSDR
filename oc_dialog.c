@@ -38,6 +38,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "protocol1.h"
 #include "protocol2.h"
 #include "oc_dialog.h"
@@ -136,6 +137,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   g_print("create oc dialog\n");
 
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_column_spacing (GTK_GRID(grid),10);
 
   GtkWidget *band_title=gtk_label_new("Band");
@@ -149,10 +151,6 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   GtkWidget *tx_title=gtk_label_new("Tx");
   gtk_widget_show(tx_title);
   gtk_grid_attach(GTK_GRID(grid),tx_title,11,1,1,1);
-
-  GtkWidget *tune_title=gtk_label_new("Tune (ORed with TX)");
-  gtk_widget_show(tune_title);
-  gtk_grid_attach(GTK_GRID(grid),tune_title,18,1,2,1);
 
   for(i=1;i<8;i++) {
     char oc_id[8];
@@ -172,12 +170,16 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   }
   #endif
 
+  // Grid row for the next visible band. Indexing rows by band index leaves an
+  // empty grid track (and thus a double row-spacing gap) for every band with an
+  // empty title, so advance a compacting counter only for bands we actually show.
+  int dr=3;
   for(i=0; i <= stop_at/*+XVTRS*/; i++) {
     BAND *band=band_get_band(i);
     if(strlen(band->title)>0) {
       GtkWidget *band_label=gtk_label_new(band->title);
       gtk_widget_show(band_label);
-      gtk_grid_attach(GTK_GRID(grid),band_label,0,i+3,1,1);
+      gtk_grid_attach(GTK_GRID(grid),band_label,0,dr,1,1);
 
       int mask;
       for(j=1;j<8;j++) {
@@ -187,7 +189,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
         radio->oc_rx_b[band_idx] = gtk_check_button_new();
         gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (radio->oc_rx_b[band_idx]), (band->OCrx&mask)==mask);
         gtk_widget_show(radio->oc_rx_b[band_idx]);
-        gtk_grid_attach(GTK_GRID(grid),radio->oc_rx_b[band_idx],j,i+3,1,1);
+        gtk_grid_attach(GTK_GRID(grid),radio->oc_rx_b[band_idx],j,dr,1,1);
         data=g_new0(DATA,1);
         data->radio=radio;
         data->band=i;
@@ -197,56 +199,62 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
         radio->oc_tx_b[band_idx] = gtk_check_button_new();
         gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (radio->oc_tx_b[band_idx]), (band->OCtx&mask)==mask);
         gtk_widget_show(radio->oc_tx_b[band_idx]);
-        gtk_grid_attach(GTK_GRID(grid),radio->oc_tx_b[band_idx],j+7,i+3,1,1);
+        gtk_grid_attach(GTK_GRID(grid),radio->oc_tx_b[band_idx],j+7,dr,1,1);
         data->radio=radio;
         data->band=i;
         data->oc=j;
-        radio->oc_tx_signal_id[band_idx] = g_signal_connect(radio->oc_tx_b[band_idx], "toggled", G_CALLBACK(oc_tx_cb), (gpointer)data);     
+        radio->oc_tx_signal_id[band_idx] = g_signal_connect(radio->oc_tx_b[band_idx], "toggled", G_CALLBACK(oc_tx_cb), (gpointer)data);
       }
+      dr++;
     }
   }
+
+  // The tune column carries tall spin buttons; keeping it in its own grid (spanning
+  // the band rows) stops those from stretching individual band rows in the matrix.
+  GtkWidget *tune_grid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(tune_grid),6);
+  gtk_grid_set_row_spacing(GTK_GRID(tune_grid),4);
+  gtk_widget_set_valign(tune_grid,GTK_ALIGN_START);
+  gtk_widget_set_margin_start(tune_grid,24); // separate the tune block from the OC matrix
+  gtk_grid_attach(GTK_GRID(grid),tune_grid,18,1,2,30);
+
+  GtkWidget *tune_title=gtk_label_new("Tune (ORed with TX)");
+  gtk_grid_attach(GTK_GRID(tune_grid),tune_title,0,0,2,1);
 
   int mask;
   for(j=1;j<8;j++) {
     char oc_id[8];
     sprintf(oc_id,"%d",j);
     GtkWidget *oc_tune_title=gtk_label_new(oc_id);
-    gtk_widget_show(oc_tune_title);
-    gtk_grid_attach(GTK_GRID(grid),oc_tune_title,18,j+1,1,1);
+    gtk_grid_attach(GTK_GRID(tune_grid),oc_tune_title,0,j,1,1);
 
     mask=0x01<<(j-1);
     GtkWidget *oc_tune_b=gtk_check_button_new();
     gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (oc_tune_b), (radio->oc_tune&mask)==mask);
-    gtk_widget_show(oc_tune_b);
-    gtk_grid_attach(GTK_GRID(grid),oc_tune_b,19,j+1,1,1);
-    data->radio=radio;
-    data->oc=j;
-    g_signal_connect(oc_tune_b,"toggled",G_CALLBACK(oc_tune_cb),(gpointer)data);
+    gtk_grid_attach(GTK_GRID(tune_grid),oc_tune_b,1,j,1,1);
+    DATA *tdata=g_new0(DATA,1);
+    tdata->radio=radio;
+    tdata->oc=j;
+    g_signal_connect(oc_tune_b,"toggled",G_CALLBACK(oc_tune_cb),(gpointer)tdata);
   }
 
   GtkWidget *oc_full_tune_time_title=gtk_label_new("Full Tune(ms):");
-  gtk_widget_show(oc_full_tune_time_title);
-  gtk_grid_attach(GTK_GRID(grid),oc_full_tune_time_title,18,j+1,2,1);
-  j++;
+  gtk_widget_set_halign(oc_full_tune_time_title,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(tune_grid),oc_full_tune_time_title,0,8,2,1);
 
   GtkWidget *oc_full_tune_time_b=gtk_spin_button_new_with_range(0.0,9999.0,1.0);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(oc_full_tune_time_b),(double)radio->OCfull_tune_time);
-  gtk_widget_show(oc_full_tune_time_b);
-  gtk_grid_attach(GTK_GRID(grid),oc_full_tune_time_b,18,j+1,2,1);
+  gtk_grid_attach(GTK_GRID(tune_grid),oc_full_tune_time_b,0,9,2,1);
   g_signal_connect(oc_full_tune_time_b,"value_changed",G_CALLBACK(oc_full_tune_time_cb),radio);
-  j++;
 
   GtkWidget *oc_memory_tune_time_title=gtk_label_new("Memory Tune(ms):");
-  gtk_widget_show(oc_memory_tune_time_title);
-  gtk_grid_attach(GTK_GRID(grid),oc_memory_tune_time_title,18,j+1,2,1);
-  j++;
+  gtk_widget_set_halign(oc_memory_tune_time_title,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(tune_grid),oc_memory_tune_time_title,0,10,2,1);
 
   GtkWidget *oc_memory_tune_time_b=gtk_spin_button_new_with_range(0.0,9999.0,1.0);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(oc_memory_tune_time_b),(double)radio->OCmemory_tune_time);
-  gtk_widget_show(oc_memory_tune_time_b);
-  gtk_grid_attach(GTK_GRID(grid),oc_memory_tune_time_b,18,j+1,2,1);
+  gtk_grid_attach(GTK_GRID(tune_grid),oc_memory_tune_time_b,0,11,2,1);
   g_signal_connect(oc_memory_tune_time_b,"value_changed",G_CALLBACK(oc_memory_tune_time_cb),radio);
-  j++;
 
   gtk_widget_show_all(grid);
 

@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "diversity_mixer.h"
 #include "diversity_dialog.h"
 #include "math.h"
@@ -97,6 +98,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   int row=0;
 
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);

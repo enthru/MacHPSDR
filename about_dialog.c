@@ -55,10 +55,17 @@ GtkWidget *create_about_dialog(RADIO *r) {
 
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),TRUE);
   gtk_grid_set_column_spacing (GTK_GRID(grid),4);
+  gtk_widget_set_halign(grid,GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(grid,GTK_ALIGN_CENTER);
 
   int row=0;
 
   snprintf(text,sizeof(text),"linHPSDR by John Melton G0ORX/N6LYT");
+  label=gtk_label_new(text);
+  gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
+  gtk_grid_attach(GTK_GRID(grid),label,1,row,1,1);
+  row++;
+  snprintf(text,sizeof(text),"Augmented by enthru :)");
   label=gtk_label_new(text);
   gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
   gtk_grid_attach(GTK_GRID(grid),label,1,row,1,1);

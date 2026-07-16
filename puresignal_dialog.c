@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "main.h"
 #include "protocol1.h"
 #include "protocol2.h"
@@ -71,7 +72,7 @@ static gboolean ps_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event
 
   cairo_t *cr;
   cr = cairo_create (tx->ps_surface);
-  cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+  cairo_set_source_rgb (cr, 0.16, 0.16, 0.19); // @SURFACE, matches config-dialog theme
   cairo_paint (cr);
   cairo_destroy(cr);
   return TRUE;
@@ -92,12 +93,12 @@ static void update_ps(TRANSMITTER *tx,double pk) {
 
   if(tx->ps_surface!=NULL) {
     cr=cairo_create (tx->ps_surface);
-    cairo_set_source_rgb(cr,1.0,1.0,1.0);
+    cairo_set_source_rgb(cr,0.16,0.16,0.19); // @SURFACE background
     cairo_paint(cr);
 
     cairo_set_font_size(cr,12);
     if(info[FEEDBACK]>181)  {
-      cairo_set_source_rgb(cr,0.0,0.0,0.0);
+      cairo_set_source_rgb(cr,0.89,0.89,0.91); // @OFF_WHITE (was black, invisible on dark)
     } else if(info[FEEDBACK]>128)  {
       cairo_set_source_rgb(cr,0.0,1.0,0.0);
     } else if(info[FEEDBACK]>90)  {
@@ -109,7 +110,7 @@ static void update_ps(TRANSMITTER *tx,double pk) {
     sprintf(text,"Feedback Level: %d",info[FEEDBACK]);
     cairo_show_text(cr,text);
 
-    cairo_set_source_rgb(cr,0.0,0.0,0.0);
+    cairo_set_source_rgb(cr,0.89,0.89,0.91); // @OFF_WHITE
 
     cairo_move_to(cr,5,24);
     sprintf(text,"Correction Count: %d",info[COR_CNT]);
@@ -238,6 +239,7 @@ static void twotone_cb(GtkWidget *widget, gpointer data) {
 
 GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
@@ -251,6 +253,7 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_grid_set_column_spacing(GTK_GRID(ps_grid),10);
   gtk_grid_set_row_homogeneous(GTK_GRID(ps_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(ps_grid),TRUE);
+  sui_style_group(ps_grid);
   gtk_container_add(GTK_CONTAINER(ps_frame),ps_grid);
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
 

@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "settings_ui.h"
 #include "main.h"
 #include "protocol1.h"
 #include "protocol2.h"
@@ -98,6 +99,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   int i;
   g_print("%s\n",__FUNCTION__);
   GtkWidget *grid=gtk_grid_new();
+  sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
@@ -110,6 +112,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   gtk_grid_set_row_homogeneous(GTK_GRID(pa_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(pa_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(pa_grid),15);
+  sui_style_group(pa_grid);
   gtk_container_add(GTK_CONTAINER(pa_frame),pa_grid);
   gtk_grid_attach(GTK_GRID(grid),pa_frame,col,row++,1,1);
 
@@ -153,6 +156,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     gtk_grid_set_row_homogeneous(GTK_GRID(hl2mrf_grid), FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(hl2mrf_grid), FALSE);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 20);
+    sui_style_group(hl2mrf_grid);
     gtk_container_add(GTK_CONTAINER(hl2mrf_frame), hl2mrf_grid);
     gtk_grid_attach(GTK_GRID(grid), hl2mrf_frame, col, row++, 1, 1);
 

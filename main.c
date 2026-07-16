@@ -88,7 +88,7 @@ enum {
   N_COLUMNS
 };
 
-static gboolean main_delete (GtkWidget *widget) {
+gboolean main_delete (GtkWidget *widget) {
   if(radio!=NULL) {
     radio_save_state(radio);
     switch(radio->discovered->protocol) {
@@ -108,6 +108,11 @@ static gboolean main_delete (GtkWidget *widget) {
     //audio_close_output(radio);
   }
   _exit(0);
+}
+
+// Action invoked by the "Quit" menu item / Cmd-Q (macOS) or Ctrl-Q accelerator.
+static void quit_action(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  main_delete(NULL);
 }
 
 static gpointer wisdom_thread(gpointer arg) {
@@ -610,6 +615,15 @@ int main(int argc, char **argv) {
   sprintf(text,"org.g0orx.hpsdr.pid%d",getpid());
   hpsdr=gtk_application_new(text, G_APPLICATION_FLAGS_NONE);
   g_signal_connect(hpsdr, "activate", G_CALLBACK(activate_hpsdr), NULL);
+
+  // Register app.quit so Cmd-Q (macOS) / Ctrl-Q performs a clean shutdown.
+  GSimpleAction *quit=g_simple_action_new("quit", NULL);
+  g_signal_connect(quit, "activate", G_CALLBACK(quit_action), NULL);
+  g_action_map_add_action(G_ACTION_MAP(hpsdr), G_ACTION(quit));
+  g_object_unref(quit);
+  const char *quit_accels[]={"<Primary>q", NULL};
+  gtk_application_set_accels_for_action(hpsdr, "app.quit", quit_accels);
+
   rc=g_application_run(G_APPLICATION(hpsdr), argc, argv);
   g_object_unref(hpsdr);
   return rc;

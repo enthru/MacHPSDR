@@ -151,6 +151,17 @@ void radio_save_state(RADIO *radio) {
   }
 
 g_print("radio_save_state: %s\n",filename);
+  // radio_save_state is a full snapshot: initProperties() wipes everything and
+  // only live receivers are re-serialized below. Retain the saved settings of
+  // any inactive (user-closed) receiver slot so they are not discarded — they
+  // are merged back in after the live state has been written.
+  for(i=0;i<radio->discovered->supported_receivers;i++) {
+    if(radio->receiver[i]==NULL) {
+      char prefix[32];
+      sprintf(prefix,"receiver[%d].",i);
+      retainProperties(prefix);
+    }
+  }
   initProperties();
 
   sprintf(value,"%d",radio->model);
@@ -216,6 +227,8 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.mic_linein",value);
   sprintf(value,"%d",radio->linein_gain);
   setProperty("radio.linein_gain",value);
+  setProperty("radio.att10_label",radio->att10_label);
+  setProperty("radio.att20_label",radio->att20_label);
 
   for(int i=0;i<radio->discovered->adcs;i++) {
     sprintf(name,"radio.adc[%d].filters",i);
@@ -355,6 +368,9 @@ g_print("radio_save_state: %s\n",filename);
       w=gtk_paned_get_child2(GTK_PANED(w));
     }
   }
+
+  // Merge back the retained settings of any inactive receiver slots.
+  releaseRetainedProperties();
 
   saveProperties(filename);
 }
@@ -504,6 +520,10 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->mic_linein=atoi(value);
   value=getProperty("radio.linein_gain");
   if(value!=NULL) radio->linein_gain=atoi(value);
+  value=getProperty("radio.att10_label");
+  if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att10_label,value,sizeof(radio->att10_label));
+  value=getProperty("radio.att20_label");
+  if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att20_label,value,sizeof(radio->att20_label));
   value=getProperty("radio.filter_board");
   if(value!=NULL) radio->filter_board=atoi(value);
   value=getProperty("radio.region");
@@ -1226,6 +1246,11 @@ void add_receivers(RADIO *r) {
       sprintf(name,"receiver[%d].channel",i);
       value=getProperty(name);
       if(value!=NULL) {
+        // A receiver closed by the user is marked inactive: keep its saved
+        // settings but do not recreate it (channel 0 is always active).
+        sprintf(name,"receiver[%d].active",i);
+        value=getProperty(name);
+        if(i!=0 && value!=NULL && atoi(value)==0) continue;
         r->receiver[i]=create_receiver(i,r->sample_rate, TRUE);
         r->receivers++;
         switch(r->discovered->protocol) {
@@ -1409,17 +1434,19 @@ static void create_visual(RADIO *r) {
   g_signal_connect(preamp_button,"toggled",G_CALLBACK(adc_preamp_cb),&radio->adc[0]);
   gtk_box_pack_start(GTK_BOX(adc_col),preamp_button,FALSE,FALSE,0);
 
-  GtkWidget *att10_button=gtk_toggle_button_new_with_label("Att10");
+  GtkWidget *att10_button=gtk_toggle_button_new_with_label(r->att10_label);
   gtk_widget_set_name(att10_button,"toolbar-button");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att10_button),radio->adc[0].att10);
   g_signal_connect(att10_button,"toggled",G_CALLBACK(adc_att10_cb),&radio->adc[0]);
   gtk_box_pack_start(GTK_BOX(adc_col),att10_button,FALSE,FALSE,0);
+  r->att10_button=att10_button;
 
-  GtkWidget *att20_button=gtk_toggle_button_new_with_label("Att20");
+  GtkWidget *att20_button=gtk_toggle_button_new_with_label(r->att20_label);
   gtk_widget_set_name(att20_button,"toolbar-button");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att20_button),radio->adc[0].att20);
   g_signal_connect(att20_button,"toggled",G_CALLBACK(adc_att20_cb),&radio->adc[0]);
   gtk_box_pack_start(GTK_BOX(adc_col),att20_button,FALSE,FALSE,0);
+  r->att20_button=att20_button;
 
   gtk_box_pack_start(GTK_BOX(r->bottom_bar),
                      bar_module("RX FRONT-END",adc_col),FALSE,FALSE,0);
@@ -1645,6 +1672,9 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->adc[0].att20=FALSE;
   r->adc[0].attenuation=0;
   r->adc_overload = 0;
+
+  strcpy(r->att10_label,"Att10");
+  strcpy(r->att20_label,"Att20");
 
 #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {

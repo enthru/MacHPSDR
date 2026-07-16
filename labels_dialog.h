@@ -1,5 +1,4 @@
 /* Copyright (C)
-* 2018 - John Melton, G0ORX/N6LYT
 *
 * This program is free software; you can redistribute it and/or
 * modify it under the terms of the GNU General Public License
@@ -17,29 +16,4 @@
 *
 */
 
-#ifndef _PROPERTY_H
-#define _PROPERTY_H
-
-#define PROPERTY_VERSION 2.0
-
-typedef struct _PROPERTY PROPERTY;
-
-/* --------------------------------------------------------------------------*/
-/**
-* @brief Property structure
-*/
-struct _PROPERTY {
-    char* name;
-    char* value;
-    PROPERTY* next_property;
-};
-extern void initProperties();
-extern void retainProperties(char* prefix);
-extern void releaseRetainedProperties();
-extern void loadProperties(char* filename);
-extern char* getProperty(char* name);
-extern void setProperty(char* name,char* value);
-
-extern void saveProperties(char* filename);
-
-#endif
+extern GtkWidget *create_labels_dialog(RADIO *r);
