@@ -37,27 +37,33 @@
 static char *title="Microphone Level";
 
 static gboolean mic_level_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
-  int width=gtk_widget_get_allocated_width (widget);
-  int height=gtk_widget_get_allocated_height (widget);
-  if(radio->mic_level_surface) {
-    cairo_surface_destroy(radio->mic_level_surface);
-  }
-  if(radio->mic_level!=NULL) {
-    radio->mic_level_surface = gdk_window_create_similar_surface (gtk_widget_get_window (radio->mic_level), CAIRO_CONTENT_COLOR, width, height);
-    cairo_t *cr;
-    cr = cairo_create (radio->mic_level_surface);
-    cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-    cairo_paint (cr);
-    cairo_destroy(cr);
-  }
   return TRUE;
 }
 
+// Draw directly (same style as mic_gain / drive) instead of a cached surface,
+// so the meter looks identical to the other two.
 static gboolean mic_level_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
-  if(radio->mic_level_surface!=NULL) {
-    cairo_set_source_surface (cr, radio->mic_level_surface, 0.0, 0.0);
-    cairo_paint (cr);
-  }
+  cairo_text_extents_t extents;
+  int width=gtk_widget_get_allocated_width(widget);
+  int height=gtk_widget_get_allocated_height(widget);
+  int bar_width=width-10;
+
+  double peak=radio->vox_peak*(double)bar_width;
+  level_meter_draw(cr, peak, width, height, TEXT_B);
+
+  // Vox threshold marker
+  SetColour(cr, WARNING);
+  double threshold=radio->vox_threshold*(double)bar_width;
+  cairo_move_to(cr,threshold+5.0,1);
+  cairo_line_to(cr,threshold+5.0,height/2);
+  cairo_stroke(cr);
+
+  SetColour(cr, TEXT_B);
+  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  cairo_set_font_size(cr,10);
+  cairo_text_extents(cr, title, &extents);
+  cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
+  cairo_show_text(cr,title);
   return TRUE;
 }
 
@@ -102,7 +108,7 @@ GtkWidget *create_mic_level(TRANSMITTER *tx) {
 
   radio->mic_level_surface=NULL;
   radio->mic_level=gtk_drawing_area_new();
-  //gtk_widget_set_size_request(radio->mic_level, 10, 100);
+  gtk_widget_set_size_request(radio->mic_level, 170, 34);
 
   g_signal_connect(radio->mic_level,"configure-event",G_CALLBACK(mic_level_configure_event_cb),(gpointer)tx);
   g_signal_connect(radio->mic_level,"draw",G_CALLBACK(mic_level_draw_cb),(gpointer)tx);
@@ -121,37 +127,7 @@ GtkWidget *create_mic_level(TRANSMITTER *tx) {
 }
 
 void update_mic_level(RADIO *r) {
-  int i;
-  double x;
-  cairo_text_extents_t extents;
-
-  if(r->mic_level_surface!=NULL) {
-    cairo_t *cr;
-    cr = cairo_create (r->mic_level_surface);
-
-    int width=gtk_widget_get_allocated_width(r->mic_level);
-    int height=gtk_widget_get_allocated_height(r->mic_level);
-    int bar_width=width-10;
-
-    double peak=radio->vox_peak*(double)bar_width;
-    
-    level_meter_draw(cr, peak, width, height, INFO_ON);    
-    
-    // Vox threshold marker
-    SetColour(cr, WARNING);
-    double threshold=radio->vox_threshold*(double)bar_width;
-    cairo_move_to(cr,threshold+5.0,1);
-    cairo_line_to(cr,threshold+5.0,height/2);
-    cairo_stroke(cr);
-
-    SetColour(cr, TEXT_B);    
-    cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);    
-    cairo_set_font_size(cr,10);
-    cairo_text_extents(cr, title, &extents);
-    cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
-    cairo_show_text(cr,title);
-
-    cairo_destroy(cr);
+  if(r->mic_level!=NULL) {
     gtk_widget_queue_draw(r->mic_level);
   }
 }

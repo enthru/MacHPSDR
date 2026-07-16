@@ -452,7 +452,22 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     gtk_container_remove(GTK_CONTAINER(grid),view);
     gtk_container_remove(GTK_CONTAINER(grid),start);
     gtk_container_remove(GTK_CONTAINER(grid),retry);
-    gtk_grid_attach(GTK_GRID(grid), radio->visual, 1, 0, 4, 1);
+    gtk_container_remove(GTK_CONTAINER(grid),image_event_box);
+    gtk_grid_attach(GTK_GRID(grid), radio->visual, 0, 0, 5, 1);
+    // Breathing room between the window titlebar and the first VFO button row.
+    gtk_widget_set_margin_top(radio->rx_container, 8);
+    gtk_grid_attach(GTK_GRID(grid), radio->rx_container, 0, 1, 5, 1);
+
+    // Double-line divider between the RX stack and the bottom control panel
+    // (two thin horizontal lines with a small gap; distinct from the vertical
+    // gradient separator inside the bottom bar).
+    GtkWidget *rx_bottom_sep=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
+    gtk_widget_set_name(rx_bottom_sep,"rx-bottom-sep");
+    gtk_box_pack_start(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,0);
+    gtk_grid_attach(GTK_GRID(grid), rx_bottom_sep, 0, 2, 5, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), radio->bottom_bar, 0, 3, 5, 1);
     gtk_widget_show_all(grid);
 
     //launch_rigctl(radio);
@@ -466,9 +481,18 @@ g_print("x=%d y=%d\n",x,y);
 g_print("moving main_window to x=%d y=%d\n",x,y);
       gtk_window_move(GTK_WINDOW(main_window),x,y);
     }
+
+    int win_w=-1, win_h=-1;
+    value=getProperty("radio.width");
+    if(value!=NULL) win_w=atoi(value);
+    value=getProperty("radio.height");
+    if(value!=NULL) win_h=atoi(value);
+    if(win_w>0 && win_h>0) {
+      gtk_window_resize(GTK_WINDOW(main_window),win_w,win_h);
+    }
+
     gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_ARROW));
 
-    g_signal_connect(image_event_box,"button-press-event",G_CALLBACK(radio_button_press_event_cb),NULL);
   }
   return TRUE;
 }
@@ -527,7 +551,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   main_window = gtk_application_window_new (app);
   sprintf(title,"LinHPSDR (%s)",version);
   gtk_window_set_title (GTK_WINDOW (main_window), title);
-  gtk_window_set_resizable(GTK_WINDOW(main_window), FALSE);
+  gtk_window_set_resizable(GTK_WINDOW(main_window), TRUE);
   GError *error = NULL;
   if(!gtk_window_set_icon_from_file (GTK_WINDOW(main_window), png_path, &error)) {
     g_print("Warning: failed to set icon for main_window: %s\n",png_path);
@@ -536,6 +560,8 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
     }
   }
   g_signal_connect (main_window, "delete-event", G_CALLBACK (main_delete), NULL);
+  g_signal_connect (main_window, "key-press-event", G_CALLBACK (receiver_key_press_event), NULL);
+  g_signal_connect (main_window, "key-release-event", G_CALLBACK (receiver_key_release_event), NULL);
 
   grid = gtk_grid_new();
   //gtk_widget_set_size_request(grid, 800, 480);

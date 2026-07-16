@@ -394,7 +394,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_fill(cr);
       cairo_pattern_destroy(pat);
     } else {
-      cairo_set_source_rgb (cr, 0.1, 0.1, 0.1);
+      cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
       //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
       cairo_rectangle(cr,0,0,display_width,display_height);
       cairo_fill(cr);
@@ -461,7 +461,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     cairo_set_line_width (cr, LINE_WIDTH);
     // plot the levels
     
-    cairo_set_source_rgb (cr, 0.1, 0.1, 0.1);
+    cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
     //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
     cairo_rectangle(cr,0,0,40,display_height);
     cairo_fill(cr);    
@@ -480,7 +480,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         cairo_line_to(cr,(double)display_width,y);
         if(rx->panadapter_gradient) SetColour(cr, TEXT_B);
         sprintf(temp," %d",i);
-        cairo_move_to(cr, 5, y-1);  
+        cairo_move_to(cr, 5, y-4);  // lift the label clear of the graticule line
         cairo_show_text(cr, temp);
       }
     }
@@ -491,7 +491,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
     // plot frequency markers
     
-    cairo_set_source_rgb (cr, 0.1, 0.1, 0.1);
+    cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
     cairo_rectangle(cr,0, (rx->panadapter_height-20), display_width, (rx->panadapter_height));
     cairo_fill(cr);        
 

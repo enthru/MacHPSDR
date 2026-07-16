@@ -25,7 +25,7 @@ void SetColour(cairo_t *cr, const int colour) {
 
   switch(colour) {
     case BACKGROUND: {
-      cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
+      cairo_set_source_rgb(cr, 0.09, 0.09, 0.10);   // match CSS @BACKGROUND
       break;
     }
     case OFF_WHITE: {
@@ -82,7 +82,7 @@ void SetColour(cairo_t *cr, const int colour) {
 void set_stop_pattern(cairo_pattern_t *pat, const int colour, const double pc) {
   switch(colour) {
     case BACKGROUND: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.1, 0.1, 0.1);
+      cairo_pattern_add_color_stop_rgb(pat, pc, 0.09, 0.09, 0.10);
       break;
     }
     case OFF_WHITE: {
@@ -136,59 +136,53 @@ void set_stop_pattern(cairo_pattern_t *pat, const int colour, const double pc) {
   }
 }
 
-gboolean level_meter_draw(cairo_t *cr, double x, int width, int height, const int fill) {
-  SetColour(cr, BACKGROUND);
-  cairo_rectangle(cr,0,0,width,height);
-  cairo_fill(cr);  
-  
-  double bar_width=(double)width-10;
-
-  
-  cairo_pattern_t *pat3 = cairo_pattern_create_linear(0, (height/2)-1, width, (height/2)-1);
-
-  cairo_pattern_add_color_stop_rgb(pat3, 0.05, 0.12, 0.12, 0.12);
-  set_stop_pattern(pat3, fill, 0.8);
-  cairo_pattern_add_color_stop_rgb(pat3, 0.95, 1, 0, 0);
-  cairo_set_source(cr, pat3);
-	cairo_pattern_destroy(pat3);
-  
-  cairo_set_line_width(cr, 10);  
-  cairo_move_to(cr, 5, (height/4));
-          
-  static const double dashed2[] = {5.0, 2.0};
-  static int len2  = sizeof(dashed2) / sizeof(dashed2[0]);        
-  cairo_set_dash(cr, dashed2, len2, 0);          
-          
-  cairo_line_to(cr, width, (height/4));
+// rounded-rectangle sub-path helper
+static void lm_rounded(cairo_t *cr, double x, double y, double w, double h, double r) {
+  if(w < 2.0*r) r = w/2.0;
+  if(h < 2.0*r) r = h/2.0;
+  if(r < 0.0) r = 0.0;
+  cairo_new_sub_path(cr);
+  cairo_arc(cr, x+w-r, y+r,   r, -M_PI/2.0, 0.0);
+  cairo_arc(cr, x+w-r, y+h-r, r, 0.0,       M_PI/2.0);
+  cairo_arc(cr, x+r,   y+h-r, r, M_PI/2.0,  M_PI);
+  cairo_arc(cr, x+r,   y+r,   r, M_PI,      3.0*M_PI/2.0);
   cairo_close_path(cr);
-  cairo_stroke(cr);
+}
 
-  cairo_set_line_width(cr, 1);  
-  
-  cairo_set_dash(cr, 0, 0, 0);
-  
+// Flat-dark horizontal meter: a dark rounded track with a solid accent fill.
+// x is the fill-end position in pixels (0..width-10); fill is a colour enum.
+gboolean level_meter_draw(cairo_t *cr, double x, int width, int height, const int fill) {
+  const double pad = 5.0;
+  const double th  = 9.0;                       // track height
+  double tw = (double)width - 2.0*pad;          // track width
+  double ty = (double)(height/2) - th - 1.0;    // bar in the upper half, label below
+  if(ty < 2.0) ty = 2.0;
+
+  // ground
   SetColour(cr, BACKGROUND);
-  cairo_rectangle(cr,x,0,width,(height/2)-1);
-  
+  cairo_rectangle(cr, 0, 0, width, height);
   cairo_fill(cr);
-  
-  SetColour(cr, TEXT_B);
-  cairo_move_to(cr,5,height/2);
-  cairo_line_to(cr,width-5,height/2);
-  cairo_stroke(cr);  
-  
-  SetColour(cr, TEXT_B);
-  for(int i = 0; i <= 100; i += 25) {
-    x=((double)i/100.0)*(double)bar_width;
-    if((i%50)==0) {
-      cairo_move_to(cr,x+5.0,(double)(height/2)-8.0);
-    } else {
-      cairo_move_to(cr,x+5.0,(double)(height/2)-3.0);
-    }
-    cairo_line_to(cr,x+5.0,height/2-1);
-    cairo_stroke(cr);
+
+  // track
+  lm_rounded(cr, pad, ty, tw, th, 3.0);
+  cairo_set_source_rgb(cr, 0.06, 0.06, 0.07);
+  cairo_fill(cr);
+
+  // accent fill up to x
+  double fe = x;
+  if(fe < pad)        fe = pad;
+  if(fe > pad + tw)   fe = pad + tw;
+  double fw = fe - pad;
+  if(fw >= 1.0) {
+    lm_rounded(cr, pad, ty, fw, th, 3.0);
+    SetColour(cr, fill);
+    cairo_fill(cr);
+    // subtle top gloss
+    lm_rounded(cr, pad, ty, fw, th/2.0, 2.0);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10);
+    cairo_fill(cr);
   }
 
-  return TRUE;  
+  return TRUE;
 }
 

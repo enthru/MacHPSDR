@@ -59,7 +59,7 @@ static gboolean drive_level_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data)
   double v=radio->transmitter->drive;
   double x=(bar_width/100.0)*v;
   
-  level_meter_draw(cr, x, width, height, TEXT_A);
+  level_meter_draw(cr, x, width, height, BOX_ON);
   
   SetColour(cr, TEXT_B);
   cairo_select_font_face(cr, "w", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);  
@@ -121,6 +121,7 @@ static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event) {
 GtkWidget *create_drive_level(TRANSMITTER *tx) {
 
   radio->drive_level=gtk_drawing_area_new();
+  gtk_widget_set_size_request(radio->drive_level, 170, 34);
 
   g_signal_connect(radio->drive_level,"configure-event",G_CALLBACK(drive_level_configure_event_cb),(gpointer)tx);
   g_signal_connect(radio->drive_level,"draw",G_CALLBACK(drive_level_draw_cb),(gpointer)tx);

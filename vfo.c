@@ -1515,42 +1515,37 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   g_print("%s: rx=%d\n",__FUNCTION__,rx->channel);
 
-  int x=5;
-  int y=5;
-
   VFO_DATA *v=g_new(VFO_DATA,1);
 
-  v->vfo=gtk_layout_new(NULL,NULL);
+  v->vfo=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
 
+  GtkWidget *vfo_row_top=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);
+  GtkWidget *vfo_row_freq=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+  GtkWidget *vfo_row_ctl=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,3);
+  gtk_box_pack_start(GTK_BOX(v->vfo),vfo_row_top,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(v->vfo),vfo_row_freq,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(v->vfo),vfo_row_ctl,FALSE,FALSE,0);
 
   gtk_widget_set_name(v->vfo,"vfo");
 
   v->vfo_a_text=gtk_label_new("VFO A");
   gtk_widget_set_name(v->vfo_a_text,"vfo-a-text");
-  gtk_widget_set_size_request(v->vfo_a_text,40,15);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->vfo_a_text,x,y);
-  x+=50;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->vfo_a_text,FALSE,FALSE,0);
 
   v->a2b=gtk_button_new_with_label("A>B");
   gtk_widget_set_name(v->a2b,"vfo-button");
-  gtk_widget_set_size_request(v->a2b,40,15);
   g_signal_connect(v->a2b, "pressed", G_CALLBACK(a2b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->a2b,x,y);
-  x+=45;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->a2b,FALSE,FALSE,0);
 
   v->b2a=gtk_button_new_with_label("A<B");
   gtk_widget_set_name(v->b2a,"vfo-button");
-  gtk_widget_set_size_request(v->b2a,40,15);
   g_signal_connect(v->b2a, "pressed", G_CALLBACK(b2a_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->b2a,x,y);
-  x+=45;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->b2a,FALSE,FALSE,0);
 
   v->aswapb=gtk_button_new_with_label("A<>B");
   gtk_widget_set_name(v->aswapb,"vfo-button");
-  gtk_widget_set_size_request(v->aswapb,40,15);
   g_signal_connect(v->aswapb, "pressed", G_CALLBACK(aswapb_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->aswapb,x,y);
-  x+=45;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->aswapb,FALSE,FALSE,0);
 
   switch(rx->split) {
     case SPLIT_OFF:
@@ -1568,62 +1563,46 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->split_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->split_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->split_b),rx->split!=SPLIT_OFF);
-  gtk_widget_set_size_request(v->split_b,40,15);
   g_signal_connect(v->split_b, "toggled", G_CALLBACK(split_b_cb),rx);
   g_signal_connect(v->split_b, "button_press_event", G_CALLBACK(split_b_press_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->split_b,x,y);
-
-  x=240;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->split_b,FALSE,FALSE,0);
 
   v->vfo_b_text=gtk_label_new("VFO B");
   gtk_widget_set_name(v->vfo_b_text,"vfo-b-text");
-  gtk_widget_set_size_request(v->vfo_b_text,40,15);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->vfo_b_text,x,y);
-  x+=50;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->vfo_b_text,FALSE,FALSE,0);
 
   sprintf(temp,"ZOOM x%d",rx->zoom);
   v->zoom_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->zoom_b,"vfo-button");
-  gtk_widget_set_size_request(v->zoom_b,60,15);
   g_signal_connect(v->zoom_b, "pressed",G_CALLBACK(zoom_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->zoom_b,x,y);
-  x+=70;
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->zoom_b,FALSE,FALSE,0);
 
   sprintf(temp,"STEP %s",step_labels[get_step(rx->step)]);
   v->step_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->step_b,"vfo-button");
-  gtk_widget_set_size_request(v->step_b,70,15);
   g_signal_connect(v->step_b, "pressed",G_CALLBACK(step_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->step_b,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->step_b,FALSE,FALSE,0);
 
-
-  x = 630;
   v->tx_label=gtk_label_new("");
   gtk_widget_set_name(v->tx_label,"warning-label");
-  gtk_widget_set_size_request(v->tx_label,60,15);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->tx_label,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->tx_label,FALSE,FALSE,0);
   if(radio!=NULL && radio->transmitter!=NULL) {
     if(radio->transmitter->rx==rx) {
       gtk_label_set_text(GTK_LABEL(v->tx_label),"ASSIGNED TX");
     }
   }
 #ifdef PURESIGNAL
-  x+=93;
-
   v->ps_b=gtk_toggle_button_new_with_label("PS");
   gtk_widget_set_name(v->ps_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->ps_b),FALSE);
   if(radio!=NULL && radio->transmitter!=NULL) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ps_b), radio->transmitter->puresignal_enabled);
   }
-  gtk_widget_set_size_request(v->ps_b,33,6);
   g_signal_connect(v->ps_b, "toggled", G_CALLBACK(ps_press_cb), rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->ps_b,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_top),v->ps_b,FALSE,FALSE,0);
 #endif
-  /* ... */
 
-  x=0;
-  y=21;
+  /* ... */
 
   long long af=rx->frequency_a;
   if(rx->ctun) af=rx->ctun_frequency;
@@ -1637,14 +1616,11 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_a=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_a),v->frequency_a_text);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_a,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),event_box_a,FALSE,FALSE,0);
   gtk_widget_set_events(event_box_a, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
   g_signal_connect(event_box_a,"button_press_event",G_CALLBACK(frequency_a_press_cb),rx);
   g_signal_connect(event_box_a,"motion-notify-event",G_CALLBACK(frequency_a_motion_notify_event_cb),rx);
   g_signal_connect(event_box_a,"scroll_event",G_CALLBACK(frequency_a_scroll_event_cb),(gpointer)rx);
-
-  x+=240;
-  y=27;
 
   long long bf=rx->frequency_b;
   sprintf(temp,"%05lld.%03lld.%03lld",bf/(long long)1000000,(bf%(long long)1000000)/(long long)1000,bf%(long long)1000);
@@ -1655,31 +1631,21 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_b=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_b),v->frequency_b_text);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_b,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),event_box_b,FALSE,FALSE,0);
   g_signal_connect(event_box_b,"motion-notify-event",G_CALLBACK(frequency_b_motion_notify_event_cb),rx);
   g_signal_connect(event_box_b,"scroll_event",G_CALLBACK(frequency_b_scroll_event_cb),(gpointer)rx);
   gtk_widget_set_events(event_box_b, GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
-
-  x+=180;
-  y=31;
 
   v->subrx_b=gtk_toggle_button_new_with_label("SUBRX");
   gtk_widget_set_name(v->subrx_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->subrx_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),FALSE);
-  gtk_widget_set_size_request(v->subrx_b,35,6);
   g_signal_connect(v->subrx_b, "toggled", G_CALLBACK(subrx_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->subrx_b,x,y);
-
-  x=x+60;
-  y=21;
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),v->subrx_b,FALSE,FALSE,0);
 
   GtkWidget *afgain_label=gtk_label_new("AF GAIN");
   gtk_widget_set_name(afgain_label,"afgain-text");
-  gtk_layout_put(GTK_LAYOUT(v->vfo),afgain_label,x,y);
-  x+=60;
-  y=18;
-
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),afgain_label,FALSE,FALSE,0);
 
   v->afgain_scale=gtk_level_bar_new();
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->afgain_scale),GTK_LEVEL_BAR_OFFSET_LOW);
@@ -1691,23 +1657,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_afgain=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_afgain),v->afgain_scale);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_afgain,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),event_box_afgain,FALSE,FALSE,0);
   g_signal_connect(event_box_afgain,"motion-notify-event",G_CALLBACK(afgain_scale_motion_notify_event_cb),rx);
   g_signal_connect(event_box_afgain,"scroll_event",G_CALLBACK(afgain_scale_scroll_event_cb),(gpointer)rx);
   g_signal_connect(event_box_afgain,"button_press_event",G_CALLBACK(afgain_press_cb),rx);
   g_signal_connect(event_box_afgain,"button_release_event",G_CALLBACK(afgain_release_cb),rx);
   gtk_widget_set_events(event_box_afgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
 
-
-  x=x+105;
-  y=21;
-
   v->squelch_label=gtk_label_new("SQL");
   gtk_widget_set_name(v->squelch_label,"squelch-text");
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->squelch_label,x,y);
-
-  x+=22;
-  y=18;
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),v->squelch_label,FALSE,FALSE,0);
 
   v->squelch_scale=gtk_level_bar_new();
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->squelch_scale),GTK_LEVEL_BAR_OFFSET_LOW);
@@ -1719,22 +1678,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_squelch = gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_squelch),v->squelch_scale);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_squelch,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),event_box_squelch,FALSE,FALSE,0);
   g_signal_connect(event_box_squelch,"motion-notify-event",G_CALLBACK(squelch_scale_motion_notify_event_cb),rx);
   g_signal_connect(event_box_squelch,"scroll_event",G_CALLBACK(squelch_scale_scroll_event_cb),(gpointer)rx);
   g_signal_connect(event_box_squelch,"button_press_event",G_CALLBACK(squelch_press_cb),rx);
   g_signal_connect(event_box_squelch,"button_release_event",G_CALLBACK(squelch_release_cb),rx);
   gtk_widget_set_events(event_box_squelch, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
 
-  x=480;
-  y=36;
-
   GtkWidget *agcgain_label=gtk_label_new("AGC GAIN");
   gtk_widget_set_name(agcgain_label,"agcgain-text");
-  gtk_layout_put(GTK_LAYOUT(v->vfo),agcgain_label,x,y);
-
-  x+=60;
-  y=36;
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),agcgain_label,FALSE,FALSE,0);
 
   v->agcgain_scale=gtk_level_bar_new_for_interval(0.0,140.0);
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->agcgain_scale),GTK_LEVEL_BAR_OFFSET_LOW);
@@ -1746,32 +1699,24 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_agcgain=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_agcgain),v->agcgain_scale);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_agcgain,x,y);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),event_box_agcgain,FALSE,FALSE,0);
   g_signal_connect(event_box_agcgain,"motion-notify-event",G_CALLBACK(agcgain_scale_motion_notify_event_cb),rx);
   g_signal_connect(event_box_agcgain,"scroll_event",G_CALLBACK(agcgain_scale_scroll_event_cb),(gpointer)rx);
   g_signal_connect(event_box_agcgain,"button_press_event",G_CALLBACK(agcgain_press_cb),rx);
   g_signal_connect(event_box_agcgain,"button_release_event",G_CALLBACK(agcgain_release_cb),rx);
   gtk_widget_set_events(event_box_agcgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
 
-
-  y=52;
-  x=5;
-
   v->lock_b=gtk_toggle_button_new_with_label("LOCK");
   gtk_widget_set_name(v->lock_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
-  gtk_widget_set_size_request(v->lock_b,35,6);
   g_signal_connect(v->lock_b, "toggled", G_CALLBACK(lock_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->lock_b,x,y);
-  x=x+43;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->lock_b,FALSE,FALSE,0);
 
   v->mode_b=gtk_button_new_with_label(mode_string[rx->mode_a]);
   gtk_widget_set_name(v->mode_b,"vfo-mode-filter-button");
-  gtk_widget_set_size_request(v->mode_b,35,6);
   g_signal_connect(v->mode_b, "pressed", G_CALLBACK(mode_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->mode_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->mode_b,FALSE,FALSE,0);
 
   FILTER *band_filters=filters[rx->mode_a];
 
@@ -1787,10 +1732,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->filter_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->filter_b,"vfo-mode-filter-button");
-  gtk_widget_set_size_request(v->filter_b,35,6);
   g_signal_connect(v->filter_b, "pressed", G_CALLBACK(filter_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->filter_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->filter_b,FALSE,FALSE,0);
 
   strcpy(temp,"NB");
   if(rx->nb2) {
@@ -1800,37 +1743,29 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->nb_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->nb_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nb_b),rx->nb|rx->nb2);
-  gtk_widget_set_size_request(v->nb_b,35,6);
   g_signal_connect(v->nb_b, "button-press-event", G_CALLBACK(nb_b_pressed_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->nb_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->nb_b,FALSE,FALSE,0);
 
   v->nr_b=gtk_toggle_button_new_with_label("NR");
   gtk_widget_set_name(v->nr_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->nr_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2);
-  gtk_widget_set_size_request(v->nr_b,35,6);
   g_signal_connect(v->nr_b, "button-press-event", G_CALLBACK(nr_b_pressed_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->nr_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->nr_b,FALSE,FALSE,0);
 
   v->snb_b=gtk_toggle_button_new_with_label("SNB");
   gtk_widget_set_name(v->snb_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->snb_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->snb_b),rx->snb);
-  gtk_widget_set_size_request(v->snb_b,35,6);
   g_signal_connect(v->snb_b, "toggled", G_CALLBACK(snb_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->snb_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->snb_b,FALSE,FALSE,0);
 
   v->anf_b=gtk_toggle_button_new_with_label("ANF");
   gtk_widget_set_name(v->anf_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->anf_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->anf_b),rx->anf);
-  gtk_widget_set_size_request(v->anf_b,35,6);
   g_signal_connect(v->anf_b, "toggled", G_CALLBACK(anf_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->anf_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->anf_b,FALSE,FALSE,0);
 
   switch(rx->agc) {
     case AGC_OFF:
@@ -1853,20 +1788,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->agc_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->agc_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->agc_b),rx->agc!=AGC_OFF);
-  gtk_widget_set_size_request(v->agc_b,75,6);
   g_signal_connect(v->agc_b, "button-press-event", G_CALLBACK(agc_b_pressed_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->agc_b,x,y);
-  x=x+80;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->agc_b,FALSE,FALSE,0);
 
   v->rit_b=gtk_toggle_button_new_with_label("RIT");
   gtk_widget_set_name(v->rit_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->rit_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->rit_b),rx->rit_enabled);
-  gtk_widget_set_size_request(v->rit_b,35,6);
   g_signal_connect(v->rit_b, "toggled", G_CALLBACK(rit_b_cb),rx);
   g_signal_connect(v->rit_b, "button-press-event", G_CALLBACK(rit_b_press_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->rit_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->rit_b,FALSE,FALSE,0);
 
   sprintf(temp,"%+05ld",rx->rit);
   v->rit_value=gtk_label_new(temp);
@@ -1874,11 +1805,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_rit_b=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_rit_b),v->rit_value);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_rit_b,x,y-1);
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),event_box_rit_b,FALSE,FALSE,0);
   g_signal_connect(event_box_rit_b,"scroll_event",G_CALLBACK(rit_b_scroll_event_cb),(gpointer)rx);
   gtk_widget_set_events(event_box_rit_b, GDK_SCROLL_MASK);
-
-  x=x+50;
 
   v->xit_b=gtk_toggle_button_new_with_label("XIT");
   gtk_widget_set_name(v->xit_b,"vfo-toggle");
@@ -1886,11 +1815,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->xit_b),radio->transmitter->xit_enabled);
   }
-  gtk_widget_set_size_request(v->xit_b,35,6);
   g_signal_connect(v->xit_b, "toggled", G_CALLBACK(xit_b_cb),rx);
   g_signal_connect(v->xit_b, "button-press-event", G_CALLBACK(xit_b_press_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->xit_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->xit_b,FALSE,FALSE,0);
 
 
   if(radio->transmitter!=NULL) {
@@ -1903,30 +1830,24 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   GtkWidget *event_box_xit_b=gtk_event_box_new();
   gtk_container_add(GTK_CONTAINER(event_box_xit_b),v->xit_value);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),event_box_xit_b,x,y-1);
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),event_box_xit_b,FALSE,FALSE,0);
   g_signal_connect(event_box_xit_b,"scroll_event",G_CALLBACK(xit_b_scroll_event_cb),(gpointer)rx);
   gtk_widget_set_events(event_box_xit_b, GDK_SCROLL_MASK);
-
-  x=x+50;
 
   v->ctun_b=gtk_toggle_button_new_with_label("CTUN");
   gtk_widget_set_name(v->ctun_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->ctun_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ctun_b),rx->ctun);
-  gtk_widget_set_size_request(v->ctun_b,35,6);
   g_signal_connect(v->ctun_b, "toggled", G_CALLBACK(ctun_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->ctun_b,x,y);
-  x=x+45;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->ctun_b,FALSE,FALSE,0);
 
 
   v->dup_b=gtk_toggle_button_new_with_label("DUP");
   gtk_widget_set_name(v->dup_b,"vfo-toggle");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->dup_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->dup_b),rx->duplex);
-  gtk_widget_set_size_request(v->dup_b,35,6);
   g_signal_connect(v->dup_b, "toggled", G_CALLBACK(dup_b_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->dup_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->dup_b,FALSE,FALSE,0);
 
 
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
@@ -1934,37 +1855,30 @@ GtkWidget *create_vfo(RECEIVER *rx) {
     gtk_widget_set_name(v->ant_b,"vfo-toggle");
     gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->ant_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ant_b),radio->adc[0].antenna!=0);
-    gtk_widget_set_size_request(v->ant_b,35,6);
     g_signal_connect(v->ant_b, "toggled", G_CALLBACK(ant_b_cb),rx);
-    gtk_layout_put(GTK_LAYOUT(v->vfo),v->ant_b,x,y);
+    gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->ant_b,FALSE,FALSE,0);
   }
   else {
     v->bpsk_b=gtk_toggle_button_new_with_label("BPSK");
     gtk_widget_set_name(v->bpsk_b,"vfo-toggle");
     gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->bpsk_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->bpsk_b),rx->bpsk_enable);
-    gtk_widget_set_size_request(v->bpsk_b,35,6);
     g_signal_connect(v->bpsk_b, "toggled", G_CALLBACK(bpsk_b_cb),rx);
-    gtk_layout_put(GTK_LAYOUT(v->vfo),v->bpsk_b,x,y);
+    gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->bpsk_b,FALSE,FALSE,0);
   }
-  x=x+52;
 
   v->bmk_b=gtk_button_new_with_label("BMK");
   gtk_widget_set_name(v->bmk_b,"vfo-button");
-  gtk_widget_set_size_request(v->bmk_b,35,6);
   g_signal_connect(v->bmk_b, "button-press-event", G_CALLBACK(bmk_b_pressed_cb),rx);
-  gtk_layout_put(GTK_LAYOUT(v->vfo),v->bmk_b,x,y);
-  x=x+40;
+  gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->bmk_b,FALSE,FALSE,0);
 
   if(radio->discovered->protocol == PROTOCOL_1) {
     v->div_b=gtk_toggle_button_new_with_label("DIV");
     gtk_widget_set_name(v->div_b,"vfo-toggle");
     gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->div_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b),rx->diversity);
-    gtk_widget_set_size_request(v->div_b,35,6);
     g_signal_connect(v->div_b, "toggled", G_CALLBACK(div_b_cb),rx);
-    gtk_layout_put(GTK_LAYOUT(v->vfo),v->div_b,x,y);
-    x=x+40;
+    gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->div_b,FALSE,FALSE,0);
   }
 
   gtk_widget_show_all(v->vfo);

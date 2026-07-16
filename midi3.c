@@ -1009,7 +1009,9 @@ static int midi_action(void *data) {
 		update_vfo(rx);
 		rx=radio->receiver[midi_rx];
 		update_vfo(rx);
-		gtk_window_present(GTK_WINDOW(radio->receiver[midi_rx]->window));
+		if(radio->receiver[midi_rx]->window!=NULL) {
+		    gtk_window_present(GTK_WINDOW(radio->receiver[midi_rx]->window));
+		}
 	    }
 	    break;    
 	/////////////////////////////////////////////////////////// "SWAPVFO"

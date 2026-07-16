@@ -68,6 +68,7 @@ enum {
 #ifdef SOAPYSDR
 #define PROTOCOL_SOAPYSDR 2
 #endif
+#define PROTOCOL_FAKE 3
 
 struct _DISCOVERED {
     int protocol;

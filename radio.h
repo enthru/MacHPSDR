@@ -204,6 +204,9 @@ typedef struct _radio {
   gboolean display_filled;
 
   GtkWidget *visual;
+  GtkWidget *rx_container;
+  gboolean rx_paned_restore;
+  GtkWidget *bottom_bar;
   GtkWidget *mox_button;
   GtkWidget *vox_button;
   GtkWidget *tune_button;
@@ -257,6 +260,7 @@ extern void frequency_changed(RECEIVER *rx);
 extern int add_receiver(void *data, gboolean show_rx);
 extern int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden); // TODO - does this *need* a prototype?
 extern void add_receivers(RADIO *r);
+extern void radio_rebuild_rx_stack(RADIO *r);
 extern void add_transmitter(RADIO *r);
 extern void radio_save_state(RADIO *radio);
 extern void radio_restore_state(RADIO *radio);

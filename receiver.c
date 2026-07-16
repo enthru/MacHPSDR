@@ -366,21 +366,23 @@ void receiver_save_state(RECEIVER *rx) {
   setProperty(name,value);
 
 
-  gtk_window_get_position(GTK_WINDOW(rx->window),&x,&y);
-  sprintf(name,"receiver[%d].x",rx->channel);
-  sprintf(value,"%d",x);
-  setProperty(name,value);
-  sprintf(name,"receiver[%d].y",rx->channel);
-  sprintf(value,"%d",y);
-  setProperty(name,value);
+  if(rx->window!=NULL) {
+    gtk_window_get_position(GTK_WINDOW(rx->window),&x,&y);
+    sprintf(name,"receiver[%d].x",rx->channel);
+    sprintf(value,"%d",x);
+    setProperty(name,value);
+    sprintf(name,"receiver[%d].y",rx->channel);
+    sprintf(value,"%d",y);
+    setProperty(name,value);
 
-  gtk_window_get_size(GTK_WINDOW(rx->window),&width,&height);
-  sprintf(name,"receiver[%d].width",rx->channel);
-  sprintf(value,"%d",width);
-  setProperty(name,value);
-  sprintf(name,"receiver[%d].height",rx->channel);
-  sprintf(value,"%d",height);
-  setProperty(name,value);
+    gtk_window_get_size(GTK_WINDOW(rx->window),&width,&height);
+    sprintf(name,"receiver[%d].width",rx->channel);
+    sprintf(value,"%d",width);
+    setProperty(name,value);
+    sprintf(name,"receiver[%d].height",rx->channel);
+    sprintf(value,"%d",height);
+    setProperty(name,value);
+  }
 
   rx->paned_position=gtk_paned_get_position(GTK_PANED(rx->vpaned));
   sprintf(name,"receiver[%d].paned_position",rx->channel);
@@ -758,8 +760,10 @@ void update_noise(RECEIVER *rx) {
   update_vfo(rx);
 }
 
-static gboolean window_delete(GtkWidget *widget,GdkEvent *event, gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
+void receiver_close(RECEIVER *rx) {
+  // Keep at least one receiver — never leave the radio headless
+  if(radio->receivers<=1) return;
+
   g_source_remove(rx->update_timer_id);
   if(radio->dialog!=NULL) {
     gtk_widget_destroy(radio->dialog);
@@ -770,7 +774,17 @@ static gboolean window_delete(GtkWidget *widget,GdkEvent *event, gpointer data) 
     rx->bookmark_dialog=NULL;
   }
   delete_receiver(rx);
-  return FALSE;
+  // delete_receiver has set radio->receiver[i]=NULL for this rx; if it was the
+  // active receiver, hand focus to the first remaining live receiver.
+  if(radio->active_receiver==rx) {
+    int i;
+    for(i=0;i<radio->discovered->supported_receivers;i++) {
+      if(radio->receiver[i]!=NULL) { radio->active_receiver=radio->receiver[i]; break; }
+    }
+  }
+  // Rebuild the stack: re-lays out the surviving panels (with GtkPaned dividers)
+  // and destroys the just-closed panel, now orphaned in the old layout tree.
+  radio_rebuild_rx_stack(radio);
 }
 
 static void focus_in_event_cb(GtkWindow *window,GdkEventFocus *event,gpointer data) {
@@ -781,6 +795,7 @@ static void focus_in_event_cb(GtkWindow *window,GdkEventFocus *event,gpointer da
 
 gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+  radio->active_receiver=(RECEIVER *)data;
   switch(event->button) {
     case 1: // left button
       //if(!rx->locked) {
@@ -1631,7 +1646,9 @@ void receiver_update_title(RECEIVER *rx) {
   gchar title[128];
   g_snprintf((gchar *)&title,sizeof(title),"LinHPSDR: %s Rx-%d ADC-%d %d",radio->discovered->name,rx->channel,rx->adc,rx->sample_rate);
 g_print("receiver_update_title: %s\n",title);
-  gtk_window_set_title(GTK_WINDOW(rx->window),title);
+  if(rx->window!=NULL) {
+    gtk_window_set_title(GTK_WINDOW(rx->window),title);
+  }
 }
 
 static gboolean enter (GtkWidget *ebox, GdkEventCrossing *event, void *user_data) {
@@ -1649,45 +1666,51 @@ static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event, void *user_data
    return FALSE;
 }
 
+static void close_button_cb(GtkWidget *widget, gpointer data) {
+  receiver_close((RECEIVER *)data);
+}
+
 static void create_visual(RECEIVER *rx) {
 
   rx->dialog=NULL;
 
-  rx->window=gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  gtk_widget_set_name(rx->window,"receiver-window");
-  if(rx->channel==0) {
-    gtk_window_set_deletable (GTK_WINDOW(rx->window),FALSE);
-  }
-  g_signal_connect(rx->window,"configure-event",G_CALLBACK(receiver_configure_event_cb),rx);
-  g_signal_connect(rx->window,"focus_in_event",G_CALLBACK(focus_in_event_cb),rx);
-  g_signal_connect(rx->window,"delete-event",G_CALLBACK (window_delete), rx);
-  g_signal_connect(rx->window,"key-press-event",G_CALLBACK(receiver_key_press_event),rx);
-  g_signal_connect(rx->window,"key-release-event",G_CALLBACK(receiver_key_release_event),rx);
+  rx->window=NULL;
 
   receiver_update_title(rx);
 
-  gtk_widget_set_size_request(rx->window,rx->window_width,rx->window_height);
-
-  rx->table=gtk_table_new(4,6,FALSE);
+  rx->table=gtk_grid_new();
 
   rx->vfo=create_vfo(rx);
-  gtk_widget_set_size_request(rx->vfo,765,75);
-  gtk_table_attach(GTK_TABLE(rx->table), rx->vfo, 0, 3, 0, 1,
-      GTK_FILL, GTK_FILL, 0, 0);
+  gtk_widget_set_hexpand(rx->vfo,TRUE);
+  gtk_grid_attach(GTK_GRID(rx->table), rx->vfo, 0, 0, 3, 1);
 
   rx->radio_info=create_radio_info_visual(rx);
   gtk_widget_set_size_request(rx->radio_info, 170, 60);
-  gtk_table_attach(GTK_TABLE(rx->table), rx->radio_info, 3, 4, 0, 1,
-      GTK_FILL, GTK_FILL, 0, 0);
+  gtk_grid_attach(GTK_GRID(rx->table), rx->radio_info, 3, 0, 1, 1);
 
   rx->meter=create_meter_visual(rx);
   gtk_widget_set_size_request(rx->meter,250,60);        // resize from 154 to 300 for custom s-meter
-  gtk_table_attach(GTK_TABLE(rx->table), rx->meter, 4, 6, 0, 1,
-      GTK_FILL, GTK_FILL, 0, 0);
+  gtk_grid_attach(GTK_GRID(rx->table), rx->meter, 4, 0, 2, 1);
+
+  // Additional receivers (not the primary channel 0) get a close button in the
+  // top-right corner of the panel. Placed as a real grid cell rather than a
+  // GtkOverlay, because the panadapter's native window would hide an overlay.
+  if(rx->channel!=0) {
+    GtkWidget *close_b=gtk_button_new_with_label("✕");
+    gtk_widget_set_name(close_b,"vfo-close");
+    gtk_widget_set_tooltip_text(close_b,"Close this receiver");
+    gtk_widget_set_halign(close_b,GTK_ALIGN_END);
+    gtk_widget_set_valign(close_b,GTK_ALIGN_START);
+    g_signal_connect(close_b,"clicked",G_CALLBACK(close_button_cb),rx);
+    gtk_grid_attach(GTK_GRID(rx->table), close_b, 6, 0, 1, 1);
+  }
 
   rx->vpaned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
-  gtk_table_attach(GTK_TABLE(rx->table), rx->vpaned, 0, 6, 1, 3,
-      GTK_FILL | GTK_EXPAND, GTK_FILL | GTK_EXPAND, 0, 0);
+  gtk_grid_attach(GTK_GRID(rx->table), rx->vpaned, 0, 1, 7, 2);
+  gtk_widget_set_hexpand(rx->vpaned, TRUE);
+  gtk_widget_set_vexpand(rx->vpaned, TRUE);
+  // Breathing room between the VFO mode/filter row and the spectrum below it.
+  gtk_widget_set_margin_top(rx->vpaned, 8);
 
   rx->panadapter=create_rx_panadapter(rx);
   gtk_paned_pack1 (GTK_PANED(rx->vpaned), rx->panadapter,TRUE,TRUE);
@@ -1700,15 +1723,15 @@ static void create_visual(RECEIVER *rx) {
   gtk_paned_pack2 (GTK_PANED(rx->vpaned), rx->waterfall,TRUE,TRUE);
   gtk_widget_add_events (rx->waterfall,GDK_ENTER_NOTIFY_MASK);
   gtk_widget_add_events (rx->waterfall,GDK_LEAVE_NOTIFY_MASK);
-  g_signal_connect (rx->waterfall, "enter-notify-event", G_CALLBACK (enter), rx->window);
-  g_signal_connect (rx->waterfall, "leave-notify-event", G_CALLBACK (leave), rx->window);
+  g_signal_connect (rx->waterfall, "enter-notify-event", G_CALLBACK (enter), rx);
+  g_signal_connect (rx->waterfall, "leave-notify-event", G_CALLBACK (leave), rx);
 
-  gtk_container_add(GTK_CONTAINER(rx->window),rx->table);
-
-  gtk_widget_set_events(rx->window,gtk_widget_get_events(rx->window)
-                     | GDK_FOCUS_CHANGE_MASK
-                     | GDK_BUTTON_PRESS_MASK
-                     | GDK_BUTTON_RELEASE_MASK);
+  gtk_widget_set_size_request(rx->table, -1, 180);
+  // Make sure the panel grows to fill the container on window resize (otherwise
+  // the vpaned can stay at its minimum and leave a gap below the waterfall).
+  gtk_widget_set_hexpand(rx->table, TRUE);
+  gtk_widget_set_vexpand(rx->table, TRUE);
+  gtk_widget_set_valign(rx->table, GTK_ALIGN_FILL);
 }
 
 void receiver_init_analyzer(RECEIVER *rx) {
@@ -1781,6 +1804,21 @@ g_print("%s: %d\n",__FUNCTION__,zoom);
     }
   }
   receiver_init_analyzer(rx);
+}
+
+// Restore the saved panadapter/waterfall split. Must run only once the vpaned
+// has a real allocated height - at create_receiver time the panel is not yet in
+// a sized window (it gets re-parented into the RX stack and the window resized
+// afterwards), so gtk_widget_get_allocated_height() would return ~1 and the
+// saved proportion would be lost. Poll on a timeout until allocated, then apply.
+static gboolean restore_paned_position_cb(gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(rx->vpaned==NULL) return FALSE;
+  gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
+  if(paned_height<=1) return TRUE;  // not allocated yet, keep waiting
+  gint position=(gint)((double)paned_height*rx->paned_percent);
+  gtk_paned_set_position(GTK_PANED(rx->vpaned),position);
+  return FALSE;  // done, stop the timeout
 }
 
 
@@ -2167,34 +2205,13 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   if (!rx->show_rx) return rx;
 
   create_visual(rx);
-  if(rx->window!=NULL) {
-    gtk_widget_show_all(rx->window);
-    sprintf(name,"receiver[%d].x",rx->channel);
-    value=getProperty(name);
-    if(value) x=atoi(value);
-    sprintf(name,"receiver[%d].y",rx->channel);
-    value=getProperty(name);
-    if(value) y=atoi(value);
-    if(x!=-1 && y!=-1) {
-      gtk_window_move(GTK_WINDOW(rx->window),x,y);
-
-      sprintf(name,"receiver[%d].width",rx->channel);
-      value=getProperty(name);
-      if(value) width=atoi(value);
-      sprintf(name,"receiver[%d].height",rx->channel);
-      value=getProperty(name);
-      if(value) height=atoi(value);
-      gtk_window_resize(GTK_WINDOW(rx->window),width,height);
-
-      if(rx->vpaned!=NULL && rx->paned_position!=-1) {
-        gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
-        gint position=(gint)((double)paned_height*rx->paned_percent);
-        gtk_paned_set_position(GTK_PANED(rx->vpaned),position);
-      }
-    }
-
-    update_frequency(rx);
+  gtk_widget_show_all(rx->table);
+  radio->active_receiver=rx;
+  if(rx->vpaned!=NULL && rx->paned_position!=-1 && rx->paned_percent>0.0) {
+    // Defer until the vpaned actually has a height (see restore_paned_position_cb).
+    g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
   }
+  update_frequency(rx);
 
   rx->update_timer_id=g_timeout_add(1000/rx->fps,update_timer_cb,(gpointer)rx);
 

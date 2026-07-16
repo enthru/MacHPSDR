@@ -53,7 +53,7 @@ static gboolean mic_gain_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   double v=radio->transmitter->mic_gain+10.0; // move from rabd -10..50 to range 0..60
   double x = (bar_width/60.0)*v;
 
-  level_meter_draw(cr, x, width, height, TEXT_B);
+  level_meter_draw(cr, x, width, height, TEXT_A);
 
   // 0 dB marker
   SetColour(cr, WARNING);
@@ -115,7 +115,7 @@ static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event) {
 GtkWidget *create_mic_gain(TRANSMITTER *tx) {
 
   radio->mic_gain=gtk_drawing_area_new();
-  //gtk_widget_set_size_request(radio->mic_gain, 10, 100);
+  gtk_widget_set_size_request(radio->mic_gain, 170, 34);
 
   g_signal_connect(radio->mic_gain,"configure-event",G_CALLBACK(mic_gain_configure_event_cb),(gpointer)tx);
   g_signal_connect(radio->mic_gain,"draw",G_CALLBACK(mic_gain_draw_cb),(gpointer)tx);

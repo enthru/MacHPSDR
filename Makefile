@@ -154,6 +154,7 @@ waterfall.c\
 wideband_panadapter.c\
 wideband_waterfall.c\
 protocol1.c\
+fake_protocol.c\
 protocol2.c\
 radio_dialog.c\
 receiver_dialog.c\
@@ -275,6 +276,7 @@ wideband_panadapter.o\
 wideband_waterfall.o\
 waterfall.o\
 protocol1.o\
+fake_protocol.o\
 protocol2.o\
 radio_dialog.o\
 receiver_dialog.o\

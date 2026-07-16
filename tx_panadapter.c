@@ -56,6 +56,8 @@ static gboolean transmitter_button_press_event_cb(GtkWidget *widget,GdkEventButt
   return TRUE;
 }
 
+void update_tx_panadapter(RADIO *r);
+
 static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   tx->panadapter_width=gtk_widget_get_allocated_width (widget);
@@ -77,10 +79,15 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
                                        tx->panadapter_height);
     cairo_t *cr;
     cr = cairo_create (tx->panadapter_surface);
-    cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
+    cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
     cairo_paint (cr);
     cairo_destroy(cr);
     transmitter_init_analyzer(tx);
+    /* The surface was just recreated blank. The periodic RX-loop refresh is
+       gated on !tx->updated, which is only reset in the Soapy path — so on
+       non-Soapy devices (e.g. fake) it would stay blank until MOX/freq change.
+       Repaint now so every resize refreshes immediately. */
+    update_tx_panadapter(radio);
   }
   }
   return TRUE;
@@ -88,6 +95,8 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
 
 static gboolean tx_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
+  cairo_set_source_rgb(cr, 0.09, 0.09, 0.10);
+  cairo_paint(cr);
   if(tx->panadapter_surface!=NULL) {
     cairo_set_source_surface (cr, tx->panadapter_surface, 0.0, 0.0);
     cairo_paint (cr);
@@ -101,7 +110,7 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
   tx->panadapter_height=0;
   tx->panadapter_surface=NULL;
   tx->panadapter=gtk_drawing_area_new();
-  gtk_widget_set_size_request(tx->panadapter, 300, 150);
+  gtk_widget_set_size_request(tx->panadapter, 300, 120);
 
   g_signal_connect(tx->panadapter,"configure-event",G_CALLBACK(tx_panadapter_configure_event_cb),(gpointer)tx);
   g_signal_connect(tx->panadapter,"draw",G_CALLBACK(tx_panadapter_draw_cb),(gpointer)tx);
@@ -141,7 +150,7 @@ void update_tx_panadapter(RADIO *r) {
     cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
     cairo_set_line_width(cr, 1.0);
     cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 10);
+    cairo_set_font_size(cr, 14);
     char v[32];
 
     // filter
@@ -160,7 +169,7 @@ void update_tx_panadapter(RADIO *r) {
         cairo_line_to(cr,(double)width,y);
   
         sprintf(v,"%d dBm",i);
-        cairo_move_to(cr, 1, y-1);
+        cairo_move_to(cr, 1, y-4);   // lift the label clear of the graticule line
         cairo_show_text(cr, v);
       }
     }
@@ -225,8 +234,8 @@ void update_tx_panadapter(RADIO *r) {
       cairo_set_line_width(cr, 1.0);
       cairo_stroke(cr);
       
-      cairo_set_font_size(cr, 12); 
-      
+      cairo_set_font_size(cr, 16);
+
       SetColour(cr, TEXT_A);
       sprintf(text,"%.1f W",tx->fwd);
       cairo_move_to(cr, 206, 34);
@@ -278,8 +287,8 @@ void update_tx_panadapter(RADIO *r) {
           SetColour(cr, TEXT_B);          
         }
       }
-      cairo_set_font_size(cr, 20);
-      cairo_move_to(cr,((double)width/2.0)+2.0,18.0);
+      cairo_set_font_size(cr, 21);
+      cairo_move_to(cr,((double)width/2.0)+2.0,15.0);
       cairo_show_text(cr, temp);
     }
     

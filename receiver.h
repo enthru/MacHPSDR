@@ -299,6 +299,7 @@ enum {
 };
 
 extern RECEIVER *create_receiver(int channel,int sample_rate, gboolean show_rx);
+extern void receiver_close(RECEIVER *rx);
 extern void receiver_update_title(RECEIVER *rx);
 extern void receiver_init_analyzer(RECEIVER *rx);
 extern void add_iq_samples(RECEIVER *r,double left,double right);

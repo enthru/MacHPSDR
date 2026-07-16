@@ -51,7 +51,9 @@ static gboolean resize_timeout(void *data) {
   if(rx->waterfall!=NULL) {
     rx->waterfall_pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, rx->waterfall_width, rx->waterfall_height);
     guchar *pixels = gdk_pixbuf_get_pixels (rx->waterfall_pixbuf);
-    memset(pixels, 0, rx->waterfall_width*rx->waterfall_height*3);
+    // Fill with the theme grey (~@BACKGROUND) not black, so the not-yet-scrolled
+    // area after a resize matches the UI instead of showing a black band.
+    memset(pixels, 23, rx->waterfall_width*rx->waterfall_height*3);
   }
   rx->waterfall_frequency=0;
   rx->waterfall_sample_rate=0;
@@ -76,6 +78,10 @@ static gboolean waterfall_configure_event_cb(GtkWidget *widget,GdkEventConfigure
 
 static gboolean waterfall_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+  // Fill the ground first so any area the pixbuf doesn't cover matches the
+  // theme (@BACKGROUND) instead of showing pure black.
+  cairo_set_source_rgb(cr, 0.09, 0.09, 0.10);
+  cairo_paint(cr);
   if(rx->waterfall_pixbuf) {
     gdk_cairo_set_source_pixbuf (cr, rx->waterfall_pixbuf, 0, 0);
     cairo_paint (cr);

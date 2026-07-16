@@ -377,6 +377,9 @@ static void waterfall_theme_cb(GtkWidget *widget, gpointer data) {
   int theme = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
   rx->waterfall_color_theme = theme;
   waterfall_set_theme(rx, theme);
+  // Persist immediately so the theme survives even if the app is quit without
+  // a clean window-close (e.g. Cmd-Q), which would skip the exit-time save.
+  radio_save_state(radio);
 }
 
 static void remote_audio_cb(GtkWidget *widget, gpointer data) {

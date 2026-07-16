@@ -30,6 +30,7 @@
 #ifdef SOAPYSDR
 #include "soapy_discovery.h"
 #endif
+#include "fake_protocol.h"
 
 void discovery() {
 g_print("discovery\n");
@@ -39,4 +40,5 @@ g_print("discovery\n");
 #ifdef SOAPYSDR
   soapy_discovery();
 #endif
+  fake_discovery();
 }

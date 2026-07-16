@@ -1314,6 +1314,9 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
     case PROTOCOL_2:
       gain=8388607.0; // 24 bit
       break;
+    case PROTOCOL_FAKE:
+      gain=32767.0;  // loopback: iq is computed then discarded
+      break;
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
       gain=32767.0;  // 16 bit
@@ -1661,6 +1664,15 @@ g_print("create_transmitter: channel=%d\n",channel);
       tx->packet_counter = 0;
       break;
     case PROTOCOL_2:
+      tx->mic_sample_rate=48000;
+      tx->mic_dsp_rate=96000;
+      tx->iq_output_rate=192000;
+      tx->buffer_size=1024;
+      tx->output_samples=1024*(tx->iq_output_rate/tx->mic_sample_rate);
+      break;
+    case PROTOCOL_FAKE:
+      // Same rates as PROTOCOL_2. Without a case here these all stay 0
+      // (tx is g_new0'd) and OpenChannel() below segfaults deep in WDSP.
       tx->mic_sample_rate=48000;
       tx->mic_dsp_rate=96000;
       tx->iq_output_rate=192000;

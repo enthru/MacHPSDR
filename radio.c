@@ -47,6 +47,7 @@
 #include "tx_panadapter.h"
 #include "protocol1.h"
 #include "protocol2.h"
+#include "fake_protocol.h"
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
 #endif
@@ -112,6 +113,8 @@ fprintf(stderr,"radio_start\n");
     case PROTOCOL_SOAPYSDR:
       break;
 #endif
+    case PROTOCOL_FAKE:
+      break;
   }
   if(r->transmitter!=NULL) {
     update_tx_panadapter(r);
@@ -334,6 +337,24 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.width",value);
   sprintf(value,"%d",height);
   setProperty("radio.height",value);
+
+  // Save inter-receiver GtkPaned divider positions as fractions of each pane's
+  // height, so they restore sensibly even if the window is a different size.
+  if(radio->rx_container!=NULL) {
+    GList *children=gtk_container_get_children(GTK_CONTAINER(radio->rx_container));
+    GtkWidget *w=(children!=NULL)?GTK_WIDGET(children->data):NULL;
+    g_list_free(children);
+    int k=0;
+    while(w!=NULL && GTK_IS_PANED(w)) {
+      int ph=gtk_widget_get_allocated_height(w);
+      double frac=(ph>0)?((double)gtk_paned_get_position(GTK_PANED(w))/(double)ph):0.5;
+      sprintf(name,"radio.rx_paned[%d]",k);
+      sprintf(value,"%f",frac);
+      setProperty(name,value);
+      k++;
+      w=gtk_paned_get_child2(GTK_PANED(w));
+    }
+  }
 
   saveProperties(filename);
 }
@@ -874,6 +895,10 @@ g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
 #endif
     }
     update_tx_panadapter(r);
+    /* TX just stopped: clear the stale mic-level frame (it only repaints
+       while TX is running, so the last VOX-peak block would otherwise linger). */
+    r->vox_peak=0.0;
+    update_mic_level(r);
   }
   update_vfo(r->transmitter->rx);
 }
@@ -1026,16 +1051,15 @@ g_print("add_receiver: no receivers available\n");
     i = -1;
   }
 
-  if (radio->hl2 != NULL) {
-    if (radio->hl2->xvtr == FALSE) {
-      gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
-    }
+  if (radio->hl2 == NULL || radio->hl2->xvtr == FALSE) {
+    gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
   }
 
   if(radio->dialog) {
     gtk_widget_destroy(radio->dialog);
     radio->dialog=NULL;
   }
+  if(i>=0) radio_rebuild_rx_stack(r);
   return i;
 }
 
@@ -1063,6 +1087,112 @@ g_print("add_diversity_mixer: no diversity mixers available\n");
   }
 
   return i;
+}
+
+// One-shot balancer: split the receiver stack evenly. Runs on a timeout so the
+// container has a real allocated height by the time it computes positions.
+static gboolean rx_stack_balance(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  if(r->rx_container==NULL) return FALSE;
+  int total=gtk_widget_get_allocated_height(r->rx_container);
+  if(total<=1) return TRUE;  // not allocated yet; retry on next timeout
+
+  int n=0;
+  for(int i=0;i<r->discovered->supported_receivers;i++) {
+    if(r->receiver[i]!=NULL && r->receiver[i]->table!=NULL) n++;
+  }
+  if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
+
+  GList *children=gtk_container_get_children(GTK_CONTAINER(r->rx_container));
+  GtkWidget *w=(children!=NULL)?GTK_WIDGET(children->data):NULL;
+  g_list_free(children);
+
+  // On the first balance after startup, restore saved divider positions (stored
+  // as fractions of each pane's height); afterwards, and for a fresh config,
+  // fall back to an even split.
+  gboolean restore=r->rx_paned_restore;
+  r->rx_paned_restore=FALSE;
+
+  int remaining=total;
+  int k=0;
+  while(w!=NULL && GTK_IS_PANED(w)) {
+    double frac=-1.0;
+    if(restore) {
+      char pname[32];
+      sprintf(pname,"radio.rx_paned[%d]",k);
+      char *pvalue=getProperty(pname);
+      if(pvalue!=NULL) frac=atof(pvalue);
+    }
+    int slot;
+    if(frac>0.0 && frac<1.0) slot=(int)(frac*remaining);
+    else slot=remaining/(n-k);
+    gtk_paned_set_position(GTK_PANED(w),slot);
+    remaining-=slot;
+    k++;
+    w=gtk_paned_get_child2(GTK_PANED(w));
+  }
+  return FALSE;
+}
+
+// Rebuild the vertical stack of receiver panels in radio->rx_container. Visible
+// receivers are laid out top-to-bottom; when more than one is present they are
+// separated by draggable GtkPaned dividers so the user can reapportion vertical
+// space. A single receiver is packed directly. Call this whenever the set of
+// visible receivers changes (add/remove).
+void radio_rebuild_rx_stack(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+
+  // Collect the live panels in channel order, holding a temporary reference on
+  // each and unparenting it so the teardown of the old layout below does not
+  // destroy them.
+  GtkWidget *tables[MAX_RECEIVERS];
+  int n=0;
+  for(int i=0;i<r->discovered->supported_receivers;i++) {
+    RECEIVER *rx=r->receiver[i];
+    if(rx!=NULL && rx->table!=NULL) {
+      GtkWidget *t=rx->table;
+      g_object_ref(t);
+      GtkWidget *parent=gtk_widget_get_parent(t);
+      if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),t);
+      tables[n++]=t;
+    }
+  }
+
+  // Destroy whatever remains in the container: the old paned skeleton plus any
+  // orphaned panel (e.g. a receiver that was just closed). Live panels were
+  // unparented above so they survive this.
+  GList *children=gtk_container_get_children(GTK_CONTAINER(r->rx_container));
+  for(GList *l=children;l!=NULL;l=l->next) {
+    gtk_widget_destroy(GTK_WIDGET(l->data));
+  }
+  g_list_free(children);
+
+  // Build the new layout.
+  if(n==1) {
+    gtk_box_pack_start(GTK_BOX(r->rx_container),tables[0],TRUE,TRUE,0);
+  } else if(n>1) {
+    // Right-leaning chain of vertical panes: P0(t0, P1(t1, P2(t2, ... t_{n-1}))).
+    GtkWidget *paned=gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    GtkWidget *top=paned;
+    for(int k=0;k<n-1;k++) {
+      gtk_paned_pack1(GTK_PANED(paned),tables[k],TRUE,TRUE);
+      if(k==n-2) {
+        gtk_paned_pack2(GTK_PANED(paned),tables[k+1],TRUE,TRUE);
+      } else {
+        GtkWidget *next=gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+        gtk_paned_pack2(GTK_PANED(paned),next,TRUE,TRUE);
+        paned=next;
+      }
+    }
+    gtk_box_pack_start(GTK_BOX(r->rx_container),top,TRUE,TRUE,0);
+  }
+
+  // Panels are now owned by their new parents; drop the temporary refs.
+  for(int k=0;k<n;k++) g_object_unref(tables[k]);
+
+  gtk_widget_show_all(r->rx_container);
+
+  if(n>1) g_timeout_add(100,rx_stack_balance,r);
 }
 
 void add_receivers(RADIO *r) {
@@ -1180,74 +1310,133 @@ static gboolean configure_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
+// Bottom-bar RX front-end toggles (ADC 0). These just flip the ADC state; the
+// protocol high-priority packet applies it to hardware (no-op on the fake device).
+static void adc_preamp_cb(GtkWidget *widget, gpointer data) {
+  ADC *adc=(ADC *)data;
+  adc->preamp=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+}
+
+static void adc_att10_cb(GtkWidget *widget, gpointer data) {
+  ADC *adc=(ADC *)data;
+  adc->att10=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+}
+
+static void adc_att20_cb(GtkWidget *widget, gpointer data) {
+  ADC *adc=(ADC *)data;
+  adc->att20=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+}
+
+// --- bottom-bar "console" helpers (Option A: labelled modules + hairline rails) ---
+
+// Wrap a control column under a small uppercase section label -> one module.
+static GtkWidget *bar_module(const char *title, GtkWidget *content) {
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,7);
+  gtk_widget_set_valign(box,GTK_ALIGN_FILL);   // stretch to the bar height
+  GtkWidget *lbl=gtk_label_new(title);
+  gtk_widget_set_name(lbl,"section-label");
+  gtk_widget_set_halign(lbl,GTK_ALIGN_START);
+  gtk_widget_set_valign(lbl,GTK_ALIGN_START);
+  gtk_box_pack_start(GTK_BOX(box),lbl,FALSE,FALSE,0);
+  // content takes the remaining height and is vertically centred within it,
+  // so short columns (e.g. the transmit buttons) don't hug the top.
+  gtk_widget_set_valign(content,GTK_ALIGN_CENTER);
+  gtk_box_pack_start(GTK_BOX(box),content,TRUE,FALSE,0);
+  return box;
+}
+
+// Hairline vertical rail between modules (accent = teal boundary before Setup).
+static GtkWidget *bar_rail(gboolean accent) {
+  GtkWidget *s=gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+  gtk_widget_set_name(s,accent?"bar-rail-accent":"bar-rail");
+  return s;
+}
+
 static void create_visual(RADIO *r) {
+  // The top row (r->visual) is now an empty spacer: all TX controls and the
+  // toolbar buttons live in a single horizontal bottom bar below the receivers.
   r->visual=gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(r->visual),TRUE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(r->visual),FALSE);
-  gtk_grid_set_row_spacing(GTK_GRID(r->visual),5);
-  gtk_grid_set_column_spacing(GTK_GRID(r->visual),5);
 
-
-  int row=0;
-  int col=0;
+  r->bottom_bar=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+  gtk_widget_set_name(r->bottom_bar,"bottom-bar");
 
   if(r->can_transmit) {
-    gtk_grid_attach(GTK_GRID(r->visual),r->transmitter->panadapter,col,row,1,5);
-    col++;
-    row=0;
+    // Module: TX MONITOR - the small transmit panadapter.
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                       bar_module("TX MONITOR",r->transmitter->panadapter),FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
 
+    // Module: MIC & DRIVE - three stacked meters.
+    GtkWidget *slider_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+    r->mic_level=create_mic_level(radio->transmitter);
+    gtk_box_pack_start(GTK_BOX(slider_col),r->mic_level,FALSE,FALSE,0);
+    r->mic_gain=create_mic_gain(radio->transmitter);
+    gtk_box_pack_start(GTK_BOX(slider_col),r->mic_gain,FALSE,FALSE,0);
+    r->drive_level=create_drive_level(radio->transmitter);
+    gtk_box_pack_start(GTK_BOX(slider_col),r->drive_level,FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                       bar_module("MIC & DRIVE",slider_col),FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+
+    // Module: TRANSMIT - MOX / VOX / Tune.
+    GtkWidget *tx_btn_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
     r->mox_button=gtk_toggle_button_new_with_label("MOX");
     gtk_widget_set_name(r->mox_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->mox_button)),"circular");
     g_signal_connect(r->mox_button,"toggled",G_CALLBACK(mox_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mox_button,col,row,1,1);
-    row++;
+    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->mox_button,FALSE,FALSE,0);
 
     r->vox_button=gtk_toggle_button_new_with_label("VOX");
     gtk_widget_set_name(r->vox_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->vox_button)),"circular");
     g_signal_connect(r->vox_button,"toggled",G_CALLBACK(vox_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->vox_button,col,row,1,1);
-    row++;
-
-    r->mic_level=create_mic_level(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mic_level,col,row,3,1);
-    row++;
-
-    r->mic_gain=create_mic_gain(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mic_gain,col,row,3,1);
-    row++;
-
-    r->drive_level=create_drive_level(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->drive_level,col,row,3,1);
-
-    col++;
-    row=0;
+    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->vox_button,FALSE,FALSE,0);
 
     r->tune_button=gtk_toggle_button_new_with_label("Tune");
     gtk_widget_set_name(r->tune_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->tune_button)),"circular");
     g_signal_connect(r->tune_button,"toggled",G_CALLBACK(tune_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->tune_button,col,row,1,1);
-    row++;
+    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->tune_button,FALSE,FALSE,0);
 
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                       bar_module("TRANSMIT",tx_btn_col),FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
   }
 
-  GtkWidget *configure=gtk_button_new_with_label("Configure");
-  gtk_widget_set_name(configure,"vfo-button");
-  //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(configure)),"circular");
-  g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
-  gtk_grid_attach(GTK_GRID(r->visual),configure,col,row,1,1);
+  // Module: RX FRONT-END - Preamp / Att10 / Att20 (ADC 0).
+  GtkWidget *adc_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
 
-  col++;
-  row=0;
+  GtkWidget *preamp_button=gtk_toggle_button_new_with_label("Preamp");
+  gtk_widget_set_name(preamp_button,"toolbar-button");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(preamp_button),radio->adc[0].preamp);
+  g_signal_connect(preamp_button,"toggled",G_CALLBACK(adc_preamp_cb),&radio->adc[0]);
+  gtk_box_pack_start(GTK_BOX(adc_col),preamp_button,FALSE,FALSE,0);
+
+  GtkWidget *att10_button=gtk_toggle_button_new_with_label("Att10");
+  gtk_widget_set_name(att10_button,"toolbar-button");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att10_button),radio->adc[0].att10);
+  g_signal_connect(att10_button,"toggled",G_CALLBACK(adc_att10_cb),&radio->adc[0]);
+  gtk_box_pack_start(GTK_BOX(adc_col),att10_button,FALSE,FALSE,0);
+
+  GtkWidget *att20_button=gtk_toggle_button_new_with_label("Att20");
+  gtk_widget_set_name(att20_button,"toolbar-button");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att20_button),radio->adc[0].att20);
+  g_signal_connect(att20_button,"toggled",G_CALLBACK(adc_att20_cb),&radio->adc[0]);
+  gtk_box_pack_start(GTK_BOX(adc_col),att20_button,FALSE,FALSE,0);
+
+  gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                     bar_module("RX FRONT-END",adc_col),FALSE,FALSE,0);
+
+  // Module: SETUP - Configure / Add Receiver / Add Wideband.
+  GtkWidget *tool_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
+
+  GtkWidget *configure=gtk_button_new_with_label("Configure");
+  gtk_widget_set_name(configure,"toolbar-button");
+  g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(tool_col),configure,FALSE,FALSE,0);
 
   if(r->discovered->supported_receivers>1) {
     add_receiver_b=gtk_button_new_with_label("Add Receiver");
-    gtk_widget_set_name(add_receiver_b,"vfo-button");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(add_receiver_b)),"circular");
+    gtk_widget_set_name(add_receiver_b,"toolbar-button");
     g_signal_connect(add_receiver_b,"clicked",G_CALLBACK(add_receiver_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),add_receiver_b,col,row,1,1);
+    gtk_box_pack_start(GTK_BOX(tool_col),add_receiver_b,FALSE,FALSE,0);
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
@@ -1257,24 +1446,23 @@ static void create_visual(RADIO *r) {
         gtk_widget_set_sensitive(add_receiver_b, FALSE);
       }
     }
-    row++;
   }
 
 #ifdef SOAPYSDR
   if(r->discovered->protocol!=PROTOCOL_SOAPYSDR) {
 #endif
     add_wideband_b=gtk_button_new_with_label("Add Wideband");
-    gtk_widget_set_name(add_wideband_b,"vfo-button");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(add_wideband_b)),"circular");
+    gtk_widget_set_name(add_wideband_b,"toolbar-button");
     g_signal_connect(add_wideband_b,"clicked",G_CALLBACK(add_wideband_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),add_wideband_b,col,row,1,1);
-    col++;
+    gtk_box_pack_start(GTK_BOX(tool_col),add_wideband_b,FALSE,FALSE,0);
 #ifdef SOAPYSDR
   }
 #endif
 
-  col++;
-  row=0;
+  // Setup module pinned to the right edge, teal accent rail to its left.
+  // pack_end order: Setup first -> far right; rail next -> immediately left of it.
+  gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col),FALSE,FALSE,0);
+  gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_rail(TRUE),FALSE,FALSE,0);
 
   gtk_widget_show_all(r->visual);
 
@@ -1382,7 +1570,6 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     r->can_transmit=r->discovered->info.soapy.tx_channels>0;
   }
 #endif
-
   r->mox=FALSE;
   r->tune=FALSE;
   r->vox=FALSE;
@@ -1551,11 +1738,26 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
   create_audio(r->which_audio_backend,r->which_audio==USE_SOUNDIO?audio_get_backend_name(r->which_audio_backend):NULL);
 
+  r->rx_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_set_vexpand(r->rx_container, TRUE);
+  gtk_widget_set_hexpand(r->rx_container, TRUE);
+  r->rx_paned_restore=TRUE;  // first stack balance restores saved divider positions
+
   add_receivers(r);
+
+  // Receivers are now loaded (possibly already at the max, e.g. restored from
+  // saved properties), so set the Add Receiver button sensitivity to match.
+  // The button only exists when supported_receivers>1; leave HL2-with-xvtr as-is.
+  if(r->discovered->supported_receivers>1 && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
+    gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
+  }
+
+  radio_rebuild_rx_stack(r);
 
   switch(r->discovered->protocol) {
     case PROTOCOL_1:
     case PROTOCOL_2:
+    case PROTOCOL_FAKE:
       add_transmitter(r);
       break;
 #ifdef SOAPYSDR
@@ -1576,6 +1778,9 @@ g_print("create_radio for %s %d\n",d->name,d->device);
       break;
     case PROTOCOL_2:
       protocol2_init(r);
+      break;
+    case PROTOCOL_FAKE:
+      fake_protocol_init(r);
       break;
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
