@@ -220,10 +220,24 @@ static gboolean info_timeout(gpointer arg) {
 #endif
 }
 
-//static void enable_cb(GtkWidget *widget, gpointer data) {
-//  TRANSMITTER *tx=(TRANSMITTER *)data;
-//  transmitter_set_ps(tx,gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget)));
-//}
+static void enable_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+    // PureSignal needs free receiver slots for the TX/RX feedback channels.
+    if(radio->receivers <= (radio->discovered->ps_tx_fdbk_chan - 1)) {
+      transmitter_set_ps(tx,1);
+      tx->puresignal_enabled=TRUE;
+    } else {
+      // Too many open receivers — undo the toggle without re-entering this cb.
+      g_signal_handlers_block_by_func(widget,G_CALLBACK(enable_cb),tx);
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(widget),FALSE);
+      g_signal_handlers_unblock_by_func(widget,G_CALLBACK(enable_cb),tx);
+    }
+  } else {
+    transmitter_set_ps(tx,0);
+    tx->puresignal_enabled=FALSE;
+  }
+}
 
 static void twotone_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
@@ -257,10 +271,10 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_container_add(GTK_CONTAINER(ps_frame),ps_grid);
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
 
-  //GtkWidget *enable_b=gtk_check_button_new_with_label("Enable PS");
-  //gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->puresignal_enabled);
-  //g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),tx);
-  //gtk_grid_attach(GTK_GRID(ps_grid),enable_b,0,0,1,1);
+  GtkWidget *enable_b=gtk_check_button_new_with_label("Enable PureSignal");
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->puresignal_enabled);
+  g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),tx);
+  gtk_grid_attach(GTK_GRID(ps_grid),enable_b,0,0,1,1);
 
   GtkWidget *twotone_b=gtk_check_button_new_with_label("Two Tone");
   g_signal_connect(twotone_b,"toggled",G_CALLBACK(twotone_cb),tx);
@@ -270,6 +284,16 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   g_signal_connect (tx->ps,"configure-event",G_CALLBACK(ps_configure_event_cb),(gpointer)tx);
   g_signal_connect (tx->ps,"draw",G_CALLBACK(ps_draw_cb),(gpointer)tx);
   gtk_grid_attach(GTK_GRID(ps_grid),tx->ps,0,1,8,8);
+
+  // Honest disclaimer: this PureSignal path is an unfinished prototype.
+  GtkWidget *note=gtk_label_new(NULL);
+  gtk_label_set_markup(GTK_LABEL(note),
+    "<small><i>Note: PureSignal here is an unfinished prototype — Protocol 1 only, "
+    "and its peak calibration is tuned mainly for the Hermes-Lite 2. "
+    "It has not been verified on hardware in this fork; use at your own risk.</i></small>");
+  gtk_label_set_line_wrap(GTK_LABEL(note),TRUE);
+  gtk_label_set_xalign(GTK_LABEL(note),0.0);
+  gtk_grid_attach(GTK_GRID(grid),note,0,row++,2,1);
 
   return grid;
 }

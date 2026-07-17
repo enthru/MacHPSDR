@@ -57,11 +57,17 @@
 
 #define INFO_SIZE 16
 
+// Runtime PureSignal debug flag (declared in puresignal.h). Off by default so
+// the diagnostic logging below stays silent unless explicitly enabled.
+int ps_debug = 0;
+
 static gboolean info_timer_cb(void *data) {
-  PSIGNAL *ps=(PSIGNAL *)data; 
+  PSIGNAL *ps=(PSIGNAL *)data;
+
+  if (!ps_debug) return TRUE;
 
   g_print("**********************************\n");
-  
+
   static int info[INFO_SIZE];
   
   GetPSInfo(radio->transmitter->channel, &info[0]);
@@ -154,7 +160,7 @@ void ps_change_tx_attenuation(PSIGNAL *ps, int att_diff) {
     new_att = radio->transmitter->attenuation + att_diff;
   }
   
-  g_print("att_diff %i New %i old %i \n", att_diff, new_att, ps->attenuation);
+  PS_DEBUG("att_diff %i New %i old %i \n", att_diff, new_att, ps->attenuation);
   // Limit range of new attenuation value
   if (new_att < 0) {
     new_att = 0;
@@ -164,7 +170,7 @@ void ps_change_tx_attenuation(PSIGNAL *ps, int att_diff) {
   }
  
   if (new_att != ps->attenuation) {
-    g_print("New att\n");
+    PS_DEBUG("New att\n");
     SetPSControl(radio->transmitter->channel, 1, 0, 0, 0);
 
     if (radio->hl2 != NULL) {
@@ -191,7 +197,15 @@ int ps_get_tx_attenuation(PSIGNAL *ps) {
 
 PSIGNAL *create_puresignal(void) {
   PSIGNAL *ps = g_new0(PSIGNAL, 1);
-  g_print("----------------------Create new puresignal\n");
+
+  // Enable PureSignal diagnostics if the LINHPSDR_PS_DEBUG env var is set
+  // (any value). Off unless the user opts in, so no rebuild is needed to
+  // turn the logging on/off.
+  if (g_getenv("LINHPSDR_PS_DEBUG") != NULL) {
+    ps_debug = 1;
+  }
+
+  PS_DEBUG("----------------------Create new puresignal\n");
   ps->ints = 16;
   ps->spi = 256;
   ps->stbl = 0;
@@ -218,7 +232,10 @@ PSIGNAL *create_puresignal(void) {
   SetPSTXDelay(radio->transmitter->channel, ps->amp_delay);
   SetPSLoopDelay(radio->transmitter->channel, ps->loop_delay);
 
-  //ps->info_timer_id = g_timeout_add(500, info_timer_cb,(gpointer)ps);
+  // Periodic status dump; only started when PS debug logging is enabled.
+  if (ps_debug) {
+    ps->info_timer_id = g_timeout_add(500, info_timer_cb,(gpointer)ps);
+  }
 
   // TODO this value is only valid for the HL2
   double set_peak = 0.4067;

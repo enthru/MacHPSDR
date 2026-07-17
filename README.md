@@ -96,6 +96,18 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     elsewhere.
 41) RDS/RBDS programme-type names are selectable in Configure → Misc → "Broadcast FM
     (WFM)" (Europe vs North America); the choice is saved.
+42) PureSignal (adaptive predistortion, Protocol 1) now builds cleanly and is
+    enabled in the default Makefile again. It is switched on with an "Enable
+    PureSignal" checkbox on the Configure → "Pure Signal" panel (the old "PS"
+    button in the VFO row has been removed); that panel also carries a note that
+    the feature is an unfinished prototype. Its verbose diagnostics (including a
+    per-TX-sample feedback trace
+    and the 500 ms status dump) are now gated behind a single flag `ps_debug`,
+    which defaults to off — no console spam unless you turn it on. Enable the
+    logging by starting linhpsdr with the environment variable
+    `LINHPSDR_PS_DEBUG=1` (any value works). Note: PureSignal remains an
+    unfinished prototype (Protocol 1 only, peak values calibrated mainly for the
+    Hermes-Lite 2).
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

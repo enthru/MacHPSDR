@@ -723,7 +723,7 @@ static void process_ozy_byte(int b) {
           fbk_right_sample_double = right_sample_double;
         } else {
           // Must be pre-DAC TX feedback
-          if (nreceiver != 3) g_print("RX %i: add ps samples\n", nreceiver);
+          if (nreceiver != 3) PS_DEBUG("RX %i: add ps samples\n", nreceiver);
           add_ps_iq_samples(radio->transmitter, left_sample_double, right_sample_double, fbk_left_sample_double, fbk_right_sample_double);
         }                                                            
       }
