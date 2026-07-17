@@ -37,6 +37,7 @@
 #include "dac.h"
 #include "radio.h"
 #include "settings_ui.h"
+#include "css.h"
 #include "main.h"
 #include "protocol1.h"
 #include "protocol2.h"
@@ -61,6 +62,14 @@ static int info[INFO_SIZE];
 static int save_ps_auto;
 static int save_ps_single;
 
+// Set the Cairo source to a skin palette color, falling back to the given RGB
+// if the active skin has no such name (see css.c / css_rgb).
+static void ps_source(cairo_t *cr, const char *name, double fr, double fg, double fb) {
+  double r=fr,g=fg,b=fb;
+  css_rgb(name,&r,&g,&b);
+  cairo_set_source_rgb(cr,r,g,b);
+}
+
 static gboolean ps_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   gint width=gtk_widget_get_allocated_width(widget);
@@ -72,7 +81,7 @@ static gboolean ps_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event
 
   cairo_t *cr;
   cr = cairo_create (tx->ps_surface);
-  cairo_set_source_rgb (cr, 0.16, 0.16, 0.19); // @SURFACE, matches config-dialog theme
+  ps_source(cr, "SURFACE", 0.16, 0.16, 0.19); // matches config-dialog theme
   cairo_paint (cr);
   cairo_destroy(cr);
   return TRUE;
@@ -93,24 +102,24 @@ static void update_ps(TRANSMITTER *tx,double pk) {
 
   if(tx->ps_surface!=NULL) {
     cr=cairo_create (tx->ps_surface);
-    cairo_set_source_rgb(cr,0.16,0.16,0.19); // @SURFACE background
+    ps_source(cr,"SURFACE",0.16,0.16,0.19); // skin surface background
     cairo_paint(cr);
 
     cairo_set_font_size(cr,12);
     if(info[FEEDBACK]>181)  {
-      cairo_set_source_rgb(cr,0.89,0.89,0.91); // @OFF_WHITE (was black, invisible on dark)
+      ps_source(cr,"OFF_WHITE",0.89,0.89,0.91); // good feedback level
     } else if(info[FEEDBACK]>128)  {
-      cairo_set_source_rgb(cr,0.0,1.0,0.0);
+      ps_source(cr,"ACCENT_A",0.0,1.0,0.0);
     } else if(info[FEEDBACK]>90)  {
-      cairo_set_source_rgb(cr,0.0,1.0,1.0);
+      ps_source(cr,"INFO_ON",0.0,1.0,1.0);
     } else {
-      cairo_set_source_rgb(cr,1.0,0.0,0.0);
+      ps_source(cr,"WARNING",1.0,0.0,0.0);   // too low
     }
     cairo_move_to(cr,5,12);
     sprintf(text,"Feedback Level: %d",info[FEEDBACK]);
     cairo_show_text(cr,text);
 
-    cairo_set_source_rgb(cr,0.89,0.89,0.91); // @OFF_WHITE
+    ps_source(cr,"OFF_WHITE",0.89,0.89,0.91);
 
     cairo_move_to(cr,5,24);
     sprintf(text,"Correction Count: %d",info[COR_CNT]);

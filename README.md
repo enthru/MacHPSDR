@@ -122,8 +122,44 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     Protocol-1 only and is not wired to the Soapy TX stream). PureSignal is also not
     applicable here — it needs a feedback receiver running alongside TX, which this
     single-receiver half-duplex path cannot provide.
+44) Skins for the main window. The whole colour scheme of the main window and the
+    Configure dialog is now driven by a swappable palette, selectable in Configure →
+    Misc → "Appearance" → Skin. Five skins ship: Charcoal (the original dark look),
+    Solarized Dark, Solarized Light, Nord and Gruvbox Dark. The choice applies
+    immediately and is remembered per radio. A light skin works properly because
+    text drawn on top of accent-coloured fills (checked buttons, warnings) uses a
+    dedicated always-light colour, separate from the ordinary body-text colour that
+    turns dark on light skins. The panadapter/waterfall keep their own (dark)
+    background; their grid lines and labels do follow the skin.
+    The skin now also drives the Cairo-drawn widgets that ignore CSS: the
+    S-meter, the TX-monitor level box, the MIC/DRIVE bars and the PureSignal
+    info panel. These previously used hard-coded (dark) colours and looked like
+    black boxes on a light skin; they now read the active palette through a
+    small css_rgb() accessor (parsed from the same palette strings, so CSS and
+    Cairo never disagree). The Charcoal palette reproduces the original numbers,
+    so the default look is unchanged. Widgets that redraw every frame (S-meter,
+    mic/drive bars) recolour themselves on a skin change; the TX "monitor"
+    panadapter is idle unless transmitting, so it is repainted explicitly when
+    the skin changes (its background/dBm scale now follow the skin too, instead
+    of being fixed dark).
     Status: implemented but NOT yet tested on hardware — to be verified on a
     real HackRF later.
+45) Interface polish built on the skin system:
+    - Spectrum trace: the area under the curve now fades from the trace colour
+      down to transparent (instead of a flat fill), with a soft glow under the
+      line. The default trace colour follows the skin's accent; explicit
+      single-colour choices are kept and also get the gradient/glow.
+    - Dark panels follow the skin: the panadapter and TX monitor backgrounds use
+      a per-skin SPECTRUM_BG (kept dark on every skin — e.g. Solarized Light maps
+      it to a Solarized-dark tone) so they read as intentional inset panels
+      rather than black boxes, and text on them uses an always-light colour.
+    - Frequency display: leading zeros are dimmed so the eye lands on the
+      significant digits, and the VFO A/B colours now come from the skin accents
+      (previously hard-coded).
+    - S-meter: dimmed minor ticks with bright major ticks, a themed-accent
+      needle with a pivot hub, and a red S9+ overload arc.
+    Status: implemented, builds clean; visual look still to be eyeballed on the
+    running app.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

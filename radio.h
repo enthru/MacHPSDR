@@ -222,6 +222,8 @@ typedef struct _radio {
   char att10_label[32];
   char att20_label[32];
 
+  int theme;   // main-window skin index (see css.c); 0 = Charcoal (default)
+
   GtkWidget *dialog;
   
   GtkWidget *txmeter_info;
@@ -277,6 +279,7 @@ extern void radio_rebuild_rx_stack(RADIO *r);
 extern void add_transmitter(RADIO *r);
 extern void radio_save_state(RADIO *radio);
 extern void radio_restore_state(RADIO *radio);
+extern void radio_refresh_skin(RADIO *radio);
 extern void delete_wideband(WIDEBAND *w);
 extern void vox_changed(RADIO *r);
 extern void ptt_changed(RADIO *r);

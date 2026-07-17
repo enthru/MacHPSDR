@@ -32,6 +32,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "css.h"
 #include "band.h"
 #include "main.h"
 #include "vfo.h"
@@ -1854,9 +1855,38 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   return v->vfo;
 }
 
+// Format an active-skin palette color as "#rrggbb" (fallback if name unknown).
+static void skin_hex(const char *name, char *out, const char *fallback) {
+  double r,g,b;
+  if(css_rgb(name,&r,&g,&b)) {
+    sprintf(out,"#%02x%02x%02x",(int)(r*255.0+0.5),(int)(g*255.0+0.5),(int)(b*255.0+0.5));
+  } else {
+    g_strlcpy(out,fallback,8);
+  }
+}
+
+// Pango markup for a frequency string with its leading zeros drawn in a dim
+// colour, so the eye lands on the significant digits (a classic radio look).
+// s contains only digits and '.', so no markup escaping is needed.
+static char *freq_markup(const char *s, const char *bright, const char *dim) {
+  int n=(int)strlen(s), cut=0;
+  while(cut<n && (s[cut]=='0' || s[cut]=='.')) cut++;
+  if(cut>=n) cut=0;   // all-zero frequency: don't dim everything
+  char pre[32];
+  g_strlcpy(pre,s,cut+1);
+  return g_markup_printf_escaped(
+    "<span foreground=\"%s\">%s</span><span foreground=\"%s\">%s</span>",
+    dim,pre,bright,s+cut);
+}
+
 void update_vfo(RECEIVER *rx) {
   char temp[32];
   char *markup;
+  char accent_a[8],accent_b[8],dim_col[8],tx_col[8];
+  skin_hex("ACCENT_A",accent_a,"#A3CCD1");
+  skin_hex("ACCENT_B",accent_b,"#ED9D80");
+  skin_hex("DARK_TEXT",dim_col,"#5A5A5A");
+  skin_hex("WARNING",tx_col,"#D94545");
 
   if(rx->vfo==NULL) return;
 
@@ -1871,9 +1901,9 @@ void update_vfo(RECEIVER *rx) {
 
   sprintf(temp,"%05lld.%03lld.%03lld",af/(long long)1000000,(af%(long long)1000000)/(long long)1000,af%(long long)1000);
   if(radio!=NULL && radio->transmitter!=NULL && rx==radio->transmitter->rx && radio->transmitter->rx->split==SPLIT_OFF && isTransmitting(radio)) {
-    markup=g_markup_printf_escaped("<span foreground=\"#D94545\">%s</span>",temp);
+    markup=freq_markup(temp,tx_col,dim_col);
   } else {
-    markup=g_markup_printf_escaped("<span foreground=\"#A3CCD1\">%s</span>",temp);
+    markup=freq_markup(temp,accent_a,dim_col);
   }
   gtk_label_set_markup(GTK_LABEL(v->frequency_a_text),markup);
 
@@ -1888,9 +1918,9 @@ void update_vfo(RECEIVER *rx) {
   long long bf=rx->frequency_b;
   sprintf(temp,"%05lld.%03lld.%03lld",bf/(long long)1000000,(bf%(long long)1000000)/(long long)1000,bf%(long long)1000);
   if(radio!=NULL && radio->transmitter!=NULL && rx==radio->transmitter->rx && radio->transmitter->rx->split!=SPLIT_OFF && isTransmitting(radio)) {
-    markup=g_markup_printf_escaped("<span foreground=\"#D94545\">%s</span>",temp);
+    markup=freq_markup(temp,tx_col,dim_col);
   } else {
-    markup=g_markup_printf_escaped("<span foreground=\"#ED9D80\">%s</span>",temp);
+    markup=freq_markup(temp,accent_b,dim_col);
   }
   gtk_label_set_markup(GTK_LABEL(v->frequency_b_text),markup);
 

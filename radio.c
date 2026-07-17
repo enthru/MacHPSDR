@@ -60,6 +60,7 @@
 #include "drive_level.h"
 #include "frequency.h"
 #include "property.h"
+#include "css.h"
 //#include "rigctl.h"
 #include "receiver_dialog.h"
 #include "subrx.h"
@@ -120,6 +121,18 @@ fprintf(stderr,"radio_start\n");
     update_tx_panadapter(r);
   }
   return 0;
+}
+
+// Repaint the Cairo-drawn surfaces that cache their background and are NOT on a
+// continuous refresh timer, so a live skin change shows up right away. The RX
+// panadapter/waterfall/S-meter/mic-drive bars redraw every frame while running
+// and pick up the new palette on their own; the TX "monitor" panadapter is idle
+// unless transmitting, so it has to be repainted explicitly.
+void radio_refresh_skin(RADIO *r) {
+  if(r==NULL) return;
+  if(r->transmitter!=NULL && r->transmitter->panadapter_surface!=NULL) {
+    update_tx_panadapter(r);
+  }
 }
 
 void radio_save_state(RADIO *radio) {
@@ -229,6 +242,8 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.linein_gain",value);
   setProperty("radio.att10_label",radio->att10_label);
   setProperty("radio.att20_label",radio->att20_label);
+  sprintf(value,"%d",radio->theme);
+  setProperty("radio.theme",value);
 
   for(int i=0;i<radio->discovered->adcs;i++) {
     sprintf(name,"radio.adc[%d].filters",i);
@@ -528,6 +543,9 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att10_label,value,sizeof(radio->att10_label));
   value=getProperty("radio.att20_label");
   if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att20_label,value,sizeof(radio->att20_label));
+  value=getProperty("radio.theme");
+  if(value!=NULL) radio->theme=atoi(value);
+  css_set_theme(radio->theme);   // apply the saved skin to the (already-built) UI
   value=getProperty("radio.filter_board");
   if(value!=NULL) radio->filter_board=atoi(value);
   value=getProperty("radio.region");
@@ -1864,6 +1882,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
   strcpy(r->att10_label,"Att10");
   strcpy(r->att20_label,"Att20");
+  r->theme=0;   // Charcoal
 
 #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {

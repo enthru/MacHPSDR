@@ -50,7 +50,7 @@ static gboolean tx_info_meter_configure_event_cb(GtkWidget *widget, GdkEventConf
     
     cairo_t *cr;
     cr = cairo_create(tx_meter->tx_info_meter_surface);
-    cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+    SetColour(cr, BACKGROUND);
     cairo_paint (cr);
     cairo_destroy(cr);
   }  

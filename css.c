@@ -1,17 +1,119 @@
 #include <gtk/gtk.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "css.h"
 
-char *css=
+// ---------------------------------------------------------------------------
+// Skins for the main window.
+//
+// The whole look of the main window (VFO rows, toolbar buttons, bottom bar) and
+// the Configure dialog is driven by a small palette of named colors declared as
+// GTK @define-color at the top of the style sheet.  The rule body below never
+// mentions a concrete color -- it only references those names -- so a "skin" is
+// simply a different palette prepended to the same body.
+//
+// Two text roles are kept apart on purpose so that light skins work too:
+//   OFF_WHITE  - normal body/label text.  Light on dark skins, dark on light.
+//   ON_ACCENT  - text that sits on top of an accent-colored fill (checked
+//                buttons, warnings).  Always kept light, whatever the skin.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  const char *name;
+  const char *palette;
+  gboolean dark;      // ask GTK for the dark variant of stock widgets?
+} THEME;
+
+// ---- Palettes ----
+
+static const char palette_charcoal[]=
 "  @define-color BACKGROUND rgb(9%,9%,10%);\n"
 "  @define-color SURFACE rgb(16%,16%,19%);\n"
 "  @define-color SURFACE_HOVER rgb(24%,24%,28%);\n"
 "  @define-color BORDER rgb(28%,28%,33%);\n"
 "  @define-color OFF_WHITE rgb(89%,89%,91%);\n"
 "  @define-color DARK_TEXT rgb(66%,66%,72%);\n"
+"  @define-color ON_ACCENT rgb(89%,89%,91%);\n"
 "  @define-color ACCENT_A rgb(50%,80%,84%);\n"
 "  @define-color ACCENT_B rgb(93%,62%,50%);\n"
 "  @define-color ACCENT_ON rgb(58%,46%,72%);\n"
 "  @define-color WARNING rgb(85%,27%,27%);\n"
 "  @define-color INFO_ON rgb(15%,58%,60%);\n"
+"  @define-color SPECTRUM_BG rgb(9%,9%,10%);\n";
+
+static const char palette_solarized_dark[]=
+"  @define-color BACKGROUND #002b36;\n"
+"  @define-color SURFACE #073642;\n"
+"  @define-color SURFACE_HOVER #0d4a5a;\n"
+"  @define-color BORDER #35545c;\n"
+"  @define-color OFF_WHITE #eee8d5;\n"
+"  @define-color DARK_TEXT #93a1a1;\n"
+"  @define-color ON_ACCENT #fdf6e3;\n"
+"  @define-color ACCENT_A #2aa198;\n"
+"  @define-color ACCENT_B #cb4b16;\n"
+"  @define-color ACCENT_ON #6c71c4;\n"
+"  @define-color WARNING #dc322f;\n"
+"  @define-color INFO_ON #268bd2;\n"
+"  @define-color SPECTRUM_BG #002b36;\n";
+
+static const char palette_solarized_light[]=
+"  @define-color BACKGROUND #fdf6e3;\n"
+"  @define-color SURFACE #eee8d5;\n"
+"  @define-color SURFACE_HOVER #e0d9c3;\n"
+"  @define-color BORDER #c9c2ad;\n"
+"  @define-color OFF_WHITE #073642;\n"
+"  @define-color DARK_TEXT #657b83;\n"
+"  @define-color ON_ACCENT #fdf6e3;\n"
+"  @define-color ACCENT_A #2aa198;\n"
+"  @define-color ACCENT_B #cb4b16;\n"
+"  @define-color ACCENT_ON #6c71c4;\n"
+"  @define-color WARNING #dc322f;\n"
+"  @define-color INFO_ON #268bd2;\n"
+"  @define-color SPECTRUM_BG #002b36;\n";
+
+static const char palette_nord[]=
+"  @define-color BACKGROUND #2e3440;\n"
+"  @define-color SURFACE #3b4252;\n"
+"  @define-color SURFACE_HOVER #434c5e;\n"
+"  @define-color BORDER #4c566a;\n"
+"  @define-color OFF_WHITE #eceff4;\n"
+"  @define-color DARK_TEXT #b8c0d0;\n"
+"  @define-color ON_ACCENT #eceff4;\n"
+"  @define-color ACCENT_A #88c0d0;\n"
+"  @define-color ACCENT_B #d08770;\n"
+"  @define-color ACCENT_ON #5e81ac;\n"
+"  @define-color WARNING #bf616a;\n"
+"  @define-color INFO_ON #8fbcbb;\n"
+"  @define-color SPECTRUM_BG #242933;\n";
+
+static const char palette_gruvbox_dark[]=
+"  @define-color BACKGROUND #282828;\n"
+"  @define-color SURFACE #3c3836;\n"
+"  @define-color SURFACE_HOVER #504945;\n"
+"  @define-color BORDER #665c54;\n"
+"  @define-color OFF_WHITE #ebdbb2;\n"
+"  @define-color DARK_TEXT #a89984;\n"
+"  @define-color ON_ACCENT #fbf1c7;\n"
+"  @define-color ACCENT_A #8ec07c;\n"
+"  @define-color ACCENT_B #fe8019;\n"
+"  @define-color ACCENT_ON #b16286;\n"
+"  @define-color WARNING #cc241d;\n"
+"  @define-color INFO_ON #458588;\n"
+"  @define-color SPECTRUM_BG #1d2021;\n";
+
+static const THEME themes[]={
+  { "Charcoal",        palette_charcoal,        TRUE  },
+  { "Solarized Dark",  palette_solarized_dark,  TRUE  },
+  { "Solarized Light", palette_solarized_light, FALSE },
+  { "Nord",            palette_nord,            TRUE  },
+  { "Gruvbox Dark",    palette_gruvbox_dark,    TRUE  },
+};
+static const int n_themes=(int)(sizeof(themes)/sizeof(themes[0]));
+
+// ---- Rule body (palette-independent) ----
+
+static const char css_body[]=
 "  #receiver-window {\n"
 "    background-image: none;\n"
 "    background-color: @BACKGROUND;\n"
@@ -81,7 +183,7 @@ char *css=
 "  #toolbar-button:disabled {\n"
 "    background-image: none;\n"
 "    background-color: @BACKGROUND;\n"
-"    color: rgb(36%,36%,40%);\n"
+"    color: alpha(@DARK_TEXT,0.55);\n"
 "    opacity: 0.55;\n"
 "    box-shadow: none;\n"
 "    }\n"
@@ -177,7 +279,7 @@ char *css=
 "    min-height: 16px;\n"
 "    background-image: none;\n"
 "    background-color: @ACCENT_ON;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  #vfo-toggle:checked {\n"
@@ -196,7 +298,7 @@ char *css=
 "    min-height: 16px;\n"
 "    background-image: none;\n"
 "    background-color: @ACCENT_ON;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  .label {\n"
@@ -214,23 +316,6 @@ char *css=
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    color: @WARNING;\n"
-"    }\n"
-"  #info-button {\n"
-"    border-radius: 5px;\n"
-"    border-style: none;\n"
-"    border-width: 1px;\n"
-"    padding-top: 0px;\n"
-"    padding-right: 0px;\n"
-"    padding-bottom: 0px;\n"
-"    padding-left: 0px;\n"
-"    font-size: small;\n"
-"    margin-top: 0px;\n"
-"    margin-bottom: 0px;\n"
-"    min-height: 0px;\n"
-"    background-image: none;\n"
-"    background-color: @SURFACE;\n"
-"    color: @OFF_WHITE;\n"
-"    box-shadow: none;\n"
 "    }\n"
 "  #rit-value {\n"
 "    color: @OFF_WHITE;\n"
@@ -333,7 +418,7 @@ char *css=
 "    min-height: 16px;\n"
 "    background-image: none;\n"
 "    background-color: @WARNING;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  #info-button {\n"
@@ -390,7 +475,7 @@ char *css=
 "    min-height: 16px;\n"
 "    background-image: none;\n"
 "    background-color: @INFO_ON;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  #transmit-warning {\n"
@@ -428,7 +513,7 @@ char *css=
 "    min-height: 22px;\n"
 "    background-image: none;\n"
 "    background-color: @WARNING;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  #vfo-close {\n"
@@ -456,7 +541,7 @@ char *css=
 "  #vfo-close:hover {\n"
 "    background-image: none;\n"
 "    background-color: @WARNING;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    border-color: @WARNING;\n"
 "    box-shadow: none;\n"
 "    }\n"
@@ -473,7 +558,7 @@ char *css=
 "    min-height: 22px;\n"
 "    background-image: none;\n"
 "    background-color: @ACCENT_ON;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    box-shadow: none;\n"
 "    }\n"
 "  #bottom-bar {\n"
@@ -487,7 +572,7 @@ char *css=
 "    font-family: Noto Sans;\n"
 "    font-size: 10px;\n"
 "    font-weight: bold;\n"
-"    color: rgb(46%,46%,52%);\n"
+"    color: @DARK_TEXT;\n"
 "    margin-left: 2px;\n"
 "    }\n"
 "  #rds-text {\n"
@@ -615,7 +700,7 @@ char *css=
 "    }\n"
 "  #config-dialog button:checked, #config-dialog button:active {\n"
 "    background-color: @ACCENT_ON;\n"
-"    color: @OFF_WHITE;\n"
+"    color: @ON_ACCENT;\n"
 "    border-color: @ACCENT_ON;\n"
 "    }\n"
 "  #config-dialog entry, #config-dialog spinbutton {\n"
@@ -673,26 +758,115 @@ char *css=
 "    }\n"
 ;
 
+// ---- Runtime ----
+
+static GtkCssProvider *css_provider=NULL;
+static int current_theme=0;
+
+// ---- Numeric palette cache -------------------------------------------------
+// Cairo-drawn widgets (S-meter, TX monitor, mic/drive bars, PureSignal panel)
+// cannot read the CSS, so we parse the active palette's @define-color values
+// into numbers once per skin change and hand them out via css_rgb(). This keeps
+// a single source of truth: the same palette strings feed both CSS and Cairo.
+
+typedef struct { char name[24]; double r,g,b; } SKIN_RGB;
+static SKIN_RGB rgb_cache[16];
+static int rgb_n=0;
+
+static void parse_palette(const char *pal) {
+  rgb_n=0;
+  const char *p=pal;
+  while((p=strstr(p,"@define-color"))!=NULL && rgb_n<(int)(sizeof(rgb_cache)/sizeof(rgb_cache[0]))) {
+    p+=strlen("@define-color");
+    while(*p==' ') p++;
+    char name[24]; int i=0;
+    while(*p && *p!=' ' && i<23) name[i++]=*p++;
+    name[i]='\0';
+    while(*p==' ') p++;
+    double r=0,g=0,b=0;
+    if(*p=='#') {
+      unsigned v=0;
+      if(sscanf(p+1,"%6x",&v)==1) {
+        r=((v>>16)&0xff)/255.0; g=((v>>8)&0xff)/255.0; b=(v&0xff)/255.0;
+      }
+    } else if(strncmp(p,"rgb",3)==0) {
+      const char *q=strchr(p,'(');
+      if(q!=NULL) {
+        q++;
+        double vals[3]={0,0,0};
+        for(int k=0;k<3 && *q!='\0' && *q!=')';k++) {
+          char *end;
+          double val=strtod(q,&end);
+          q=end;
+          while(*q==' ') q++;
+          if(*q=='%') { val/=100.0; q++; } else { val/=255.0; }
+          while(*q==',' || *q==' ') q++;
+          vals[k]=val;
+        }
+        r=vals[0]; g=vals[1]; b=vals[2];
+      }
+    }
+    g_strlcpy(rgb_cache[rgb_n].name,name,sizeof(rgb_cache[rgb_n].name));
+    rgb_cache[rgb_n].r=r; rgb_cache[rgb_n].g=g; rgb_cache[rgb_n].b=b;
+    rgb_n++;
+  }
+}
+
+// Fill *r,*g,*b (0..1) with the active skin's color for a palette name
+// (e.g. "BACKGROUND","ACCENT_A"). Leaves them untouched and returns FALSE if the
+// name is unknown, so callers can pass in a fallback color first.
+gboolean css_rgb(const char *name, double *r, double *g, double *b) {
+  if(rgb_n==0) parse_palette(themes[current_theme].palette);  // before load_css()
+  for(int i=0;i<rgb_n;i++) {
+    if(strcmp(rgb_cache[i].name,name)==0) {
+      *r=rgb_cache[i].r; *g=rgb_cache[i].g; *b=rgb_cache[i].b;
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+int css_theme_count(void) { return n_themes; }
+
+const char *css_theme_name(int idx) {
+  if(idx<0 || idx>=n_themes) return "";
+  return themes[idx].name;
+}
+
+int css_get_theme(void) { return current_theme; }
+
+// Rebuild the full style sheet (selected palette + shared body) and push it into
+// the one application-wide provider. Safe to call at any time; the main window
+// and any open dialog restyle live.
+void css_set_theme(int idx) {
+  if(idx<0 || idx>=n_themes) idx=0;
+  current_theme=idx;
+  parse_palette(themes[idx].palette);   // refresh numeric cache for Cairo widgets
+
+  if(css_provider==NULL) return;   // load_css() not run yet
+
+  // Ask GTK for the light/dark variant of stock widgets (combobox popups, menus,
+  // scrollbars, tooltips) so they match the skin.
+  g_object_set(gtk_settings_get_default(),
+               "gtk-application-prefer-dark-theme",themes[idx].dark,NULL);
+
+  char *full=g_strconcat(themes[idx].palette,css_body,NULL);
+  gtk_css_provider_load_from_data(css_provider,full,-1,NULL);
+  g_free(full);
+}
+
 void load_css() {
-  GtkCssProvider *provider;
   GdkDisplay *display;
   GdkScreen *screen;
 
   g_print("%s\n",__FUNCTION__);
 
-  // Ask GTK for the dark variant of the active theme so stock widgets that we
-  // do not paint ourselves (combobox popups, menus, scrollbars, tooltips,
-  // spin buttons in the config dialog) default to dark instead of light.
-  g_object_set(gtk_settings_get_default(),
-               "gtk-application-prefer-dark-theme",TRUE,NULL);
-
-  provider = gtk_css_provider_new ();
+  css_provider = gtk_css_provider_new ();
   display = gdk_display_get_default ();
   screen = gdk_display_get_default_screen (display);
   gtk_style_context_add_provider_for_screen (screen,
-                                             GTK_STYLE_PROVIDER(provider),
+                                             GTK_STYLE_PROVIDER(css_provider),
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  gtk_css_provider_load_from_data(provider, css, -1, NULL);
-  g_object_unref (provider);
+  css_set_theme(current_theme);
 }

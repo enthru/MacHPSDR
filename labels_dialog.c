@@ -27,6 +27,7 @@
 #include "dac.h"
 #include "radio.h"
 #include "settings_ui.h"
+#include "css.h"
 
 // Apply an entry's text to a stored label and update every widget that carries
 // it live: the bottom-bar toolbar button and the check button on the Radio
@@ -65,6 +66,15 @@ static void rds_rbds_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
   radio->rds_rbds=(sel>0)?1:0;   // 0 = RDS (Europe), 1 = RBDS (N. America)
+}
+
+static void theme_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  if(sel<0) sel=0;
+  radio->theme=sel;
+  css_set_theme(sel);         // restyle the CSS chrome live
+  radio_refresh_skin(radio);  // repaint idle Cairo surfaces (e.g. TX monitor)
 }
 
 GtkWidget *create_labels_dialog(RADIO *r) {
@@ -137,7 +147,35 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(fm_grid),pty_combo,1,2,1,1);
   g_signal_connect(pty_combo,"changed",G_CALLBACK(rds_rbds_cb),r);
 
+  // ---- Appearance (main-window skin) ----
+  GtkWidget *skin_frame=gtk_frame_new("Appearance");
+  GtkWidget *skin_grid=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(skin_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(skin_grid),FALSE);
+  gtk_grid_set_column_spacing(GTK_GRID(skin_grid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(skin_grid),5);
+  sui_style_group(skin_grid);
+  gtk_container_add(GTK_CONTAINER(skin_frame),skin_grid);
+
+  GtkWidget *skin_info=gtk_label_new("Color skin for the main window and this dialog.\n"
+                                     "Applied immediately and remembered per radio.");
+  gtk_widget_set_halign(skin_info,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(skin_info,12);
+  gtk_grid_attach(GTK_GRID(skin_grid),skin_info,0,0,2,1);
+
+  GtkWidget *skin_lbl=gtk_label_new("Skin:");
+  gtk_widget_set_halign(skin_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),skin_lbl,0,1,1,1);
+  GtkWidget *skin_combo=gtk_combo_box_text_new();
+  for(int t=0;t<css_theme_count();t++) {
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(skin_combo),NULL,css_theme_name(t));
+  }
+  gtk_combo_box_set_active(GTK_COMBO_BOX(skin_combo),r->theme);
+  gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
+  g_signal_connect(skin_combo,"changed",G_CALLBACK(theme_cb),r);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
+  gtk_box_pack_start(GTK_BOX(vbox),skin_frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),fm_frame,FALSE,FALSE,0);
   return vbox;

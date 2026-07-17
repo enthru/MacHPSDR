@@ -41,11 +41,21 @@
 #include "main.h"
 #include "vfo.h"
 #include "level_meter.h"
+#include "css.h"
 
 #define LINE_WIDTH 1.0
 
 int signal_vertices_size=-1;
 float *signal_vertices=NULL;
+
+// Set the Cairo source to the active skin's spectrum backdrop. Kept dark on
+// every skin (light skins map it to a dark tone of their own palette) so the
+// trace/waterfall stay readable and the panel does not read as a black box.
+static void pan_background(cairo_t *cr) {
+  double r=0.09, g=0.09, b=0.10;
+  css_rgb("SPECTRUM_BG",&r,&g,&b);
+  cairo_set_source_rgb(cr, r, g, b);
+}
 
 static gboolean resize_timeout(void *data) {
   RECEIVER *rx=(RECEIVER *)data;
@@ -394,7 +404,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_fill(cr);
       cairo_pattern_destroy(pat);
     } else {
-      cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
+      pan_background(cr);
       //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
       cairo_rectangle(cr,0,0,display_width,display_height);
       cairo_fill(cr);
@@ -461,7 +471,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     cairo_set_line_width (cr, LINE_WIDTH);
     // plot the levels
     
-    cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
+    pan_background(cr);
     //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
     cairo_rectangle(cr,0,0,40,display_height);
     cairo_fill(cr);    
@@ -491,7 +501,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
     // plot frequency markers
     
-    cairo_set_source_rgb (cr, 0.09, 0.09, 0.10);
+    pan_background(cr);
     cairo_rectangle(cr,0, (rx->panadapter_height-20), display_width, (rx->panadapter_height));
     cairo_fill(cr);        
 
@@ -713,55 +723,40 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         
    }
     else {
+      // Base trace colour: the user's single-colour choice, or -- for the
+      // default -- the active skin's accent, so the spectrum matches the theme.
+      double sr=0.804, sg=0.635, sb=0.859;
+      switch(rx->panadapter_single_color) {
+        case 2: sr=0.769; sg=0.117; sb=0.227; break; // red
+        case 3: sr=1.0;   sg=0.459; sb=0.095; break; // orange
+        case 4: sr=1.0;   sg=0.850; sb=0.0;   break; // yellow
+        case 5: sr=0.133; sg=0.545; sb=0.133; break; // green
+        case 6: sr=0.0;   sg=0.184; sb=0.655; break; // blue
+        case 7: sr=0.4;   sg=0.0;   sb=0.6;   break; // violet
+        case 8: sr=0.90;  sg=0.0;   sb=0.90;  break; // magenta
+        case 9: sr=0.0;   sg=0.9;   sb=0.9;   break; // cyan
+        case 1:
+        default: css_rgb("ACCENT_A",&sr,&sg,&sb); break; // follow the skin
+      }
+
       if(rx->panadapter_filled) {
         cairo_close_path (cr);
-        cairo_pattern_t *pat=cairo_pattern_create_linear(0.624,	0.427,	0.690,(rx->panadapter_height-20));  
-        
-        switch(rx->panadapter_single_color) {
-          case  2: //red
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.769, 0.117,0.227);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.769, 0.117, 0.227);
-            break;
-          case  3: // orange
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 1.0, 0.459, 0.095);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 1.0, 0.459, 0.095);
-            break;
-          case  4: // yellow
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 1.0, 0.850, 0.0);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 1.0, 0.850, 0.0);
-            break;
-          case  5: // green
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.133, 0.545, 0.133);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.133, 0.545, 0.133);
-            break;
-          case  6: // blue
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.0, 0.184, 0.655);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.0, 0.184, 0.655);
-            break;
-          case  7: // violet
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.4, 0.0, 0.6);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.4, 0.0, 0.6);
-            break;
-          case  8: // magenta (darker)
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.90, 0.0, 0.90);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.90, 0.0, 0.90);
-            break;
-          case  9: // cyan (darker)
-            cairo_pattern_add_color_stop_rgb(pat,0.0, 0.0, 0.9, 0.9);
-            cairo_pattern_add_color_stop_rgb(pat,1.0, 0.0, 0.9, 0.9);
-            break;
-          case 1:
-            default:
-              cairo_pattern_add_color_stop_rgba(pat,0.0,0.804, 0.635,0.859,0.5);
-                        cairo_pattern_add_color_stop_rgba(pat,1.0,0.804, 0.635,0.859,0.5);
-        }
-            cairo_set_source (cr, pat);
-            cairo_fill_preserve(cr);
-            cairo_pattern_destroy(pat);
-        }
-        // turquoise
-        cairo_set_source_rgb(cr, 0.804,	0.635,	0.859);
-        cairo_stroke(cr);
+        // Fade the fill from the trace colour just under the curve down to
+        // transparent at the baseline -- the modern "area under the line" look.
+        cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,(double)(rx->panadapter_height-20));
+        cairo_pattern_add_color_stop_rgba(pat,0.0, sr,sg,sb, 0.55);
+        cairo_pattern_add_color_stop_rgba(pat,1.0, sr,sg,sb, 0.04);
+        cairo_set_source (cr, pat);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(pat);
+      }
+      // Soft glow underneath, then the crisp trace on top.
+      cairo_set_line_width(cr, LINE_WIDTH*3.0);
+      cairo_set_source_rgba(cr, sr,sg,sb, 0.18);
+      cairo_stroke_preserve(cr);
+      cairo_set_line_width(cr, LINE_WIDTH);
+      cairo_set_source_rgb(cr, sr,sg,sb);
+      cairo_stroke(cr);
                 if (radio->divmixer[rx->dmix_id] != NULL) {
             if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error)) {
 

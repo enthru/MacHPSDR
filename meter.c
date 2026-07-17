@@ -147,18 +147,19 @@ void update_meter(RECEIVER *rx) {
   cairo_arc(cr, cx, cy, radius, 216.0*M_PI/180.0, 324.0*M_PI/180.0);
   cairo_stroke(cr);
 
-  cairo_set_line_width(cr, 2.0);
-  SetColour(cr, BOX_ON);
+  cairo_set_line_width(cr, 2.5);
+  SetColour(cr, WARNING);        // S9+ overload zone
   cairo_arc(cr, cx, cy, radius+2, 264.0*M_PI/180.0, 324.0*M_PI/180.0);
   cairo_stroke(cr);
 
-  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+  cairo_set_line_width(cr, 1.0);
 
   for(i=1;i<10;i++) {
     angle=((double)i*6.0)+offset;
     radians=angle*M_PI/180.0;
 
     if((i%2)==1) {
+      SetColour(cr, OFF_WHITE);   // major ticks + numbers: bright
       cairo_arc(cr, cx, cy, radius+4, radians, radians);
       cairo_get_current_point(cr, &x, &y);
       cairo_arc(cr, cx, cy, radius, radians, radians);
@@ -172,6 +173,7 @@ void update_meter(RECEIVER *rx) {
       cairo_move_to(cr, x, y);
       cairo_show_text(cr, sf);
     } else {
+      SetColour(cr, DARK_TEXT);   // minor ticks: dimmed
       cairo_arc(cr, cx, cy, radius+2, radians, radians);
       cairo_get_current_point(cr, &x, &y);
       cairo_arc(cr, cx, cy, radius, radians, radians);
@@ -181,6 +183,7 @@ void update_meter(RECEIVER *rx) {
     cairo_new_path(cr);
   }
 
+  SetColour(cr, OFF_WHITE);   // +20/+40/+60 major ticks + labels
   for(i=20;i<=60;i+=20) {
     angle=((double)i+54.0)+offset;
     radians=angle*M_PI/180.0;
@@ -200,14 +203,17 @@ void update_meter(RECEIVER *rx) {
     cairo_new_path(cr);
   }
 
-  cairo_set_line_width(cr, 1.5);
-  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+  cairo_set_line_width(cr, 2.0);
+  SetColour(cr, TEXT_B);   // themed accent needle
 
   angle=level+127.0+offset;
   radians=angle*M_PI/180.0;
   cairo_arc(cr, cx, cy, radius+8, radians, radians);
   cairo_line_to(cr, cx, cy);
   cairo_stroke(cr);
+  // pivot hub
+  cairo_arc(cr, cx, cy, 3.0, 0.0, 2.0*M_PI);
+  cairo_fill(cr);
 
   SetColour(cr, TEXT_A);
   sprintf(sf,"%d dBm %s",(int)level,rx->smeter==RXA_S_AV?"Av":"Pk");

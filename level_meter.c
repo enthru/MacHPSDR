@@ -20,120 +20,41 @@
 #include <gtk/gtk.h>
 #include <math.h>
 #include "level_meter.h"
+#include "css.h"
+
+// Map a level-meter colour enum onto the active skin's palette (see css.c).
+// The fallback RGB (the original hard-coded Charcoal values) is used only if the
+// skin has no such color, so behaviour is unchanged when a palette is missing.
+static void skin_colour(const int colour, const char **name,
+                        double *r, double *g, double *b) {
+  switch(colour) {
+    case BACKGROUND: *name="BACKGROUND"; *r=0.09;  *g=0.09;  *b=0.10;  break;
+    case OFF_WHITE:  *name="OFF_WHITE";  *r=0.9;   *g=0.9;   *b=0.9;   break;
+    case BOX_ON:     *name="ACCENT_ON";  *r=0.624; *g=0.427; *b=0.690; break;
+    case BOX_OFF:    *name="SURFACE";    *r=0.2;   *g=0.2;   *b=0.2;   break;
+    case TEXT_A:     *name="ACCENT_B";   *r=0.929; *g=0.616; *b=0.502; break;
+    case TEXT_B:     *name="ACCENT_A";   *r=0.639; *g=0.800; *b=0.820; break;
+    case TEXT_C:     *name="ACCENT_B";   *r=0.929; *g=0.616; *b=0.502; break;
+    case WARNING:    *name="WARNING";    *r=0.851; *g=0.271; *b=0.271; break;
+    case DARK_LINES: *name="BORDER";     *r=0.3;   *g=0.3;   *b=0.3;   break;
+    case DARK_TEXT:  *name="DARK_TEXT";  *r=0.7;   *g=0.7;   *b=0.7;   break;
+    case INFO_ON:    *name="INFO_ON";    *r=0.15;  *g=0.58;  *b=0.6;   break;
+    case INFO_OFF:   *name="SURFACE";    *r=0.2;   *g=0.2;   *b=0.2;   break;
+    default:         *name=NULL;         *r=0.0;   *g=0.0;   *b=0.0;   break;
+  }
+  if(*name!=NULL) css_rgb(*name,r,g,b);   // override fallback with skin color
+}
 
 void SetColour(cairo_t *cr, const int colour) {
-
-  switch(colour) {
-    case BACKGROUND: {
-      cairo_set_source_rgb(cr, 0.09, 0.09, 0.10);   // match CSS @BACKGROUND
-      break;
-    }
-    case OFF_WHITE: {
-      cairo_set_source_rgb(cr, 0.9, 0.9, 0.9);
-      break;
-    }
-    case BOX_ON: {
-      cairo_set_source_rgb(cr, 0.624, 0.427, 0.690);
-      break;
-    }
-    case BOX_OFF: {
-      cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
-      break;
-    }
-    case TEXT_A: {
-      cairo_set_source_rgb(cr, 0.929, 0.616, 0.502);
-      break;
-    }
-    case TEXT_B: {
-      //light blue
-      cairo_set_source_rgb(cr, 0.639, 0.800, 0.820);
-      break;
-    }
-    case TEXT_C: {
-      // Pale orange
-      cairo_set_source_rgb(cr, 0.929, 0.616, 0.502);
-      break;
-    }
-    case WARNING: {
-      // Pale red
-        cairo_set_source_rgb(cr, 0.851, 0.271, 0.271);
-      break;
-    }
-    case DARK_LINES: {
-      // Dark grey
-        cairo_set_source_rgb(cr, 0.3, 0.3, 0.3);
-      break;
-    }
-    case DARK_TEXT: {
-      cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);
-      break;
-    }
-    case INFO_ON: {
-      cairo_set_source_rgb(cr, 0.15, 0.58, 0.6);
-      break;
-    }
-    case INFO_OFF: {
-      cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
-      break;
-    }
-  }
+  const char *name; double r,g,b;
+  skin_colour(colour,&name,&r,&g,&b);
+  cairo_set_source_rgb(cr,r,g,b);
 }
 
 void set_stop_pattern(cairo_pattern_t *pat, const int colour, const double pc) {
-  switch(colour) {
-    case BACKGROUND: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.09, 0.09, 0.10);
-      break;
-    }
-    case OFF_WHITE: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.9, 0.9, 0.9);
-      break;
-    }
-    case BOX_ON: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.624, 0.427, 0.690);
-      break;
-    }
-    case BOX_OFF: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.2, 0.2, 0.2);
-      break;
-    }
-    case TEXT_A: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.929, 0.616, 0.502);
-      break;
-    }
-    case TEXT_B: {
-      //light blue
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.639, 0.800, 0.820);
-      break;
-    }
-    case TEXT_C: {
-      // Pale orange
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.929, 0.616, 0.502);
-      break;
-    }
-    case WARNING: {
-      // Pale red
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.851, 0.271, 0.271);
-      break;
-    }
-    case DARK_LINES: {
-      // Dark grey
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.3, 0.3, 0.3);
-      break;
-    }
-    case DARK_TEXT: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.7, 0.7, 0.7);
-      break;
-    }
-    case INFO_ON: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.15, 0.58, 0.6);
-      break;
-    }
-    case INFO_OFF: {
-      cairo_pattern_add_color_stop_rgb(pat, pc, 0.2, 0.2, 0.2);
-      break;
-    }
-  }
+  const char *name; double r,g,b;
+  skin_colour(colour,&name,&r,&g,&b);
+  cairo_pattern_add_color_stop_rgb(pat,pc,r,g,b);
 }
 
 // rounded-rectangle sub-path helper
@@ -163,9 +84,12 @@ gboolean level_meter_draw(cairo_t *cr, double x, int width, int height, const in
   cairo_rectangle(cr, 0, 0, width, height);
   cairo_fill(cr);
 
-  // track
+  // track: a recessed groove, slightly darker than the skin background so it
+  // reads as sunken on both dark and light skins.
   lm_rounded(cr, pad, ty, tw, th, 3.0);
-  cairo_set_source_rgb(cr, 0.06, 0.06, 0.07);
+  double gr=0.06, gg=0.06, gb=0.07;
+  if(css_rgb("BACKGROUND",&gr,&gg,&gb)) { gr*=0.72; gg*=0.72; gb*=0.72; }
+  cairo_set_source_rgb(cr, gr, gg, gb);
   cairo_fill(cr);
 
   // accent fill up to x
