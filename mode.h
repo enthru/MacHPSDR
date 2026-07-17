@@ -30,6 +30,7 @@ enum {
   DIGL,
   SAM,
   DRM,
+  WFM,
   MODES
 };
 

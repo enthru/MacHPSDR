@@ -243,10 +243,24 @@ g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
 
       // find the device
       rx->output_index=-1;
-      for(int i=0;i<n_output_devices;i++) {
-        if(strcmp(rx->audio_name,output_devices[i].name)==0) {
-          rx->output_index=output_devices[i].index;
-          break;
+      if(rx->audio_name!=NULL) {
+        for(int i=0;i<n_output_devices;i++) {
+          if(strcmp(rx->audio_name,output_devices[i].name)==0) {
+            rx->output_index=output_devices[i].index;
+            break;
+          }
+        }
+      }
+
+      // Configured device not found (e.g. a stale "Dummy Output Device" name, or
+      // a device that has since been unplugged): fall back to the system default
+      // output so we still make sound instead of silently failing.
+      if(rx->output_index==-1) {
+        int def=soundio_default_output_device_index(soundio);
+        if(def>=0) {
+          g_print("audio_open_output: '%s' not found; using default output device\n",
+                  rx->audio_name?rx->audio_name:"(none)");
+          rx->output_index=def;
         }
       }
 
@@ -274,8 +288,11 @@ g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
         return -1;
       }
 
-      // guess that 8 output buffers should be enough
-      int size=8*rx->output_samples*sizeof(float)*2;
+      // Size the ring buffer for a fixed ~200 ms of output audio so there is
+      // room for a start-up cushion at any DSP rate.  At high DSP rates
+      // output_samples is small (e.g. 128 at 384 kHz), so the old "8 buffers"
+      // guess collapsed to the 32 kB floor with almost no slack.
+      int size=(int)(0.200 * (double)sample_rate) * (int)sizeof(float) * 2;
       if(size<32768) size=32768;
       rx->ring_buffer = soundio_ring_buffer_create(soundio, size);
       if(!rx->ring_buffer) {
@@ -770,6 +787,14 @@ void audio_start_output(RECEIVER *rx) {
     case USE_SOUNDIO:
       if(rx->output_stream!=NULL) {
         if(!rx->output_started) {
+          // Don't start playback until the ring buffer holds a cushion (~60 ms):
+          // starting on a near-empty buffer makes the consumer callback drain to
+          // empty and underrun on the slightest producer jitter, heard as
+          // periodic "buffer gaps" (worst at high DSP rates where each feed is
+          // only a few ms of audio).  audio_write keeps filling the ring while
+          // we wait; this is retried every buffer until the cushion is reached.
+          int frames = soundio_ring_buffer_fill_count(rx->ring_buffer) / (int)(sizeof(float)*2);
+          if(frames < rx->output_stream->sample_rate / 16) break;
           underflow_count=0;
           if((err = soundio_outstream_start(rx->output_stream))) {
               g_print("audio_start_output: unable to start output device: %s", soundio_strerror(err));
@@ -1131,13 +1156,36 @@ void create_audio(int backend_index,const char *backend) {
 
   switch(radio->which_audio) {
     case USE_SOUNDIO:
-g_print("audio: create_audio: USE_SOUNDIO: %d %s\n",soundio_get_backend(soundio,backend_index),backend);
       soundio=soundio_create();
       if(!soundio) {
         g_print("create_audio: soundio_create failed\n");
         return;
       }
-      rc=soundio_connect_backend(soundio,soundio_get_backend(soundio,backend_index));
+      // Resolve the requested backend, but NEVER use the Dummy backend: it
+      // enumerates a fake "Dummy Output Device" and silently discards all audio
+      // (this is what left a Fake-SDR config with no real output devices). If the
+      // saved index points at Dummy/None, fall back to the first real backend and
+      // heal the persisted selection so it doesn't recur.
+      {
+        enum SoundIoBackend want=soundio_get_backend(soundio,backend_index);
+        if(want==SoundIoBackendDummy || want==SoundIoBackendNone) {
+          int nb=soundio_backend_count(soundio);
+          want=SoundIoBackendNone;
+          for(int b=0;b<nb;b++) {
+            enum SoundIoBackend cand=soundio_get_backend(soundio,b);
+            if(cand!=SoundIoBackendDummy && cand!=SoundIoBackendNone) {
+              want=cand;
+              radio->which_audio_backend=b;
+              break;
+            }
+          }
+        }
+        g_print("audio: create_audio: USE_SOUNDIO backend=%s\n",soundio_backend_name(want));
+        if(want==SoundIoBackendNone)
+          rc=soundio_connect(soundio);            // let soundio auto-pick a real backend
+        else
+          rc=soundio_connect_backend(soundio,want);
+      }
       if(rc) {
         g_print("create_audio: soundio_connect_backend: %s\n",soundio_strerror(rc));
         return;

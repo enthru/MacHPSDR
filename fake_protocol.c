@@ -13,6 +13,7 @@
 #include <gtk/gtk.h>
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "discovered.h"
@@ -36,10 +37,109 @@
 static const double fake_tone_offset[FAKE_TONE_COUNT] = { 10000.0, -25000.0, 40000.0, -5000.0 };
 static const double fake_tone_amp[FAKE_TONE_COUNT]    = {    0.02,     0.008,    0.03,   0.015 };
 
+// Optional I/Q recording playback. If an "iq.wav" (16-bit stereo I/Q, e.g. an
+// SDR# recording) is found at startup, the fake device streams that real RF
+// instead of synthetic noise/tones, looping forever and resampling on the fly to
+// the receiver's sample rate. Great for verifying real WFM/AM/SSB demodulation
+// with no hardware. FAKE_IQ_GAIN scales the (normalised +-1) file level; lower it
+// if the S-meter pins, raise it if the signal is buried.
+#define FAKE_IQ_FILE  "iq.wav"
+#define FAKE_IQ_GAIN  0.2
+
+static float  *iq_data   = NULL;   // interleaved I,Q, normalised to ~[-1,1]
+static long    iq_frames = 0;      // number of I/Q sample pairs
+static double  iq_rate   = 0.0;    // file sample rate (Hz)
+static double  iq_offset = 0.0;    // recorded carrier offset from centre (Hz)
+static double  iq_pos[8] = {0};    // per-receiver fractional read cursor (loops)
+static double  mix_phase[8] = {0}; // per-receiver de-rotation phase (centres station)
+
 static volatile int fake_running = 0;
 static GThread *fake_thread_id = NULL;
 
+// 4-point Catmull-Rom cubic interpolation. Far cleaner than linear when
+// resampling a wideband I/Q signal (linear interp adds audible demod noise).
+static inline double cubic4(double ym1, double y0, double y1, double y2, double t) {
+  double a = -0.5*ym1 + 1.5*y0 - 1.5*y1 + 0.5*y2;
+  double b =       ym1 - 2.5*y0 + 2.0*y1 - 0.5*y2;
+  double c = -0.5*ym1           + 0.5*y1;
+  return ((a*t + b)*t + c)*t + y0;
+}
+
+// Minimal RIFF/WAVE reader: 16-bit PCM, 2 channels (I,Q). Loads the whole file
+// into memory as floats. Returns 1 on success.
+static int fake_load_iq(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if(!f) return 0;
+  unsigned char hdr[12];
+  if(fread(hdr,1,12,f)!=12 || memcmp(hdr,"RIFF",4)!=0 || memcmp(hdr+8,"WAVE",4)!=0) {
+    fclose(f); return 0;
+  }
+  int channels=0, bits=0;
+  unsigned int rate=0, data_len=0;
+  long data_off=0;
+  unsigned char c[8];
+  while(fread(c,1,8,f)==8) {
+    unsigned int csize = c[4] | (c[5]<<8) | (c[6]<<16) | ((unsigned int)c[7]<<24);
+    if(memcmp(c,"fmt ",4)==0) {
+      unsigned char fmt[16];
+      unsigned int toread = csize<16 ? csize : 16;
+      if(fread(fmt,1,toread,f)!=toread) { fclose(f); return 0; }
+      channels = fmt[2] | (fmt[3]<<8);
+      rate     = fmt[4] | (fmt[5]<<8) | (fmt[6]<<16) | ((unsigned int)fmt[7]<<24);
+      bits     = fmt[14] | (fmt[15]<<8);
+      if(csize>toread) fseek(f, csize-toread, SEEK_CUR);
+      if(csize & 1) fseek(f, 1, SEEK_CUR);         // chunks are word-aligned
+    } else if(memcmp(c,"data",4)==0) {
+      data_off = ftell(f);
+      data_len = csize;
+      break;
+    } else {
+      fseek(f, csize + (csize & 1), SEEK_CUR);      // skip aux chunks (e.g. "auxi")
+    }
+  }
+  if(channels!=2 || bits!=16 || rate==0 || data_len==0 || data_off==0) {
+    fclose(f); return 0;
+  }
+  long frames = data_len / 4;                       // 2 ch * 2 bytes
+  short *raw = (short *)malloc((size_t)frames * 4);
+  if(!raw) { fclose(f); return 0; }
+  fseek(f, data_off, SEEK_SET);
+  if(fread(raw,1,(size_t)frames*4,f)!=(size_t)frames*4) { free(raw); fclose(f); return 0; }
+  fclose(f);
+  iq_data = (float *)malloc((size_t)frames * 2 * sizeof(float));
+  if(!iq_data) { free(raw); return 0; }
+  for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
+  free(raw);
+  iq_frames = frames;
+  iq_rate = (double)rate;
+  for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+
+  // Estimate the recorded carrier offset (mean instantaneous frequency of the
+  // dominant signal) so playback can shift the station to baseband 0. An
+  // off-centre station is otherwise clipped asymmetrically by the RX filter on
+  // loud deviation peaks -> distortion.
+  {
+    long s0 = (frames > 600000) ? frames/2 : 0;
+    long s1 = (s0 + 300000 < frames) ? s0 + 300000 : frames - 1;
+    double pi_ = iq_data[s0*2], pj = iq_data[s0*2+1], sum = 0.0;
+    long cnt = 0;
+    for(long k = s0+1; k < s1; k++) {
+      double I = iq_data[k*2], Q = iq_data[k*2+1];
+      double re = I*pi_ + Q*pj, im = Q*pi_ - I*pj;
+      pi_ = I; pj = Q;
+      if(!(re == 0.0 && im == 0.0)) { sum += atan2(im, re); cnt++; }
+    }
+    iq_offset = (cnt > 0) ? (sum/(double)cnt) * iq_rate / (2.0*M_PI) : 0.0;
+  }
+  g_print("fake: iq.wav carrier offset %.0f Hz -> auto-centering to baseband 0\n", iq_offset);
+  return 1;
+}
+
+/* Only the --faker command-line flag (parsed in main()) turns this on. */
+int enable_fake = 0;
+
 void fake_discovery(void) {
+  if(!enable_fake) return;
   if(devices >= MAX_DEVICES) return;
 
   DISCOVERED *d = &discovered[devices];
@@ -69,10 +169,14 @@ static gpointer fake_thread_fn(gpointer data) {
   static double phase[FAKE_TONE_COUNT] = {0.0};
   static double mic_phase = 0.0;
 
+  gint64 next = g_get_monotonic_time();
+
   while(fake_running) {
     int any = 0;
+    int n_ref = 0;
+    double sr_ref = 48000.0;
 
-    for(int ch = 0; ch < r->discovered->supported_receivers; ch++) {
+    for(int ch = 0; ch < r->discovered->supported_receivers && ch < 8; ch++) {
       g_mutex_lock(&r->delete_rx_mutex);
       RECEIVER *rx = r->receiver[ch];
       if(rx == NULL || !rx->show_rx) {
@@ -83,28 +187,58 @@ static gpointer fake_thread_fn(gpointer data) {
 
       int n = rx->buffer_size;
       double sr = (double)rx->sample_rate;
+      n_ref = n;
+      sr_ref = sr;
 
       for(int s = 0; s < n; s++) {
-        // Gaussian-ish white noise via sum of 12 uniforms (mean 0)
-        double ni = 0.0;
-        double nq = 0.0;
-        for(int k = 0; k < 12; k++) {
-          ni += (double)rand() / (double)RAND_MAX;
-          nq += (double)rand() / (double)RAND_MAX;
-        }
-        ni = (ni - 6.0) * FAKE_NOISE_AMP;
-        nq = (nq - 6.0) * FAKE_NOISE_AMP;
+        double i_sample, q_sample;
 
-        double i_sample = ni;
-        double q_sample = nq;
-
-        // Fixed baseband tones -> distinct peaks on the panadapter
-        for(int t = 0; t < FAKE_TONE_COUNT; t++) {
-          i_sample += fake_tone_amp[t] * cos(phase[t]);
-          q_sample += fake_tone_amp[t] * sin(phase[t]);
-          phase[t] += 2.0 * M_PI * fake_tone_offset[t] / sr;
-          if(phase[t] > 2.0 * M_PI) phase[t] -= 2.0 * M_PI;
-          if(phase[t] < -2.0 * M_PI) phase[t] += 2.0 * M_PI;
+        if(iq_data) {
+          // Stream the recorded I/Q, resampling file_rate -> sr by cubic
+          // interpolation and looping back to the start at end-of-file. Each
+          // receiver keeps its own cursor so they don't consume the file twice.
+          double step = iq_rate / sr;
+          double pos = iq_pos[ch];
+          long i0 = (long)pos;
+          double t = pos - (double)i0;
+          long im1 = i0 - 1; if(im1 < 0)          im1 += iq_frames;   // wrap
+          long ip1 = i0 + 1; if(ip1 >= iq_frames) ip1 -= iq_frames;
+          long ip2 = i0 + 2; if(ip2 >= iq_frames) ip2 -= iq_frames;
+          double ii = cubic4(iq_data[im1*2],   iq_data[i0*2],   iq_data[ip1*2],   iq_data[ip2*2],   t);
+          double qq = cubic4(iq_data[im1*2+1], iq_data[i0*2+1], iq_data[ip1*2+1], iq_data[ip2*2+1], t);
+          // de-rotate by the carrier offset to move the station to baseband 0
+          double th = mix_phase[ch];
+          double cc = cos(th), ss = sin(th);
+          double ri = ii*cc + qq*ss;
+          double rq = qq*cc - ii*ss;
+          mix_phase[ch] += 2.0*M_PI*iq_offset/sr;
+          if(mix_phase[ch] >  M_PI) mix_phase[ch] -= 2.0*M_PI;
+          if(mix_phase[ch] < -M_PI) mix_phase[ch] += 2.0*M_PI;
+          i_sample = FAKE_IQ_GAIN * ri;
+          q_sample = FAKE_IQ_GAIN * rq;
+          pos += step;
+          if(pos >= (double)iq_frames) pos -= (double)iq_frames;   // loop
+          iq_pos[ch] = pos;
+        } else {
+          // Gaussian-ish white noise via sum of 12 uniforms (mean 0)
+          double ni = 0.0;
+          double nq = 0.0;
+          for(int k = 0; k < 12; k++) {
+            ni += (double)rand() / (double)RAND_MAX;
+            nq += (double)rand() / (double)RAND_MAX;
+          }
+          ni = (ni - 6.0) * FAKE_NOISE_AMP;
+          nq = (nq - 6.0) * FAKE_NOISE_AMP;
+          i_sample = ni;
+          q_sample = nq;
+          // Fixed baseband tones -> distinct peaks on the panadapter
+          for(int t = 0; t < FAKE_TONE_COUNT; t++) {
+            i_sample += fake_tone_amp[t] * cos(phase[t]);
+            q_sample += fake_tone_amp[t] * sin(phase[t]);
+            phase[t] += 2.0 * M_PI * fake_tone_offset[t] / sr;
+            if(phase[t] > 2.0 * M_PI) phase[t] -= 2.0 * M_PI;
+            if(phase[t] < -2.0 * M_PI) phase[t] += 2.0 * M_PI;
+          }
         }
 
         add_iq_samples(rx, i_sample, q_sample);
@@ -126,18 +260,39 @@ static gpointer fake_thread_fn(gpointer data) {
       }
 
       g_mutex_unlock(&r->delete_rx_mutex);
-
-      // Pace to roughly real time for this receiver's block (lock released)
-      g_usleep((gulong)(1000000.0 * (double)n / sr));
     }
 
-    if(!any) g_usleep(10000);
+    if(!any) {
+      g_usleep(10000);
+      next = g_get_monotonic_time();
+      continue;
+    }
+
+    // Pace ONE block to real time against a monotonic deadline. Sleeping per
+    // receiver (as before) under-fed each RX when several were shown, and plain
+    // g_usleep drifts and starves the audio ring buffer -> crackle/dropouts.
+    next += (gint64)(1000000.0 * (double)n_ref / sr_ref);
+    gint64 now = g_get_monotonic_time();
+    if(next > now) g_usleep((gulong)(next - now));
+    else           next = now;   // fell behind; resync without accumulating lag
   }
 
   return NULL;
 }
 
 void fake_protocol_init(RADIO *r) {
+  // Look for an I/Q recording to play (current dir, then home dir).
+  if(!fake_load_iq(FAKE_IQ_FILE)) {
+    char *home_path = g_build_filename(g_get_home_dir(), FAKE_IQ_FILE, NULL);
+    fake_load_iq(home_path);
+    g_free(home_path);
+  }
+  if(iq_data) {
+    g_print("fake: playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
+            FAKE_IQ_FILE, iq_rate, iq_frames, (double)iq_frames/iq_rate);
+  } else {
+    g_print("fake: no '%s' found; using synthetic noise+tones\n", FAKE_IQ_FILE);
+  }
   fake_running = 1;
   fake_thread_id = g_thread_new("fake_iq", fake_thread_fn, r);
 }

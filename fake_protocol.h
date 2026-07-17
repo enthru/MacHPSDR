@@ -14,6 +14,10 @@
  * discovery.c). */
 typedef struct _radio RADIO;
 
+/* Set from main() when the binary is launched with --faker. The synthetic
+ * fake device is only discovered/offered when this is non-zero. */
+extern int enable_fake;
+
 void fake_discovery(void);
 void fake_protocol_init(RADIO *r);
 void fake_protocol_stop(void);

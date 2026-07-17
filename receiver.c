@@ -724,7 +724,9 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
   rx->hz_per_pixel=(double)rx->sample_rate/(double)rx->samples;
   //SetInputSamplerate(rx->channel, sample_rate);
-  SetAllRates(rx->channel,rx->sample_rate,48000,48000);
+  // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
+  rx->dsp_rate=(rx->mode_a==WFM)?rx->sample_rate:48000;
+  SetAllRates(rx->channel,rx->sample_rate,rx->dsp_rate,48000);
 
   receiver_init_analyzer(rx);
   SetEXTANBSamplerate (rx->channel, sample_rate);
@@ -1314,9 +1316,24 @@ static gboolean update_timer_cb(void *data) {
 }
 
 static void set_mode(RECEIVER *rx,int m) {
-  int previous_mode;
-  previous_mode=rx->mode_a;
   rx->mode_a=m;
+  // Wideband (broadcast) FM must be demodulated at the full sample rate so the
+  // ~180 kHz signal fits; the stereo pilot (19/38 kHz) and RDS (57 kHz)
+  // subcarriers also need this wide baseband.  All other modes run the DSP at
+  // 48 kHz.  The audio output stays at 48 kHz either way.
+  //
+  // Drive the DSP rate off the TARGET mode, not the transition: when WFM is
+  // restored from props at startup there is no other-mode->WFM transition, yet
+  // the channel is opened at 48 kHz (see OpenChannel) and must still be raised.
+  // rx->dsp_rate tracks the channel's real DSP rate so we only rebuild when it
+  // actually changes.
+  int desired_dsp = (m==WFM) ? rx->sample_rate : 48000;
+  if(rx->dsp_rate != desired_dsp) {
+    SetChannelState(rx->channel,0,1);
+    SetAllRates(rx->channel, rx->sample_rate, desired_dsp, 48000);
+    SetChannelState(rx->channel,1,0);
+    rx->dsp_rate = desired_dsp;
+  }
   SetRXAMode(rx->channel, m);
 }
 
@@ -2002,7 +2019,22 @@ g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", cha
   rx->iq_sequence=0;
 #ifdef SOAPYSDR
   if(radio->discovered->device==DEVICE_SOAPYSDR) {
-    rx->buffer_size=1024; //2048;
+    // WFM runs the whole DSP chain at the (wide) sample_rate with a large output
+    // resampler (sample_rate->48k).  Two things must hold to avoid glitches in
+    // WDSP's async double-buffered I/O ring:
+    //   (1) in_size == dsp_insize, else the DSP thread fills the output ring only
+    //       every N-th fexchange while fexchange drains it every call -> periodic
+    //       boundary click.  For WFM dsp_rate==sample_rate so dsp_insize==fft_size,
+    //       hence buffer_size must equal fft_size.
+    //   (2) the output block out_size = buffer_size/(sample_rate/48000) must be an
+    //       exact integer AND reasonably large; tiny blocks (=64 at 1536k with
+    //       buffer_size=2048) still glitch.
+    // 5120 = 2^10 * 5 satisfies both for every offered span, because it is an exact
+    // multiple of (sample_rate/48000) for 192/384/768/1536/1920 k (ratios
+    // 4/8/16/32/40) -> out_size = 1280/640/320/160/128, all integer and >=128.
+    // (A pure power of two like 4096 cannot support the 1920k span, whose ratio 40
+    // has a factor of 5.)
+    rx->buffer_size=5120;
   } else {
 #endif
     rx->buffer_size=1024;
@@ -2027,7 +2059,9 @@ fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
 
 #ifdef SOAPYSDR
   if(radio->discovered->device==DEVICE_SOAPYSDR) {
-    rx->fft_size=2048;
+    // Must equal buffer_size so in_size==dsp_insize for the WFM chain (see the
+    // buffer_size comment above): avoids the WDSP output-ring boundary glitch.
+    rx->fft_size=5120;
   } else {
 #endif
     rx->fft_size=2048;
@@ -2145,6 +2179,12 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
     }
   }
 
+  // Fake test device runs at a fixed wide rate (see create_radio); don't let a
+  // persisted narrower rate override it, so wideband FM has room on the display.
+  if(radio->discovered->protocol==PROTOCOL_FAKE) {
+    rx->sample_rate=sample_rate;
+  }
+
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
 
@@ -2159,6 +2199,11 @@ g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d 
               0, // receive
               1, // run
               0.010, 0.025, 0.0, 0.010, 0);
+
+  // The channel is opened at 48 kHz DSP rate regardless of any rate persisted
+  // in props; keep rx->dsp_rate in sync so set_mode's guard reflects reality
+  // (otherwise a restored WFM rate would make it skip the needed raise).
+  rx->dsp_rate=48000;
 
   // Modified per pihpsdr commit d9af51206087959083feddcb325443d9368dad8c
   create_anbEXT(rx->channel, 1, rx->buffer_size, rx->sample_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);

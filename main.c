@@ -34,6 +34,7 @@
 
 #include "css.h"
 #include "discovery.h"
+#include "fake_protocol.h"
 #include "discovered.h"
 #include "bpsk.h"
 #include "receiver.h"
@@ -601,6 +602,21 @@ int main(int argc, char **argv) {
   char text[1024];
   int rc;
   const char *homedir;
+
+  // --faker: offer the synthetic fake test device (see fake_protocol.c).
+  // Strip it from argv so GtkApplication does not reject the unknown option.
+  {
+    int i, j;
+    for(i=1,j=1;i<argc;i++) {
+      if(strcmp(argv[i],"--faker")==0) {
+        enable_fake=1;
+      } else {
+        argv[j++]=argv[i];
+      }
+    }
+    argc=j;
+    argv[argc]=NULL;
+  }
 
   if((homedir=getenv("HOME"))==NULL) {
     homedir=getpwuid(getuid())->pw_dir;

@@ -247,6 +247,23 @@ static void sample_rate_cb(GtkComboBoxText *widget,gpointer data) {
   g_idle_add(radio_restart,(void *)radio);
 }
 
+#ifdef SOAPYSDR
+// SoapySDR (e.g. HackRF): the hardware/ADC stays at radio->sample_rate (a rate
+// the device actually supports); this control sets only the PER-RECEIVER rate,
+// i.e. the panadapter/waterfall span.  The receiver's resampler bridges the ADC
+// rate down to it, so no hardware re-tuning and no full radio restart is needed.
+static void soapy_rx_rate_cb(GtkComboBoxText *widget,gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int rate=atoi(gtk_combo_box_text_get_active_text(widget));
+  if(rate>radio->sample_rate) rate=radio->sample_rate;
+  for(int i=0;i<radio->discovered->supported_receivers;i++) {
+    if(radio->receiver[i]!=NULL) {
+      receiver_change_sample_rate(radio->receiver[i],rate);
+    }
+  }
+}
+#endif
+
 static void filter_board_cb(GtkComboBox *widget,gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->filter_board=gtk_combo_box_get_active(widget);
@@ -731,6 +748,33 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         break;
     }
     g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(sample_rate_cb),radio);
+    gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
+  }
+
+  // SoapySDR devices other than sdrplay (HackRF, RTL-SDR, Lime): let the user
+  // pick the per-receiver rate = waterfall span, up to the ADC rate.  Higher =
+  // wider view but more DSP load.
+  if(radio->discovered->device==DEVICE_SOAPYSDR &&
+     strcmp(radio->discovered->name,"sdrplay")!=0) {
+    GtkWidget *sample_rate_combo_box=gtk_combo_box_text_new();
+    // All are exact multiples of 48000 by a factor that divides buffer_size(5120)
+    // so the 48k audio output rate stays exact (no drift/clicks).  1920000 is the
+    // widest; 2000000 (HackRF ADC) is deliberately NOT offered because 2000000/48000
+    // is not an integer -> the audio pipeline would drift.
+    const int rates[]={192000,384000,768000,1536000,1920000};
+    int rxrate=(radio->receiver[0]!=NULL)?radio->receiver[0]->sample_rate:radio->sample_rate;
+    int active=-1,idx=0;
+    for(int r=0;r<5;r++) {
+      if(rates[r]<=radio->sample_rate) {
+        char buf[16];
+        snprintf(buf,sizeof(buf),"%d",rates[r]);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,buf);
+        if(rates[r]==rxrate) active=idx;
+        idx++;
+      }
+    }
+    if(active>=0) gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),active);
+    g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(soapy_rx_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 #endif

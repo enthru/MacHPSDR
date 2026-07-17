@@ -115,7 +115,12 @@ g_print("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->s
 void soapy_protocol_create_receiver(RECEIVER *rx) {
   int rc;
 
-  soapy_rx_sample_rate=rx->sample_rate;
+  // Drive the hardware at the radio (ADC) sample rate — a rate the device
+  // actually supports — and let the per-receiver resampler take it down to
+  // rx->sample_rate.  Setting the hardware straight to rx->sample_rate asked
+  // e.g. HackRF for an unsupported rate; it clamped internally while the app
+  // still read the stream as rx->sample_rate -> garbage waterfall.
+  soapy_rx_sample_rate=radio->sample_rate;
 
 g_print("%s: setting bandwidth=%f\n",__FUNCTION__,bandwidth);
   rc=SoapySDRDevice_setBandwidth(soapy_device,SOAPY_SDR_RX,rx->adc,bandwidth);
@@ -306,11 +311,7 @@ g_print("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
   while(running) {
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,max_samples,&flags,&timeNs,timeoutUs);
-    //if(elements<0) {
-    //  g_print("%s: elements=%d max_samples=%d\n",__FUNCTION__,elements,max_samples);
-    //  running=FALSE;
-    //  break;
-    //}
+    if(elements<0) continue;
     for(i=0;i<elements;i++) {
       rx->buffer[i*2]=(double)buffer[i*2];
       rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];

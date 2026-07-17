@@ -20,6 +20,51 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
 14) Added app bundling for Mac os to the Makefile
 15) Add waterfall themes
 16) Changed default paremeters for NR filter
+17) Single-window redesign. All receivers now live stacked inside one resizable
+    main window instead of separate floating windows. Adjustable GtkPaned dividers
+    between stacked receivers, a per-receiver close button, and the window size +
+    divider positions are persisted across restarts.
+18) Fake "Noise" test device (a built-in virtual SDR). Lets you run the app — RX
+    and TX, panadapter/waterfall, and the demodulators — with no hardware attached,
+    which is handy for testing and development; it can also play back an IQ .wav.
+19) VFO widget reflows to the window width and the window is freely resizable; moved
+    common controls to a bottom toolbar.
+20) Flat dark theme — full CSS rewrite of the main window, meters and controls.
+21) Bottom bar with a console/log area, plus a working TX path on the fake device.
+22) Configure dialog modernization — flat-dark theme, unified spacing, and vertical
+    sidebar (GtkStackSidebar) navigation between the settings pages.
+23) Custom Att10/Att20 labels, info-button sizing and TX-monitor font tweaks.
+24) Cmd-Q quits the app (macOS).
+25) Waterfall now draws the passband band and a centre-frequency cursor.
+26) Closed receivers keep their settings (they're just marked inactive) and restore
+    them when re-opened, instead of resetting to defaults.
+27) Broadcast FM (WFM) support for SoapySDR devices (HackRF/RTL-SDR), with a
+    selectable RX span (192k…1920k). Fixed the wide-rate audio crackle that came
+    from WDSP's async I/O ring (block-boundary glitch + output-ring underruns), not
+    from the resampler.
+    Known tradeoff — latency vs. high sample rates: at high rates the DSP thread has
+    much less time per block, so the WDSP output ring is given extra headroom
+    (DSP_MULT, currently 16) to avoid dropouts. That headroom is a fixed global
+    buffer, so the app is currently NOT very responsive (~40 ms of added audio
+    latency) even in narrow modes / low rates that don't need it. It can be improved
+    later (shrink the WFM output resampler filter — redundant since WFM is already
+    band-limited to 15 kHz before it — and/or make the ring headroom per-channel so
+    only wide WFM spans pay for it).
+    RDS decoding is planned next.
+28) WFM stereo decoding. A 19 kHz pilot is isolated (biquad band-pass), tracked by
+    a 2nd-order PLL, and doubled to a coherent 38 kHz reference that demodulates the
+    23–53 kHz L−R subcarrier; the L/R matrix is folded into the samples ahead of the
+    shared 15 kHz audio filter. A pilot-lock detector blends smoothly to mono when no
+    stereo pilot is present, so mono stations stay clean.
+29) The synthetic "Fake Noise SDR" test device is now hidden by default; launch the
+    binary with `--faker` to make it available (used for UI/DSP testing without
+    hardware).
+
+Note: some of these additions rely on a patched WDSP (this fork adds a WFM
+demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
+this repository under `wdsp/`** (originally from g0orx/wdsp) — do NOT clone WDSP
+separately; build and install it from that directory. See the WDSP build steps
+below.
 
 ### Development environment
 
@@ -49,8 +94,10 @@ Development and testing has been run on Ubuntu and Arch Linux. If run on early v
 
 ### linhpsdr requires WDSP to be built and installed
 
+The patched WDSP is vendored in this repo under `wdsp/` (do not clone it
+separately). After cloning linhpsdr, build and install it from that directory:
+
 ```
-  git clone https://github.com/g0orx/wdsp.git
   cd wdsp
   make
   sudo make install
@@ -115,8 +162,10 @@ Development and testing has been run on MacOS Sierra 10.12.6 and MacOS high Sier
 
 ### linhpsdr requires WDSP to be built and installed
 
+The patched WDSP is vendored in this repo under `wdsp/` (do not clone it
+separately). After cloning linhpsdr, build and install it from that directory:
+
 ```
-  git clone https://github.com/g0orx/wdsp.git
   cd wdsp
   make install
 ```

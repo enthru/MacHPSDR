@@ -1547,7 +1547,16 @@ g_print("create_radio for %s %d\n",d->name,d->device);
       r->sample_rate=r->discovered->info.soapy.sample_rate;
       r->sample_rate=768000;
       if(strcmp(r->discovered->name,"rtlsdr")==0) {
-        r->sample_rate=1536000;
+        // RTL2832U is stable up to ~2.4 MHz; 1.92 MHz (=40*48k) is a clean ADC
+        // rate that also lets the receiver offer the widest 1920000 span.
+        r->sample_rate=1920000;
+      } else if(strcmp(r->discovered->name,"hackrf")==0) {
+        // HackRF only supports integer-MHz sample rates (1..20 MHz; practical
+        // minimum 2 MHz for its 1.75 MHz baseband filter).  768 kHz is not
+        // achievable, so SoapyHackRF ran the hardware at a different real rate
+        // than the app assumed -> garbage waterfall.  The per-receiver
+        // resampler brings this ADC rate down to rx->sample_rate.
+        r->sample_rate=2000000;
       }
       r->buffer_size=2048;
       if(strcmp(r->discovered->name,"lime")==0) {
@@ -1745,6 +1754,24 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   }
 
   radio_restore_state(r);
+
+  // Fake test device: run at 384 kHz so a wideband-FM signal (~180 kHz) sits in
+  // the middle of the span with noise margin around it instead of filling the
+  // whole display. Forced (overrides any persisted rate) as it is a test device.
+  if(r->discovered->protocol==PROTOCOL_FAKE) {
+    r->sample_rate=384000;
+  }
+
+#ifdef SOAPYSDR
+  // HackRF only supports integer-MHz ADC rates; force 2 MHz regardless of any
+  // persisted radio.sample_rate (e.g. a stale 768000), so the hardware always
+  // gets a valid rate and the per-receiver resampler provides the (narrower)
+  // waterfall span.  Without this a restored 768000 hit the hardware directly.
+  if(r->discovered->device==DEVICE_SOAPYSDR &&
+     strcmp(r->discovered->name,"hackrf")==0) {
+    r->sample_rate=2000000;
+  }
+#endif
 
   if (radio->hl2 != NULL) hl2_init(r->hl2);
 

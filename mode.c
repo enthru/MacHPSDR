@@ -30,6 +30,7 @@ char *mode_string[]={
   ,"DIGL"
   ,"SAM"
   ,"DRM"
+  ,"WFM"
 #ifdef PSK
   ,"PSK"
 #endif
