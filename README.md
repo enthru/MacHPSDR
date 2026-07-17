@@ -59,6 +59,43 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
 29) The synthetic "Fake Noise SDR" test device is now hidden by default; launch the
     binary with `--faker` to make it available (used for UI/DSP testing without
     hardware).
+30) RDS decoding for WFM. The 57 kHz subcarrier (3rd harmonic of the stereo pilot)
+    is demodulated coherently, tracked by a Costas loop, symbol-timed with a
+    Mueller&Muller recovery at 1187.5 bps, and block-synchronised with syndrome-based
+    burst error correction. The station name (PS) and programme id (PI) appear in an
+    "RDS" panel in the bottom bar while a broadcast-FM station is tuned.
+31) RDS RadioText (RT). Group 2A/2B are decoded into the up-to-64-character RadioText
+    message (Text A/B flag handled, so scrolling/updated text refreshes) and shown after
+    the PS/PI in the bottom-bar "RDS" panel, which now stretches into the free bar space
+    and ellipsises long text.
+32) Freetune fixes. Leaving freetune now folds the cursor offset into the real VFO
+    (you keep the frequency you were on) and recentres the cursor. In freetune, when the
+    span centre follows the cursor to a span edge, the hardware LO is now actually
+    retuned (SoapySDR/HackRF and Protocol 2) instead of only the on-screen VFO moving.
+33) RDS programme flags. The programme type (PTY, shown as its genre name from the
+    European RDS table) plus the TP (Traffic Programme) and TA (Traffic Announcement)
+    flags are decoded from block B and shown in the bottom-bar "RDS" panel.
+34) RDS clock-time (CT). Group 4A is decoded (Modified Julian Day + UTC time + local
+    offset) into the station's local date and time and shown in the bottom-bar "RDS"
+    panel. CT is broadcast only about once a minute, so it can take a moment to appear.
+35) More RDS fields: Music/Speech and the Decoder-Info stereo flag (group 0), and the
+    list of Alternative Frequencies (group 0A).
+36) RDS RadioText+ (RT+). The station's ODA announcement (group 3A, AID 0x4BD7) is
+    followed to the group that carries RT+, whose tags mark the artist and title inside
+    the RadioText; a "now playing" line shows "♪ Artist — Title".
+37) The bottom-bar "RDS" panel is now a 3-line readout: identity (PS/PI/PTY/Music-Speech/
+    Stereo/TP/TA), the RadioText, and a third line with now-playing (RT+), the station
+    clock (CT) and alternative frequencies (AF).
+38) WFM de-emphasis is selectable (50 µs / 75 µs) in Configure → Misc → "Broadcast FM
+    (WFM)"; the choice is saved and applied to all receivers. Default 50 µs.
+39) The WFM stereo indicator on the RDS identity line now reflects the real 19 kHz
+    pilot lock (what you actually hear), not the RDS decoder-info bit.
+40) RDS country. The Extended Country Code (group 1A) plus the PI country nibble are
+    resolved to a country name shown after the PI (unknown combinations fall back to the
+    raw ECC hex). The country table is complete for the main European codes, partial
+    elsewhere.
+41) RDS/RBDS programme-type names are selectable in Configure → Misc → "Broadcast FM
+    (WFM)" (Europe vs North America); the choice is saved.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

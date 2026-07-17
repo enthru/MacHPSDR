@@ -54,6 +54,19 @@ static void att20_label_cb(GtkWidget *widget, gpointer data) {
               radio->att20_button,radio->att20_check);
 }
 
+static void wfm_deemph_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  if(sel<0) sel=0;
+  radio_set_wfm_deemphasis(radio,sel);
+}
+
+static void rds_rbds_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  radio->rds_rbds=(sel>0)?1:0;   // 0 = RDS (Europe), 1 = RBDS (N. America)
+}
+
 GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *frame=gtk_frame_new("Button Labels");
   GtkWidget *grid=gtk_grid_new();
@@ -88,5 +101,44 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),att20_entry,1,2,1,1);
   g_signal_connect(att20_entry,"changed",G_CALLBACK(att20_label_cb),r);
 
-  return frame;
+  // ---- Broadcast FM (WFM) options ----
+  GtkWidget *fm_frame=gtk_frame_new("Broadcast FM (WFM)");
+  GtkWidget *fm_grid=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(fm_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(fm_grid),FALSE);
+  gtk_grid_set_column_spacing(GTK_GRID(fm_grid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(fm_grid),5);
+  sui_style_group(fm_grid);
+  gtk_container_add(GTK_CONTAINER(fm_frame),fm_grid);
+
+  GtkWidget *fm_info=gtk_label_new("Audio de-emphasis time constant. Use 50 µs in Europe and\n"
+                                   "most of the world, 75 µs in the Americas and South Korea.");
+  gtk_widget_set_halign(fm_info,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(fm_info,12);
+  gtk_grid_attach(GTK_GRID(fm_grid),fm_info,0,0,2,1);
+
+  GtkWidget *de_lbl=gtk_label_new("De-emphasis:");
+  gtk_widget_set_halign(de_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(fm_grid),de_lbl,0,1,1,1);
+  GtkWidget *de_combo=gtk_combo_box_text_new();
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(de_combo),NULL,"50 µs");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(de_combo),NULL,"75 µs");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(de_combo),r->wfm_deemphasis?1:0);
+  gtk_grid_attach(GTK_GRID(fm_grid),de_combo,1,1,1,1);
+  g_signal_connect(de_combo,"changed",G_CALLBACK(wfm_deemph_cb),r);
+
+  GtkWidget *pty_lbl=gtk_label_new("RDS PTY names:");
+  gtk_widget_set_halign(pty_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(fm_grid),pty_lbl,0,2,1,1);
+  GtkWidget *pty_combo=gtk_combo_box_text_new();
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(pty_combo),NULL,"RDS (Europe)");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(pty_combo),NULL,"RBDS (North America)");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(pty_combo),r->rds_rbds?1:0);
+  gtk_grid_attach(GTK_GRID(fm_grid),pty_combo,1,2,1,1);
+  g_signal_connect(pty_combo,"changed",G_CALLBACK(rds_rbds_cb),r);
+
+  GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
+  gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(vbox),fm_frame,FALSE,FALSE,0);
+  return vbox;
 }

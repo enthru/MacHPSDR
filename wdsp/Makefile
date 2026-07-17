@@ -66,6 +66,7 @@ fir.c\
 firmin.c\
 fmd.c\
 wfmd.c\
+rds.c\
 fmmod.c\
 fmsq.c\
 gain.c\
@@ -130,6 +131,7 @@ fir.h\
 firmin.h \
 fmd.h\
 wfmd.h\
+rds.h\
 fmmod.h\
 fmsq.h\
 gain.h\
@@ -192,6 +194,7 @@ fir.o\
 firmin.o\
 fmd.o\
 wfmd.o\
+rds.o\
 fmmod.o\
 fmsq.o\
 gain.o\

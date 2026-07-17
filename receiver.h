@@ -289,6 +289,11 @@ typedef struct _receiver {
   gboolean freetune;
   int waterfall_color_theme;
 
+  /* freetune: last centre frequency actually pushed to the hardware LO, so we
+     only retune the radio when the span centre moves (at the span edges), not
+     on every in-span digital-shift step. */
+  long long freetune_hw_frequency;
+
 } RECEIVER;
 
 

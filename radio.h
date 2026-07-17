@@ -255,6 +255,11 @@ typedef struct _radio {
   
   gboolean qos_flag;
 
+  GtkWidget *rds_label[3];   // bottom-bar decoder readout (3-line RDS in WFM)
+
+  int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
+  int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
+
 } RADIO;
 
 extern int radio_restart(void *data);
@@ -264,6 +269,7 @@ extern RADIO *create_radio(DISCOVERED *d);
 extern void delete_receiver(RECEIVER *rx);
 extern void delete_diversity_mixer(DIVMIXER *dmix);
 extern void frequency_changed(RECEIVER *rx);
+extern void radio_set_wfm_deemphasis(RADIO *radio, int sel);
 extern int add_receiver(void *data, gboolean show_rx);
 extern int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden); // TODO - does this *need* a prototype?
 extern void add_receivers(RADIO *r);

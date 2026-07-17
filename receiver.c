@@ -1074,9 +1074,19 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
     rx->ctun_max = rx->frequency_a + (long long)(rx->sample_rate / 2);
     if(rx->ctun_frequency < rx->ctun_min) rx->ctun_frequency = rx->ctun_min;
     if(rx->ctun_frequency > rx->ctun_max) rx->ctun_frequency = rx->ctun_max;
+    /* The hardware LO is already on the current centre; remember it so we only
+       retune when the span centre later moves (see frequency_changed). */
+    rx->freetune_hw_frequency = rx->frequency_a;
     SetRXAShiftRun(rx->channel, 1);
   } else {
     if(!rx->ctun) {
+      /* Leaving freetune: keep listening to whatever the cursor was on by
+         folding the freetune offset into the real VFO, recentre the display
+         (ctun_offset -> 0 so the cursor returns to the middle) and drop the
+         WDSP shift. The retune to the new centre happens in frequency_changed. */
+      rx->frequency_a = rx->ctun_frequency;
+      rx->ctun_offset = 0;
+      SetRXAShiftFreq(rx->channel, 0.0);
       SetRXAShiftRun(rx->channel, 0);
     }
   }
@@ -2255,6 +2265,8 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   if(rx->freetune || rx->ctun) {
     SetRXAShiftRun(rx->channel, 1);
   }
+  /* The LO starts on the current centre; seed the freetune retune tracker. */
+  rx->freetune_hw_frequency = rx->frequency_a;
 
   int result;
   XCreateAnalyzer(rx->channel, &result, 262144, 1, 1, "");
@@ -2267,6 +2279,9 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetDisplayDetectorMode(rx->channel, 0, DETECTOR_MODE_AVERAGE/*display_detector_mode*/);
   SetDisplayAverageMode(rx->channel, 0,  AVERAGE_MODE_LOG_RECURSIVE/*display_average_mode*/);
   calculate_display_average(rx);
+
+  /* Apply the saved broadcast-FM de-emphasis (WDSP defaults to 50 us). */
+  SetRXAWFMDeemphasisTau(rx->channel, radio->wfm_deemphasis ? 75.0e-6 : 50.0e-6);
 
   if (!rx->show_rx) return rx;
 

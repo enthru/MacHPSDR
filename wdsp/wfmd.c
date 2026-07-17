@@ -86,6 +86,7 @@ WFMD create_wfmd (int run, int size, double* in, double* out, int rate,
 	a->afgain = afgain;
 	a->tau = tau;
 	a->stereo = 1;						// decode stereo; auto-blends to mono w/o pilot
+	a->rds_run = 1;						// decode RDS
 	// fircore requires nc >= size (nfor = nc/size must be >= 1); when the DSP
 	// block (dsp_size) is larger than the requested tap count, raise nc to size
 	// (both are powers of two, so nc stays an integer multiple of size).
@@ -97,11 +98,13 @@ WFMD create_wfmd (int run, int size, double* in, double* out, int rate,
 	impulse = fir_bandpass (a->nc_aud, -a->f_high, a->f_high, a->rate, 0, 1, a->afgain / (2.0 * a->size));
 	a->paud = create_fircore (a->size, a->audio, a->out, a->nc_aud, a->mp_aud, impulse);
 	_aligned_free (impulse);
+	a->rds = create_rds (rate);
 	return a;
 }
 
 void destroy_wfmd (WFMD a)
 {
+	destroy_rds (a->rds);
 	destroy_fircore (a->paud);
 	_aligned_free (a->audio);
 	_aligned_free (a);
@@ -121,6 +124,7 @@ void flush_wfmd (WFMD a)
 	a->pll_phase = 0.0;
 	a->pll_freq = a->pll_w0;
 	a->lock = 0.0;
+	if (a->rds) flush_rds (a->rds);
 }
 
 void xwfmd (WFMD a)
@@ -141,9 +145,12 @@ void xwfmd (WFMD a)
 			if ((re == 0.0) && (im == 0.0)) re = 1.0;
 			d = a->again * atan2 (im, re);	// MPX (baseband + 19k pilot + L-R DSB)
 
-			if (a->stereo)
+			// 19 kHz pilot PLL — shared by the stereo decoder and the RDS decoder
+			// (RDS's 57 kHz subcarrier is the 3rd harmonic of the pilot).
+			double s_pll = 0.0, c_pll = 1.0;
+			if (a->stereo || a->rds_run)
 			{
-				double pil, piln, s, c, perr, ref38, gate, lr, left, right;
+				double pil, piln, perr;
 				// isolate the 19 kHz pilot (RBJ band-pass biquad, b1 = 0, b2 = -b0)
 				pil = a->bq_b0 * (d - a->bq_x2) - a->bq_a1 * a->bq_y1 - a->bq_a2 * a->bq_y2;
 				a->bq_x2 = a->bq_x1; a->bq_x1 = d;
@@ -152,16 +159,21 @@ void xwfmd (WFMD a)
 				a->env += a->env_alpha * (fabs (pil) - a->env);
 				piln = (a->env > 1e-9) ? pil / (a->env * 1.41421356) : 0.0;
 				// 2nd-order PLL locking the NCO to the pilot
-				s = sin (a->pll_phase);
-				c = cos (a->pll_phase);
-				perr = piln * (-s);				// phase detector
+				s_pll = sin (a->pll_phase);
+				c_pll = cos (a->pll_phase);
+				perr = piln * (-s_pll);			// phase detector
 				a->pll_freq += a->pll_beta * perr;
 				a->pll_phase += a->pll_freq + a->pll_alpha * perr;
 				if (a->pll_phase >  PI) a->pll_phase -= TWOPI;
 				if (a->pll_phase < -PI) a->pll_phase += TWOPI;
 				// coherence: when locked piln ~ cos(phase) so 2*piln*cos -> ~1;
 				// on noise/no-pilot it averages to ~0.  Drives the stereo gate.
-				a->lock += a->lock_alpha * (2.0 * piln * c - a->lock);
+				a->lock += a->lock_alpha * (2.0 * piln * c_pll - a->lock);
+			}
+
+			if (a->stereo)
+			{
+				double gate, ref38, lr, left, right;
 				gate = a->lock;
 				if (gate < 0.0) gate = 0.0;
 				if (gate > 1.0) gate = 1.0;
@@ -186,6 +198,9 @@ void xwfmd (WFMD a)
 				a->audio[2 * i + 0] = a->deemph_y_l;
 				a->audio[2 * i + 1] = a->deemph_y_l;
 			}
+
+			// feed the RDS decoder (uses the MPX and the pilot phase cos/sin)
+			if (a->rds_run) xrds (a->rds, d, c_pll, s_pll);
 		}
 		// audio band-limiting low-pass -> a->out (also removes the 38k L-R images)
 		xfircore (a->paud);
@@ -209,6 +224,7 @@ void setSamplerate_wfmd (WFMD a, int rate)
 	impulse = fir_bandpass (a->nc_aud, -a->f_high, a->f_high, a->rate, 0, 1, a->afgain / (2.0 * a->size));
 	setImpulse_fircore (a->paud, impulse, 1);
 	_aligned_free (impulse);
+	setSize_rds (a->rds, rate);			// re-rate the RDS decoder
 }
 
 void setSize_wfmd (WFMD a, int size)
@@ -266,4 +282,134 @@ PORT
 double GetRXAWFMPilotLock (int channel)
 {
 	return rxa[channel].wfmd.p->lock;
+}
+
+PORT
+void SetRXAWFMRDS (int channel, int run)
+{
+	EnterCriticalSection (&ch[channel].csDSP);
+	rxa[channel].wfmd.p->rds_run = run;
+	if (!run) flush_rds (rxa[channel].wfmd.p->rds);
+	LeaveCriticalSection (&ch[channel].csDSP);
+}
+
+// RDS Programme Identification (16-bit). Returns 0 if not yet decoded.
+PORT
+int GetRXAWFMRDSPI (int channel)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	return a->rds->pi_valid ? (int) a->rds->pi : 0;
+}
+
+// RDS Programme Service name (8 chars). Copies up to 9 bytes (incl. NUL) into ps.
+// Returns 1 if a PS name has been assembled, else 0 (ps set to empty string).
+PORT
+int GetRXAWFMRDSPS (int channel, char* ps)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (a->rds->ps_valid) { memcpy (ps, a->rds->ps, 9); }
+	else                  { ps[0] = 0; }
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return a->rds->ps_valid;
+}
+
+// RDS RadioText (up to 64 chars). Copies up to 65 bytes (incl. NUL) into rt.
+// Returns 1 if a RadioText message has been assembled, else 0 (rt set to empty).
+PORT
+int GetRXAWFMRDSRT (int channel, char* rt)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (a->rds->rt_valid) { memcpy (rt, a->rds->rt, 65); }
+	else                  { rt[0] = 0; }
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return a->rds->rt_valid;
+}
+
+// RDS programme flags: Programme Type (0..31), Traffic Programme and Traffic
+// Announcement. Any NULL pointer is skipped. Returns 1 if a clean block B has
+// been decoded (flags meaningful), else 0.
+PORT
+int GetRXAWFMRDSFlags (int channel, int* pty, int* tp, int* ta)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	int valid;
+	EnterCriticalSection (&ch[channel].csDSP);
+	valid = a->rds->flags_valid;
+	if (pty) *pty = a->rds->pty;
+	if (tp)  *tp  = a->rds->tp;
+	if (ta)  *ta  = a->rds->ta;
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return valid;
+}
+
+// RDS clock-time / date (group 4A), already converted to local time. Any NULL
+// pointer is skipped. Returns 1 once a plausible CT has been decoded, else 0.
+PORT
+int GetRXAWFMRDSCT (int channel, int* year, int* month, int* day, int* hour, int* minute)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	int valid;
+	EnterCriticalSection (&ch[channel].csDSP);
+	valid = a->rds->ct_valid;
+	if (year)   *year   = a->rds->ct_year;
+	if (month)  *month  = a->rds->ct_month;
+	if (day)    *day    = a->rds->ct_day;
+	if (hour)   *hour   = a->rds->ct_hour;
+	if (minute) *minute = a->rds->ct_minute;
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return valid;
+}
+
+// RDS Music/Speech (1/0) and Decoder-Info bits (b0 stereo .. b3 dynamic PTY).
+// NULL pointers are skipped. Returns 1 once a clean group 0 has been seen.
+PORT
+int GetRXAWFMRDSMSDI (int channel, int* ms, int* di)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	int valid;
+	EnterCriticalSection (&ch[channel].csDSP);
+	valid = a->rds->msdi_valid;
+	if (ms) *ms = a->rds->ms;
+	if (di) *di = a->rds->di;
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return valid;
+}
+
+// RDS Extended Country Code (group 1A). Returns the 8-bit ECC, or 0 if none yet.
+PORT
+int GetRXAWFMRDSECC (int channel)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	return a->rds->ecc_valid ? a->rds->ecc : 0;
+}
+
+// RDS Alternative Frequencies. Copies up to max entries (units of 0.1 MHz) into
+// list and returns how many are available (may exceed max).
+PORT
+int GetRXAWFMRDSAF (int channel, int* list, int max)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	int n, i;
+	EnterCriticalSection (&ch[channel].csDSP);
+	n = a->rds->af_count;
+	for (i = 0; i < n && i < max; i++) list[i] = a->rds->af_mhz10[i];
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return n;
+}
+
+// RDS RadioText+ "now playing": copies title and artist (up to 65 bytes incl.
+// NUL each). NULL pointers are skipped. Returns 1 if a tag has been extracted.
+PORT
+int GetRXAWFMRDSRTPlus (int channel, char* title, char* artist)
+{
+	WFMD a = rxa[channel].wfmd.p;
+	int valid;
+	EnterCriticalSection (&ch[channel].csDSP);
+	valid = a->rds->rtp_valid;
+	if (title)  { memcpy (title,  a->rds->rtp_title,  65); }
+	if (artist) { memcpy (artist, a->rds->rtp_artist, 65); }
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return valid;
 }

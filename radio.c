@@ -302,6 +302,10 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.swr_alarm",value);
   sprintf(value,"%d",radio->ppm_correction_value);
   setProperty("radio.ppm_correction_value",value);
+  sprintf(value,"%d",radio->wfm_deemphasis);
+  setProperty("radio.wfm_deemphasis",value);
+  sprintf(value,"%d",radio->rds_rbds);
+  setProperty("radio.rds_rbds",value);
 
 /*
   sprintf(value,"%d",rigctl_enable);
@@ -537,6 +541,10 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->swr_alarm_value=atof(value);
   value=getProperty("radio.ppm_correction_value");
   if(value!=NULL) radio->ppm_correction_value=atoi(value);
+  value=getProperty("radio.wfm_deemphasis");
+  if(value!=NULL) radio->wfm_deemphasis=atoi(value);
+  value=getProperty("radio.rds_rbds");
+  if(value!=NULL) radio->rds_rbds=atoi(value);
 
   value=getProperty("radio.iqswap");
   if(value) radio->iqswap=atoi(value);
@@ -663,6 +671,18 @@ void vox_changed(RADIO *r) {
   rxtx(radio);
 }
 
+// Apply the broadcast-FM de-emphasis choice (0 = 50 us, 1 = 75 us) to every
+// receiver's WFM channel. Harmless on non-WFM channels (the WFM demod exists on
+// all channels; only WFM mode runs it).
+void radio_set_wfm_deemphasis(RADIO *r, int sel) {
+  int i;
+  r->wfm_deemphasis = sel ? 1 : 0;
+  for(i=0;i<r->receivers;i++) {
+    if(r->receiver[i]!=NULL)
+      SetRXAWFMDeemphasisTau(r->receiver[i]->channel, sel ? 75.0e-6 : 50.0e-6);
+  }
+}
+
 void frequency_changed(RECEIVER *rx) {
 
     // Diversity mixer hidden rx synced to the rx which is
@@ -716,12 +736,27 @@ void frequency_changed(RECEIVER *rx) {
       }
     }
 
+    // Freetune (unlike plain CTUN) lets the span centre follow the cursor at the
+    // span edges: frequency_a moves, so the hardware LO must be retuned to match.
+    // Retune only when the centre actually changed, so in-span tuning stays a
+    // click-free digital shift. Protocol 1 needs nothing here (its output thread
+    // reads frequency_a continuously); Protocol 2 / SoapySDR must be told.
+    if(rx->freetune && rx->frequency_a != rx->freetune_hw_frequency) {
+      if(radio->discovered->protocol==PROTOCOL_2) {
+        protocol2_high_priority();
 #ifdef SOAPYSDR
-    if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-      // delay setting tx frequency until transmit
-    }
+      } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+        soapy_protocol_set_rx_frequency(rx);
 #endif
+      }
+      rx->band_a=get_band_from_frequency(rx->frequency_a);
+      rx->freetune_hw_frequency=rx->frequency_a;
+    }
   } else {
+    // Normal tuning: the VFO cursor sits at the centre, so there is no ctun
+    // offset. Clear any stale value left over from ctun/freetune so the cursor
+    // (drawn from ctun_offset in the panadapter) returns to the middle.
+    rx->ctun_offset=0;
     if(radio->discovered->protocol==PROTOCOL_2) {
       protocol2_high_priority();
 #ifdef SOAPYSDR
@@ -1377,6 +1412,124 @@ static GtkWidget *bar_rail(gboolean accent) {
   return s;
 }
 
+// RDS Programme Type names (European RDS table; the user's live FM is European).
+// The 32 programme-type names differ between the European RDS table and the
+// North-American RBDS table; the active one is chosen by radio->rds_rbds.
+// Code 0 = "no programme type", shown as blank.
+static const char *rds_pty_name[32] = {
+  "",                 "News",             "Current Affairs",  "Information",
+  "Sport",            "Education",        "Drama",            "Culture",
+  "Science",          "Varied",           "Pop Music",        "Rock Music",
+  "Easy Listening",   "Light Classical",  "Serious Classical","Other Music",
+  "Weather",          "Finance",          "Children",         "Social Affairs",
+  "Religion",         "Phone In",         "Travel",           "Leisure",
+  "Jazz",             "Country",          "National Music",   "Oldies",
+  "Folk Music",       "Documentary",      "Alarm Test",       "Alarm"
+};
+static const char *rbds_pty_name[32] = {
+  "",                 "News",             "Information",       "Sports",
+  "Talk",             "Rock",             "Classic Rock",     "Adult Hits",
+  "Soft Rock",        "Top 40",           "Country",          "Oldies",
+  "Soft",             "Nostalgia",        "Jazz",             "Classical",
+  "R&B",              "Soft R&B",         "Language",         "Religious Music",
+  "Religious Talk",   "Personality",      "Public",           "College",
+  "Spanish Talk",     "Spanish Music",    "Hip-Hop",          "",
+  "",                 "Weather",          "Emergency Test",   "Emergency"
+};
+
+// Country from the Extended Country Code + the PI country-code nibble (cc). A cc
+// of 0 in the table means "any" (the Americas vary the nibble). Standard RDS ECC
+// table; the European ECCs E0/E1 are the most complete, others partial — unknown
+// (ecc,cc) pairs fall back to a raw hex code so nothing is ever shown wrong.
+static const char *rds_country_name(int ecc, int cc) {
+  static const struct { unsigned char ecc, cc; const char *name; } tab[] = {
+    {0xE0,0x1,"Germany"},{0xE0,0x5,"Italy"},{0xE0,0x6,"Belgium"},
+    {0xE0,0x7,"Russia"},{0xE0,0xA,"Austria"},{0xE0,0xB,"Hungary"},{0xE0,0xD,"Germany"},
+    {0xE1,0x1,"Greece"},{0xE1,0x2,"Cyprus"},{0xE1,0x4,"Switzerland"},{0xE1,0x6,"Finland"},
+    {0xE1,0x7,"Luxembourg"},{0xE1,0x9,"Denmark"},{0xE1,0xC,"United Kingdom"},
+    {0xE1,0xE,"Romania"},{0xE1,0xF,"France"},
+    {0xE2,0x2,"Czech Republic"},{0xE2,0x3,"Poland"},{0xE2,0x5,"Slovakia"},
+    {0xE2,0xA,"Iceland"},{0xE2,0xC,"Lithuania"},{0xE2,0xE,"Spain"},
+    {0xE3,0x2,"Ireland"},{0xE3,0x8,"Netherlands"},{0xE3,0xE,"Sweden"},{0xE3,0xF,"Norway"},
+    {0xA0,0x0,"United States"},{0xA1,0x0,"Canada"},
+  };
+  size_t i;
+  for(i=0;i<sizeof(tab)/sizeof(tab[0]);i++)
+    if(tab[i].ecc==ecc && (tab[i].cc==cc || tab[i].cc==0)) return tab[i].name;
+  return NULL;
+}
+
+// Append to a running (p,n) cursor without overrunning; truncation stops growth.
+#define RDS_APP(...) do { int _w=snprintf(p,n,__VA_ARGS__); \
+    if(_w<0) _w=0; else if((size_t)_w>=n) _w=(int)n-1; p+=_w; n-=(size_t)_w; } while(0)
+
+// Periodically refresh the 3-line RDS module, but only while the active receiver
+// is demodulating broadcast FM (WFM):
+//   line 0 - identity : PS, PI, PTY, Music/Speech, Stereo/Mono, TP, TA
+//   line 1 - RadioText
+//   line 2 - now-playing (RT+), station clock (CT), alternative frequencies (AF)
+static gboolean rds_update_cb(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  RECEIVER *rx=r->active_receiver;
+  char l0[256], l1[256], l2[512];
+  l0[0]=l1[0]=l2[0]=0;
+  if(rx!=NULL && rx->mode_a==WFM) {
+    int chn=rx->channel;
+    char ps[9], rt[65], title[65], artist[65];
+    int pi=GetRXAWFMRDSPI(chn);
+    int have_ps=GetRXAWFMRDSPS(chn,ps);
+    int have_rt=GetRXAWFMRDSRT(chn,rt);
+    int pty=0,tp=0,ta=0; int have_flags=GetRXAWFMRDSFlags(chn,&pty,&tp,&ta);
+    int ms=0,di=0;       int have_msdi=GetRXAWFMRDSMSDI(chn,&ms,&di);
+    int have_rtp=GetRXAWFMRDSRTPlus(chn,title,artist);
+    const char **ptytab=r->rds_rbds?rbds_pty_name:rds_pty_name;
+
+    // ---- line 0: station identity ----
+    { char *p=l0; size_t n=sizeof(l0);
+      if(have_ps && pi)      RDS_APP("%s    PI %04X",ps,pi);
+      else if(have_ps)       RDS_APP("%s",ps);
+      else if(pi)            RDS_APP("PI %04X",pi);
+      else                   RDS_APP("searching…");
+      // country from the Extended Country Code + PI's country-code nibble
+      if(pi) { int ecc=GetRXAWFMRDSECC(chn);
+        if(ecc) { const char *ctry=rds_country_name(ecc,(pi>>12)&0xF);
+          if(ctry) RDS_APP("  (%s)",ctry); else RDS_APP("  (ECC %02X)",ecc); } }
+      if(have_flags && pty>0 && ptytab[pty][0]) RDS_APP("    %s",ptytab[pty]);
+      if(have_msdi) RDS_APP("    %s",ms?"Music":"Speech");
+      // Real stereo state from the 19 kHz pilot lock (not the RDS DI bit): the
+      // decoder auto-blends to mono without a pilot, so this reflects what you hear.
+      RDS_APP("    %s", GetRXAWFMPilotLock(chn)>0.5 ? "Stereo" : "Mono");
+      if(have_flags && tp) RDS_APP("  TP");
+      if(have_flags && ta) RDS_APP("  TA");
+    }
+
+    // ---- line 1: RadioText ----
+    if(have_rt) snprintf(l1,sizeof(l1),"%s",rt);
+
+    // ---- line 2: now-playing (RT+), clock (CT), alternative frequencies (AF) ----
+    { char *p=l2; size_t n=sizeof(l2); int first=1;
+      if(have_rtp && (title[0]||artist[0])) {
+        if(title[0] && artist[0]) RDS_APP("♪ %s — %s",artist,title);
+        else                      RDS_APP("♪ %s",title[0]?title:artist);
+        first=0;
+      }
+      int cy,cmo,cd,chh,cmi;
+      if(GetRXAWFMRDSCT(chn,&cy,&cmo,&cd,&chh,&cmi)) {
+        RDS_APP("%s%04d-%02d-%02d %02d:%02d",first?"":"    ",cy,cmo,cd,chh,cmi); first=0;
+      }
+      int af[25]; int naf=GetRXAWFMRDSAF(chn,af,25);
+      if(naf>0) {
+        RDS_APP("%sAF:",first?"":"    "); first=0;
+        for(int i=0;i<naf && n>6;i++) RDS_APP(" %.1f",af[i]/10.0);
+      }
+    }
+  }
+  for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL)
+    gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
+  return TRUE;   // keep the timer running
+}
+#undef RDS_APP
+
 static void create_visual(RADIO *r) {
   // The top row (r->visual) is now an empty spacer: all TX controls and the
   // toolbar buttons live in a single horizontal bottom bar below the receivers.
@@ -1450,6 +1603,26 @@ static void create_visual(RADIO *r) {
 
   gtk_box_pack_start(GTK_BOX(r->bottom_bar),
                      bar_module("RX FRONT-END",adc_col),FALSE,FALSE,0);
+
+  // Module: RDS - a 3-line decoder readout (identity / RadioText / now-playing +
+  // clock + AF). Its own block, attached to the left cluster and separated by a
+  // rail; the free bottom-bar space sits to its right and each line ellipsizes.
+  gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+  GtkWidget *rds_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,1);
+  gtk_widget_set_hexpand(rds_col,TRUE);
+  for(int i=0;i<3;i++) {
+    r->rds_label[i]=gtk_label_new("");
+    gtk_widget_set_name(r->rds_label[i],"rds-text");
+    gtk_widget_set_halign(r->rds_label[i],GTK_ALIGN_FILL);
+    gtk_widget_set_hexpand(r->rds_label[i],TRUE);
+    gtk_label_set_xalign(GTK_LABEL(r->rds_label[i]),0.0);
+    if(i==0) gtk_label_set_width_chars(GTK_LABEL(r->rds_label[i]),12); // modest min
+    gtk_label_set_ellipsize(GTK_LABEL(r->rds_label[i]),PANGO_ELLIPSIZE_END);
+    gtk_box_pack_start(GTK_BOX(rds_col),r->rds_label[i],FALSE,FALSE,0);
+  }
+  gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                     bar_module("RDS",rds_col),TRUE,TRUE,0);
+  g_timeout_add(500,rds_update_cb,(gpointer)r);
 
   // Module: SETUP - Configure / Add Receiver / Add Wideband.
   GtkWidget *tool_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);

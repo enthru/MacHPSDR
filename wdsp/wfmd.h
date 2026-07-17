@@ -24,6 +24,7 @@ and RDS (57 kHz) are added in later phases.
 #define _wfmd_h
 
 #include "firmin.h"
+#include "rds.h"
 
 typedef struct _wfmd
 {
@@ -67,6 +68,9 @@ typedef struct _wfmd
 	// pilot-lock metric (smoothed coherence 0..1) -> stereo/mono blend gate
 	double lock;
 	double lock_alpha;
+	// ---- RDS (Radio Data System) decoder ----
+	int rds_run;						// 1 = decode RDS
+	RDS rds;
 	// audio band-limiting filter (fircore low-pass)
 	FIRCORE paud;
 	int nc_aud;
@@ -94,5 +98,15 @@ extern void SetRXAWFMDeviation (int channel, double deviation);
 extern void SetRXAWFMDeemphasisTau (int channel, double tau);
 extern void SetRXAWFMStereo (int channel, int run);
 extern double GetRXAWFMPilotLock (int channel);
+extern void SetRXAWFMRDS (int channel, int run);
+extern int GetRXAWFMRDSPI (int channel);
+extern int GetRXAWFMRDSPS (int channel, char* ps);
+extern int GetRXAWFMRDSRT (int channel, char* rt);
+extern int GetRXAWFMRDSFlags (int channel, int* pty, int* tp, int* ta);
+extern int GetRXAWFMRDSCT (int channel, int* year, int* month, int* day, int* hour, int* minute);
+extern int GetRXAWFMRDSMSDI (int channel, int* ms, int* di);
+extern int GetRXAWFMRDSAF (int channel, int* list, int max);
+extern int GetRXAWFMRDSECC (int channel);
+extern int GetRXAWFMRDSRTPlus (int channel, char* title, char* artist);
 
 #endif
