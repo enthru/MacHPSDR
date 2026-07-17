@@ -606,12 +606,12 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     cairo_set_dash(cr, 0, 0, 0);
     // agc
     if(rx->agc!=AGC_OFF) {
-      double hang=0.0;
-      double thresh=0.0;
       double x=80.0;
 
-      GetRXAAGCHangLevel(rx->channel, &hang);
-      GetRXAAGCThresh(rx->channel, &thresh, 4096.0, (double)rx->sample_rate);
+      // Use the values cached by the display timer under rx->mutex; calling
+      // WDSP here would race with the RX thread (this runs unlocked).
+      double hang=rx->agc_hang_level;
+      double thresh=rx->agc_thresh_level;
     
       if(rx->panadapter_agc_line) {
         double knee_y=thresh+attenuation+radio->panadapter_calibration;      
@@ -741,19 +741,15 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
       if(rx->panadapter_filled) {
         cairo_close_path (cr);
-        // Fade the fill from the trace colour just under the curve down to
-        // transparent at the baseline -- the modern "area under the line" look.
-        cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,(double)(rx->panadapter_height-20));
-        cairo_pattern_add_color_stop_rgba(pat,0.0, sr,sg,sb, 0.55);
-        cairo_pattern_add_color_stop_rgba(pat,1.0, sr,sg,sb, 0.04);
-        cairo_set_source (cr, pat);
+        // Solid, constant-alpha fill in the trace colour. A vertical alpha
+        // gradient ("fade under the curve") was tried but a *varying* gradient
+        // forces per-pixel compositing over the whole fill area every frame --
+        // and this runs inline on the RX/audio thread, so on a large panadapter
+        // it stole enough time to stutter the stream. A constant fill is the
+        // cheap path (cairo treats it as solid).
+        cairo_set_source_rgba(cr, sr,sg,sb, 0.5);
         cairo_fill_preserve(cr);
-        cairo_pattern_destroy(pat);
       }
-      // Soft glow underneath, then the crisp trace on top.
-      cairo_set_line_width(cr, LINE_WIDTH*3.0);
-      cairo_set_source_rgba(cr, sr,sg,sb, 0.18);
-      cairo_stroke_preserve(cr);
       cairo_set_line_width(cr, LINE_WIDTH);
       cairo_set_source_rgb(cr, sr,sg,sb);
       cairo_stroke(cr);

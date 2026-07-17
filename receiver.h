@@ -114,6 +114,11 @@ typedef struct _receiver {
   gdouble agc_gain;
   gdouble agc_slope;
   gdouble agc_hang_threshold;
+  // AGC hang/threshold levels for the panadapter AGC line. Read from WDSP under
+  // rx->mutex in the display timer and cached here so the (unlocked) panadapter
+  // render never calls WDSP concurrently with the RX thread.
+  gdouble agc_hang_level;
+  gdouble agc_thresh_level;
 
   gboolean rit_enabled;
   gint64 rit;

@@ -21,5 +21,6 @@ extern int enable_fake;
 void fake_discovery(void);
 void fake_protocol_init(RADIO *r);
 void fake_protocol_stop(void);
+int fake_protocol_is_running(void);
 
 #endif

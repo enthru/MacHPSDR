@@ -1637,7 +1637,9 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_hexpand(rds_col,TRUE);
   for(int i=0;i<3;i++) {
     r->rds_label[i]=gtk_label_new("");
-    gtk_widget_set_name(r->rds_label[i],"rds-text");
+    // Per-line names give the 3 RDS rows a typographic hierarchy in CSS:
+    // 0 = station identity (accent, bold), 1 = RadioText (muted), 2 = now-playing.
+    gtk_widget_set_name(r->rds_label[i], i==0?"rds-text-0":i==1?"rds-text-1":"rds-text-2");
     gtk_widget_set_halign(r->rds_label[i],GTK_ALIGN_FILL);
     gtk_widget_set_hexpand(r->rds_label[i],TRUE);
     gtk_label_set_xalign(GTK_LABEL(r->rds_label[i]),0.0);

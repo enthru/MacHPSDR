@@ -300,3 +300,7 @@ void fake_protocol_init(RADIO *r) {
 void fake_protocol_stop(void) {
   fake_running = 0;
 }
+
+int fake_protocol_is_running(void) {
+  return fake_running;
+}

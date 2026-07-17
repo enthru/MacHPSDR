@@ -86,7 +86,7 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
                                        tx->panadapter_height);
     cairo_t *cr;
     cr = cairo_create (tx->panadapter_surface);
-    txpan_rgb(cr,"SPECTRUM_BG",0.09,0.09,0.10);
+    txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
     cairo_paint (cr);
     cairo_destroy(cr);
     transmitter_init_analyzer(tx);
@@ -102,7 +102,7 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
 
 static gboolean tx_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  txpan_rgb(cr,"SPECTRUM_BG",0.09,0.09,0.10);
+  txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
   cairo_paint(cr);
   if(tx->panadapter_surface!=NULL) {
     cairo_set_source_surface (cr, tx->panadapter_surface, 0.0, 0.0);
@@ -143,7 +143,7 @@ void update_tx_panadapter(RADIO *r) {
     cr = cairo_create (tx->panadapter_surface);
     cairo_set_line_width(cr, 1.0);
 
-    txpan_rgb(cr,"SPECTRUM_BG",0.09,0.09,0.10);
+    txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
     //cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,height);
     //cairo_pattern_add_color_stop_rgba(pat,1.0,0.1,0.1,0.1,0.5);
     //cairo_pattern_add_color_stop_rgba(pat,0.0,0.5,0.5,0.5,0.5);
@@ -154,7 +154,7 @@ void update_tx_panadapter(RADIO *r) {
 
     double dbm_per_line=(double)height/((double)tx->panadapter_high-(double)tx->panadapter_low);
 
-    txpan_rgb(cr,"ON_ACCENT",0.9,0.9,0.9);   // always-light text on the dark spectrum
+    txpan_rgb(cr,"OFF_WHITE",0.9,0.9,0.9);   // body text, follows the skin (readable on SURFACE)
     cairo_set_line_width(cr, 1.0);
     cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
     cairo_set_font_size(cr, 12);   // levels (dBm scale) -15%

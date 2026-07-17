@@ -145,21 +145,33 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     Status: implemented but NOT yet tested on hardware — to be verified on a
     real HackRF later.
 45) Interface polish built on the skin system:
-    - Spectrum trace: the area under the curve now fades from the trace colour
-      down to transparent (instead of a flat fill), with a soft glow under the
-      line. The default trace colour follows the skin's accent; explicit
-      single-colour choices are kept and also get the gradient/glow.
-    - Dark panels follow the skin: the panadapter and TX monitor backgrounds use
-      a per-skin SPECTRUM_BG (kept dark on every skin — e.g. Solarized Light maps
-      it to a Solarized-dark tone) so they read as intentional inset panels
-      rather than black boxes, and text on them uses an always-light colour.
+    - Spectrum trace: the default trace colour follows the skin's accent; the
+      area under the curve is a solid tinted fill. (A gradient/glow was tried but
+      the varying-alpha fill/extra stroke was too expensive per frame and stole
+      time from audio, so it was dropped — see the note below.)
+    - Big RX spectrum stays dark on every skin via a per-skin SPECTRUM_BG colour
+      (e.g. Solarized Light maps it to a Solarized-dark tone) so it reads as an
+      intentional panel, not a black box.
+    - TX monitor follows the skin: its background uses the theme SURFACE (light
+      on light skins) and its text OFF_WHITE, so it matches the theme while the
+      large RX spectrum stays dark.
     - Frequency display: leading zeros are dimmed so the eye lands on the
       significant digits, and the VFO A/B colours now come from the skin accents
       (previously hard-coded).
     - S-meter: dimmed minor ticks with bright major ticks, a themed-accent
       needle with a pivot hub, and a red S9+ overload arc.
-    Status: implemented, builds clean; visual look still to be eyeballed on the
-    running app.
+    Performance: the panadapter/waterfall/meter render in the display timer on
+    the GTK main thread, which used to hold the receiver DSP mutex across the
+    whole draw and stall the RX/audio thread on a large window. The timer now
+    holds the mutex only for the WDSP data reads and renders unlocked, so draw
+    cost no longer affects the audio stream.
+46) More skin-aware polish:
+    - The panadapter+waterfall stack has a hairline inset frame (1px border in
+      the skin's BORDER colour) so the dark spectrum reads as a framed panel.
+    - The RDS readout has a 3-line typographic hierarchy: station identity in the
+      accent colour (bold), RadioText in muted body text, now-playing in the
+      second accent.
+    - Bottom-bar section headers get a small accent tick (a coloured left bar).
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

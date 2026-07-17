@@ -52,6 +52,7 @@
 #include "protocol2.h"
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
+#include "fake_protocol.h"
 #endif
 #include "audio.h"
 #include "receiver_dialog.h"
@@ -1264,12 +1265,22 @@ gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpoi
 }
 
 static gboolean update_timer_cb(void *data) {
-  int rc;
+  int rc=0;
   int rc2;
   RECEIVER *rx=(RECEIVER *)data;
-  char *ptr;
-  gboolean running;
+  gboolean running=FALSE;
+  gboolean have_pixels=FALSE;   // panadapter/waterfall data fetched this tick?
+  gboolean draw_display;        // not TX (or duplex) -> update pan/wf/meter
+  gboolean tx_needs_update=FALSE;
 
+  // -------------------------------------------------------------------------
+  // Phase 1: read the WDSP display data under rx->mutex. This runs on the GTK
+  // main thread (g_timeout at rx->fps). The mutex also guards the RX/audio
+  // thread's fexchange0()/Spectrum0() in full_rx_buffer(), so we must hold it
+  // for as SHORT a time as possible: only the WDSP reads, never the cairo
+  // rendering. Holding it across the (pixel-area-scaled) panadapter draw used
+  // to block the RX thread and stutter the audio on a large window.
+  // -------------------------------------------------------------------------
   g_mutex_lock(&rx->mutex);
   switch(radio->discovered->protocol) {
     case PROTOCOL_1:
@@ -1283,31 +1294,31 @@ static gboolean update_timer_cb(void *data) {
       running=soapy_protocol_is_running();
       break;
 #endif
+    case PROTOCOL_FAKE:
+      running=fake_protocol_is_running();
+      break;
   }
-  if(!isTransmitting(radio) || (rx->duplex)) {
+  draw_display = (!isTransmitting(radio) || (rx->duplex));
+  if(draw_display) {
     if(rx->panadapter_resize_timer==-1 && rx->pixel_samples!=NULL) {
       GetPixels(rx->channel,0,rx->pixel_samples,&rc);
-
 
       if (radio->divmixer[rx->dmix_id] != NULL) {
         if (radio->divmixer[rx->dmix_id]->calibrate_gain) {
           GetPixels(radio->divmixer[rx->dmix_id]->rx_hidden->channel, 0,
                     radio->divmixer[rx->dmix_id]->rx_hidden->pixel_samples, &rc2);
-
         }
       }
-
-      if(rc) {
-        update_rx_panadapter(rx,running);
-        update_waterfall(rx);
-      } else if(!running) {
-        update_rx_panadapter(rx,running);
-      }
+      have_pixels=TRUE;
     }
     rx->meter_db=GetRXAMeter(rx->channel,rx->smeter) + radio->meter_calibration;
-    update_meter(rx);
+    // Cache the AGC hang/threshold here (under the lock) so the unlocked
+    // panadapter render below never calls WDSP while the RX thread runs.
+    if(rx->agc!=AGC_OFF) {
+      GetRXAAGCHangLevel(rx->channel, &rx->agc_hang_level);
+      GetRXAAGCThresh(rx->channel, &rx->agc_thresh_level, 4096.0, (double)rx->sample_rate);
+    }
   }
-  update_radio_info(rx);
 
 #ifdef SOAPYSDR
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
@@ -1316,12 +1327,31 @@ static gboolean update_timer_cb(void *data) {
     }
   }
 #endif
+  tx_needs_update = (radio->transmitter!=NULL && !radio->transmitter->updated);
+  g_mutex_unlock(&rx->mutex);
 
-  if(radio->transmitter!=NULL && !radio->transmitter->updated) {
+  // -------------------------------------------------------------------------
+  // Phase 2: render WITHOUT the lock. rx->pixel_samples is only written above
+  // (under the lock) and only from this main-thread timer, so reading it here
+  // is safe, and the RX/audio thread is never blocked waiting on the draw.
+  // -------------------------------------------------------------------------
+  if(draw_display) {
+    if(have_pixels) {
+      if(rc) {
+        update_rx_panadapter(rx,running);
+        update_waterfall(rx);
+      } else if(!running) {
+        update_rx_panadapter(rx,running);
+      }
+    }
+    update_meter(rx);
+  }
+  update_radio_info(rx);
+
+  if(tx_needs_update) {
     update_tx_panadapter(radio);
   }
 
-  g_mutex_unlock(&rx->mutex);
   return TRUE;
 }
 
@@ -1754,6 +1784,7 @@ static void create_visual(RECEIVER *rx) {
   }
 
   rx->vpaned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
+  gtk_widget_set_name(rx->vpaned,"rx-spectrum");   // hairline inset frame (CSS)
   gtk_grid_attach(GTK_GRID(rx->table), rx->vpaned, 0, 1, 7, 2);
   gtk_widget_set_hexpand(rx->vpaned, TRUE);
   gtk_widget_set_vexpand(rx->vpaned, TRUE);
