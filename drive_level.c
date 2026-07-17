@@ -36,8 +36,21 @@
 #include "main.h"
 #include "drive_level.h"
 #include "protocol2.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 #include "vfo.h"
 #include "level_meter.h"
+
+// On SoapySDR (e.g. HackRF) the drive slider maps onto the hardware TX gain,
+// exactly like the RX gain slider - there is no digital drive scaling.
+static inline void drive_level_apply(TRANSMITTER *tx) {
+#ifdef SOAPYSDR
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    soapy_protocol_set_tx_drive(tx->drive);
+  }
+#endif
+}
 
 static char *title="Drive";
 
@@ -86,6 +99,7 @@ static gboolean drive_level_press_event_cb(GtkWidget *widget,GdkEventButton *eve
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
+  drive_level_apply(tx);
   gtk_widget_queue_draw(radio->drive_level);
   return TRUE;
 }
@@ -102,6 +116,7 @@ static gboolean drive_level_scroll_event_cb(GtkWidget *widget,GdkEventScroll *ev
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
+  drive_level_apply(tx);
   gtk_widget_queue_draw(radio->drive_level);
   return TRUE;
 }

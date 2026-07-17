@@ -108,6 +108,22 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     `LINHPSDR_PS_DEBUG=1` (any value works). Note: PureSignal remains an
     unfinished prototype (Protocol 1 only, peak values calibrated mainly for the
     Hermes-Lite 2).
+43) SoapySDR transmit (HackRF). Transmit now actually works over SoapySDR, not just
+    receive. Because HackRF is half-duplex, keying MOX/PTT pauses and deactivates the
+    RX stream, activates the TX stream, and clocks IQ out; unkeying reverses it and
+    resumes RX. IQ is streamed to the device as normalised CF32 floats straight from
+    WDSP (the old path quantised them and would have transmitted clipped garbage). For
+    voice modes a local microphone/input must be selected (as on HPSDR); for Tune and
+    for keying with no input a dedicated TX thread clocks the exchange. The Drive
+    slider maps directly onto the hardware TX gain — like the RX gain slider — so
+    raising it increases output and turns the HackRF RF amp on near the top of the
+    range; there is no separate power calibration.
+    Not supported over SoapySDR TX: CW keying (the CW/cwdaemon keying path is
+    Protocol-1 only and is not wired to the Soapy TX stream). PureSignal is also not
+    applicable here — it needs a feedback receiver running alongside TX, which this
+    single-receiver half-duplex path cannot provide.
+    Status: implemented but NOT yet tested on hardware — to be verified on a
+    real HackRF later.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

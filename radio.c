@@ -922,7 +922,12 @@ g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
+        // Half-duplex: pause RX, point at the TX frequency/antenna, then bring
+        // the TX stream up and start clocking samples out.
+        soapy_protocol_rx_pause();
         soapy_protocol_set_tx_frequency(r->transmitter);
+        soapy_protocol_set_tx_antenna(r->transmitter,radio->dac[0].antenna);
+        soapy_protocol_activate_tx(r->transmitter);
         break;
 #endif
     }
@@ -945,7 +950,9 @@ g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        //soapy_protocol_stop_transmitter(r->transmitter);
+        // Bring the TX stream down, then resume RX (half-duplex).
+        soapy_protocol_deactivate_tx(r->transmitter);
+        soapy_protocol_rx_resume();
         break;
 #endif
     }

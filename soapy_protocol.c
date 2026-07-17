@@ -74,6 +74,25 @@ static int max_tx_samples;
 static float *output_buffer;
 static int output_buffer_index;
 
+// Half-duplex (HackRF): the RX stream must be deactivated before the TX stream
+// is activated and vice-versa.  receive_thread keeps running for the lifetime
+// of the app but only reads while rx_stream_active is TRUE.
+static gboolean rx_stream_active=TRUE;
+static int rx_channel=0;
+
+// TX pump: WDSP's TX exchange is clocked by whatever feeds add_mic_sample().
+// For voice that is the mic thread (audio.c).  For tune / no-microphone there
+// is nothing to clock it, so we run a dedicated thread that feeds silence at
+// the TX buffer boundary; writeStream() back-pressure paces the loop.
+static GThread *tx_thread_id=NULL;
+static gboolean tx_pump_running=FALSE;
+static gboolean tx_stream_active=FALSE;
+
+// TX gain range reported by the device, used to map the 0..100 drive slider
+// onto the hardware TX gain (HackRF: raises VGA then turns the RF amp on).
+static double tx_gain_min=0.0;
+static double tx_gain_max=47.0;
+
 SoapySDRDevice *get_soapy_device() {
   return soapy_device;
 }
@@ -178,6 +197,8 @@ g_print("%s: activate_stream\n",__FUNCTION__);
   g_print("%s: rate=%f\n",__FUNCTION__,rate);
 
   size_t channel=rx->adc;
+  rx_channel=channel;
+  rx_stream_active=TRUE;
   rc=SoapySDRDevice_activateStream(soapy_device, rx_stream[channel], 0, 0LL, 0);
   if(rc!=0) {
     g_print("%s: SoapySDRDevice_activateStream failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
@@ -236,6 +257,15 @@ g_print("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=
   }
 g_print("soapy_protocol_create_transmitter: max_tx_samples=%d\n",max_tx_samples);
   output_buffer=(float *)malloc(max_tx_samples*sizeof(float)*2);
+  output_buffer_index=0;
+
+  // Learn the hardware TX gain range so the drive slider (0..100) can be mapped
+  // onto it.  On HackRF the overall TX gain spans VGA (0..47 dB) plus the RF amp
+  // (+14 dB at the top), so raising drive raises gain and eventually the amp.
+  SoapySDRRange grange=SoapySDRDevice_getGainRange(soapy_device,SOAPY_SDR_TX,tx->dac);
+  tx_gain_min=grange.minimum;
+  tx_gain_max=grange.maximum;
+g_print("soapy_protocol_create_transmitter: tx gain range=%f..%f\n",tx_gain_min,tx_gain_max);
 
   if(radio->local_microphone) {
       if(audio_open_input(radio)!=0) {
@@ -310,6 +340,12 @@ static gpointer receive_thread(gpointer data) {
 g_print("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
   while(running) {
+    // Paused while transmitting (half-duplex): the RX stream is deactivated,
+    // so don't read from it - just idle until it is resumed.
+    if(!rx_stream_active) {
+      g_usleep(1000);
+      continue;
+    }
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,max_samples,&flags,&timeNs,timeoutUs);
     if(elements<0) continue;
     for(i=0;i<elements;i++) {
@@ -359,22 +395,110 @@ void soapy_protocol_process_local_mic(RADIO *r) {
 }
 
 void soapy_protocol_iq_samples(float isample,float qsample) {
-  const void *tx_buffs[]={output_buffer};
-  int flags=0;
-  long long timeNs=0;
   long timeoutUs=100000L;
-  if(isTransmitting(radio)) {
+  // Samples arrive as normalised floats (~+/-1.0) straight from WDSP - exactly
+  // what the CF32 TX stream expects.  Only write while actually transmitting
+  // and while the TX stream has been activated.
+  if(isTransmitting(radio) && tx_stream_active) {
     output_buffer[output_buffer_index*2]=isample;
     output_buffer[(output_buffer_index*2)+1]=qsample;
     output_buffer_index++;
     if(output_buffer_index>=max_tx_samples) {
-      int elements=SoapySDRDevice_writeStream(soapy_device,tx_stream,tx_buffs,max_tx_samples,&flags,timeNs,timeoutUs);
-      if(elements!=max_tx_samples) {
-        g_print("soapy_protocol_iq_samples: writeStream returned %d for %d elements\n",elements,max_tx_samples);
+      int written=0;
+      while(written<max_tx_samples) {
+        int flags=0;
+        long long timeNs=0;
+        const void *tx_buffs[]={&output_buffer[written*2]};
+        int elements=SoapySDRDevice_writeStream(soapy_device,tx_stream,tx_buffs,max_tx_samples-written,&flags,timeNs,timeoutUs);
+        if(elements>0) {
+          written+=elements;
+        } else {
+          // SOAPY_SDR_TIMEOUT / underflow / error: drop the rest of this block
+          // rather than spin - the next block will keep the stream fed.
+          break;
+        }
       }
-
       output_buffer_index=0;
     }
+  }
+}
+
+// ---- Half-duplex RX pause/resume ------------------------------------------
+
+void soapy_protocol_rx_pause() {
+  if(soapy_device==NULL) return;
+  if(!rx_stream_active) return;
+  rx_stream_active=FALSE;
+  // let an in-flight readStream() return before we deactivate the stream
+  g_usleep(2000);
+  SoapySDRDevice_deactivateStream(soapy_device,rx_stream[rx_channel],0,0LL);
+}
+
+void soapy_protocol_rx_resume() {
+  if(soapy_device==NULL) return;
+  if(rx_stream_active) return;
+  SoapySDRDevice_activateStream(soapy_device,rx_stream[rx_channel],0,0LL,0);
+  rx_stream_active=TRUE;
+}
+
+// ---- TX pump + stream activation ------------------------------------------
+
+static gpointer tx_thread(gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+g_print("soapy tx_thread: start\n");
+  // Feed silence into the TX exchange; writeStream() back-pressure paces us.
+  // For tune, WDSP's tone generator fills the output regardless of this input.
+  while(tx_pump_running) {
+    add_mic_sample(tx,0.0f);
+  }
+g_print("soapy tx_thread: exit\n");
+  return NULL;
+}
+
+void soapy_protocol_activate_tx(TRANSMITTER *tx) {
+  if(soapy_device==NULL) return;
+  output_buffer_index=0;
+  if(!tx_stream_active) {
+    int rc=SoapySDRDevice_activateStream(soapy_device,tx_stream,0,0LL,0);
+    if(rc!=0) {
+      g_print("soapy_protocol_activate_tx: activateStream failed: %s\n",SoapySDR_errToStr(rc));
+    }
+    tx_stream_active=TRUE;
+  }
+  // Make sure the hardware TX gain matches the drive slider before we key up.
+  soapy_protocol_set_tx_drive(tx->drive);
+  // Only run our own pump when nothing else clocks the TX exchange.  With a
+  // local microphone the mic thread already feeds add_mic_sample().
+  if(!radio->local_microphone && tx_thread_id==NULL) {
+    tx_pump_running=TRUE;
+    tx_thread_id=g_thread_new("soapy_tx",tx_thread,tx);
+  }
+}
+
+void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
+  if(soapy_device==NULL) return;
+  if(tx_thread_id!=NULL) {
+    tx_pump_running=FALSE;
+    g_thread_join(tx_thread_id);
+    tx_thread_id=NULL;
+  }
+  if(tx_stream_active) {
+    SoapySDRDevice_deactivateStream(soapy_device,tx_stream,0,0LL);
+    tx_stream_active=FALSE;
+  }
+  output_buffer_index=0;
+}
+
+// Map the 0..100 drive slider onto the hardware TX gain range.
+void soapy_protocol_set_tx_drive(double drive) {
+  if(soapy_device==NULL) return;
+  if(drive<0.0) drive=0.0;
+  if(drive>100.0) drive=100.0;
+  double g=tx_gain_min+((tx_gain_max-tx_gain_min)*(drive/100.0));
+  radio->dac[0].gain=g;
+  int rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id,g);
+  if(rc!=0) {
+    g_print("%s: SoapySDRDevice_setGain failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
   }
 }
 

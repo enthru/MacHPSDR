@@ -54,7 +54,7 @@ Platform is detected via `uname -s` in the Makefile (`Darwin` vs `Linux`).
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `SOAPYSDR` | enabled | RTL-SDR and LimeSDR support (RX only) |
+| `SOAPYSDR` | enabled | RTL-SDR/LimeSDR/HackRF support (RX; HackRF TX implemented, half-duplex, untested on hardware) |
 | `MIDI` | enabled | MIDI controller support |
 | `CWDAEMON` | enabled (Linux only) | CW keying via unixcw |
 | `PURESIGNAL` | disabled | Adaptive distortion correction (Protocol 1 only) |

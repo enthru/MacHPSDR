@@ -1391,7 +1391,14 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
           break;
 #ifdef SOAPYSDR
         case PROTOCOL_SOAPYSDR:
-          soapy_protocol_iq_samples((float)isample,(float)qsample);
+          // Soapy TX streams as CF32: send the normalised WDSP output floats
+          // directly (do NOT quantise through ROUNDHTZ, which would collapse
+          // the +/-1.0 range to just -1/0/+1).
+          if(radio->iqswap) {
+            soapy_protocol_iq_samples((float)tx->iq_output_buffer[(j*2)+1],(float)tx->iq_output_buffer[j*2]);
+          } else {
+            soapy_protocol_iq_samples((float)tx->iq_output_buffer[j*2],(float)tx->iq_output_buffer[(j*2)+1]);
+          }
           break;
 #endif
       }
@@ -1872,7 +1879,8 @@ g_print("update_timer: fps=%d\n",tx->fps);
       soapy_protocol_set_tx_antenna(tx,radio->dac[0].antenna);
       soapy_protocol_set_tx_gain(&radio->dac[0]);
       soapy_protocol_set_tx_frequency(tx);
-      soapy_protocol_start_transmitter(tx);
+      // NB: the TX stream is NOT activated here.  HackRF is half-duplex, so it
+      // is activated on MOX (rxtx() in radio.c) after the RX stream is paused.
       break;
 #endif
   }

@@ -14,6 +14,9 @@
 #include "main.h"
 #include "band.h"
 #include "protocol2.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 #include "actions.h"
 
 char *encoder_string[ENCODER_ACTIONS] = {
@@ -185,6 +188,11 @@ int rotary_action(void *data) {
         if(radio->discovered->protocol==PROTOCOL_2) {
           protocol2_high_priority();
         }
+#ifdef SOAPYSDR
+        if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+          soapy_protocol_set_tx_drive(tx->drive);
+        }
+#endif
       }
       break;
     case ENCODER_IF_SHIFT:
