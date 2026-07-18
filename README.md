@@ -37,6 +37,13 @@ RTL-SDR) with a selectable bandwidth and de-emphasis (50/75 µs), stereo decodin
 and RDS. The RDS panel shows the station name, programme type, RadioText, the
 currently playing track, clock time and alternative frequencies.
 
+Note: the wide-band mode runs the whole DSP chain at the (wide) SDR sample rate on a
+larger 5120-sample block (vs the 1024-sample block of the narrow-band path), so audio
+latency is noticeably higher than in normal narrow-band operation. This is a
+deliberate trade-off — the larger buffer is what keeps WDSP's async I/O ring
+consistent and avoids the crackle/glitching at high sample rates — so it is expected,
+not a bug.
+
 **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice modes
 require a microphone input to be selected; the Drive slider controls output power.
 CW and PureSignal are not available on this path. The TX IQ rate is rounded to a
