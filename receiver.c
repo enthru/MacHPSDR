@@ -1435,7 +1435,15 @@ fprintf(stderr,"set_deviation: %d\n",rx->deviation);
 void set_squelch(RECEIVER *rx) {
   double fm_sq=pow(10.0, -2.0*rx->squelch);
   SetRXAFMSQThreshold(rx->channel, fm_sq);
-  if(fm_sq > 1) {
+  // The squelch bar is clamped to [0,1], so fm_sq = 10^(-2*squelch) is at most
+  // 1.0 and the old "fm_sq > 1" disable test could never fire: the FM squelch
+  // stayed armed even with the bar fully down, where fm_sq=1.0 leaves
+  // unmute_thresh=0.9 (see SetRXAFMSQThreshold) still gating the audio.  On a
+  // weak/fake signal avnoise never drops below that, so the channel sits muted
+  // and there is no way to fully open the squelch -> "no sound with squelch off".
+  // Treat the bar at minimum as squelch OFF: stop the FMSQ so audio always
+  // passes (open FM = hiss on an empty channel, as expected).
+  if(rx->squelch <= 0.0) {
     rx->squelch_enable = FALSE;
   }
   else {
