@@ -49,6 +49,7 @@ extern void audio_close_output(RECEIVER *rx);
 extern int audio_write(RECEIVER *rx,float left_sample,float right_sample);
 extern int audio_write_buffer(RECEIVER *rx);
 extern void audio_get_cards();
+extern void audio_refresh_devices(void);
 extern void create_audio(int backend_index,const char *backend);
 extern int audio_get_backends(RADIO *r);
 extern const char *audio_get_backend_name(int backend);

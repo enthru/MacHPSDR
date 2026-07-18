@@ -94,6 +94,13 @@ static pa_context *pa_ctx;
 static int ready=0;
 static int sample_rate=48000;
 
+// Sentinel device name for the synthetic "System Default" output entry.  When a
+// receiver's audio_name is this string, the output stream is (re)opened on
+// whatever device macOS currently considers the default output, resolved fresh
+// every time — so the user can pick it once and never have to change devices in
+// the app when they connect e.g. Bluetooth headphones.
+#define AUDIO_SYSTEM_DEFAULT_NAME "__system_default__"
+
 
 static int underflow_count=0;
 
@@ -102,12 +109,98 @@ static void underflow_callback(struct SoundIoOutStream *outstream) {
   //g_print("audio_write: underflow %d\n", underflow_count);
 }
 
+// Output device runs at a rate other than the 48 kHz DSP rate (e.g. a Bluetooth
+// headset locked to 44.1 kHz): linear-resample the 48 kHz interleaved stereo
+// audio held in the ring buffer to the device rate on the fly.  The ring buffer
+// still stores 48 kHz frames; only whole input frames actually consumed are
+// released, and the fractional read position is carried across callbacks in
+// rx->audio_resample_phase so pitch stays exact and continuous.
+static void write_callback_resample(struct SoundIoOutStream *outstream,
+                                    int frame_count_min, int frame_count_max) {
+  RECEIVER *rx=(RECEIVER *)outstream->userdata;
+  struct SoundIoChannelArea *areas;
+  int err;
+  const int chans=outstream->layout.channel_count;
+  const double ratio=(double)sample_rate/(double)outstream->sample_rate; // input frames per output frame
+
+  char *read_ptr=soundio_ring_buffer_read_ptr(rx->ring_buffer);
+  int in_avail=soundio_ring_buffer_fill_count(rx->ring_buffer)/(int)(sizeof(float)*2);
+  const float (*in)[2]=(const float (*)[2])read_ptr;
+
+  double phase=rx->audio_resample_phase;
+
+  // How many output frames can we produce?  Output frame j reads input frames
+  // floor(phase+j*ratio) and +1, so we need phase+j*ratio <= in_avail-1.
+  int producible=0;
+  if(in_avail>=2 && phase<(double)(in_avail-1))
+    producible=(int)(((double)(in_avail-1)-phase)/ratio)+1;
+
+  // Not enough data to satisfy the callback minimum: emit silence and wait
+  // (the producer keeps filling the ring); do not consume any input.
+  if(producible<frame_count_min) {
+    int frames_left=frame_count_min;
+    while(frames_left>0) {
+      int fc=frames_left;
+      if((err=soundio_outstream_begin_write(outstream,&areas,&fc)) || fc<=0) return;
+      for(int f=0;f<fc;f++)
+        for(int ch=0;ch<chans;ch++) {
+          memset(areas[ch].ptr,0,outstream->bytes_per_sample);
+          areas[ch].ptr+=areas[ch].step;
+        }
+      if((err=soundio_outstream_end_write(outstream))) return;
+      frames_left-=fc;
+    }
+    return;
+  }
+
+  int want=producible;
+  if(want>frame_count_max) want=frame_count_max;
+
+  int produced=0;
+  double pos=phase;
+  while(produced<want) {
+    int fc=want-produced;
+    if((err=soundio_outstream_begin_write(outstream,&areas,&fc))) {
+      g_print("write_callback_resample: begin write error: %s\n",soundio_strerror(err));
+      return;
+    }
+    if(fc<=0) break;
+    for(int f=0;f<fc;f++) {
+      int i=(int)pos;
+      int i1=(i+1<in_avail)?i+1:i;
+      double frac=pos-(double)i;
+      for(int ch=0;ch<chans;ch++) {
+        float s0=in[i][ch&1];
+        float s1=in[i1][ch&1];
+        float v=(float)(s0+(s1-s0)*frac);
+        memcpy(areas[ch].ptr,&v,sizeof(float));
+        areas[ch].ptr+=areas[ch].step;
+      }
+      pos+=ratio;
+    }
+    if((err=soundio_outstream_end_write(outstream))) return;
+    produced+=fc;
+  }
+
+  // Release the whole input frames consumed; keep the fraction for next time.
+  int consumed=(int)pos;
+  if(consumed>in_avail) consumed=in_avail;
+  soundio_ring_buffer_advance_read_ptr(rx->ring_buffer, consumed*(int)(sizeof(float)*2));
+  rx->audio_resample_phase=pos-(double)consumed;
+}
+
 static void write_callback(struct SoundIoOutStream *outstream, int frame_count_min, int frame_count_max) {
   RECEIVER *rx=(RECEIVER *)outstream->userdata;
   struct SoundIoChannelArea *areas;
   int frames_left;
   int frame_count;
   int err;
+
+  // Device not running at the 48 kHz DSP rate: hand off to the resampling path.
+  if(outstream->sample_rate!=sample_rate) {
+    write_callback_resample(outstream,frame_count_min,frame_count_max);
+    return;
+  }
 
   char *read_ptr = soundio_ring_buffer_read_ptr(rx->ring_buffer);
   int fill_bytes = soundio_ring_buffer_fill_count(rx->ring_buffer);
@@ -206,6 +299,48 @@ g_print("read_callback: create microphone buffer: %p length=%d (%d bytes)\n",r->
 
     g_mutex_lock(&r->ring_buffer_mutex);
 
+    if(r->mic_resample_rate!=0) {
+      // Capture device is not at 48 kHz (e.g. a 16 kHz Bluetooth headset mic):
+      // linear-resample the captured mono audio up to 48 kHz before it enters
+      // the ring buffer, so the rest of the mic path sees a plain 48 kHz stream.
+      // ratio = input frames consumed per output frame (<1 when upsampling).
+      double ratio=(double)r->mic_resample_rate/(double)sample_rate;
+      float *out=(float *)soundio_ring_buffer_write_ptr(r->ring_buffer);
+      int free_count=soundio_ring_buffer_free_count(r->ring_buffer)/(int)sizeof(float);
+      char *base=(areas!=NULL)?areas[0].ptr:NULL;
+      int step=(areas!=NULL)?areas[0].step:0;
+      double pos=r->mic_resample_phase;
+      float prev=r->mic_resample_prev;
+      int produced=0;
+
+      // Virtual input sequence c[0]=prev, c[k]=s[k-1] for k>=1 (s = this
+      // callback's frames). Output sample at pos interpolates c[floor(pos)] and
+      // c[floor(pos)+1]; valid while pos < frame_count.
+      while(pos<(double)frame_count && produced<free_count) {
+        int i=(int)pos;
+        double frac=pos-(double)i;
+        float a=(i==0)?prev:(base?*(float *)(base+(i-1)*step):0.0f);
+        float b=base?*(float *)(base+i*step):0.0f;   // c[i+1] == s[i]
+        out[produced++]=(float)(a+(b-a)*frac);
+        pos+=ratio;
+      }
+
+      if(frame_count>0 && base)
+        r->mic_resample_prev=*(float *)(base+(frame_count-1)*step);
+      r->mic_resample_phase=pos-(double)frame_count;
+      if(r->mic_resample_phase<0.0) r->mic_resample_phase=0.0;
+
+      if((err = soundio_instream_end_read(instream)))
+        g_print("read_callback: end read error: %s", soundio_strerror(err));
+
+      if(produced>0) {
+        soundio_ring_buffer_advance_write_ptr(r->ring_buffer, produced*(int)sizeof(float));
+        g_cond_signal (&r->ring_buffer_cond);
+      }
+      g_mutex_unlock (&r->ring_buffer_mutex);
+      return;
+    }
+
     char *write_ptr = soundio_ring_buffer_write_ptr(r->ring_buffer);
     int free_bytes = soundio_ring_buffer_free_count(r->ring_buffer);
     int free_count = free_bytes / instream->bytes_per_frame;
@@ -252,13 +387,17 @@ g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
         }
       }
 
-      // Configured device not found (e.g. a stale "Dummy Output Device" name, or
-      // a device that has since been unplugged): fall back to the system default
-      // output so we still make sound instead of silently failing.
+      // output_index==-1 here means either the user picked the synthetic
+      // "System Default" entry (index -1 by design), or the configured device
+      // was not found (stale "Dummy Output Device" name, or a device that has
+      // since been unplugged).  In both cases follow the current system default
+      // output.  Re-flush events first so a device connected after launch (e.g.
+      // Bluetooth headphones macOS just made the default) is picked up.
       if(rx->output_index==-1) {
+        soundio_flush_events(soundio);
         int def=soundio_default_output_device_index(soundio);
         if(def>=0) {
-          g_print("audio_open_output: '%s' not found; using default output device\n",
+          g_print("audio_open_output: '%s' -> using current default output device\n",
                   rx->audio_name?rx->audio_name:"(none)");
           rx->output_index=def;
         }
@@ -276,17 +415,28 @@ g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
         return -1;
       }
 
-      if(!soundio_device_supports_sample_rate(rx->output_device, sample_rate)) {
-        g_print("audio_open_output: device does not support sample rate of %d",sample_rate);
-        g_mutex_unlock(&rx->local_audio_mutex);
-        return -1;
-      }
-
       if(!soundio_device_supports_format(rx->output_device, SoundIoFormatFloat32NE)) {
         g_print("audio_open_output: device does not support SoundIoFormatFloat32NE");
         g_mutex_unlock(&rx->local_audio_mutex);
         return -1;
       }
+
+      // Pick the stream rate: prefer the 48 kHz DSP rate, but if the device does
+      // not accept it (e.g. a Bluetooth headset locked to 44.1 kHz) fall back to
+      // the nearest rate the device supports.  When they differ, write_callback
+      // resamples the 48 kHz audio to the device rate on the fly.
+      int device_rate=sample_rate;
+      if(!soundio_device_supports_sample_rate(rx->output_device, sample_rate)) {
+        device_rate=soundio_device_nearest_sample_rate(rx->output_device, sample_rate);
+        if(device_rate<=0) {
+          g_print("audio_open_output: device has no usable sample rate\n");
+          g_mutex_unlock(&rx->local_audio_mutex);
+          return -1;
+        }
+        g_print("audio_open_output: device does not support %d Hz; opening at %d Hz with resampling\n",
+                sample_rate, device_rate);
+      }
+      rx->audio_resample_phase=0.0;
 
       // Size the ring buffer for a fixed ~200 ms of output audio so there is
       // room for a start-up cushion at any DSP rate.  At high DSP rates
@@ -308,7 +458,7 @@ g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
         return -1;
       }
       rx->output_stream->format = SoundIoFormatFloat32NE;
-      rx->output_stream->sample_rate = sample_rate;
+      rx->output_stream->sample_rate = device_rate;
       rx->output_stream->write_callback = write_callback;
       rx->output_stream->underflow_callback = underflow_callback;
       rx->output_stream->software_latency = 0.01;
@@ -468,6 +618,19 @@ int audio_open_input(RADIO *r) {
         }
       }
 
+      // input_index==-1 means the user picked the synthetic "System Default"
+      // entry (index -1 by design), or the configured mic was not found.  In
+      // both cases follow the current system default input; re-flush events so
+      // a device connected after launch is picked up.
+      if(input_index==-1) {
+        soundio_flush_events(soundio);
+        int def=soundio_default_input_device_index(soundio);
+        if(def>=0) {
+          g_print("audio_open_input: '%s' -> using current default input device\n",r->microphone_name);
+          input_index=def;
+        }
+      }
+
       if(input_index==-1) {
         g_print("audio_open_input: did not find %s\n",r->microphone_name);
         return -1;
@@ -480,15 +643,27 @@ int audio_open_input(RADIO *r) {
         return -1;
       }
 
-      if(!soundio_device_supports_sample_rate(r->input_device, sample_rate)) {
-        g_print("audio_open_input: device does not support sample rate of %d",sample_rate);
-        return -1;
-      }
-
       if(!soundio_device_supports_format(r->input_device, SoundIoFormatFloat32NE)) {
         g_print("audio_open_input: device does not support SoundIoFormatFloat32NE");
         return -1;
       }
+
+      // As for output: if the capture device does not run at 48 kHz (e.g. a
+      // Bluetooth headset mic at 16 kHz) open it at its nearest rate and let
+      // read_callback resample the captured audio up to 48 kHz.
+      int in_device_rate=sample_rate;
+      if(!soundio_device_supports_sample_rate(r->input_device, sample_rate)) {
+        in_device_rate=soundio_device_nearest_sample_rate(r->input_device, sample_rate);
+        if(in_device_rate<=0) {
+          g_print("audio_open_input: device has no usable sample rate\n");
+          return -1;
+        }
+        g_print("audio_open_input: device does not support %d Hz; opening at %d Hz with resampling\n",
+                sample_rate, in_device_rate);
+      }
+      r->mic_resample_rate=(in_device_rate==sample_rate)?0:in_device_rate;
+      r->mic_resample_phase=0.0;
+      r->mic_resample_prev=0.0f;
 
       r->input_stream = soundio_instream_create(r->input_device);
       if(!r->input_stream) {
@@ -496,7 +671,7 @@ int audio_open_input(RADIO *r) {
         return -1;
       }
       r->input_stream->format = SoundIoFormatFloat32NE;
-      r->input_stream->sample_rate = sample_rate;
+      r->input_stream->sample_rate = in_device_rate;
       r->input_stream->read_callback = read_callback;
       r->input_stream->userdata=(void *)r;
 
@@ -1148,6 +1323,90 @@ g_print("audio: state_cb: PA_CONTEXT_READY\n");
 }
 #endif
 
+// (Re)build the SoundIo output/input device lists from the current CoreAudio
+// state.  Called at startup and again every time the receiver audio page is
+// opened, so devices that appear after launch (Bluetooth headphones the user
+// just connected) show up without restarting the app.  A synthetic "System
+// Default" entry is always placed first (see AUDIO_SYSTEM_DEFAULT_NAME).
+static void soundio_build_device_lists(void) {
+  // free strings from a previous scan
+  for(int i=0;i<n_output_devices;i++) {
+    if(output_devices[i].name) { g_free(output_devices[i].name); output_devices[i].name=NULL; }
+    if(output_devices[i].description) { g_free(output_devices[i].description); output_devices[i].description=NULL; }
+  }
+  for(int i=0;i<n_input_devices;i++) {
+    if(input_devices[i].name) { g_free(input_devices[i].name); input_devices[i].name=NULL; }
+    if(input_devices[i].description) { g_free(input_devices[i].description); input_devices[i].description=NULL; }
+  }
+  n_output_devices=0;
+  n_input_devices=0;
+
+  // refresh soundio's cached device list from the backend
+  soundio_flush_events(soundio);
+
+  // synthetic "System Default" output at index 0; index -1 is resolved to the
+  // current system default output device each time the stream is (re)opened
+  output_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+  output_devices[0].description=g_strdup("System Default");
+  output_devices[0].index=-1;
+  n_output_devices=1;
+
+  int output_count=soundio_output_device_count(soundio);
+  for(int i=0;i<output_count;i++) {
+    if(n_output_devices>=MAX_AUDIO_DEVICES) break;
+    struct SoundIoDevice *device=soundio_get_output_device(soundio,i);
+    if(!device) continue;
+
+    int ok_fmt=soundio_device_supports_format(device, SoundIoFormatFloat32NE);
+    int nearest=soundio_device_nearest_sample_rate(device, sample_rate);
+
+    // Only Float32 output is required.  Devices that don't accept the 48 kHz
+    // DSP rate (e.g. Bluetooth headsets locked to 44.1 kHz) are still listed
+    // and usable: audio_open_output opens them at their nearest rate and the
+    // write callback resamples on the fly.  A device with no usable rate at all
+    // (nearest<=0) is skipped.
+    if(!ok_fmt || nearest<=0) {
+      soundio_device_unref(device);
+      continue;
+    }
+
+    output_devices[n_output_devices].name=g_strdup(device->name);
+    output_devices[n_output_devices].description=g_strdup(device->name);
+    output_devices[n_output_devices].index=i;
+    soundio_device_unref(device);
+    n_output_devices++;
+  }
+
+  // synthetic "System Default" input at index 0 (mirrors the output list);
+  // index -1 is resolved to the current system default input each time the
+  // mic stream is opened
+  input_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+  input_devices[0].description=g_strdup("System Default");
+  input_devices[0].index=-1;
+  n_input_devices=1;
+
+  int input_count=soundio_input_device_count(soundio);
+  for(int i=0;i<input_count;i++) {
+    if(n_input_devices>=MAX_AUDIO_DEVICES) break;
+    struct SoundIoDevice *device=soundio_get_input_device(soundio,i);
+    if(!device) continue;
+    input_devices[n_input_devices].name=g_strdup(device->name);
+    input_devices[n_input_devices].description=g_strdup(device->name);
+    input_devices[n_input_devices].index=i;
+    soundio_device_unref(device);
+    n_input_devices++;
+  }
+}
+
+// Public: re-scan audio devices (macOS/SoundIo only).  Safe to call while audio
+// is streaming — it only rebuilds the UI-facing device metadata, not the open
+// stream, which holds its own device reference.
+void audio_refresh_devices(void) {
+  if(radio!=NULL && radio->which_audio==USE_SOUNDIO && soundio!=NULL) {
+    soundio_build_device_lists();
+  }
+}
+
 void create_audio(int backend_index,const char *backend) {
   int rc;
 
@@ -1191,43 +1450,7 @@ void create_audio(int backend_index,const char *backend) {
         return;
       }
 
-      soundio_flush_events(soundio);
-
-      int output_count=soundio_output_device_count(soundio);
-      for(int i=0;i<output_count;i++) {
-        if(n_output_devices<MAX_AUDIO_DEVICES) {
-          struct SoundIoDevice *device=soundio_get_output_device(soundio,i);
-
-          // ignore devices that do not support the sample rate or format
-          if(!soundio_device_supports_sample_rate(device, sample_rate) ) {
-            continue;
-          }
-          if(!soundio_device_supports_format(device, SoundIoFormatFloat32NE) ) {
-            continue;
-          }
-
-          output_devices[n_output_devices].name=g_new0(char,strlen(device->name)+1);
-          memcpy(output_devices[n_output_devices].name,device->name,strlen(device->name));
-          output_devices[n_output_devices].description=g_new0(char,strlen(device->name)+1);
-          memcpy(output_devices[n_output_devices].description,device->name,strlen(device->name));
-          output_devices[n_output_devices].index=i;
-          soundio_device_unref(device);
-          n_output_devices++;
-        }
-      }
-      int input_count=soundio_input_device_count(soundio);
-      for(int i=0;i<input_count;i++) {
-        if(n_input_devices<MAX_AUDIO_DEVICES) {
-          struct SoundIoDevice *device=soundio_get_input_device(soundio,i);
-          input_devices[n_input_devices].name=g_new0(char,strlen(device->name)+1);
-          memcpy(input_devices[n_input_devices].name,device->name,strlen(device->name));
-          input_devices[n_input_devices].description=g_new0(char,strlen(device->name)+1);
-          memcpy(input_devices[n_input_devices].description,device->name,strlen(device->name));
-          input_devices[n_input_devices].index=i;
-          soundio_device_unref(device);
-          n_input_devices++;
-        }
-      }
+      soundio_build_device_lists();
       break;
   
 #ifndef __APPLE__

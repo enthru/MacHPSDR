@@ -232,6 +232,10 @@ typedef struct _receiver {
   struct SoundIoOutStream *output_stream;
   struct SoundIoRingBuffer *ring_buffer;
   gboolean output_started;
+  // Fractional read phase for the 48 kHz -> output-device-rate resampler,
+  // used when the output device does not accept 48 kHz (e.g. a Bluetooth
+  // headset locked to 44.1 kHz). 0 when the device runs natively at 48 kHz.
+  gdouble audio_resample_phase;
 
 #ifndef __APPLE__
   pa_simple* playstream;

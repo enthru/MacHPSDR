@@ -143,6 +143,12 @@ typedef struct _radio {
   gboolean input_started;
   GMutex ring_buffer_mutex;
   GCond ring_buffer_cond;
+  // device-rate -> 48 kHz resampler state for the local microphone input, used
+  // when the capture device does not run at 48 kHz (e.g. a Bluetooth headset
+  // mic at 16 kHz). mic_resample_rate==0 means "native 48 kHz, no resampling".
+  gint    mic_resample_rate;
+  gdouble mic_resample_phase;
+  gfloat  mic_resample_prev;
   
   GMutex delete_rx_mutex;  
   

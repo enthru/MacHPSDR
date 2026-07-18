@@ -256,6 +256,9 @@ void update_transmitter_dialog(TRANSMITTER *tx) {
   int i;
 
 g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
+  // re-scan audio devices so a mic connected after launch (e.g. a Bluetooth
+  // headset) shows up in the list without restarting the app
+  audio_refresh_devices();
   g_signal_handler_block(G_OBJECT(tx->microphone_choice_b),tx->microphone_choice_signal_id);
   g_signal_handler_block(G_OBJECT(tx->local_microphone_b),tx->local_microphone_signal_id);
 

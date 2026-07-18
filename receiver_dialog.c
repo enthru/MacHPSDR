@@ -557,6 +557,10 @@ static void cat_baudrate_cb(GtkWidget *widget,gpointer data) {
 void update_receiver_dialog(RECEIVER *rx) {
   int i;
 
+  // re-scan audio devices so a device connected after launch (e.g. Bluetooth
+  // headphones) shows up in the list without restarting the app
+  audio_refresh_devices();
+
   // update audio
   g_signal_handler_block(G_OBJECT(rx->audio_choice_b),rx->audio_choice_signal_id);
   g_signal_handler_block(G_OBJECT(rx->local_audio_b),rx->local_audio_signal_id);

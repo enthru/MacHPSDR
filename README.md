@@ -73,6 +73,15 @@ fixes. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 output
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 
 can be used as xverter or filter switches) - lables can be changed in settings.
 
+**Audio devices (macOS).** The output and microphone device lists now include a
+**System Default** entry that follows whatever macOS is currently using, so you can
+pick it once and never re-select a device when you connect Bluetooth headphones.
+Devices that don't run at 48 kHz (e.g. Bluetooth headsets locked to 44.1 kHz, which
+were previously hidden and silent) now appear and work: audio is resampled on the fly
+between 48 kHz and the device rate, in both directions. The device lists are also
+re-scanned each time you open the RX/TX audio page, so a headset connected after
+launch shows up without restarting.
+
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
 this repository under `wdsp/`** (originally from g0orx/wdsp) — do NOT clone WDSP
