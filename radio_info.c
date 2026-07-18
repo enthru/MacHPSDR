@@ -37,11 +37,10 @@
 
 #ifdef MIDI
 static gboolean midi_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
   if(radio->dialog==NULL) {
-    int tab=rx_base+radio->receivers+(radio->can_transmit?4:0);
-    radio->dialog=create_configure_dialog(radio,tab);
+    radio->dialog=create_configure_dialog(radio,-1);
   }
+  configure_dialog_set_page("MIDI");
   return TRUE;
 }
 #endif

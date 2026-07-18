@@ -197,3 +197,11 @@ void configure_dialog_set_tab(int tab) {
     gtk_stack_set_visible_child(GTK_STACK(stack),pages[tab]);
   }
 }
+
+// Select a page by its title/name (add_page registers title as the stack child
+// name), so callers don't have to compute a fragile integer index.
+void configure_dialog_set_page(const char *name) {
+  if(stack!=NULL && name!=NULL) {
+    gtk_stack_set_visible_child_name(GTK_STACK(stack),name);
+  }
+}
