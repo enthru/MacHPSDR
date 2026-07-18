@@ -551,6 +551,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     f2=(f1/divisor2)*divisor2;
 
     int x=0;
+    double last_text_end = -1000.0;  // right edge of the last frequency label drawn
     do {
       x=(int)(f2-f1)/rx->hz_per_pixel;
       if(x>70) {
@@ -566,8 +567,15 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
           cairo_set_font_size(cr, 12);
           sprintf(temp,"%0lld.%03lld",f2/1000000,(f2%1000000)/1000);
           cairo_text_extents(cr, temp, &extents);
-          cairo_move_to(cr, (double)x-(extents.width/2.0), (rx->panadapter_height - 6));
-          cairo_show_text(cr, temp);
+          double text_x = (double)x-(extents.width/2.0);
+          // Draw the label only if it clears the previous one; the gridline is
+          // still drawn above. Prevents labels colliding when they get dense
+          // (wide labels / small pixel spacing at high freqs and wide spans).
+          if(text_x > last_text_end + 6.0) {
+            cairo_move_to(cr, text_x, (rx->panadapter_height - 6));
+            cairo_show_text(cr, temp);
+            last_text_end = text_x + extents.width;
+          }
         } else if((f2%divisor2)==00LL) {
           SetColour(cr, DARK_LINES);
           cairo_move_to(cr,(double)x,0);
