@@ -110,7 +110,7 @@ warren@wpratt.com
 
 // channel definitions
 #define MAX_CHANNELS					32					// maximum number of supported channels
-#define DSP_MULT						16					// number of dsp_buffsizes that are held in an iobuff pseudo-ring (was 2; raised to give the fexchange output ring more headroom so occasional DSP-thread jitter at high dsp_rate, e.g. WFM at 1536k/1920k, does not underrun -> zero-fill clicks)
+#define DSP_MULT						2					// original/default iobuff pseudo-ring depth (dsp_buffsizes). No longer read directly: the depth is now a runtime, per-channel value (dsp_mult_global, set via SetDSPMult) so SoapySDR can use a deep ring (16) for glitch-free wide reception while HPSDR keeps this low-latency default (2). See iobuffs.c.
 #define INREAL							float				// data type for channel input buffer
 #define OUTREAL							float				// data type for channel output buffer
 

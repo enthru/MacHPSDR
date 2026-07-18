@@ -2031,6 +2031,18 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   gtk_widget_set_hexpand(r->rx_container, TRUE);
   r->rx_paned_restore=TRUE;  // first stack balance restores saved divider positions
 
+  // Set the WDSP iobuff ring depth for every channel opened below (RX now, TX in
+  // add_transmitter later).  Wide SoapySDR reception (WFM at high sample rates) needs
+  // a deep output ring to stay glitch-free, but that ring adds a large fixed audio
+  // latency to every mode, so only SoapySDR pays for it; HPSDR keeps the original
+  // low-latency depth of 2.  Must be set BEFORE OpenChannel (create_iobuffs captures
+  // it per channel).
+#ifdef SOAPYSDR
+  SetDSPMult(r->discovered->protocol==PROTOCOL_SOAPYSDR ? 16 : 2);
+#else
+  SetDSPMult(2);
+#endif
+
   add_receivers(r);
 
   // Receivers are now loaded (possibly already at the max, e.g. restored from

@@ -37,17 +37,17 @@ RTL-SDR) with a selectable bandwidth and de-emphasis (50/75 µs), stereo decodin
 and RDS. The RDS panel shows the station name, programme type, RadioText, the
 currently playing track, clock time and alternative frequencies.
 
-**Latency trade-off (affects every mode).** To make wide-band reception glitch-free,
-the patched WDSP deepens its output I/O ring: the ring multiplier `DSP_MULT`
-(`wdsp/comm.h`) was raised from 2 to 16, giving the DSP output enough headroom that
-thread jitter at high sample rates (e.g. WFM at 1536k/1920k) no longer underruns into
-zero-fill clicks. Because this is a global WDSP constant, the deeper ring — and the
-extra audio latency it adds — applies to **all** receivers and **every** mode, not
-just WFM: the output ring pre-fills roughly `(DSP_MULT-1)` DSP output blocks, so on a
-normal 48 kHz narrow-band receiver the added delay is on the order of a few hundred
-milliseconds compared with the old value of 2. This is a deliberate trade-off for
-stable wide reception; if low latency matters more to you (e.g. SSB/CW break-in),
-`DSP_MULT` can be lowered in `wdsp/comm.h` and WDSP rebuilt.
+**Ring-buffer depth is per device (latency vs. glitch-free wide reception).** Wide
+reception needs a deep WDSP output I/O ring so DSP-thread jitter at high sample rates
+(e.g. a wide span at 1536k/1920k — useful even for CW band-scanning, not only WFM)
+cannot underrun into zero-fill clicks. But a deep ring pre-fills roughly `(ring-1)`
+DSP output blocks, which adds a fixed audio latency to *every* mode on that receiver.
+Earlier this fork raised the ring globally (2 → 16) and so paid that latency on all
+hardware. The ring depth is now chosen at runtime by device type
+(`SetDSPMult()`, called once before the channels are opened): **SoapySDR** devices
+(HackRF, RTL-SDR) use the deep ring (16) for stable wide reception, while **HPSDR**
+hardware keeps the original low-latency depth (2). So HPSDR users get the original
+snappy latency back, and Soapy/wide users keep glitch-free audio.
 
 **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice modes
 require a microphone input to be selected; the Drive slider controls output power.

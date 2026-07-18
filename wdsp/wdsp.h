@@ -12,6 +12,7 @@ extern "C" {
 int GetWDSPVersion();
 
 // channel
+extern void SetDSPMult (int mult);				// iobuff ring depth for channels opened after this call (2 = original/low-latency, 16 = deep ring for wide SoapySDR reception)
 extern void OpenChannel (int channel, int in_size, int dsp_size, int input_samplerate, int dsp_rate, int output_samplerate, int type, int state, double tdelayup, double tslewup, double tdelaydown, double tslewdown, int bfo);
 extern void CloseChannel (int channel);
 extern void SetType (int channel, int type);

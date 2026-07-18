@@ -26,6 +26,22 @@ warren@wpratt.com
 
 #include "comm.h"
 
+// Depth of the fexchange input/output pseudo-rings, in DSP blocks, applied to every
+// channel created after SetDSPMult() is called.  The original WDSP value was 2; wide
+// SoapySDR reception (WFM at 1536k/1920k) needs a much deeper output ring (16) to keep
+// the DSP thread from underrunning into zero-fill clicks, but that depth adds a large
+// fixed audio latency to EVERY mode.  So the app raises it only for SoapySDR devices
+// and leaves the low-latency original (2) for HPSDR hardware.  Captured per channel in
+// create_iobuffs so flush_iobuffs uses the same depth the ring was allocated with.
+int dsp_mult_global = 2;
+
+PORT
+void SetDSPMult (int mult)
+{
+	if (mult < 2) mult = 2;						// nfor/priming math needs at least 2
+	dsp_mult_global = mult;
+}
+
 /********************************************************************************************************
 *																										*
 *										    Begin Slew Code												*
@@ -399,16 +415,17 @@ void create_iobuffs (int channel)
 		a->r2_size = a->out_size;
 	else
 		a->r2_size = a->r2_insize;
-	a->r1_active_buffsize = DSP_MULT * a->r1_size;
-	a->r2_active_buffsize = DSP_MULT * a->r2_size;
+	a->dsp_mult = dsp_mult_global;
+	a->r1_active_buffsize = a->dsp_mult * a->r1_size;
+	a->r2_active_buffsize = a->dsp_mult * a->r2_size;
 	a->r1_baseptr = (double*) malloc0 (a->r1_active_buffsize * sizeof (complex));
 	a->r2_baseptr = (double*) malloc0 (a->r2_active_buffsize * sizeof (complex));
 	a->r1_inidx = 0;
 	a->r1_outidx = 0;
 	a->r1_unqueuedsamps = 0;
-	a->r2_inidx = (DSP_MULT - 1) * a->r2_size;
+	a->r2_inidx = (a->dsp_mult - 1) * a->r2_size;
 	a->r2_outidx = 0;
-	a->r2_havesamps = (DSP_MULT - 1) * a->r2_size;
+	a->r2_havesamps = (a->dsp_mult - 1) * a->r2_size;
 	n = a->r2_havesamps / a->out_size;
 	a->r2_unqueuedsamps = a->r2_havesamps - n * a->out_size;
 	InitializeCriticalSectionAndSpinCount(&a->r2_ControlSection, 2500);
@@ -439,9 +456,9 @@ void flush_iobuffs (int channel)
 	a->r1_inidx = 0;
 	a->r1_outidx = 0;
 	a->r1_unqueuedsamps = 0;
-	a->r2_inidx = (DSP_MULT - 1) * a->r2_size;
+	a->r2_inidx = (a->dsp_mult - 1) * a->r2_size;
 	a->r2_outidx = 0;
-	a->r2_havesamps = (DSP_MULT - 1) * a->r2_size;
+	a->r2_havesamps = (a->dsp_mult - 1) * a->r2_size;
 	while (!WaitForSingleObject (a->Sem_BuffReady, 1));
 	n = a->r2_havesamps / a->out_size;
 	a->r2_unqueuedsamps = a->r2_havesamps - n * a->out_size;

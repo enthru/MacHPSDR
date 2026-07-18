@@ -38,7 +38,8 @@ typedef struct _iob
 	int   r2_size;								// size of a single maximum sized transfer
 	int   r1_active_buffsize;					// size of input pseudo-ring (in complex samples)
 	int   r2_active_buffsize;					// size of output pseudo-ring (in complex samples)
-	
+	int   dsp_mult;								// per-channel ring depth captured at create time (see SetDSPMult)
+
 	double* r1_baseptr;							// pointer to input pseudo-ring
 	int   r1_inidx;								// in 'double', actual index into the buffer is 2 times this
 	int   r1_outidx;							// in 'double', actual index into the buffer is 2 times this
@@ -77,6 +78,9 @@ extern void create_slews (IOB a);
 extern void destroy_slews (IOB a);
 
 extern void flush_slews (IOB a);
+
+PORT
+void SetDSPMult (int mult);						// set ring depth for channels created AFTER this call
 
 extern void create_iobuffs (int channel);
 
