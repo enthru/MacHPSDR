@@ -111,14 +111,25 @@ OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTI
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
+# WDSP: use the in-tree copy (./wdsp) rather than the system-installed library.
+WDSP_DIR=wdsp
+WDSP_LIB=$(WDSP_DIR)/libwdsp.dylib
+
 ifeq ($(UNAME_S), Linux)
 LIBS=-lrt -lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS)
+WDSP_INCLUDE=
+RPATH_FLAGS=
 endif
 ifeq ($(UNAME_S), Darwin)
-LIBS=-lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS)
+# Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS)
+WDSP_INCLUDE=-I$(WDSP_DIR)
+# rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
+# ./linhpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
+RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
 endif
 
-INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES)
+INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -317,7 +328,19 @@ waterfall_theme.o
 
 
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(LIBS)
+	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(LIBS) $(RPATH_FLAGS)
+
+ifeq ($(UNAME_S), Darwin)
+# Build the in-tree WDSP and stamp its install-id to @rpath so it can be found
+# via rpath (repo run) or bundled into the .app. Order-only prereq of $(PROGRAM):
+# it must exist before linking but a rebuild here does not force a relink.
+.PHONY: wdsp-local
+wdsp-local:
+	$(MAKE) -C $(WDSP_DIR)
+	install_name_tool -id @rpath/libwdsp.dylib $(WDSP_LIB)
+
+$(PROGRAM): | wdsp-local
+endif
 
 
 all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
@@ -363,6 +386,7 @@ app: $(PROGRAM)
 	@dylibbundler -of -b \
 		-x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin \
 		-d $(APP_BUNDLE)/Contents/Frameworks/ \
+		-s $(WDSP_DIR) \
 		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
 
 	@# Copy and fix gdk-pixbuf loaders

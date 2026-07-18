@@ -173,6 +173,14 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
       second accent.
     - Bottom-bar section headers get a small accent tick (a coloured left bar).
 
+47) Build now links against the in-tree WDSP (`./wdsp`) instead of the system
+    copy in `/usr/local/lib`, and the macOS `.app` bundle ships that same WDSP
+    inside it. On macOS `make` builds `wdsp/libwdsp.dylib`, stamps its
+    install-id to `@rpath/libwdsp.dylib`, and links with rpaths so it resolves
+    both when running `./linhpsdr` from the repo (`@loader_path/wdsp`) and from
+    the bundle (`@executable_path/../Frameworks`); `make app` then bundles it via
+    dylibbundler. No system-wide `make install` of WDSP is required anymore.
+
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
 this repository under `wdsp/`** (originally from g0orx/wdsp) — do NOT clone WDSP
