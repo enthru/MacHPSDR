@@ -533,11 +533,14 @@ g_print("%s: g_thread_join\n",__FUNCTION__);
   g_thread_join(receive_thread_id);
 }
 
-// Re-apply the stored RX gain a moment after streaming resumes.  HackRF only
-// latches gain into hardware once samples are actually flowing (see the note in
-// radio.c); after a reconnect we emulate the same post-start "nudge".
+// Re-apply the stored RX frequency and gain a moment after streaming resumes.
+// HackRF only latches control settings into hardware once samples are actually
+// flowing (see the note in radio.c); after a reconnect we emulate the same
+// post-start "nudge" so a cold device tunes correctly instead of receiving
+// garbage until the next manual re-tune.
 static gboolean soapy_reconnect_reapply_gain(gpointer data) {
   if(soapy_device!=NULL) {
+    soapy_protocol_set_rx_frequency(radio->receiver[0]);
     soapy_protocol_set_gain(&radio->adc[0]);
   }
   return FALSE;   // one-shot

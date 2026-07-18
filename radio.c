@@ -1097,6 +1097,13 @@ static void tune_cb(GtkToggleButton *widget,gpointer data) {
 static gboolean soapy_reapply_rx_gain(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(rx==NULL || soapy_protocol_is_running()==FALSE) return G_SOURCE_REMOVE;
+  // A cold HackRF (freshly powered / just after a reboot) only latches control
+  // settings into hardware once the stream is actually transferring samples.
+  // The frequency and gain set before the stream started are cached but not
+  // physically applied, so reception is garbage (wrong LO) until the user
+  // re-tunes.  Re-apply both a moment after streaming has begun, emulating that
+  // manual nudge, so a cold start tunes correctly from the first go.
+  soapy_protocol_set_rx_frequency(rx);
   soapy_protocol_set_automatic_gain(rx,radio->adc[0].agc);
   if(!radio->adc[0].agc) {
     soapy_protocol_set_gain(&radio->adc[0]);

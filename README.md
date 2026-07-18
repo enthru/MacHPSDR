@@ -63,9 +63,11 @@ Cmd-Q quits the app, and the required WDSP library is built and bundled
 automatically — no separate install needed. The fork was renamed to MacHPSDR;
 existing settings are migrated automatically on first run.
 
-**Other changes.** SoapySDR RX gain is now re-applied just after the stream starts,
-so the saved gain (and the HackRF RF preamp) takes effect on startup instead of
-staying weak until you nudged the slider. Broadcast FM crackle at high sample rates fixed; `Space` toggles
+**Other changes.** The SoapySDR RX frequency and gain are now re-applied just after
+the stream starts, so the saved gain (and the HackRF RF preamp) takes effect on
+startup instead of staying weak until you nudged the slider, and a cold HackRF
+(freshly powered / just after a reboot) tunes correctly from the first go instead
+of receiving garbage until you re-tune. Broadcast FM crackle at high sample rates fixed; `Space` toggles
 transmit; waterfall shows the passband and centre cursor; assorted FM/squelch/NFM
 fixes. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 
