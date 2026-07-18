@@ -1690,7 +1690,21 @@ g_print("create_transmitter: channel=%d\n",channel);
     case PROTOCOL_SOAPYSDR:
       tx->mic_sample_rate=48000;
       tx->mic_dsp_rate=96000;
-      tx->iq_output_rate=radio->sample_rate;
+      // The TX IQ output rate MUST be an exact integer multiple of the mic
+      // DSP rate (not merely the mic sample rate).  WDSP sizes two buffers
+      // from this rate by integer division: out_size = in_size*(out/in_rate)
+      // and dsp_outsize = dsp_size*(out/dsp_rate).  If out is not a multiple
+      // of dsp_rate these two disagree, WDSP's r2 ring buffer size
+      // (DSP_MULT*max(out_size,dsp_outsize)) stops being an integer multiple
+      // of dsp_outsize, so its write index never wraps and dexchange()
+      // overruns the buffer -> memmove into unmapped memory -> SIGSEGV.
+      // (HackRF's 2000000 is not a multiple of 96000; rounding only to 48000
+      // gives 1968000 which still fails because 1968000/96000 = 20.5.)
+      // Round the device rate DOWN to a multiple of mic_dsp_rate; the HackRF
+      // TX DAC accepts arbitrary rates, so it simply clocks the samples out at
+      // this (very slightly lower) rate - the emitted signal stays correct.
+      // For 2000000 this yields 1920000, the same clean rate the RX path uses.
+      tx->iq_output_rate=(radio->sample_rate/tx->mic_dsp_rate)*tx->mic_dsp_rate;
       tx->buffer_size=1024;
       tx->output_samples=1024*(tx->iq_output_rate/tx->mic_sample_rate);
       break;

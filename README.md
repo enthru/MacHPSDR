@@ -33,7 +33,10 @@ currently playing track, clock time and alternative frequencies.
 
 **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice modes
 require a microphone input to be selected; the Drive slider controls output power.
-CW and PureSignal are not available on this path. *Not yet tested on real hardware.*
+CW and PureSignal are not available on this path. The TX IQ rate is rounded to a
+multiple of the DSP rate (96 kHz) so WDSP's internal buffers stay consistent —
+without this HackRF crashed on key-up (e.g. its 2 MHz rate → 1.92 MHz). Keys up on
+real hardware without crashing; on-air signal quality still needs more testing.
 
 **PureSignal.** Adaptive predistortion (Protocol 1 only) is available again, turned
 on in Configure → Pure Signal. Still an unfinished prototype, calibrated mainly for
