@@ -519,6 +519,12 @@ static void lock_b_cb(GtkToggleButton *widget,gpointer user_data) {
   rx->locked=gtk_toggle_button_get_active(widget);
 }
 
+static void mute_b_cb(GtkToggleButton *widget,gpointer user_data) {
+  RECEIVER *rx=(RECEIVER *)user_data;
+  rx->mute=gtk_toggle_button_get_active(widget);
+  receiver_set_volume(rx);
+}
+
 void mode_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   receiver_mode_changed(choice->rx,choice->selection);
@@ -1631,6 +1637,13 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(event_box_afgain,"button_press_event",G_CALLBACK(afgain_press_cb),rx);
   g_signal_connect(event_box_afgain,"button_release_event",G_CALLBACK(afgain_release_cb),rx);
   gtk_widget_set_events(event_box_afgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
+
+  v->mute_b=gtk_toggle_button_new_with_label("MUTE");
+  gtk_widget_set_name(v->mute_b,"vfo-toggle");
+  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->mute_b),FALSE);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->mute_b),rx->mute);
+  g_signal_connect(v->mute_b, "toggled", G_CALLBACK(mute_b_cb),rx);
+  gtk_box_pack_start(GTK_BOX(vfo_row_freq),v->mute_b,FALSE,FALSE,0);
 
   v->squelch_label=gtk_label_new("SQL");
   gtk_widget_set_name(v->squelch_label,"squelch-text");

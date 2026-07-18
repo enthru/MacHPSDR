@@ -308,6 +308,10 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%f",rx->volume);
   setProperty(name,value);
 
+  sprintf(name,"receiver[%d].mute",rx->channel);
+  sprintf(value,"%d",rx->mute);
+  setProperty(name,value);
+
   sprintf(name,"receiver[%d].nr",rx->channel);
   sprintf(value,"%d",rx->nr);
   setProperty(name,value);
@@ -563,6 +567,10 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].volume",rx->channel);
   value=getProperty(name);
   if(value) rx->volume=atof(value);
+
+  sprintf(name,"receiver[%d].mute",rx->channel);
+  value=getProperty(name);
+  if(value) rx->mute=atoi(value);
 
   sprintf(name,"receiver[%d].nr",rx->channel);
   value=getProperty(name);
@@ -2047,6 +2055,7 @@ g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", cha
   rx->locked=FALSE;
 
   rx->volume=0.05;
+  rx->mute=FALSE;
   rx->agc=AGC_OFF;
   rx->agc_gain=80.0;
   rx->agc_slope=35.0;
@@ -2351,7 +2360,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 }
 
 void receiver_set_volume(RECEIVER *rx) {
-  SetRXAPanelGain1(rx->channel, rx->volume);
+  SetRXAPanelGain1(rx->channel, rx->mute?0.0:rx->volume);
   if(rx->subrx_enable) {
     subrx_volume_changed(rx);
   }

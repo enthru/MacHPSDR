@@ -37,6 +37,7 @@ typedef struct _vfo_data {
   GtkWidget *frequency_b_text;
   GtkWidget *subrx_b;
   GtkWidget *afgain_scale;
+  GtkWidget *mute_b;
   GtkWidget *squelch_scale;
   GtkWidget *agcgain_scale;
   GtkWidget *squelch_label;

@@ -129,6 +129,7 @@ typedef struct _receiver {
   gboolean locked;
 
   gdouble volume;
+  gboolean mute;
 
   gboolean nb;
   gboolean nb2;
