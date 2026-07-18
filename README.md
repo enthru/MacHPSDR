@@ -28,6 +28,9 @@ sessions.
 Solarized Dark, Solarized Light, Nord, Gruvbox), chosen in Configure → Misc →
 Appearance and remembered per radio. Includes a redesigned S-meter and frequency
 display. The waterfall display also has several selectable colour themes of its own.
+The panadapter trace colour is now chosen from a named drop-down list (Gradient,
+Skin Accent, Red, Orange, Yellow, Green, Blue, Violet, Magenta, Cyan) in the
+receiver settings instead of a numeric spin box.
 
 **Broadcast FM (WFM).** FM broadcast reception on SoapySDR devices (HackRF,
 RTL-SDR) with a selectable bandwidth and de-emphasis (50/75 µs), stereo decoding,

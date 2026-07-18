@@ -348,9 +348,26 @@ static void panadapter_agc_line_changed_cb(GtkWidget *widget, gpointer data) {
 }
 
 
+// Panadapter trace-colour choices, in combo-box order. The index stored in
+// rx->panadapter_single_color matches the switch() in rx_panadapter.c:
+//   0=gradient, 1=skin accent, 2..9=fixed colours.
+static const char *panadapter_color_names[] = {
+  "Gradient (S-meter)",
+  "Skin Accent",
+  "Red",
+  "Orange",
+  "Yellow",
+  "Green",
+  "Blue",
+  "Violet",
+  "Magenta",
+  "Cyan",
+};
+#define PANADAPTER_COLOR_COUNT (sizeof(panadapter_color_names)/sizeof(panadapter_color_names[0]))
+
 static void panadapter_single_color_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->panadapter_single_color=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
+  rx->panadapter_single_color=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
 }
 
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
@@ -945,15 +962,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_agc_line,0,7,2,1);
   g_signal_connect(panadapter_agc_line,"toggled",G_CALLBACK(panadapter_agc_line_changed_cb),rx);
 
-  GtkWidget *panadapter_single_color_label=gtk_label_new("Panadapter Color (0=Grad):");
+  GtkWidget *panadapter_single_color_label=gtk_label_new("Panadapter Color:");
   gtk_widget_show(panadapter_single_color_label);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,0,8,1,1);
 
-  GtkWidget *panadapter_single_color_b=gtk_spin_button_new_with_range(0,9,1);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(panadapter_single_color_b),rx->panadapter_single_color);
+  GtkWidget *panadapter_single_color_b=gtk_combo_box_text_new();
+  for(i=0; i<(int)PANADAPTER_COLOR_COUNT; i++) {
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(panadapter_single_color_b),NULL,panadapter_color_names[i]);
+  }
+  gtk_combo_box_set_active(GTK_COMBO_BOX(panadapter_single_color_b),rx->panadapter_single_color);
   gtk_widget_show(panadapter_single_color_b);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,0,9,1,1);
-  g_signal_connect(panadapter_single_color_b,"value_changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,1,8,1,1);
+  g_signal_connect(panadapter_single_color_b,"changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();
