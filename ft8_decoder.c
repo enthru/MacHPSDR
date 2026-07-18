@@ -221,13 +221,18 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
 
   monitor_free(&mon);
 
-  // Publish under the list mutex.
-  g_mutex_lock(&list_mutex);
-  result_count = n;
-  memcpy(results, local, n * sizeof(FT8_DECODE));
-  snprintf(result_utc, sizeof(result_utc), "%02d%02d%02d",
-           tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
-  g_mutex_unlock(&list_mutex);
+  // Publish under the list mutex — but only when this window actually decoded
+  // something.  Overlapping windows land on quiet stretches between FT8 slots;
+  // keeping the previous non-empty list there means the readout holds the last
+  // decodes until the next batch arrives instead of blanking every ~2 s.
+  if (n > 0) {
+    g_mutex_lock(&list_mutex);
+    result_count = n;
+    memcpy(results, local, n * sizeof(FT8_DECODE));
+    snprintf(result_utc, sizeof(result_utc), "%02d%02d%02d",
+             tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
+    g_mutex_unlock(&list_mutex);
+  }
 
   if (n > 0) {
     fprintf(stderr, "ft8: %s decoded %d messages (%d candidates)\n",

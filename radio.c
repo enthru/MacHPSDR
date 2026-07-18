@@ -1604,7 +1604,7 @@ static gboolean rds_update_cb(gpointer data) {
     // block (up to FT8_ROWS rows). Slot time is shown in the title; any overflow
     // beyond the visible rows is summarised on the last line.
     show_ft8 = TRUE;
-    const int FT8_ROWS = 6;
+    const int FT8_ROWS = 7;
     FT8_DECODE d[64]; char utc[8]="";
     int total = ft8_decoder_get_decodes(d, 64, utc);
     if(r->rds_title!=NULL) {

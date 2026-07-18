@@ -56,6 +56,48 @@ static double  mix_phase[8] = {0}; // per-receiver de-rotation phase (centres st
 static volatile int fake_running = 0;
 static GThread *fake_thread_id = NULL;
 
+// ---- anti-imaging / anti-aliasing low-pass -------------------------------
+// Resampling the file_rate I/Q to the (usually much higher) receiver rate by
+// per-sample interpolation leaves spectral IMAGES of the recording spaced at
+// +-file_rate across the panadapter — they look like a "mirror". A 6th-order
+// Butterworth low-pass at the file's Nyquist removes them, so the panadapter
+// shows only the recording's own bandwidth (and, when downsampling, it doubles
+// as the anti-alias filter). The real signal near baseband is untouched, so
+// demod/decode is unaffected. Applied to I and Q independently — a real filter
+// band-limits the complex spectrum symmetrically, exactly what we want.
+static double  aa_bq[3][5];            // 3 biquads: {b0,b1,b2,a1,a2}, a0=1
+static double  aa_z[8][3][2][2];       // state [ch][stage][I/Q][z1,z2]
+static double  aa_fs = 0.0;            // sample rate the coeffs were designed for
+
+// RBJ cookbook low-pass biquads for a 6th-order Butterworth (three stages).
+static void aa_design(double fc, double fs) {
+  static const double Q[3] = { 0.51763809, 0.70710678, 1.93185165 };
+  double w0 = 2.0*M_PI*fc/fs, cw = cos(w0), sw = sin(w0);
+  for(int s=0;s<3;s++) {
+    double alpha = sw/(2.0*Q[s]);
+    double a0 = 1.0+alpha;
+    aa_bq[s][0] = ((1.0-cw)/2.0)/a0;   // b0
+    aa_bq[s][1] = (1.0-cw)/a0;         // b1
+    aa_bq[s][2] = ((1.0-cw)/2.0)/a0;   // b2
+    aa_bq[s][3] = (-2.0*cw)/a0;        // a1
+    aa_bq[s][4] = (1.0-alpha)/a0;      // a2
+  }
+  memset(aa_z, 0, sizeof(aa_z));
+  aa_fs = fs;
+}
+
+// Run one sample of channel ch (iq: 0=I,1=Q) through the 3-biquad cascade.
+static inline double aa_filter(int ch, int iq, double x) {
+  for(int s=0;s<3;s++) {
+    double *z = aa_z[ch][s][iq];
+    double y = aa_bq[s][0]*x + z[0];
+    z[0] = aa_bq[s][1]*x - aa_bq[s][3]*y + z[1];
+    z[1] = aa_bq[s][2]*x - aa_bq[s][4]*y;
+    x = y;
+  }
+  return x;
+}
+
 // 4-point Catmull-Rom cubic interpolation. Far cleaner than linear when
 // resampling a wideband I/Q signal (linear interp adds audible demod noise).
 static inline double cubic4(double ym1, double y0, double y1, double y2, double t) {
@@ -217,6 +259,11 @@ static gpointer fake_thread_fn(gpointer data) {
           long ip2 = i0 + 2; if(ip2 >= iq_frames) ip2 -= iq_frames;
           double ii = cubic4(iq_data[im1*2],   iq_data[i0*2],   iq_data[ip1*2],   iq_data[ip2*2],   t);
           double qq = cubic4(iq_data[im1*2+1], iq_data[i0*2+1], iq_data[ip1*2+1], iq_data[ip2*2+1], t);
+          // Band-limit to the recording's own bandwidth: kills the resampling
+          // images (the "mirror") so the panadapter shows the file's spectrum.
+          if(aa_fs != sr) aa_design(0.49*(iq_rate<sr?iq_rate:sr), sr);
+          ii = aa_filter(ch, 0, ii);
+          qq = aa_filter(ch, 1, qq);
           // de-rotate by the carrier offset to move the station to baseband 0
           double th = mix_phase[ch];
           double cc = cos(th), ss = sin(th);

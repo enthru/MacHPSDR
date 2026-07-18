@@ -48,9 +48,10 @@ decoded in a background thread. Decoding runs on a sliding 15-second window
 when the system clock is slightly off and when driving it from a looped I/Q
 recording that is not aligned to real UTC slots. Decoded traffic (signal
 report, audio frequency and message text) appears in the bottom-bar decoder
-block, retitled **FT8** with the slot time; the three most recent decodes are
-shown with an "(+N more)" summary when a slot yields more. Switching away from
-DIGU stops the decoder. Requires an accurate system clock (UTC), like WSJT-X.
+block, retitled **FT8** with the slot time; up to seven decodes are shown with
+an "(+N more)" summary when a window yields more, and the readout holds the last
+decodes until the next batch arrives (it does not blank between transmissions).
+Switching away from DIGU stops the decoder. Requires an accurate system clock (UTC), like WSJT-X.
 The codec is the vendored [ft8_lib](https://github.com/kgoba/ft8_lib) by Kārlis
 Goba (MIT). *(Transmit / QSO answering is planned as a later phase.)*
 
@@ -59,9 +60,12 @@ loop any 16-bit stereo I/Q WAV recording instead of the built-in noise+tones, so
 features can be exercised without hardware. Pass the file directly:
 `./machpsdr --faker ft8.wav` (or set `MACHPSDR_FAKE_IQ=...`); with no argument it
 falls back to `iq.wav`. The recording's sample rate is resampled to the
-receiver's rate and its carrier auto-centred to baseband, then looped. Add
-`--revert-iq` to swap the recording's I and Q channels (mirrors the spectrum)
-when its sideband is inverted — i.e. the image is not suppressed or signals
+receiver's rate and its carrier auto-centred to baseband, then looped. A
+6th-order Butterworth low-pass at the recording's Nyquist band-limits the
+resampled stream so the panadapter shows the file's own bandwidth instead of
+the resampling images ("mirror" copies) that a wide receiver span would
+otherwise reveal. Add `--revert-iq` to swap the recording's I and Q channels
+(mirrors the spectrum) when its sideband is inverted — i.e. signals
 appear/decode as their mirror.
 
 **Ring-buffer depth is per device (latency vs. glitch-free wide reception).** Wide
