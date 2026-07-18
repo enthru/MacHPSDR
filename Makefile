@@ -24,6 +24,9 @@ ifeq ($(UNAME_S), Darwin)
 AUDIO_LIBS=-lsoundio -framework CoreAudio
 AUDIO_SOURCES=portaudio.c
 AUDIO_HEADERS=portaudio.h
+# Homebrew prefix: /opt/homebrew on Apple Silicon, /usr/local on Intel.
+# Used by the `app` target to locate GTK resources for bundling.
+BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
 endif
 
 # uncomment the line below to include SoapySDR support
@@ -430,45 +433,45 @@ app: $(PROGRAM)
 
 	@# Copy and fix gdk-pixbuf loaders
 	@echo "Copying gdk-pixbuf loaders..."
-	@if [ -d "/usr/local/lib/gdk-pixbuf-2.0" ]; then \
-		cp -r /usr/local/lib/gdk-pixbuf-2.0 $(APP_BUNDLE)/Contents/Resources/lib/; \
+	@if [ -d "$(BREW_PREFIX)/lib/gdk-pixbuf-2.0" ]; then \
+		cp -r $(BREW_PREFIX)/lib/gdk-pixbuf-2.0 $(APP_BUNDLE)/Contents/Resources/lib/; \
 		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 -name "*.dylib" | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
-				-p @executable_path/../Frameworks/ 2>/dev/null || true; \
+				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
 		done; \
 		if [ -f "$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]; then \
-			sed -i '' 's|/usr/local/.*lib|@executable_path/../Resources/lib|g' \
+			sed -i '' 's|$(BREW_PREFIX)/.*lib|@executable_path/../Resources/lib|g' \
 				$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache; \
 		fi; \
 	fi
 
 	@# Copy GLib schemas
 	@echo "Copying GLib schemas..."
-	@if [ -d "/usr/local/share/glib-2.0/schemas" ]; then \
+	@if [ -d "$(BREW_PREFIX)/share/glib-2.0/schemas" ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/glib-2.0; \
-		cp -r /usr/local/share/glib-2.0/schemas $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/; \
+		cp -r $(BREW_PREFIX)/share/glib-2.0/schemas $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/; \
 		glib-compile-schemas $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/schemas 2>/dev/null || true; \
 	fi
 
 	@# Copy GTK themes
 	@echo "Copying GTK themes..."
-	@if [ -d "/usr/local/share/themes" ]; then \
+	@if [ -d "$(BREW_PREFIX)/share/themes" ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/themes; \
 		for theme in Adwaita Default; do \
-			if [ -d "/usr/local/share/themes/$$theme" ]; then \
-				cp -r /usr/local/share/themes/$$theme $(APP_BUNDLE)/Contents/Resources/share/themes/ 2>/dev/null || true; \
+			if [ -d "$(BREW_PREFIX)/share/themes/$$theme" ]; then \
+				cp -r $(BREW_PREFIX)/share/themes/$$theme $(APP_BUNDLE)/Contents/Resources/share/themes/ 2>/dev/null || true; \
 			fi; \
 		done; \
 	fi
 
 	@# Copy icon themes
 	@echo "Copying icon themes..."
-	@if [ -d "/usr/local/share/icons" ]; then \
+	@if [ -d "$(BREW_PREFIX)/share/icons" ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/icons; \
 		for icon_theme in gnome Adwaita hicolor; do \
-			if [ -d "/usr/local/share/icons/$$icon_theme" ]; then \
+			if [ -d "$(BREW_PREFIX)/share/icons/$$icon_theme" ]; then \
 				echo "  Copying $$icon_theme icon theme..."; \
-				cp -r /usr/local/share/icons/$$icon_theme $(APP_BUNDLE)/Contents/Resources/share/icons/ 2>/dev/null || true; \
+				cp -r $(BREW_PREFIX)/share/icons/$$icon_theme $(APP_BUNDLE)/Contents/Resources/share/icons/ 2>/dev/null || true; \
 			fi; \
 		done; \
 		if command -v gtk-update-icon-cache >/dev/null 2>&1; then \
@@ -480,18 +483,18 @@ app: $(PROGRAM)
 
 	@# Copy GTK im modules (input methods)
 	@echo "Copying GTK modules..."
-	@if [ -d "/usr/local/lib/gtk-3.0" ]; then \
-		cp -r /usr/local/lib/gtk-3.0 $(APP_BUNDLE)/Contents/Resources/lib/ 2>/dev/null || true; \
+	@if [ -d "$(BREW_PREFIX)/lib/gtk-3.0" ]; then \
+		cp -r $(BREW_PREFIX)/lib/gtk-3.0 $(APP_BUNDLE)/Contents/Resources/lib/ 2>/dev/null || true; \
 		find $(APP_BUNDLE)/Contents/Resources/lib/gtk-3.0 -name "*.so" -o -name "*.dylib" | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
-				-p @executable_path/../Frameworks/ 2>/dev/null || true; \
+				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
 		done; \
 	fi
 
 	@# Copy GTK settings
-	@if [ -f "/usr/local/etc/gtk-3.0/settings.ini" ]; then \
+	@if [ -f "$(BREW_PREFIX)/etc/gtk-3.0/settings.ini" ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0; \
-		cp /usr/local/etc/gtk-3.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0/ 2>/dev/null || true; \
+		cp $(BREW_PREFIX)/etc/gtk-3.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0/ 2>/dev/null || true; \
 	fi
 
 	@# Copy application PNG resources
@@ -534,7 +537,7 @@ app: $(PROGRAM)
 	@echo 'export DYLD_FALLBACK_LIBRARY_PATH="$$DIR/../Frameworks"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '# GTK and GLib paths' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@echo 'export XDG_DATA_DIRS="$$RES/share:/usr/local/share:/usr/share"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export XDG_DATA_DIRS="$$RES/share:$(BREW_PREFIX)/share:/usr/share"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export XDG_DATA_HOME="$$RES/share"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export XDG_CONFIG_HOME="$$RES/etc"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GTK_DATA_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
