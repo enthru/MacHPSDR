@@ -375,7 +375,9 @@ g_print("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
   while(running) {
     // Paused while transmitting (half-duplex): the RX stream is deactivated,
-    // so don't read from it - just idle until it is resumed.
+    // so don't read from it - just idle until it is resumed.  The stream is
+    // torn down and rebuilt fresh in soapy_protocol_rx_resume() (see there),
+    // so no backlog reaches us here.
     if(!rx_stream_active) {
       g_usleep(1000);
       continue;
@@ -472,7 +474,24 @@ void soapy_protocol_rx_pause() {
 void soapy_protocol_rx_resume() {
   if(soapy_device==NULL) return;
   if(rx_stream_active) return;
-  SoapySDRDevice_activateStream(soapy_device,rx_stream[rx_channel],0,0LL,0);
+  size_t channel=rx_channel;
+  // HackRF leaves the RX stream in a runaway overflow after a
+  // deactivate/reactivate across a TX over: readStream then keeps returning
+  // full buffers forever (observed 200M+ samples, far faster than real time),
+  // which floods WDSP into an endless "fexchange0: error=-2" and dead RX.  A
+  // plain activateStream does NOT clear it, and the backlog cannot be drained
+  // (it arrives as fast as we read).  So tear the stream all the way down and
+  // set it up fresh, which resumes RX at real time with an empty buffer.
+  // Safe to rebuild the stream here: the receive thread only touches it while
+  // rx_stream_active is TRUE, which we set last.
+  SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
+  SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
+#if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
+  SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+#else
+  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+#endif
+  SoapySDRDevice_activateStream(soapy_device,rx_stream[channel],0,0LL,0);
   rx_stream_active=TRUE;
 }
 
