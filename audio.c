@@ -374,6 +374,10 @@ int audio_open_output(RECEIVER *rx) {
   switch(radio->which_audio) {
     case USE_SOUNDIO: {
 g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
+      // Idempotent: drop any stream already open for this receiver so callers
+      // (normal startup and the system-default monitor) can never race into
+      // leaking a stream/device.
+      if(rx->output_stream!=NULL) audio_close_output(rx);
       g_mutex_lock(&rx->local_audio_mutex);
 
       // find the device
@@ -1430,40 +1434,62 @@ static gboolean default_output_monitor_cb(gpointer data) {
   if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
     return TRUE;
 
-  // Skip the (cheap but pointless) flush/query unless some receiver is actually
-  // streaming to the system default right now.
+  // Anything that should be following the system default?  Note we do NOT
+  // require an open stream here: a previous transition may have left a receiver
+  // with output_stream==NULL, and we want to recover it, not abandon it (that
+  // was the "switched once, then never again" bug — the receiver got dropped
+  // from the poll forever).
   int any=0;
   for(int i=0;i<radio->receivers;i++) {
     RECEIVER *rx=radio->receiver[i];
-    if(rx!=NULL && rx->local_audio && rx->output_stream!=NULL &&
-       rx_follows_system_default(rx)) { any=1; break; }
+    if(rx!=NULL && rx->local_audio && rx_follows_system_default(rx)) { any=1; break; }
   }
   if(!any) return TRUE;
 
-  // Refresh soundio's backend state so the default index reflects any change
-  // CoreAudio has signalled since the last poll.
+  // Apply whatever device change CoreAudio has already signalled.
   soundio_flush_events(soundio);
   int def=soundio_default_output_device_index(soundio);
-  if(def<0) return TRUE;
+  if(def<0) { soundio_force_device_scan(soundio); return TRUE; }
   struct SoundIoDevice *ddev=soundio_get_output_device(soundio,def);
-  if(ddev==NULL) return TRUE;
+  if(ddev==NULL) { soundio_force_device_scan(soundio); return TRUE; }
+
+  // Log default transitions so a terminal run shows exactly what the monitor
+  // sees (helps tell "not detected" apart from "detected but re-open failed").
+  static char last_default[256]="";
+  const char *did = ddev->id ? ddev->id : "";
+  if(strncmp(last_default, did, sizeof(last_default)-1)!=0) {
+    g_print("audio: system default output = '%s' (%s)\n", ddev->name, did);
+    snprintf(last_default,sizeof(last_default),"%s",did);
+  }
 
   for(int i=0;i<radio->receivers;i++) {
     RECEIVER *rx=radio->receiver[i];
-    if(rx==NULL || !rx->local_audio || rx->output_stream==NULL) continue;
-    if(!rx_follows_system_default(rx)) continue;
-    // Already on the current default device?  Nothing to do.
-    if(rx->output_device!=NULL && rx->output_device->id!=NULL &&
+    if(rx==NULL || !rx->local_audio || !rx_follows_system_default(rx)) continue;
+
+    // Already streaming to the current default device?  Nothing to do.
+    if(rx->output_stream!=NULL && rx->output_device!=NULL &&
+       rx->output_device->id!=NULL &&
        strcmp(rx->output_device->id, ddev->id)==0 &&
        rx->output_device->is_raw==ddev->is_raw)
       continue;
-    g_print("audio: system default output changed -> re-opening RX%d on '%s'\n",
+
+    // Either the default moved, or a previous (re)open left this receiver with
+    // no stream.  (Re)open onto the current default and keep retrying on later
+    // ticks if it fails — never leave a System Default receiver permanently
+    // muted because one transition failed.
+    g_print("audio: (re)opening RX%d output on system default '%s'\n",
             rx->channel, ddev->name);
     audio_close_output(rx);
-    audio_open_output(rx);
+    if(audio_open_output(rx)<0)
+      g_print("audio: RX%d re-open on '%s' failed; will retry\n",
+              rx->channel, ddev->name);
   }
 
   soundio_device_unref(ddev);
+
+  // Queue a fresh rescan so the next tick still catches a change even if the
+  // automatic CoreAudio device-change listener ever drops an event.
+  soundio_force_device_scan(soundio);
   return TRUE;
 }
 
