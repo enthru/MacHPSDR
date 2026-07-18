@@ -60,6 +60,9 @@
 #include "property.h"
 #include "rigctl.h"
 #include "subrx.h"
+#ifdef FT8
+#include "ft8_decoder.h"
+#endif
 
 void receiver_save_state(RECEIVER *rx) {
   if (rx->show_rx == FALSE) return;
@@ -1577,6 +1580,20 @@ static void process_rx_buffer(RECEIVER *rx) {
   if(rx->local_audio && !rx->output_started) {
     audio_start_output(rx);
   }
+
+#ifdef FT8
+  // FT8 listening: tap the active receiver's demodulated audio when it is in
+  // DIGU.  Driving enable/disable from the active RX's own buffer covers mode
+  // changes, active-receiver switches and start-up in one place (only the
+  // active receiver ever toggles the flag, so there is no cross-RX thrash).
+  if(radio->active_receiver==rx) {
+    gboolean want = (rx->mode_a==DIGU);
+    ft8_decoder_set_enabled(want);
+    if(want) {
+      ft8_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
+    }
+  }
+#endif
 }
 
 static void full_rx_buffer(RECEIVER *rx) {

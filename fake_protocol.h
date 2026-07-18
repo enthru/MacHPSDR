@@ -18,6 +18,10 @@ typedef struct _radio RADIO;
  * fake device is only discovered/offered when this is non-zero. */
 extern int enable_fake;
 
+/* Optional I/Q recording to loop, from `--faker <file>`. NULL falls back to
+ * the MACHPSDR_FAKE_IQ env var, then the default iq.wav. */
+extern const char *fake_iq_file;
+
 void fake_discovery(void);
 void fake_protocol_init(RADIO *r);
 void fake_protocol_stop(void);

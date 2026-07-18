@@ -53,6 +53,9 @@
 #include "property.h"
 #include "rigctl.h"
 #include "version.h"
+#ifdef FT8
+#include "ft8_decoder.h"
+#endif
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -618,6 +621,11 @@ int main(int argc, char **argv) {
     for(i=1,j=1;i<argc;i++) {
       if(strcmp(argv[i],"--faker")==0) {
         enable_fake=1;
+        // Optional following argument: the I/Q WAV to loop (e.g. --faker ft8.wav).
+        // Only consume it if it is not another option.
+        if(i+1<argc && argv[i+1][0]!='-') {
+          fake_iq_file=argv[++i];
+        }
       } else if(strcmp(argv[i],"--usb-only")==0) {
         // Skip the blocking Protocol 1/2 network discovery; only enumerate
         // USB/SoapySDR devices for a near-instant startup.
@@ -629,6 +637,11 @@ int main(int argc, char **argv) {
     argc=j;
     argv[argc]=NULL;
   }
+
+#ifdef FT8
+  // Spin up the FT8 decode worker thread (idle until a DIGU receiver feeds it).
+  ft8_decoder_init();
+#endif
 
   if((homedir=getenv("HOME"))==NULL) {
     homedir=getpwuid(getuid())->pw_dir;

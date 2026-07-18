@@ -61,6 +61,7 @@ Platform is detected via `uname -s` in the Makefile (`Darwin` vs `Linux`).
 | `CWDAEMON` | enabled (Linux only) | CW keying via unixcw |
 | `PURESIGNAL` | disabled | Adaptive distortion correction (Protocol 1 only) |
 | `OPENGL` | disabled | OpenGL rendering |
+| `FT8` | enabled | FT8 receive decoder (auto-enabled in DIGU); vendored `ft8_lib/` |
 
 To toggle, comment/uncomment the `*_INCLUDE=*` lines near the top of the Makefile.
 
@@ -86,6 +87,7 @@ The global `RADIO *radio` struct (`radio.h`) is the central application state. I
 - **`waterfall_theme.c`** — Waterfall color theme definitions
 - **`hl2.c`** — Hermes-Lite 2 specific protocol extensions
 - **`wideband.c`, `wideband_panadapter.c`, `wideband_waterfall.c`** — Wideband spectrum display (separate from per-receiver panadapter)
+- **`ft8_decoder.c/h`** — FT8 receive decoder. Auto-enabled when the active receiver's mode is DIGU (tap in `receiver.c:process_rx_buffer`); decimates the 48 kHz demod audio to 12 kHz, buffers 15-second UTC slots, decodes in a background `GThread`. Displayed in the bottom-bar decoder block (see `rds_update_cb` in `radio.c`). Uses the vendored `ft8_lib/` (Karlis Goba, MIT); gated by the `FT8` Makefile flag. TX/QSO is a planned Phase 2.
 - **`subrx.c`** — Sub-receiver support
 - **`ext.c`** — Thread-safe UI dispatch helpers (`ext_*` functions wrap `g_idle_add()` calls)
 

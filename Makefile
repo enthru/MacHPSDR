@@ -67,6 +67,29 @@ PURESIGNAL_OBJS= \
 puresignal.o
 endif
 
+# FT8 receive decoder (and, later, TX).  Uses the vendored ft8_lib (MIT) under
+# ft8_lib/.  Comment out FT8_INCLUDE to build without FT8 support.
+FT8_INCLUDE=FT8
+
+ifeq ($(FT8_INCLUDE),FT8)
+FT8_OPTIONS=-D FT8
+FT8_INCLUDES=-Ift8_lib
+FT8_SOURCES= \
+ft8_decoder.c \
+ft8_lib/ft8/constants.c ft8_lib/ft8/crc.c ft8_lib/ft8/decode.c \
+ft8_lib/ft8/encode.c ft8_lib/ft8/ldpc.c ft8_lib/ft8/message.c ft8_lib/ft8/text.c \
+ft8_lib/fft/kiss_fft.c ft8_lib/fft/kiss_fftr.c \
+ft8_lib/common/monitor.c
+FT8_HEADERS= \
+ft8_decoder.h
+FT8_OBJS= \
+ft8_decoder.o \
+ft8_lib/ft8/constants.o ft8_lib/ft8/crc.o ft8_lib/ft8/decode.o \
+ft8_lib/ft8/encode.o ft8_lib/ft8/ldpc.o ft8_lib/ft8/message.o ft8_lib/ft8/text.o \
+ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \
+ft8_lib/common/monitor.o
+endif
+
 
 ifeq ($(UNAME_S), Linux)
 # cwdaemon support. Allows linux based logging software to key an Hermes/HermesLite2
@@ -107,7 +130,7 @@ endif
 
 CFLAGS= -g -Wno-deprecated-declarations -O3
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
@@ -129,7 +152,7 @@ WDSP_INCLUDE=-I$(WDSP_DIR)
 RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
 endif
 
-INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE)
+INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -329,8 +352,8 @@ actions.o \
 waterfall_theme.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(LIBS) $(RPATH_FLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
+	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(LIBS) $(RPATH_FLAGS)
 
 ifeq ($(UNAME_S), Darwin)
 # Build the in-tree WDSP and stamp its install-id to @rpath so it can be found
@@ -354,6 +377,7 @@ prebuild:
 
 clean:
 	-rm -f *.o
+	-rm -f ft8_lib/ft8/*.o ft8_lib/fft/*.o ft8_lib/common/*.o
 	-rm -f $(PROGRAM)
 	-rm -rf $(APP_NAME).app
 

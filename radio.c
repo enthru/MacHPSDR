@@ -66,6 +66,9 @@
 #include "receiver_dialog.h"
 #include "subrx.h"
 #include "hl2.h"
+#ifdef FT8
+#include "ft8_decoder.h"
+#endif
 
 #include "cwdaemon.h"
 
@@ -1534,10 +1537,12 @@ static gboolean rds_update_cb(gpointer data) {
   char l0[256], l1[256], l2[512];
   l0[0]=l1[0]=l2[0]=0;
   gboolean wfm = rx!=NULL && rx->mode_a==WFM;
-  // The decoder block is the RDS readout in WFM; in any other mode it carries no
-  // decode of its own, so its title falls back to the neutral "Decode".
+  gboolean digu = rx!=NULL && rx->mode_a==DIGU;
+  // The decoder block is the RDS readout in WFM and the FT8 readout in DIGU; in
+  // any other mode it carries no decode of its own, so the title falls back to
+  // the neutral "Decode".
   if(r->rds_title!=NULL)
-    gtk_label_set_text(GTK_LABEL(r->rds_title),wfm?"RDS":"Decode");
+    gtk_label_set_text(GTK_LABEL(r->rds_title),wfm?"RDS":digu?"FT8":"Decode");
   if(wfm) {
     int chn=rx->channel;
     char ps[9], rt[65], title[65], artist[65];
@@ -1589,6 +1594,36 @@ static gboolean rds_update_cb(gpointer data) {
       }
     }
   }
+#ifdef FT8
+  else if(digu) {
+    // FT8 listening readout: the most recent slot's decodes, three per block.
+    // Slot time appears in the title (set above as "FT8"); overflow beyond the
+    // three visible rows is summarised on the last line.
+    FT8_DECODE d[64]; char utc[8]="";
+    int total = ft8_decoder_get_decodes(d, 64, utc);
+    if(r->rds_title!=NULL) {
+      char t[24];
+      if(total>0 && utc[0]) snprintf(t,sizeof(t),"FT8 %.2s:%.2s:%.2s",utc,utc+2,utc+4);
+      else                  snprintf(t,sizeof(t),"FT8");
+      gtk_label_set_text(GTK_LABEL(r->rds_title),t);
+    }
+    char *line[3]={l0,l1,l2};
+    if(total==0) {
+      snprintf(l0,sizeof(l0),"listening…");
+    } else {
+      int shown = total<3 ? total : 3;
+      for(int i=0;i<shown;i++) {
+        snprintf(line[i],256,"%+3.0f  %4.0f Hz  %s", d[i].snr, d[i].freq, d[i].text);
+      }
+      if(total>3) {
+        int extra = total-3;
+        char tmp[300];
+        snprintf(tmp,sizeof(tmp),"%s   (+%d more)", l2, extra);
+        snprintf(l2,512,"%s",tmp);
+      }
+    }
+  }
+#endif
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL)
     gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
   return TRUE;   // keep the timer running

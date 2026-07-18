@@ -137,6 +137,7 @@ static int fake_load_iq(const char *path) {
 
 /* Only the --faker command-line flag (parsed in main()) turns this on. */
 int enable_fake = 0;
+const char *fake_iq_file = NULL;
 
 void fake_discovery(void) {
   if(!enable_fake) return;
@@ -281,17 +282,24 @@ static gpointer fake_thread_fn(gpointer data) {
 }
 
 void fake_protocol_init(RADIO *r) {
-  // Look for an I/Q recording to play (current dir, then home dir).
-  if(!fake_load_iq(FAKE_IQ_FILE)) {
-    char *home_path = g_build_filename(g_get_home_dir(), FAKE_IQ_FILE, NULL);
+  // Which I/Q recording to loop.  Precedence: the `--faker <file>` argument,
+  // then the MACHPSDR_FAKE_IQ env var, then the default iq.wav.  Any 16-bit
+  // stereo I/Q WAV works, e.g. `--faker ft8.wav` to drive the FT8 decoder.
+  const char *iq_file = fake_iq_file;
+  if(iq_file==NULL || iq_file[0]=='\0') iq_file = getenv("MACHPSDR_FAKE_IQ");
+  if(iq_file==NULL || iq_file[0]=='\0') iq_file = FAKE_IQ_FILE;
+
+  // Look for the recording in the current dir, then the home dir.
+  if(!fake_load_iq(iq_file)) {
+    char *home_path = g_build_filename(g_get_home_dir(), iq_file, NULL);
     fake_load_iq(home_path);
     g_free(home_path);
   }
   if(iq_data) {
     g_print("fake: playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
-            FAKE_IQ_FILE, iq_rate, iq_frames, (double)iq_frames/iq_rate);
+            iq_file, iq_rate, iq_frames, (double)iq_frames/iq_rate);
   } else {
-    g_print("fake: no '%s' found; using synthetic noise+tones\n", FAKE_IQ_FILE);
+    g_print("fake: no '%s' found; using synthetic noise+tones\n", iq_file);
   }
   fake_running = 1;
   fake_thread_id = g_thread_new("fake_iq", fake_thread_fn, r);
