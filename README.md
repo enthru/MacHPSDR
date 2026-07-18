@@ -74,11 +74,12 @@ reception needs a deep WDSP output I/O ring so DSP-thread jitter at high sample 
 cannot underrun into zero-fill clicks. But a deep ring pre-fills roughly `(ring-1)`
 DSP output blocks, which adds a fixed audio latency to *every* mode on that receiver.
 Earlier this fork raised the ring globally (2 → 16) and so paid that latency on all
-hardware. The ring depth is now chosen at runtime by device type
-(`SetDSPMult()`, called once before the channels are opened): **SoapySDR** devices
-(HackRF, RTL-SDR) use the deep ring (16) for stable wide reception, while **HPSDR**
-hardware keeps the original low-latency depth (2). So HPSDR users get the original
-snappy latency back, and Soapy/wide users keep glitch-free audio.
+hardware. The ring depth is now scaled at runtime to each receiver's span
+(`rx_ring_depth()` → `SetDSPMult()`, applied before every channel open / rate change):
+**≤384k → 2**, **768k → 4**, **1536k → 8**, **1920k → 16**. Narrow spans (which
+includes every HPSDR rate) get the original snappy low-latency ring back, while only
+the genuinely wide spans pay for the deeper ring they need to stay glitch-free. The
+transmitter always uses depth 2.
 
 **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice modes
 require a microphone input to be selected; the Drive slider controls output power.

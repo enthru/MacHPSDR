@@ -725,6 +725,20 @@ void receiver_restore_state(RECEIVER *rx) {
 void receiver_xvtr_changed(RECEIVER *rx) {
 }
 
+// WDSP iobuff ring depth as a function of the receive span (sample rate).
+// A deeper ring keeps wide reception (WFM at high sample rates) glitch-free but
+// adds a fixed audio latency, so scale it with the span instead of using one
+// blanket value: narrow spans (<=384k, which covers every HPSDR rate) keep the
+// original low-latency depth of 2, wider spans step up 4/8/16.  Must be applied
+// via SetDSPMult() BEFORE any OpenChannel/SetAllRates so create_iobuffs captures
+// it for the (re)built ring.
+int rx_ring_depth(int sample_rate) {
+  if(sample_rate <= 384000)  return 2;
+  if(sample_rate <= 768000)  return 4;
+  if(sample_rate <= 1536000) return 8;
+  return 16;
+}
+
 void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
 g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
   g_mutex_lock(&rx->mutex);
@@ -738,6 +752,8 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
   //SetInputSamplerate(rx->channel, sample_rate);
   // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
   rx->dsp_rate=(rx->mode_a==WFM)?rx->sample_rate:48000;
+  // Re-match the iobuff ring depth to the new span before the rebuild below.
+  SetDSPMult(rx_ring_depth(rx->sample_rate));
   SetAllRates(rx->channel,rx->sample_rate,rx->dsp_rate,48000);
 
   receiver_init_analyzer(rx);
@@ -1381,6 +1397,9 @@ static void set_mode(RECEIVER *rx,int m) {
   int desired_dsp = (m==WFM) ? rx->sample_rate : 48000;
   if(rx->dsp_rate != desired_dsp) {
     SetChannelState(rx->channel,0,1);
+    // WFM runs the DSP at the full span, so match the ring depth to that span
+    // before rebuilding the iobuffs (create_iobuffs captures it).
+    SetDSPMult(rx_ring_depth(rx->sample_rate));
     SetAllRates(rx->channel, rx->sample_rate, desired_dsp, 48000);
     SetChannelState(rx->channel,1,0);
     rx->dsp_rate = desired_dsp;
@@ -2247,6 +2266,10 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
 
 g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d fft_size=%d output_samples=%d\n", rx->channel, rx->buffer_size, rx->sample_rate, rx->fft_size,rx->output_samples);
+
+  // Size the iobuff ring to this receiver's span (2/4/8/16 by width); captured
+  // by create_iobuffs inside OpenChannel below.
+  SetDSPMult(rx_ring_depth(rx->sample_rate));
 
   OpenChannel(rx->channel,
               rx->buffer_size,

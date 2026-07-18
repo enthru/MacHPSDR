@@ -1787,6 +1787,11 @@ g_print("create_transmitter: channel=%d\n",channel);
 
   transmitter_restore_state(tx);
 
+  // TX never runs the deep wide-RX ring; keep the low-latency depth of 2 (a prior
+  // receiver's per-span SetDSPMult may have left it higher).  create_iobuffs
+  // captures this inside OpenChannel below.
+  SetDSPMult(2);
+
   OpenChannel(tx->channel,
               tx->buffer_size,
               2048, // tx->fft_size,
