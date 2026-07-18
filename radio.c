@@ -1445,7 +1445,7 @@ static void adc_att20_cb(GtkWidget *widget, gpointer data) {
 // --- bottom-bar "console" helpers (Option A: labelled modules + hairline rails) ---
 
 // Wrap a control column under a small uppercase section label -> one module.
-static GtkWidget *bar_module(const char *title, GtkWidget *content) {
+static GtkWidget *bar_module_ex(const char *title, GtkWidget *content, GtkWidget **out_label) {
   GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,7);
   gtk_widget_set_valign(box,GTK_ALIGN_FILL);   // stretch to the bar height
   GtkWidget *lbl=gtk_label_new(title);
@@ -1457,7 +1457,12 @@ static GtkWidget *bar_module(const char *title, GtkWidget *content) {
   // so short columns (e.g. the transmit buttons) don't hug the top.
   gtk_widget_set_valign(content,GTK_ALIGN_CENTER);
   gtk_box_pack_start(GTK_BOX(box),content,TRUE,FALSE,0);
+  if(out_label!=NULL) *out_label=lbl;
   return box;
+}
+
+static GtkWidget *bar_module(const char *title, GtkWidget *content) {
+  return bar_module_ex(title,content,NULL);
 }
 
 // Hairline vertical rail between modules (accent = teal boundary before Setup).
@@ -1528,7 +1533,12 @@ static gboolean rds_update_cb(gpointer data) {
   RECEIVER *rx=r->active_receiver;
   char l0[256], l1[256], l2[512];
   l0[0]=l1[0]=l2[0]=0;
-  if(rx!=NULL && rx->mode_a==WFM) {
+  gboolean wfm = rx!=NULL && rx->mode_a==WFM;
+  // The decoder block is the RDS readout in WFM; in any other mode it carries no
+  // decode of its own, so its title falls back to the neutral "Decode".
+  if(r->rds_title!=NULL)
+    gtk_label_set_text(GTK_LABEL(r->rds_title),wfm?"RDS":"Decode");
+  if(wfm) {
     int chn=rx->channel;
     char ps[9], rt[65], title[65], artist[65];
     int pi=GetRXAWFMRDSPI(chn);
@@ -1677,8 +1687,13 @@ static void create_visual(RADIO *r) {
     gtk_label_set_ellipsize(GTK_LABEL(r->rds_label[i]),PANGO_ELLIPSIZE_END);
     gtk_box_pack_start(GTK_BOX(rds_col),r->rds_label[i],FALSE,FALSE,0);
   }
-  gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                     bar_module("RDS",rds_col),TRUE,TRUE,0);
+  // Title is "RDS" only in WFM mode; for every other mode the block defaults to
+  // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
+  {
+    gboolean wfm = r->active_receiver!=NULL && r->active_receiver->mode_a==WFM;
+    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
+                       bar_module_ex(wfm?"RDS":"Decode",rds_col,&r->rds_title),TRUE,TRUE,0);
+  }
   g_timeout_add(500,rds_update_cb,(gpointer)r);
 
   // Module: SETUP - Configure / Add Receiver / Add Wideband.

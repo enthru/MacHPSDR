@@ -35,7 +35,10 @@ receiver settings instead of a numeric spin box.
 **Broadcast FM (WFM).** FM broadcast reception on SoapySDR devices (HackRF,
 RTL-SDR) with a selectable bandwidth and de-emphasis (50/75 µs), stereo decoding,
 and RDS. The RDS panel shows the station name, programme type, RadioText, the
-currently playing track, clock time and alternative frequencies.
+currently playing track, clock time and alternative frequencies. The decoder
+block in the bottom bar is titled **RDS** only while the active receiver is in
+WFM mode (where it decodes and displays RDS); in every other mode it carries the
+neutral default title **Decode** and stays blank.
 
 **Ring-buffer depth is per device (latency vs. glitch-free wide reception).** Wide
 reception needs a deep WDSP output I/O ring so DSP-thread jitter at high sample rates
