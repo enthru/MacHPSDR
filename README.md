@@ -88,7 +88,10 @@ Broadcast FM crackle at high sample rates fixed; `Space` toggles
 transmit; waterfall shows the passband and centre cursor; assorted FM/squelch/NFM
 fixes. Half-duplex receive no longer dies after a transmit over (the HackRF RX
 stream was left in a runaway overflow that flooded the DSP with "fexchange0:
-error=-2"); the RX stream is now rebuilt fresh on each return to receive. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
+error=-2"); the RX stream is now rebuilt fresh on each return to receive. A
+receiver that was left muted now really starts muted after a restart (the mute
+state was saved and the button showed it, but the DSP gain was still set to full
+volume on launch, so audio played anyway). On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 
 can be used as xverter or filter switches) - lables can be changed in settings.
 

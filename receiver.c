@@ -2271,7 +2271,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   frequency_changed(rx);
   receiver_mode_changed(rx,rx->mode_a);
 
-  SetRXAPanelGain1(rx->channel, rx->volume);
+  SetRXAPanelGain1(rx->channel, rx->mute?0.0:rx->volume);
   SetRXAPanelSelect(rx->channel, 3);
   SetRXAPanelPan(rx->channel, 0.5);
   SetRXAPanelCopy(rx->channel, 0);
