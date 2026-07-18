@@ -277,7 +277,12 @@ void create_rxa (int channel)
 	rxa[channel].eqp.p = create_eqp (
 		0,												// run - OFF by default
 		ch[channel].dsp_size,							// buffer size
-		2048,											// number of filter coefficients
+		// number of filter coefficients: the partitioned overlap-save core needs
+		// nc >= size (nfor = nc/size), otherwise nfor==0 -> empty FFT-plan array ->
+		// SIGSEGV in xfircore the moment the EQ is switched on.  MacHPSDR runs
+		// dsp_size=5120 for the wide WFM/SoapySDR chain, so the historic 2048 default
+		// is too small; clamp up to dsp_size.
+		ch[channel].dsp_size > 2048 ? ch[channel].dsp_size : 2048,
 		0,												// minimum phase flag
 		rxa[channel].midbuff,							// pointer to input buffer
 		rxa[channel].midbuff,							// pointer to output buffer

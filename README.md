@@ -91,7 +91,11 @@ stream was left in a runaway overflow that flooded the DSP with "fexchange0:
 error=-2"); the RX stream is now rebuilt fresh on each return to receive. A
 receiver that was left muted now really starts muted after a restart (the mute
 state was saved and the button showed it, but the DSP gain was still set to full
-volume on launch, so audio played anyway). On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
+volume on launch, so audio played anyway). Enabling the receive equalizer no
+longer crashes on SoapySDR/HackRF: the wide WFM chain runs a 5120-sample DSP block,
+but the RX equalizer's partitioned filter was still built with the historic 2048
+coefficients, so it had zero filter partitions and dereferenced an empty FFT-plan
+array the moment it was switched on — its length is now sized to the DSP block. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 
 can be used as xverter or filter switches) - lables can be changed in settings.
 
