@@ -64,7 +64,8 @@ recorded IQ file. Hidden by default; enable it by starting with `--faker`.
 **macOS packaging.** Builds a self-contained `MacHPSDR.app` bundle (`make app`),
 Cmd-Q quits the app, and the required WDSP library is built and bundled
 automatically — no separate install needed. The fork was renamed to MacHPSDR;
-existing settings are migrated automatically on first run.
+existing settings are migrated automatically on first run. The app now ships with a
+new MacHPSDR application icon (window, Dock and `.app` bundle).
 
 **Other changes.** The SoapySDR RX frequency and gain are now re-applied just after
 the stream starts, so the saved gain (and the HackRF RF preamp) takes effect on
