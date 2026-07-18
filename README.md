@@ -67,7 +67,11 @@ existing settings are migrated automatically on first run.
 the stream starts, so the saved gain (and the HackRF RF preamp) takes effect on
 startup instead of staying weak until you nudged the slider, and a cold HackRF
 (freshly powered / just after a reboot) tunes correctly from the first go instead
-of receiving garbage until you re-tune. Broadcast FM crackle at high sample rates fixed; `Space` toggles
+of receiving garbage until you re-tune. The RX sample rate is also re-asserted when
+the receive stream starts, so a half-duplex HackRF no longer receives with artefacts
+on a fresh launch (the transmit stream's rate had been left as the active hardware
+clock, which previously only cleared up after toggling the device off/on).
+Broadcast FM crackle at high sample rates fixed; `Space` toggles
 transmit; waterfall shows the passband and centre cursor; assorted FM/squelch/NFM
 fixes. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 

@@ -209,6 +209,19 @@ void soapy_protocol_start_receiver(RECEIVER *rx) {
 
 g_print("%s: activate_stream\n",__FUNCTION__);
 
+  // Re-assert the RX sample rate right before activating the stream.  HackRF is
+  // half-duplex with a single shared hardware clock, so whichever of RX/TX ran
+  // setSampleRate last wins.  On the cold-start path add_transmitter ->
+  // create_transmitter sets the TX rate AFTER create_receiver set the RX rate,
+  // leaving the hardware clock at the TX rate while the app's resampler/DSP still
+  // expect the RX rate -> artefacts (a live reconnect happened to set RX last and
+  // sounded clean, which is why toggling the device "fixed" it).  Setting it here
+  // makes the RX rate authoritative at activation, independent of call order.
+  rc=SoapySDRDevice_setSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc,(double)soapy_rx_sample_rate);
+  if(rc!=0) {
+    g_print("%s: SoapySDRDevice_setSampleRate(%f) failed: %s\n",__FUNCTION__,(double)soapy_rx_sample_rate,SoapySDR_errToStr(rc));
+  }
+
   double rate=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc);
   g_print("%s: rate=%f\n",__FUNCTION__,rate);
 
