@@ -139,7 +139,12 @@ volume on launch, so audio played anyway). Enabling the receive equalizer no
 longer crashes on SoapySDR/HackRF: the wide WFM chain runs a 5120-sample DSP block,
 but the RX equalizer's partitioned filter was still built with the historic 2048
 coefficients, so it had zero filter partitions and dereferenced an empty FFT-plan
-array the moment it was switched on — its length is now sized to the DSP block. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
+array the moment it was switched on — its length is now sized to the DSP block.
+Switching to narrow FM (FMN) no longer crashes on SoapySDR/HackRF: the same
+5120-sample wide DSP block left the FM de-emphasis and squelch-noise filters
+(built with the historic 2048 coefficients) with zero partitions, so the first
+FMN audio block dereferenced an empty FFT-plan array — those filters' tap counts
+are now sized to the DSP block, mirroring the wideband-FM fix. On HPSDR hardware: PPM frequency correction, and the Att 10/Att 20 outputs
 usable as custom switches (for example attenuator outputs on trx-duo or red pitaya 
 can be used as xverter or filter switches) - lables can be changed in settings.
 

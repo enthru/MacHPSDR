@@ -73,9 +73,15 @@ FMD create_fmd( int run, int size, double* in, double* out, int rate, double dev
 	a->afgain = afgain;
 	a->sntch_run = sntch_run;
 	a->ctcss_freq = ctcss_freq;
-	a->nc_de = nc_de;
+	// fircore requires nc >= size (nfor = nc/size must be >= 1); when the DSP
+	// block (dsp_size) is larger than the requested tap count, raise nc to size
+	// so nfor >= 1.  MacHPSDR runs dsp_size=5120 on the wide SoapySDR/fake chain,
+	// where the historic 2048-tap de-emphasis/audio filters would otherwise have
+	// nfor==0 -> empty FFT-plan array -> SIGSEGV in xfircore the moment FMN runs.
+	// (Both are powers of two, so nc stays an integer multiple of size.)
+	a->nc_de = (nc_de >= size) ? nc_de : size;
 	a->mp_de = mp_de;
-	a->nc_aud = nc_aud;
+	a->nc_aud = (nc_aud >= size) ? nc_aud : size;
 	a->mp_aud = mp_aud;
 	calc_fmd (a);
 	// de-emphasis filter
@@ -183,6 +189,9 @@ void setSize_fmd (FMD a, int size)
 	decalc_fmd (a);
 	_aligned_free (a->audio);
 	a->size = size;
+	// keep fircore nc >= size (see create_fmd) so nfor stays >= 1 after a resize
+	if (a->nc_de  < a->size) a->nc_de  = a->size;
+	if (a->nc_aud < a->size) a->nc_aud = a->size;
 	calc_fmd (a);
 	a->audio = (double *) malloc0 (a->size * sizeof (complex));
 	// de-emphasis filter

@@ -31,6 +31,12 @@ void calc_fmsq (FMSQ a)
 	double delta, theta;
 	double* impulse;
 	int i;
+	// fircore requires nc >= size (nfor = nc/size must be >= 1); raise the noise
+	// filter's tap count to the DSP block when the block is larger.  MacHPSDR runs
+	// dsp_size=5120 on the wide SoapySDR/fake chain, where the historic 2048-tap
+	// squelch noise filter would otherwise have nfor==0 -> empty FFT-plan array ->
+	// SIGSEGV in xfircore the moment FMN squelch runs.
+	if (a->nc < a->size) a->nc = a->size;
 	// noise filter
 	a->noise = (double *)malloc0(2 * a->size * sizeof(complex));
 	a->F[0] = 0.0;
