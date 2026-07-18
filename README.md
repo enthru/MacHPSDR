@@ -91,7 +91,9 @@ output. The switch is event-driven (a CoreAudio default-device listener), so it 
 near-instant and costs nothing while idle, with a slow timer as a safety net. The
 same live, instant follow applies to the **microphone** when its input is set to
 System Default: switch the macOS input device and the open mic stream re-opens onto
-the new default.
+the new default. The output also follows a device's *sample-rate* changes, not just
+device swaps, so a Bluetooth headset flipping between its A2DP and hands-free (HFP)
+profiles no longer turns RX audio into garbage.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in

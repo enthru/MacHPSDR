@@ -1495,14 +1495,26 @@ static gboolean default_output_apply(void) {
     RECEIVER *rx=radio->receiver[i];
     if(rx==NULL || !rx->local_audio || !rx_follows_system_default(rx)) continue;
 
-    // Already streaming to the current default device?  Nothing to do.
+    // Already streaming to the current default device *at the right rate*?
+    // NB: a Bluetooth headset keeps the same device id but silently changes its
+    // sample rate when it flips A2DP<->HFP (its mic starting/stopping being
+    // used forces the "hands-free" 16 kHz profile).  Our open stream does not
+    // follow that and it plays as garbage, so we must compare the rate too, not
+    // just the device identity.
     if(rx->output_stream!=NULL && rx->output_device!=NULL &&
        rx->output_device->id!=NULL &&
        strcmp(rx->output_device->id, ddev->id)==0 &&
-       rx->output_device->is_raw==ddev->is_raw)
-      continue;
+       rx->output_device->is_raw==ddev->is_raw) {
+      int want = soundio_device_supports_sample_rate(ddev, sample_rate)
+                   ? sample_rate
+                   : soundio_device_nearest_sample_rate(ddev, sample_rate);
+      if(want>0 && rx->output_stream->sample_rate==want)
+        continue;   // same device, same rate — nothing to do
+      g_print("audio: RX%d output '%s' changed rate %d -> %d; re-opening\n",
+              rx->channel, ddev->name, rx->output_stream->sample_rate, want);
+    }
 
-    // Either the default moved, or a previous (re)open left this receiver with
+    // Either the default moved, its rate changed, or a previous (re)open left this receiver with
     // no stream.  (Re)open onto the current default and keep retrying on later
     // ticks if it fails — never leave a System Default receiver permanently
     // muted because one transition failed.
@@ -1554,10 +1566,23 @@ static gboolean default_input_apply(void) {
   if(!(r->input_device!=NULL && r->input_device->id!=NULL &&
        strcmp(r->input_device->id, ddev->id)==0 &&
        r->input_device->is_raw==ddev->is_raw)) {
-    g_print("audio: re-opening microphone on system default '%s'\n", ddev->name);
-    audio_close_input(r);
-    if(audio_open_input(r)<0)
-      g_print("audio: microphone re-open on '%s' failed\n", ddev->name);
+    // Debounce: opening a mic on a Bluetooth headset forces it into the HFP
+    // "hands-free" profile, which itself fires a burst of CoreAudio device
+    // events (and can briefly flip the system default between the headset and
+    // the built-in mic).  Without a guard each event would re-open the mic,
+    // re-trigger the profile negotiation, and spiral until it wedges.  Re-open
+    // at most once every few seconds so the negotiation can settle.
+    static gint64 last_reopen=0;
+    gint64 now=g_get_monotonic_time();
+    if(now-last_reopen < 3000000) {
+      g_print("audio: mic default changed to '%s' but debouncing (recent re-open)\n", ddev->name);
+    } else {
+      last_reopen=now;
+      g_print("audio: re-opening microphone on system default '%s'\n", ddev->name);
+      audio_close_input(r);
+      if(audio_open_input(r)<0)
+        g_print("audio: microphone re-open on '%s' failed\n", ddev->name);
+    }
   }
 
   soundio_device_unref(ddev);
