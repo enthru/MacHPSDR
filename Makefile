@@ -415,6 +415,19 @@ app: $(PROGRAM)
 		-s $(WDSP_DIR) \
 		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
 
+	@# Remove duplicate LC_RPATH entries.
+	@# The binary is linked with two rpaths (@loader_path/wdsp and
+	@# @executable_path/../Frameworks); dylibbundler rewrites BOTH to its
+	@# -p prefix, collapsing them into two identical LC_RPATH entries.
+	@# Modern dyld refuses to load a binary with duplicate LC_RPATH, so the
+	@# bundled app crashes on launch. Delete the extra copies and re-sign.
+	@echo "De-duplicating LC_RPATH entries..."
+	@BIN=$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin; \
+		while [ $$(otool -l "$$BIN" | grep -c "path @executable_path/../Frameworks/ (offset") -gt 1 ]; do \
+			install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null || break; \
+		done; \
+		codesign --force --sign - "$$BIN" 2>/dev/null || true
+
 	@# Copy and fix gdk-pixbuf loaders
 	@echo "Copying gdk-pixbuf loaders..."
 	@if [ -d "/usr/local/lib/gdk-pixbuf-2.0" ]; then \
