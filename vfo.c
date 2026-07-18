@@ -519,9 +519,15 @@ static void lock_b_cb(GtkToggleButton *widget,gpointer user_data) {
   rx->locked=gtk_toggle_button_get_active(widget);
 }
 
+static void vfo_set_mute_icon(GtkWidget *button,gboolean muted) {
+  GtkWidget *img=gtk_image_new_from_icon_name(muted?"audio-volume-muted-symbolic":"audio-volume-high-symbolic",GTK_ICON_SIZE_BUTTON);
+  gtk_button_set_image(GTK_BUTTON(button),img);
+}
+
 static void mute_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   rx->mute=gtk_toggle_button_get_active(widget);
+  vfo_set_mute_icon(GTK_WIDGET(widget),rx->mute);
   receiver_set_volume(rx);
 }
 
@@ -1638,9 +1644,11 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(event_box_afgain,"button_release_event",G_CALLBACK(afgain_release_cb),rx);
   gtk_widget_set_events(event_box_afgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
 
-  v->mute_b=gtk_toggle_button_new_with_label("MUTE");
+  v->mute_b=gtk_toggle_button_new();
   gtk_widget_set_name(v->mute_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->mute_b,"Mute this receiver");
   gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->mute_b),FALSE);
+  vfo_set_mute_icon(v->mute_b,rx->mute);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->mute_b),rx->mute);
   g_signal_connect(v->mute_b, "toggled", G_CALLBACK(mute_b_cb),rx);
   gtk_box_pack_start(GTK_BOX(vfo_row_freq),v->mute_b,FALSE,FALSE,0);

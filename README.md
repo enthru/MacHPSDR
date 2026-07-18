@@ -20,8 +20,9 @@ upstream:
 window instead of separate floating windows, with drag-to-resize dividers, a
 per-receiver close button, and a bottom toolbar and log area. Window size, layout
 and closed-receiver settings are remembered between sessions. Each receiver's VFO
-row has a **MUTE** button next to the AF-gain slider that silences its audio
-without losing the volume setting; the mute state is remembered between sessions.
+row has a compact mute (speaker) button next to the AF-gain slider that silences
+its audio without losing the volume setting; the mute state is remembered between
+sessions.
 
 **Colour skins.** A dark interface with five selectable colour schemes (Charcoal,
 Solarized Dark, Solarized Light, Nord, Gruvbox), chosen in Configure → Misc →
