@@ -17,4 +17,15 @@
 *
 */
 
+#include <glib.h>
+
 extern void discovery();
+
+// Guards the shared devices[] counter / discovered[] array while the Protocol 1
+// and Protocol 2 discovery receive threads run concurrently.
+extern GMutex discovery_mutex;
+
+// Set by the --usb-only command-line flag: skip the (blocking) network
+// discovery for Protocol 1 / Protocol 2 and only enumerate USB/SoapySDR
+// devices, so a HackRF/RTL-SDR user gets a near-instant device list.
+extern gboolean skip_network_discovery;

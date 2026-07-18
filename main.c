@@ -618,6 +618,10 @@ int main(int argc, char **argv) {
     for(i=1,j=1;i<argc;i++) {
       if(strcmp(argv[i],"--faker")==0) {
         enable_fake=1;
+      } else if(strcmp(argv[i],"--usb-only")==0) {
+        // Skip the blocking Protocol 1/2 network discovery; only enumerate
+        // USB/SoapySDR devices for a near-instant startup.
+        skip_network_discovery=TRUE;
       } else {
         argv[j++]=argv[i];
       }

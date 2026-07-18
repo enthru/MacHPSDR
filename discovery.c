@@ -32,11 +32,36 @@
 #endif
 #include "fake_protocol.h"
 
+// Shared across protocol1_discovery.c / protocol2_discovery.c. A statically
+// allocated GMutex needs no g_mutex_init() (GLib >= 2.32).
+GMutex discovery_mutex;
+gboolean skip_network_discovery=FALSE;
+
+static gpointer protocol1_discovery_thread(gpointer data) {
+  protocol1_discovery();
+  return NULL;
+}
+
+static gpointer protocol2_discovery_thread(gpointer data) {
+  protocol2_discovery();
+  return NULL;
+}
+
 void discovery() {
 g_print("discovery\n");
   devices=0;
-  protocol1_discovery();
-  protocol2_discovery();
+  // Run the two blocking network discoveries in parallel (each waits on a
+  // socket receive timeout) so the total wait is one timeout window, not two.
+  // The receive threads append to the shared discovered[] array under
+  // discovery_mutex. Skipped entirely with --usb-only.
+  if(!skip_network_discovery) {
+    GThread *p1=g_thread_new("p1 discovery", protocol1_discovery_thread, NULL);
+    GThread *p2=g_thread_new("p2 discovery", protocol2_discovery_thread, NULL);
+    g_thread_join(p1);
+    g_thread_join(p2);
+  } else {
+    g_print("discovery: network (Protocol 1/2) discovery skipped (--usb-only)\n");
+  }
 #ifdef SOAPYSDR
   soapy_discovery();
 #endif

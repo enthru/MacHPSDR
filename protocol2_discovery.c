@@ -34,6 +34,7 @@
 #include <errno.h>
 
 #include "discovered.h"
+#include "discovery.h"
 
 
 static char interface_name[64];
@@ -69,7 +70,8 @@ void protocol2_discovery() {
     getifaddrs(&addrs);
     ifa = addrs;
     while (ifa) {
-        g_main_context_iteration(NULL, 0);
+        // NB: runs in a worker thread (see discovery.c) — do not pump the GTK
+        // main context here.
         if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
             if((ifa->ifa_flags&IFF_UP)==IFF_UP
                 && (ifa->ifa_flags&IFF_RUNNING)==IFF_RUNNING
@@ -191,7 +193,7 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
     int i;
     int version;
 
-    tv.tv_sec = 2;
+    tv.tv_sec = 1;
     tv.tv_usec = 0;
     version=0;
 
@@ -214,6 +216,7 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
         if(buffer[0]==0 && buffer[1]==0 && buffer[2]==0 && buffer[3]==0) {
             int status = buffer[4] & 0xFF;
             if (status == 2 || status == 3) {
+                g_mutex_lock(&discovery_mutex);
                 if(devices<MAX_DEVICES) {
                     discovered[devices].protocol=PROTOCOL_2;
                     discovered[devices].device=buffer[11]&0xFF;
@@ -308,6 +311,7 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
                             buffer[20]&0xFF);
                     devices++;
                 }
+                g_mutex_unlock(&discovery_mutex);
             }
         }
         }

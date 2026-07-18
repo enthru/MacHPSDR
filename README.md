@@ -67,6 +67,12 @@ automatically — no separate install needed. The fork was renamed to MacHPSDR;
 existing settings are migrated automatically on first run. The app now ships with a
 new MacHPSDR application icon (window, Dock and `.app` bundle).
 
+**Faster startup.** The Protocol 1 and Protocol 2 network discoveries now run in
+parallel instead of one after the other, and each waits one second instead of two
+for a device to answer, so the device-selection list appears in about a second
+rather than four on startup. If you only use a USB device (HackRF, RTL-SDR), start
+with `--usb-only` to skip network discovery entirely for a near-instant list.
+
 **Other changes.** The SoapySDR RX frequency and gain are now re-applied just after
 the stream starts, so the saved gain (and the HackRF RF preamp) takes effect on
 startup instead of staying weak until you nudged the slider, and a cold HackRF

@@ -33,6 +33,7 @@
 #include <errno.h>
 
 #include "discovered.h"
+#include "discovery.h"
 #include "protocol1_discovery.h"
 
 static char interface_name[64];
@@ -143,7 +144,7 @@ static gpointer discover_receive_thread(gpointer data) {
 
 g_print("discover_receive_thread\n");
 
-    tv.tv_sec = 2;
+    tv.tv_sec = 1;
     tv.tv_usec = 0;
     version=0;
 
@@ -161,6 +162,7 @@ g_print("discover_receive_thread\n");
         if ((buffer[0] & 0xFF) == 0xEF && (buffer[1] & 0xFF) == 0xFE) {
             int status = buffer[2] & 0xFF;
             if (status == 2 || status == 3) {
+                g_mutex_lock(&discovery_mutex);
                 if(devices<MAX_DEVICES) {
                     discovered[devices].protocol=PROTOCOL_1;
                     version=buffer[9]&0xFF;                    
@@ -279,6 +281,7 @@ g_print("discover_receive_thread\n");
                             discovered[devices].info.network.interface_name);
                     devices++;
                 }
+                g_mutex_unlock(&discovery_mutex);
             }
         }
 
@@ -295,7 +298,8 @@ g_print("protocol1_discovery\n");
     getifaddrs(&addrs);
     ifa = addrs;
     while (ifa) {
-        g_main_context_iteration(NULL, 0);
+        // NB: runs in a worker thread (see discovery.c) — do not pump the GTK
+        // main context here.
         if (ifa->ifa_addr && (ifa->ifa_addr->sa_family == AF_INET || ifa->ifa_addr->sa_family==AF_LOCAL)) {
             if((ifa->ifa_flags&IFF_UP)==IFF_UP
                 && (ifa->ifa_flags&IFF_RUNNING)==IFF_RUNNING
