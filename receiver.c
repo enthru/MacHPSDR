@@ -1603,6 +1603,17 @@ static void process_rx_buffer(RECEIVER *rx) {
         }
       }
     }
+    // Clamp to full scale before the 16-bit conversion below.  FM has no audio
+    // AGC and WDSP's NBFM de-emphasis boosts the low end hard (a 300 Hz tone at
+    // rated deviation demodulates to ~3x full scale), so the demod output swings
+    // well past +/-1.0 on loud/low modulation peaks.  An out-of-range
+    // (short)(x*32767) is undefined and in practice wraps a positive peak to a
+    // large negative value -> a loud click/pop on the HPSDR audio path; the raw
+    // float fed to audio_write() likewise hard-clips into buzzy distortion on
+    // the local sound card.  Bound both here so peaks flat-top cleanly instead.
+    if(left_sample  >  1.0) left_sample  =  1.0; else if(left_sample  < -1.0) left_sample  = -1.0;
+    if(right_sample >  1.0) right_sample =  1.0; else if(right_sample < -1.0) right_sample = -1.0;
+
     left_audio_sample=(short)(left_sample*32767.0);
     right_audio_sample=(short)(right_sample*32767.0);
 
