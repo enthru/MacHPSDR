@@ -2073,8 +2073,10 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   // dialog and persisted, so only fall back to the default when the restored rate
   // is not one the fake device offers.
   if(r->discovered->protocol==PROTOCOL_FAKE) {
-    if(r->sample_rate!=48000 && r->sample_rate!=96000 &&
-       r->sample_rate!=192000 && r->sample_rate!=384000) {
+    if(r->sample_rate!=48000   && r->sample_rate!=96000   &&
+       r->sample_rate!=192000  && r->sample_rate!=384000  &&
+       r->sample_rate!=768000  && r->sample_rate!=1536000 &&
+       r->sample_rate!=1920000) {
       r->sample_rate=384000;
     }
   }
@@ -2123,11 +2125,15 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   // latency to every mode, so only SoapySDR pays for it; HPSDR keeps the original
   // low-latency depth of 2.  Must be set BEFORE OpenChannel (create_iobuffs captures
   // it per channel).
+  // The fake test device also uses the deep ring so it can run the wide spans
+  // (768k/1536k/1920k) glitch-free, like a wideband SoapySDR device.
+  {
+    gboolean deep_ring = (r->discovered->protocol==PROTOCOL_FAKE);
 #ifdef SOAPYSDR
-  SetDSPMult(r->discovered->protocol==PROTOCOL_SOAPYSDR ? 16 : 2);
-#else
-  SetDSPMult(2);
+    if(r->discovered->protocol==PROTOCOL_SOAPYSDR) deep_ring=TRUE;
 #endif
+    SetDSPMult(deep_ring ? 16 : 2);
+  }
 
   add_receivers(r);
 

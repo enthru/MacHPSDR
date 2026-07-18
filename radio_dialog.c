@@ -712,19 +712,21 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"96000");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"192000");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"384000");
+    // The fake device runs the wideband I/O path, so it can also offer the wide
+    // spans (real Protocol-1 hardware tops out at 384k).
+    if(radio->discovered->protocol==PROTOCOL_FAKE) {
+      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"768000");
+      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"1536000");
+      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"1920000");
+    }
     switch(radio->sample_rate) {
-      case 48000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),0);
-        break;
-      case 96000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),1);
-        break;
-      case 192000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),2);
-        break;
-      case 384000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),3);
-        break;
+      case 48000:   gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),0); break;
+      case 96000:   gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),1); break;
+      case 192000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),2); break;
+      case 384000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),3); break;
+      case 768000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),4); break;
+      case 1536000: gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),5); break;
+      case 1920000: gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),6); break;
     }
     g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(sample_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);

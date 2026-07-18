@@ -2084,30 +2084,28 @@ g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", cha
   rx->pixel_samples=NULL;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
+  // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole
+  // DSP chain at the (wide) sample_rate with a large output resampler
+  // (sample_rate->48k).  Two things must hold to avoid glitches in WDSP's async
+  // double-buffered I/O ring:
+  //   (1) in_size == dsp_insize, else the DSP thread fills the output ring only
+  //       every N-th fexchange while fexchange drains it every call -> periodic
+  //       boundary click.  For WFM dsp_rate==sample_rate so dsp_insize==fft_size,
+  //       hence buffer_size must equal fft_size.
+  //   (2) the output block out_size = buffer_size/(sample_rate/48000) must be an
+  //       exact integer AND reasonably large; tiny blocks (=64 at 1536k with
+  //       buffer_size=2048) still glitch.
+  // 5120 = 2^10 * 5 satisfies both for every offered span, because it is an exact
+  // multiple of (sample_rate/48000) for 192/384/768/1536/1920 k (ratios
+  // 4/8/16/32/40) -> out_size = 1280/640/320/160/128, all integer and >=128.
+  // (A pure power of two like 4096 cannot support the 1920k span, whose ratio 40
+  // has a factor of 5.)  The fake test device shares this so it too can offer the
+  // wide spans (its 1024-sample block breaks 1920k: 1024/40 is not an integer).
+  gboolean wide_buffers = (radio->discovered->protocol==PROTOCOL_FAKE);
 #ifdef SOAPYSDR
-  if(radio->discovered->device==DEVICE_SOAPYSDR) {
-    // WFM runs the whole DSP chain at the (wide) sample_rate with a large output
-    // resampler (sample_rate->48k).  Two things must hold to avoid glitches in
-    // WDSP's async double-buffered I/O ring:
-    //   (1) in_size == dsp_insize, else the DSP thread fills the output ring only
-    //       every N-th fexchange while fexchange drains it every call -> periodic
-    //       boundary click.  For WFM dsp_rate==sample_rate so dsp_insize==fft_size,
-    //       hence buffer_size must equal fft_size.
-    //   (2) the output block out_size = buffer_size/(sample_rate/48000) must be an
-    //       exact integer AND reasonably large; tiny blocks (=64 at 1536k with
-    //       buffer_size=2048) still glitch.
-    // 5120 = 2^10 * 5 satisfies both for every offered span, because it is an exact
-    // multiple of (sample_rate/48000) for 192/384/768/1536/1920 k (ratios
-    // 4/8/16/32/40) -> out_size = 1280/640/320/160/128, all integer and >=128.
-    // (A pure power of two like 4096 cannot support the 1920k span, whose ratio 40
-    // has a factor of 5.)
-    rx->buffer_size=5120;
-  } else {
+  if(radio->discovered->device==DEVICE_SOAPYSDR) wide_buffers=TRUE;
 #endif
-    rx->buffer_size=1024;
-#ifdef SOAPYSDR
-  }
-#endif
+  rx->buffer_size = wide_buffers ? 5120 : 1024;
 fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->iq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
   rx->diviq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
@@ -2124,17 +2122,10 @@ fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->fps=25;
   rx->display_average_time=40.0;
 
-#ifdef SOAPYSDR
-  if(radio->discovered->device==DEVICE_SOAPYSDR) {
-    // Must equal buffer_size so in_size==dsp_insize for the WFM chain (see the
-    // buffer_size comment above): avoids the WDSP output-ring boundary glitch.
-    rx->fft_size=5120;
-  } else {
-#endif
-    rx->fft_size=2048;
-#ifdef SOAPYSDR
-  }
-#endif
+  // Must equal buffer_size for wideband receivers so in_size==dsp_insize for the
+  // WFM chain (see the buffer_size comment above): avoids the WDSP output-ring
+  // boundary glitch.
+  rx->fft_size = wide_buffers ? 5120 : 2048;
 fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
   rx->low_latency=FALSE;
 
