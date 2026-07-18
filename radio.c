@@ -2068,11 +2068,15 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
   radio_restore_state(r);
 
-  // Fake test device: run at 384 kHz so a wideband-FM signal (~180 kHz) sits in
-  // the middle of the span with noise margin around it instead of filling the
-  // whole display. Forced (overrides any persisted rate) as it is a test device.
+  // Fake test device: default to 384 kHz (a wideband-FM signal ~180 kHz then sits
+  // in the middle of the span with margin). The rate is selectable in the Radio
+  // dialog and persisted, so only fall back to the default when the restored rate
+  // is not one the fake device offers.
   if(r->discovered->protocol==PROTOCOL_FAKE) {
-    r->sample_rate=384000;
+    if(r->sample_rate!=48000 && r->sample_rate!=96000 &&
+       r->sample_rate!=192000 && r->sample_rate!=384000) {
+      r->sample_rate=384000;
+    }
   }
 
 #ifdef SOAPYSDR

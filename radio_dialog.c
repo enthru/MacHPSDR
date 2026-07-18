@@ -701,7 +701,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   }
 #endif
 
-  if(radio->discovered->protocol==PROTOCOL_1) {
+  // The classic Protocol-1 radio-wide rate selector.  Also offered for the fake
+  // test device (PROTOCOL_FAKE emulates a Hermes/P1) so its panadapter span — and
+  // hence how a played I/Q file is shown — can be changed in the UI. The faker
+  // resamples the file to whatever rate is chosen.
+  if(radio->discovered->protocol==PROTOCOL_1 ||
+     radio->discovered->protocol==PROTOCOL_FAKE) {
     GtkWidget *sample_rate_combo_box=gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"48000");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"96000");
