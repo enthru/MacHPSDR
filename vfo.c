@@ -1225,7 +1225,7 @@ static gboolean agcgain_scale_motion_notify_event_cb(GtkWidget *widget, GdkEvent
     if (moved > 1 && moved < -1) {
       has_moved=TRUE;
     }
-    rx->agc_gain=rx->agc_gain+moved;
+    rx->agc_gain=rx->agc_gain+moved*1.4;
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
@@ -1239,12 +1239,12 @@ static gboolean agcgain_release_cb(GtkWidget *widget,GdkEventButton *event,gpoin
   RECEIVER *rx=(RECEIVER *)data;
   if(has_moved) {
     gdouble moved=event->x-last_x;
-    rx->agc_gain=rx->agc_gain+moved;
+    rx->agc_gain=rx->agc_gain+moved*1.4;
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
   } else {
-    rx->agc_gain=event->x-20.0;
+    rx->agc_gain=event->x*1.4-20.0;
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
@@ -1683,7 +1683,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->agcgain_scale),GTK_LEVEL_BAR_OFFSET_HIGH);
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->agcgain_scale),GTK_LEVEL_BAR_OFFSET_FULL);
   gtk_widget_set_name(v->agcgain_scale,"agcgain-scale");
-  gtk_widget_set_size_request(v->agcgain_scale,140,15);
+  gtk_widget_set_size_request(v->agcgain_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->agcgain_scale),rx->agc_gain+20.0);
 
   GtkWidget *event_box_agcgain=gtk_event_box_new();
