@@ -54,12 +54,10 @@
 static volatile gboolean enabled = FALSE;
 
 // ---- 48k->12k decimation state (RX thread) ---------------------------------
-// Gentle one-pole low-pass before dropping to 12 kHz.  The DIGU SSB filter
-// already band-limits the audio to <=~5 kHz (< the 6 kHz post-decimation
-// Nyquist), so almost no aliasing occurs; the filter must therefore be soft
-// enough NOT to attenuate the FT8 sub-band (audio up to ~3 kHz).  a=0.45 puts
-// the -3 dB corner near ~4.5 kHz.
-static double lpf_z = 0.0;
+// Straight decimate-by-4, no extra anti-alias filter: the DIGU SSB filter
+// already band-limits the audio to <=~5 kHz, below the 6 kHz Nyquist of the
+// 12 kHz decoder rate, so decimation cannot alias.  An extra low-pass here
+// would only risk trimming the top of the FT8 sub-band for no benefit.
 static int    dec_count = 0;
 
 // ---- rolling audio ring (RX thread writes) ---------------------------------
@@ -285,8 +283,7 @@ void ft8_decoder_init(void) {
 
 void ft8_decoder_set_enabled(gboolean en) {
   if (en && !enabled) {
-    // Fresh start: clear the decimation filter and the ring.
-    lpf_z = 0.0;
+    // Fresh start: clear the decimation phase and the ring.
     dec_count = 0;
     ring_w = 0;
     last_decode_w = 0;
@@ -301,14 +298,11 @@ gboolean ft8_decoder_is_enabled(void) {
 void ft8_decoder_add_audio(const gdouble *samples, int nframes) {
   if (!enabled) return;
 
-  // Decimate the left channel 48k -> 12k into the rolling ring.
-  const double a = 0.45;             // gentle one-pole (~4.5 kHz @ 48 kHz)
+  // Decimate the left channel 48k -> 12k into the rolling ring (take every 4th).
   for (int i = 0; i < nframes; i++) {
-    double x = samples[i * 2];       // left channel
-    lpf_z += a * (x - lpf_z);
     if (++dec_count >= FT8_DECIM) {
       dec_count = 0;
-      ring[ring_w % RING_CAP] = (float)lpf_z;
+      ring[ring_w % RING_CAP] = (float)samples[i * 2];   // left channel
       ring_w++;
     }
   }

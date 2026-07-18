@@ -265,6 +265,7 @@ typedef struct _radio {
 
   GtkWidget *rds_label[3];   // bottom-bar decoder readout (3-line RDS in WFM)
   GtkWidget *rds_title;      // bottom-bar decoder module title ("RDS" in WFM, else "Decode")
+  GtkWidget *ft8_label;      // bottom-bar FT8 readout (up to 6 decode lines in DIGU)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)

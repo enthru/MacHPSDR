@@ -1538,6 +1538,10 @@ static gboolean rds_update_cb(gpointer data) {
   l0[0]=l1[0]=l2[0]=0;
   gboolean wfm = rx!=NULL && rx->mode_a==WFM;
   gboolean digu = rx!=NULL && rx->mode_a==DIGU;
+#ifdef FT8
+  char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU)
+  gboolean show_ft8=FALSE;
+#endif
   // The decoder block is the RDS readout in WFM and the FT8 readout in DIGU; in
   // any other mode it carries no decode of its own, so the title falls back to
   // the neutral "Decode".
@@ -1596,9 +1600,11 @@ static gboolean rds_update_cb(gpointer data) {
   }
 #ifdef FT8
   else if(digu) {
-    // FT8 listening readout: the most recent slot's decodes, three per block.
-    // Slot time appears in the title (set above as "FT8"); overflow beyond the
-    // three visible rows is summarised on the last line.
+    // FT8 listening readout: the most recent window's decodes as one multi-line
+    // block (up to FT8_ROWS rows). Slot time is shown in the title; any overflow
+    // beyond the visible rows is summarised on the last line.
+    show_ft8 = TRUE;
+    const int FT8_ROWS = 6;
     FT8_DECODE d[64]; char utc[8]="";
     int total = ft8_decoder_get_decodes(d, 64, utc);
     if(r->rds_title!=NULL) {
@@ -1607,25 +1613,38 @@ static gboolean rds_update_cb(gpointer data) {
       else                  snprintf(t,sizeof(t),"FT8");
       gtk_label_set_text(GTK_LABEL(r->rds_title),t);
     }
-    char *line[3]={l0,l1,l2};
+    char *p=ft8buf; size_t n=sizeof(ft8buf);
     if(total==0) {
-      snprintf(l0,sizeof(l0),"listening…");
+      snprintf(ft8buf,sizeof(ft8buf),"listening…");
     } else {
-      int shown = total<3 ? total : 3;
+      int shown = total<FT8_ROWS ? total : FT8_ROWS;
       for(int i=0;i<shown;i++) {
-        snprintf(line[i],256,"%+3.0f  %4.0f Hz  %s", d[i].snr, d[i].freq, d[i].text);
-      }
-      if(total>3) {
-        int extra = total-3;
-        char tmp[300];
-        snprintf(tmp,sizeof(tmp),"%s   (+%d more)", l2, extra);
-        snprintf(l2,512,"%s",tmp);
+        int last = (i==FT8_ROWS-1) && (total>FT8_ROWS);
+        int w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
+                       i?"\n":"", d[i].snr, d[i].freq, d[i].text);
+        if(w<0) w=0; else if((size_t)w>=n) w=(int)n-1; p+=w; n-=(size_t)w;
+        if(last) {
+          int e=snprintf(p,n,"   (+%d more)", total-FT8_ROWS);
+          if(e<0) e=0; else if((size_t)e>=n) e=(int)n-1; p+=e; n-=(size_t)e;
+        }
       }
     }
   }
 #endif
+#ifdef FT8
+  // Swap between the 3 RDS rows and the single FT8 block depending on the mode.
+  if(r->ft8_label!=NULL) {
+    gtk_label_set_text(GTK_LABEL(r->ft8_label), ft8buf);
+    gtk_widget_set_visible(r->ft8_label, show_ft8);
+  }
+  for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
+    gtk_widget_set_visible(r->rds_label[i], !show_ft8);
+    gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
+  }
+#else
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL)
     gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
+#endif
   return TRUE;   // keep the timer running
 }
 #undef RDS_APP
@@ -1710,6 +1729,7 @@ static void create_visual(RADIO *r) {
   gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
   GtkWidget *rds_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,1);
   gtk_widget_set_hexpand(rds_col,TRUE);
+  gtk_widget_set_valign(rds_col,GTK_ALIGN_START);   // rows grow from the top
   for(int i=0;i<3;i++) {
     r->rds_label[i]=gtk_label_new("");
     // Per-line names give the 3 RDS rows a typographic hierarchy in CSS:
@@ -1722,6 +1742,18 @@ static void create_visual(RADIO *r) {
     gtk_label_set_ellipsize(GTK_LABEL(r->rds_label[i]),PANGO_ELLIPSIZE_END);
     gtk_box_pack_start(GTK_BOX(rds_col),r->rds_label[i],FALSE,FALSE,0);
   }
+  // FT8 readout: a single multi-line label (up to 6 decodes) that replaces the
+  // 3 RDS rows while the active receiver is in DIGU. Kept separate so it can be
+  // top-aligned and shown/hidden as a unit (see rds_update_cb).
+  r->ft8_label=gtk_label_new("");
+  gtk_widget_set_name(r->ft8_label,"ft8-text");
+  gtk_widget_set_halign(r->ft8_label,GTK_ALIGN_FILL);
+  gtk_widget_set_hexpand(r->ft8_label,TRUE);
+  gtk_widget_set_valign(r->ft8_label,GTK_ALIGN_START);
+  gtk_label_set_xalign(GTK_LABEL(r->ft8_label),0.0);
+  gtk_label_set_yalign(GTK_LABEL(r->ft8_label),0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),PANGO_ELLIPSIZE_END);
+  gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_label,TRUE,TRUE,0);
   // Title is "RDS" only in WFM mode; for every other mode the block defaults to
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
   {
