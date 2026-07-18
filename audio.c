@@ -1407,6 +1407,66 @@ void audio_refresh_devices(void) {
   }
 }
 
+// A receiver "follows the system default" output when the user picked the
+// synthetic "System Default" entry, or left the output unconfigured.  A receiver
+// pinned to a specific named device is intentionally left where the user put it.
+static gboolean rx_follows_system_default(RECEIVER *rx) {
+  return rx->audio_name==NULL ||
+         strcmp(rx->audio_name,AUDIO_SYSTEM_DEFAULT_NAME)==0;
+}
+
+// libsoundio binds an output stream to a *concrete* device resolved when the
+// stream is opened; it does not track later changes to the macOS default output.
+// So when a "System Default" receiver is playing and the user switches the
+// system output device (System Settings > Sound, or (un)plugging headphones),
+// audio keeps going to the now-stale device.  This timer polls the current
+// default output and, when it differs from the device a System Default receiver
+// is bound to, re-opens that receiver's stream onto the new device.  Playback
+// restarts on its own once the receiver feed refills the ring buffer
+// (see the audio_start_output call at the end of the receiver audio loop).
+static guint default_output_monitor_id=0;
+
+static gboolean default_output_monitor_cb(gpointer data) {
+  if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
+    return TRUE;
+
+  // Skip the (cheap but pointless) flush/query unless some receiver is actually
+  // streaming to the system default right now.
+  int any=0;
+  for(int i=0;i<radio->receivers;i++) {
+    RECEIVER *rx=radio->receiver[i];
+    if(rx!=NULL && rx->local_audio && rx->output_stream!=NULL &&
+       rx_follows_system_default(rx)) { any=1; break; }
+  }
+  if(!any) return TRUE;
+
+  // Refresh soundio's backend state so the default index reflects any change
+  // CoreAudio has signalled since the last poll.
+  soundio_flush_events(soundio);
+  int def=soundio_default_output_device_index(soundio);
+  if(def<0) return TRUE;
+  struct SoundIoDevice *ddev=soundio_get_output_device(soundio,def);
+  if(ddev==NULL) return TRUE;
+
+  for(int i=0;i<radio->receivers;i++) {
+    RECEIVER *rx=radio->receiver[i];
+    if(rx==NULL || !rx->local_audio || rx->output_stream==NULL) continue;
+    if(!rx_follows_system_default(rx)) continue;
+    // Already on the current default device?  Nothing to do.
+    if(rx->output_device!=NULL && rx->output_device->id!=NULL &&
+       strcmp(rx->output_device->id, ddev->id)==0 &&
+       rx->output_device->is_raw==ddev->is_raw)
+      continue;
+    g_print("audio: system default output changed -> re-opening RX%d on '%s'\n",
+            rx->channel, ddev->name);
+    audio_close_output(rx);
+    audio_open_output(rx);
+  }
+
+  soundio_device_unref(ddev);
+  return TRUE;
+}
+
 void create_audio(int backend_index,const char *backend) {
   int rc;
 
@@ -1451,8 +1511,12 @@ void create_audio(int backend_index,const char *backend) {
       }
 
       soundio_build_device_lists();
+      // Poll the system default output so "System Default" receivers follow it
+      // live when the user switches the macOS output device while streaming.
+      if(default_output_monitor_id==0)
+        default_output_monitor_id=g_timeout_add(1000, default_output_monitor_cb, NULL);
       break;
-  
+
 #ifndef __APPLE__
     case USE_PULSEAUDIO:
 g_print("audio: create_audio: USE_PULSEAUDIO\n");

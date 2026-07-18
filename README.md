@@ -84,7 +84,10 @@ Devices that don't run at 48 kHz (e.g. Bluetooth headsets locked to 44.1 kHz, wh
 were previously hidden and silent) now appear and work: audio is resampled on the fly
 between 48 kHz and the device rate, in both directions. The device lists are also
 re-scanned each time you open the RX/TX audio page, so a headset connected after
-launch shows up without restarting.
+launch shows up without restarting. When **System Default** is selected, changing
+the macOS output device while audio is playing now takes effect live — the stream
+re-opens onto the new default automatically, instead of staying stuck on the old
+output.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
