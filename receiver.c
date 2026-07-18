@@ -739,6 +739,24 @@ int rx_ring_depth(int sample_rate) {
   return 16;
 }
 
+// Position the zoomed panadapter/waterfall pan window so the cursor (the
+// freetune/ctun listening frequency, i.e. frequency_a + ctun_offset) sits in
+// the middle of the visible area instead of the span centre. At zoom==1 there
+// is no pan headroom, so recentring there needs the span centre itself to move
+// (done on a bandwidth change); this only slides the window when zoomed in.
+// For plain tuning ctun_offset==0, so this reduces to centring on the span.
+static void center_pan_on_cursor(RECEIVER *rx) {
+  if(rx->zoom<=1) {
+    rx->pan=0;
+    return;
+  }
+  double hz_per_pixel=(double)rx->sample_rate/(double)rx->pixels;
+  int cursor_px=(rx->pixels/2)+(int)((double)(rx->ctun_frequency-rx->frequency_a)/hz_per_pixel);
+  rx->pan=cursor_px-(rx->panadapter_width/2);
+  if(rx->pan<0) rx->pan=0;
+  if(rx->pan>(rx->pixels-rx->panadapter_width)) rx->pan=rx->pixels-rx->panadapter_width;
+}
+
 void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
 g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
   g_mutex_lock(&rx->mutex);
@@ -761,13 +779,15 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
   SetEXTNOBSamplerate (rx->channel, sample_rate);
 fprintf(stderr,"receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_samples=%d\n",rx->channel, rx->sample_rate, rx->buffer_size, rx->output_samples);
 
-  /* Update freetune span boundaries when sample rate changes */
+  /* Recentre the freetune span on the current listening frequency (the cursor)
+     so it stays in the middle when the bandwidth changes. Moving the span centre
+     retunes the hardware LO to the cursor; frequency_changed() (called after the
+     mutex is released, below) re-derives the now-zero digital shift and issues
+     the retune. */
   if(rx->freetune) {
+    rx->frequency_a = rx->ctun_frequency;
     rx->ctun_min = rx->frequency_a - (rx->sample_rate / 2);
     rx->ctun_max = rx->frequency_a + (rx->sample_rate / 2);
-    /* Clamp ctun_frequency to new span */
-    if(rx->ctun_frequency < rx->ctun_min) rx->ctun_frequency = rx->ctun_min;
-    if(rx->ctun_frequency > rx->ctun_max) rx->ctun_frequency = rx->ctun_max;
   }
 
 #ifdef SOAPYSDR
@@ -782,6 +802,16 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 
   SetChannelState(rx->channel,1,0);
   g_mutex_unlock(&rx->mutex);
+
+  /* Freetune moved the span centre onto the cursor above: retune the LO and
+     re-zero the digital shift (frequency_changed), then keep the cursor centred
+     in the zoomed view. */
+  if(rx->freetune) {
+    frequency_changed(rx);
+    center_pan_on_cursor(rx);
+    update_vfo(rx);
+  }
+
   receiver_update_title(rx);
 }
 
@@ -1922,18 +1952,9 @@ void receiver_change_zoom(RECEIVER *rx,int zoom) {
 g_print("%s: %d\n",__FUNCTION__,zoom);
   rx->zoom=zoom;
   rx->pixels=rx->panadapter_width*rx->zoom;
-  if(rx->zoom==1) {
-    rx->pan=0;
-  } else {
-    if(rx->ctun || rx->freetune) {
-      long long min_frequency=rx->frequency_a-(long long)(rx->sample_rate/2);
-      rx->pan=(rx->pixels/2)-(rx->panadapter_width/2);
-      if(rx->pan<0) rx->pan=0;
-      if(rx->pan>(rx->pixels-rx->panadapter_width)) rx->pan=rx->pixels-rx->panadapter_width;
-    } else {
-      rx->pan=(rx->pixels/2)-(rx->panadapter_width/2);
-    }
-  }
+  // Centre the zoomed view on the cursor (freetune/ctun listening frequency);
+  // for plain tuning ctun_offset==0 so this centres on the span, as before.
+  center_pan_on_cursor(rx);
   receiver_init_analyzer(rx);
 }
 

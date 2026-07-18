@@ -94,7 +94,8 @@ the Hermes-Lite 2.
 
 **Freetune.** A tuning mode where the cursor moves within the visible span; exiting
 keeps the frequency you were on, and the radio retunes automatically when the cursor
-reaches a span edge.
+reaches a span edge. Changing the bandwidth re-centres the span on the frequency you
+are listening to, and zooming keeps that frequency centred in the view.
 
 **Disconnect recovery.** If the radio stops delivering data (a HackRF/SoapySDR
 device unplugged, or a network HPSDR radio going away), a watchdog detects the
