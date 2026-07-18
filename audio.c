@@ -31,6 +31,9 @@
 #include <semaphore.h>
 
 #include <soundio/soundio.h>
+#ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+#endif
 #ifndef __APPLE__
 #include <pulse/pulseaudio.h>
 #include <pulse/glib-mainloop.h>
@@ -1430,9 +1433,15 @@ static gboolean rx_follows_system_default(RECEIVER *rx) {
 // (see the audio_start_output call at the end of the receiver audio loop).
 static guint default_output_monitor_id=0;
 
-static gboolean default_output_monitor_cb(gpointer data) {
+// Core of the follow-the-default logic: resolve the current system default
+// output and (re)open every System Default receiver that isn't already on it.
+// Runs on the GTK main thread (from the CoreAudio-listener idle handler and
+// from the fallback timer).  Returns TRUE if at least one receiver still wants
+// to follow the default (used to decide whether the fallback timer keeps
+// ticking).
+static gboolean default_output_apply(void) {
   if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
-    return TRUE;
+    return FALSE;
 
   // Anything that should be following the system default?  Note we do NOT
   // require an open stream here: a previous transition may have left a receiver
@@ -1444,17 +1453,16 @@ static gboolean default_output_monitor_cb(gpointer data) {
     RECEIVER *rx=radio->receiver[i];
     if(rx!=NULL && rx->local_audio && rx_follows_system_default(rx)) { any=1; break; }
   }
-  if(!any) return TRUE;
+  if(!any) return FALSE;
 
   // Apply whatever device change CoreAudio has already signalled.
   soundio_flush_events(soundio);
   int def=soundio_default_output_device_index(soundio);
-  if(def<0) { soundio_force_device_scan(soundio); return TRUE; }
+  if(def<0) return TRUE;
   struct SoundIoDevice *ddev=soundio_get_output_device(soundio,def);
-  if(ddev==NULL) { soundio_force_device_scan(soundio); return TRUE; }
+  if(ddev==NULL) return TRUE;
 
-  // Log default transitions so a terminal run shows exactly what the monitor
-  // sees (helps tell "not detected" apart from "detected but re-open failed").
+  // Log default transitions so a terminal run shows exactly what happened.
   static char last_default[256]="";
   const char *did = ddev->id ? ddev->id : "";
   if(strncmp(last_default, did, sizeof(last_default)-1)!=0) {
@@ -1486,12 +1494,57 @@ static gboolean default_output_monitor_cb(gpointer data) {
   }
 
   soundio_device_unref(ddev);
-
-  // Queue a fresh rescan so the next tick still catches a change even if the
-  // automatic CoreAudio device-change listener ever drops an event.
-  soundio_force_device_scan(soundio);
   return TRUE;
 }
+
+// Fallback poll: a slow safety net that also handles retrying a failed re-open
+// (no CoreAudio event fires for that).  The instant path is the CoreAudio
+// listener below; on macOS this timer rarely does more than a cheap
+// flush_events + early-out, so it costs next to nothing.
+static gboolean default_output_monitor_cb(gpointer data) {
+  default_output_apply();
+  return TRUE;
+}
+
+#ifdef __APPLE__
+// Event-driven fast path.  CoreAudio calls this (on one of its own threads) the
+// instant the user changes the system default output device — no polling, zero
+// cost until it actually fires.  We must not touch soundio/GTK from this thread,
+// so we force a device rescan and bounce the real work onto the GTK main thread.
+// A short delay lets soundio's async rescan land before we read the new default.
+static gboolean default_output_apply_idle(gpointer data) {
+  default_output_apply();
+  return FALSE;   // one-shot
+}
+static gboolean default_output_changed_idle(gpointer data) {
+  if(soundio!=NULL) soundio_force_device_scan(soundio);
+  g_timeout_add(120, default_output_apply_idle, NULL);
+  return FALSE;   // one-shot
+}
+static OSStatus default_output_listener(AudioObjectID objectID, UInt32 n,
+                                        const AudioObjectPropertyAddress *addr,
+                                        void *client) {
+  g_idle_add(default_output_changed_idle, NULL);
+  return noErr;
+}
+static void install_default_output_listener(void) {
+  static gboolean installed=FALSE;
+  if(installed) return;
+  AudioObjectPropertyAddress addr = {
+    kAudioHardwarePropertyDefaultOutputDevice,
+    kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMaster
+  };
+  OSStatus st=AudioObjectAddPropertyListener(kAudioObjectSystemObject, &addr,
+                                             default_output_listener, NULL);
+  if(st==noErr) {
+    installed=TRUE;
+    g_print("audio: installed CoreAudio default-output listener (instant switching)\n");
+  } else {
+    g_print("audio: AudioObjectAddPropertyListener failed (%d); using timer fallback only\n",(int)st);
+  }
+}
+#endif
 
 void create_audio(int backend_index,const char *backend) {
   int rc;
@@ -1537,10 +1590,15 @@ void create_audio(int backend_index,const char *backend) {
       }
 
       soundio_build_device_lists();
-      // Poll the system default output so "System Default" receivers follow it
-      // live when the user switches the macOS output device while streaming.
+      // Follow the system default output live when the user switches the macOS
+      // output device.  On macOS this is event-driven (instant, no polling) via
+      // a CoreAudio property listener; the timer below is just a slow safety net
+      // that also retries a failed re-open.
+#ifdef __APPLE__
+      install_default_output_listener();
+#endif
       if(default_output_monitor_id==0)
-        default_output_monitor_id=g_timeout_add(1000, default_output_monitor_cb, NULL);
+        default_output_monitor_id=g_timeout_add(2000, default_output_monitor_cb, NULL);
       break;
 
 #ifndef __APPLE__

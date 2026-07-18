@@ -21,7 +21,7 @@ AUDIO_SOURCES=audio.c
 AUDIO_HEADERS=audio.h
 endif
 ifeq ($(UNAME_S), Darwin)
-AUDIO_LIBS=-lsoundio
+AUDIO_LIBS=-lsoundio -framework CoreAudio
 AUDIO_SOURCES=portaudio.c
 AUDIO_HEADERS=portaudio.h
 endif
