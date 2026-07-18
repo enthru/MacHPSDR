@@ -64,6 +64,7 @@
 //#include "vox.h"
 #include "ext.h"
 #include "main.h"
+#include "reconnect.h"
 #include "protocol2.h"
 
 #define min(x,y) (x<y?x:y)
@@ -1061,6 +1062,26 @@ void protocol2_run() {
     protocol2_high_priority();
 }
 
+// In-place restart after a disconnect: stop the current data thread and relaunch
+// protocol2_thread, which re-creates the socket and re-issues the general/start/
+// high-priority sequence (and its timer thread).  Runs on the GTK main thread.
+void protocol2_reconnect() {
+    fprintf(stderr,"protocol2_reconnect\n");
+    running=0;
+    if(protocol2_thread_id!=NULL) {
+        g_thread_join(protocol2_thread_id);  // returns within one SO_RCVTIMEO period
+        protocol2_thread_id=NULL;
+    }
+    if(data_socket>=0) {
+        close(data_socket);
+        data_socket=-1;
+    }
+    protocol2_thread_id = g_thread_new( "protocol2", protocol2_thread, NULL);
+    if( ! protocol2_thread_id ) {
+        fprintf(stderr,"g_thread_new failed on protocol2_thread (reconnect)\n");
+    }
+}
+
 double calibrate(int v) {
     // Angelia
     double v1;
@@ -1091,6 +1112,14 @@ fprintf(stderr,"protocol2_thread\n");
     int optval = 1;
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+
+    // Receive timeout so recvfrom() returns periodically: lets the thread notice
+    // running==FALSE (clean stop/reconnect) and lets the disconnect watchdog see
+    // the data gap instead of the thread blocking forever on a dead radio.
+    struct timeval rcvtv;
+    rcvtv.tv_sec=1;
+    rcvtv.tv_usec=0;
+    setsockopt(data_socket, SOL_SOCKET, SO_RCVTIMEO, &rcvtv, sizeof(rcvtv));
 
     // bind to the interface
     if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
@@ -1148,9 +1177,16 @@ fprintf(stderr,"protocol2_thread: high_priority_addr setup for port %d\n",HIGH_P
         length=sizeof(struct sockaddr_in);
         bytesread=recvfrom(data_socket,buffer,NET_BUFFER_SIZE,0,(struct sockaddr*)&addr,&length);
         if(bytesread<0) {
-            fprintf(stderr,"recvfrom socket failed for protocol2_thread");
-            exit(-1);
+            // EAGAIN/EWOULDBLOCK is the normal SO_RCVTIMEO expiry - the radio
+            // just went quiet.  Loop back (re-checking running) and let the
+            // disconnect watchdog decide, rather than killing the whole app.
+            free(buffer);
+            if(errno!=EAGAIN && errno!=EWOULDBLOCK) {
+                fprintf(stderr,"recvfrom socket failed for protocol2_thread: %s\n",strerror(errno));
+            }
+            continue;
         }
+        reconnect_note_data();   // a packet arrived: the radio is alive
 
         int sourceport=ntohs(addr.sin_port);
 

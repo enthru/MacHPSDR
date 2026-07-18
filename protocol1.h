@@ -22,6 +22,7 @@
 
 extern void protocol1_stop();
 extern void protocol1_run();
+extern void protocol1_reconnect();
 
 extern void protocol1_init(RADIO *r);
 extern void protocol1_set_mic_sample_rate(int rate);

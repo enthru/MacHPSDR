@@ -29,6 +29,7 @@ void soapy_protocol_start_receiver(RECEIVER *rx);
 
 void soapy_protocol_init(RADIO *r,int rx);
 void soapy_protocol_stop();
+gboolean soapy_protocol_reconnect(RECEIVER *rx);
 void soapy_protocol_set_rx_frequency(RECEIVER *rx);
 void soapy_protocol_set_rx_antenna(RECEIVER *rx,int ant);
 void soapy_protocol_set_lna_gain(RECEIVER *rx,int gain);

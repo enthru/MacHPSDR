@@ -46,6 +46,14 @@ the Hermes-Lite 2.
 keeps the frequency you were on, and the radio retunes automatically when the cursor
 reaches a span edge.
 
+**Disconnect recovery.** If the radio stops delivering data (a HackRF/SoapySDR
+device unplugged, or a network HPSDR radio going away), a watchdog detects the
+stall and pops a "Connection lost" dialog offering **Reconnect** or **Exit**,
+instead of leaving the app frozen and forcing a full restart. Reconnect
+re-initialises the hardware in place (re-opening the SoapySDR device or
+re-issuing the Protocol 1/2 start sequence) while keeping your session; if the
+device is still missing the dialog simply reappears so you can retry.
+
 **Test device.** A built-in "Fake Noise SDR" lets you run the app with no hardware
 connected (receive, transmit, spectrum and demodulation), and can play back a
 recorded IQ file. Hidden by default; enable it by starting with `--faker`.

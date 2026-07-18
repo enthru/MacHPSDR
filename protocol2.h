@@ -59,6 +59,7 @@ extern unsigned int alex_reverse_power;
 extern void protocol2_init(RADIO *radio);
 extern void protocol2_stop();
 extern void protocol2_run();
+extern void protocol2_reconnect();
 extern void protocol2_start_receiver(RECEIVER *r);
 extern void protocol2_stop_receiver(RECEIVER *r);
 extern void protocol2_high_priority();

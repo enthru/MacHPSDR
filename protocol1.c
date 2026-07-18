@@ -20,6 +20,7 @@
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -58,6 +59,7 @@
 #include "ext.h"
 #include "error_handler.h"
 #include "hl2.h"
+#include "reconnect.h"
 
 
 
@@ -208,12 +210,29 @@ void protocol1_run() {
   fprintf(stderr,"protocol1_run\n");
 
   start_protocol1_thread();
-  
+
   for(int i=8;i<OZY_BUFFER_SIZE;i++) {
     output_buffer[i]=0;
   }
 
   metis_restart();
+}
+
+// In-place restart after a disconnect: stop the current receive thread, drop
+// the old socket and re-run the full start sequence (new socket + thread +
+// metis start command).  Runs on the GTK main thread.
+void protocol1_reconnect() {
+  fprintf(stderr,"protocol1_reconnect\n");
+  running=FALSE;
+  if(receive_thread_id!=NULL) {
+    g_thread_join(receive_thread_id);   // returns within one SO_RCVTIMEO period
+    receive_thread_id=NULL;
+  }
+  if(data_socket>=0) {
+    close(data_socket);
+    data_socket=-1;
+  }
+  protocol1_run();
 }
 
 void protocol1_set_mic_sample_rate(int rate) {
@@ -337,6 +356,15 @@ static void start_protocol1_thread() {
       if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval))<0) {
         perror("data_socket: SO_REUSEPORT");
       }
+      // Receive timeout so recvfrom() returns periodically instead of blocking
+      // forever: lets the thread notice running==FALSE (clean stop/reconnect)
+      // and lets the disconnect watchdog see the data gap.
+      struct timeval tv;
+      tv.tv_sec=1;
+      tv.tv_usec=0;
+      if(setsockopt(data_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))<0) {
+        perror("data_socket: SO_RCVTIMEO");
+      }
 #ifndef __APPLE__
       optval = 6;  
       if(setsockopt(data_socket, SOL_SOCKET, SO_PRIORITY, &optval, sizeof(optval))<0) {
@@ -389,14 +417,15 @@ static gpointer receive_thread(gpointer arg) {
       default:
         bytes_read=recvfrom(data_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&length);
         if(bytes_read<0) {
-          if(errno==EAGAIN) {
-            error_handler("protocol1: receiver_thread: recvfrom socket failed","Radio not sending data");
-          } else {
+          // EAGAIN/EWOULDBLOCK is the normal SO_RCVTIMEO expiry (no packet this
+          // second); loop back so we can re-check running.  The disconnect
+          // watchdog handles the "radio stopped sending" case, so stay quiet.
+          if(errno!=EAGAIN && errno!=EWOULDBLOCK) {
             error_handler("protocol1: receiver_thread: recvfrom socket failed",strerror(errno));
           }
-          //running=FALSE;
           continue;
         }
+        reconnect_note_data();   // a packet arrived: the radio is alive
 
         if(buffer[0]==0xEF && buffer[1]==0xFE) {
           switch(buffer[2]) {

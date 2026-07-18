@@ -51,6 +51,7 @@
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
 #endif
+#include "reconnect.h"
 #include "main.h"
 #include "configure_dialog.h"
 #include "audio.h"
@@ -2124,6 +2125,11 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     r->midi_enabled=false;
   }
 #endif
+
+  // Arm the disconnect watchdog now that the hardware is streaming.  It stays
+  // dormant until the first data block arrives (so a slow start never trips it)
+  // and pops a Reconnect/Exit dialog if data later stops flowing.
+  reconnect_init();
 
   g_idle_add(radio_start,(gpointer)r);
 

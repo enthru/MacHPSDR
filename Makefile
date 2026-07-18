@@ -167,6 +167,7 @@ wideband_waterfall.c\
 protocol1.c\
 fake_protocol.c\
 protocol2.c\
+reconnect.c\
 radio_dialog.c\
 receiver_dialog.c\
 transmitter_dialog.c\
@@ -292,6 +293,7 @@ waterfall.o\
 protocol1.o\
 fake_protocol.o\
 protocol2.o\
+reconnect.o\
 radio_dialog.o\
 receiver_dialog.o\
 transmitter_dialog.o\

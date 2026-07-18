@@ -47,6 +47,7 @@
 #include "vfo.h"
 #include "ext.h"
 #include "error_handler.h"
+#include "reconnect.h"
 
 static double bandwidth=2000000.0;
 
@@ -133,6 +134,21 @@ g_print("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->s
 
 void soapy_protocol_create_receiver(RECEIVER *rx) {
   int rc;
+
+  // Idempotent: a reconnect re-runs this on an existing receiver, so release
+  // any buffers/resampler from the previous session before re-allocating.
+  if(rx->resampler!=NULL) {
+    destroy_resample(rx->resampler);
+    rx->resampler=NULL;
+  }
+  if(rx->buffer!=NULL) {
+    g_free(rx->buffer);
+    rx->buffer=NULL;
+  }
+  if(rx->resampled_buffer!=NULL) {
+    g_free(rx->resampled_buffer);
+    rx->resampled_buffer=NULL;
+  }
 
   // Drive the hardware at the radio (ADC) sample rate — a rate the device
   // actually supports — and let the per-receiver resampler take it down to
@@ -256,6 +272,11 @@ g_print("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=
     max_tx_samples=2*tx->fft_size;
   }
 g_print("soapy_protocol_create_transmitter: max_tx_samples=%d\n",max_tx_samples);
+  // Idempotent: a reconnect re-runs this, so release the previous buffer first.
+  if(output_buffer!=NULL) {
+    free(output_buffer);
+    output_buffer=NULL;
+  }
   output_buffer=(float *)malloc(max_tx_samples*sizeof(float)*2);
   output_buffer_index=0;
 
@@ -348,6 +369,7 @@ g_print("%s: running\n",__FUNCTION__);
     }
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,max_samples,&flags,&timeNs,timeoutUs);
     if(elements<0) continue;
+    if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
     for(i=0;i<elements;i++) {
       rx->buffer[i*2]=(double)buffer[i*2];
       rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
@@ -509,6 +531,109 @@ g_print("%s\n",__FUNCTION__);
   running=FALSE;
 g_print("%s: g_thread_join\n",__FUNCTION__);
   g_thread_join(receive_thread_id);
+}
+
+// Re-apply the stored RX gain a moment after streaming resumes.  HackRF only
+// latches gain into hardware once samples are actually flowing (see the note in
+// radio.c); after a reconnect we emulate the same post-start "nudge".
+static gboolean soapy_reconnect_reapply_gain(gpointer data) {
+  if(soapy_device!=NULL) {
+    soapy_protocol_set_gain(&radio->adc[0]);
+  }
+  return FALSE;   // one-shot
+}
+
+// In-place hardware re-initialisation after a disconnect.  Tears the SoapySDR
+// device down completely and re-makes it, then re-creates the RX stream and
+// re-applies the stored settings.  Returns FALSE if the device could not be
+// re-opened (e.g. still unplugged); the caller's watchdog then re-offers the
+// dialog after the next timeout.  Runs on the GTK main thread.
+gboolean soapy_protocol_reconnect(RECEIVER *rx) {
+  SoapySDRKwargs args={};
+  char temp[32];
+  size_t channel=rx->adc;
+
+g_print("%s: tearing down old device/streams\n",__FUNCTION__);
+
+  // Stop the receive thread (it may be spinning on read errors from the dead
+  // device).  receive_thread_id can be NULL if a previous reconnect failed.
+  if(running) {
+    running=FALSE;
+    if(receive_thread_id!=NULL) {
+      g_thread_join(receive_thread_id);
+      receive_thread_id=NULL;
+    }
+  }
+
+  // Best-effort teardown of streams and device.  These calls may fail on an
+  // already-vanished device; that is fine, we discard it either way.
+  if(soapy_device!=NULL) {
+    if(rx_stream[channel]!=NULL) {
+      SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
+      SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
+      rx_stream[channel]=NULL;
+    }
+    if(tx_stream!=NULL) {
+      SoapySDRDevice_deactivateStream(soapy_device,tx_stream,0,0LL);
+      SoapySDRDevice_closeStream(soapy_device,tx_stream);
+      tx_stream=NULL;
+    }
+    SoapySDRDevice_unmake(soapy_device);
+    soapy_device=NULL;
+  }
+  tx_stream_active=FALSE;
+
+  // Re-make the device (same key args as soapy_protocol_init).  Unlike init we
+  // must NOT abort the whole app on failure - the user may simply not have
+  // plugged the device back in yet.
+  SoapySDRKwargs_set(&args, "driver", radio->discovered->name);
+  if(strcmp(radio->discovered->name,"rtlsdr")==0) {
+    sprintf(temp,"%d",radio->discovered->info.soapy.rtlsdr_count);
+    SoapySDRKwargs_set(&args, "rtl", temp);
+  } else if(strcmp(radio->discovered->name,"sdrplay")==0) {
+    sprintf(temp,"SDRplay Dev%d",radio->discovered->info.soapy.sdrplay_count);
+    SoapySDRKwargs_set(&args, "label", temp);
+  }
+  soapy_device=SoapySDRDevice_make(&args);
+  SoapySDRKwargs_clear(&args);
+  if(soapy_device==NULL) {
+    g_print("%s: SoapySDRDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
+    return FALSE;
+  }
+
+g_print("%s: re-making receiver stream and re-applying settings\n",__FUNCTION__);
+
+  // Rebuild the RX stream (create_receiver is idempotent) and re-apply the
+  // stored antenna / gain / frequency / AGC, mirroring the initial start path
+  // in radio.c.
+  soapy_protocol_create_receiver(rx);
+  soapy_protocol_set_rx_antenna(rx,radio->adc[0].antenna);
+  for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
+    soapy_protocol_set_gain(&radio->adc[0]);
+  }
+  soapy_protocol_set_rx_frequency(rx);
+  soapy_protocol_set_automatic_gain(rx,radio->adc[0].agc);
+  for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
+    soapy_protocol_set_gain(&radio->adc[0]);
+  }
+
+  soapy_protocol_start_receiver(rx);
+  g_timeout_add(500,soapy_reconnect_reapply_gain,NULL);
+
+  if(radio->can_transmit && radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    // create_transmitter re-opens the mic input; close the old handle first so
+    // we don't leak/double-open it across a reconnect.
+    if(radio->local_microphone) {
+      audio_close_input(radio);
+    }
+    soapy_protocol_create_transmitter(radio->transmitter);
+    soapy_protocol_set_tx_antenna(radio->transmitter,radio->dac[0].antenna);
+    soapy_protocol_set_tx_frequency(radio->transmitter);
+    soapy_protocol_set_tx_gain(&radio->dac[0]);
+  }
+
+g_print("%s: done\n",__FUNCTION__);
+  return TRUE;
 }
 
 void soapy_protocol_set_rx_frequency(RECEIVER *rx) {
