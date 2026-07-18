@@ -626,6 +626,10 @@ int main(int argc, char **argv) {
         if(i+1<argc && argv[i+1][0]!='-') {
           fake_iq_file=argv[++i];
         }
+      } else if(strcmp(argv[i],"--revert-iq")==0) {
+        // Swap the faker's I/Q (mirror the spectrum) for inverted-sideband
+        // recordings whose image is not suppressed / that decode as a mirror.
+        fake_revert_iq=1;
       } else if(strcmp(argv[i],"--usb-only")==0) {
         // Skip the blocking Protocol 1/2 network discovery; only enumerate
         // USB/SoapySDR devices for a near-instant startup.

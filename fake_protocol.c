@@ -108,7 +108,16 @@ static int fake_load_iq(const char *path) {
   fclose(f);
   iq_data = (float *)malloc((size_t)frames * 2 * sizeof(float));
   if(!iq_data) { free(raw); return 0; }
-  for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
+  if(fake_revert_iq) {
+    // Swap I and Q (mirrors the spectrum) for inverted-sideband recordings.
+    for(long i=0;i<frames;i++) {
+      iq_data[i*2]   = (float)raw[i*2+1] / 32768.0f;
+      iq_data[i*2+1] = (float)raw[i*2]   / 32768.0f;
+    }
+    g_print("fake: --revert-iq active (I/Q swapped)\n");
+  } else {
+    for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
+  }
   free(raw);
   iq_frames = frames;
   iq_rate = (double)rate;
@@ -138,6 +147,7 @@ static int fake_load_iq(const char *path) {
 /* Only the --faker command-line flag (parsed in main()) turns this on. */
 int enable_fake = 0;
 const char *fake_iq_file = NULL;
+int fake_revert_iq = 0;
 
 void fake_discovery(void) {
   if(!enable_fake) return;

@@ -22,6 +22,11 @@ extern int enable_fake;
  * the MACHPSDR_FAKE_IQ env var, then the default iq.wav. */
 extern const char *fake_iq_file;
 
+/* Set by `--revert-iq`: swap the I and Q channels of the played recording,
+ * which mirrors the spectrum — use when a recording's sideband is inverted
+ * (the image is not suppressed / signals decode as their mirror). */
+extern int fake_revert_iq;
+
 void fake_discovery(void);
 void fake_protocol_init(RADIO *r);
 void fake_protocol_stop(void);

@@ -34,8 +34,16 @@
 #define FT8_RATE        12000            // decoder sample rate (Hz)
 #define FT8_DECIM       4                // 48000 / 12000
 #define FT8_SLOT_SEC    15               // FT8 time slot (s)
-#define SLOT_CAP        (FT8_RATE * (FT8_SLOT_SEC + 1))   // one slot + margin
-#define MAX_DECODES     64               // per-slot cap we surface to the UI
+#define SLOT_SAMPLES    (FT8_RATE * FT8_SLOT_SEC)         // decode window (180000)
+#define RING_CAP        (FT8_RATE * (FT8_SLOT_SEC + 1))   // ring: one window + margin
+// Decode the most recent window this often.  The Costas search only tolerates a
+// transmission starting within the first ~3 s of the window, so a recorded/looped
+// I/Q file (not aligned to real UTC) — and, defensively, a slightly-off system
+// clock — need overlapping windows rather than a single hard UTC-slot cut.  A hop
+// shorter than that tolerance guarantees every complete transmission in the ring
+// lands decodably in at least one window.
+#define DECODE_HOP      (FT8_RATE * 2)                    // ~2 s between decodes
+#define MAX_DECODES     64               // per-window cap we surface to the UI
 
 // ft8_lib decode tuning (mirrors the reference decoder in demo/decode_ft8.c)
 #define KMIN_SCORE      10
@@ -46,25 +54,27 @@
 static volatile gboolean enabled = FALSE;
 
 // ---- 48k->12k decimation state (RX thread) ---------------------------------
-// One-pole low-pass (~3.4 kHz) as light anti-alias insurance before we drop to
-// 12 kHz; the DIGU SSB filter already band-limits the audio, so this only trims
-// residual energy near Nyquist.
+// Gentle one-pole low-pass before dropping to 12 kHz.  The DIGU SSB filter
+// already band-limits the audio to <=~5 kHz (< the 6 kHz post-decimation
+// Nyquist), so almost no aliasing occurs; the filter must therefore be soft
+// enough NOT to attenuate the FT8 sub-band (audio up to ~3 kHz).  a=0.45 puts
+// the -3 dB corner near ~4.5 kHz.
 static double lpf_z = 0.0;
 static int    dec_count = 0;
 
-// ---- current-slot accumulator (RX thread writes) ---------------------------
-static float  fill_buf[SLOT_CAP];
-static int    fill_pos = 0;
-static long   fill_slot = -1;            // UTC slot index this buffer belongs to
+// ---- rolling audio ring (RX thread writes) ---------------------------------
+static float  ring[RING_CAP];
+static long   ring_w = 0;                 // total decimated samples written
+static long   last_decode_w = 0;          // ring_w at the previous decode trigger
 
 // ---- hand-off to the worker ------------------------------------------------
 static GMutex   work_mutex;
 static GCond    work_cond;
 static gboolean work_ready = FALSE;
 static gboolean running = FALSE;
-static float    work_buf[SLOT_CAP];
+static float    work_buf[SLOT_SAMPLES];
 static int      work_len = 0;
-static time_t   work_slot_time = 0;      // UTC start of the slot in work_buf
+static time_t   work_slot_time = 0;       // UTC time the window ended
 static GThread *worker = NULL;
 
 // ---- decode result list (worker writes, UI reads) --------------------------
@@ -221,8 +231,14 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
            tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
   g_mutex_unlock(&list_mutex);
 
-  fprintf(stderr, "ft8: slot %s decoded %d messages (%d candidates)\n",
-          result_utc, n, num_candidates);
+  if (n > 0) {
+    fprintf(stderr, "ft8: %s decoded %d messages (%d candidates)\n",
+            result_utc, n, num_candidates);
+    for (int i = 0; i < n; i++) {
+      fprintf(stderr, "  %s  %+3.0f dB  %4.0f Hz  %s\n",
+              local[i].utc, local[i].snr, local[i].freq, local[i].text);
+    }
+  }
 }
 
 // A slot needs enough audio to hold at least the FT8 waveform (~12.6 s); below
@@ -269,11 +285,11 @@ void ft8_decoder_init(void) {
 
 void ft8_decoder_set_enabled(gboolean en) {
   if (en && !enabled) {
-    // Fresh start: drop any half-filled slot.
+    // Fresh start: clear the decimation filter and the ring.
     lpf_z = 0.0;
     dec_count = 0;
-    fill_pos = 0;
-    fill_slot = -1;
+    ring_w = 0;
+    last_decode_w = 0;
   }
   enabled = en;
 }
@@ -285,42 +301,34 @@ gboolean ft8_decoder_is_enabled(void) {
 void ft8_decoder_add_audio(const gdouble *samples, int nframes) {
   if (!enabled) return;
 
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  double now = (double)ts.tv_sec + ts.tv_nsec / 1e9;
-  long slot = (long)floor(now / (double)FT8_SLOT_SEC);
-
-  if (fill_slot < 0) {
-    fill_slot = slot;
-    fill_pos = 0;
-  }
-
-  if (slot != fill_slot) {
-    // The slot just ended — hand the accumulated buffer to the worker.
-    g_mutex_lock(&work_mutex);
-    if (!work_ready) {                 // skip if the worker is still busy
-      work_len = fill_pos;
-      work_slot_time = (time_t)(fill_slot * FT8_SLOT_SEC);
-      memcpy(work_buf, fill_buf, (size_t)fill_pos * sizeof(float));
-      work_ready = TRUE;
-      g_cond_signal(&work_cond);
-    }
-    g_mutex_unlock(&work_mutex);
-    fill_slot = slot;
-    fill_pos = 0;
-  }
-
-  // Decimate the left channel 48k -> 12k and append.
-  const double a = 0.35;             // one-pole coefficient (~3.4 kHz @ 48 kHz)
+  // Decimate the left channel 48k -> 12k into the rolling ring.
+  const double a = 0.45;             // gentle one-pole (~4.5 kHz @ 48 kHz)
   for (int i = 0; i < nframes; i++) {
     double x = samples[i * 2];       // left channel
     lpf_z += a * (x - lpf_z);
     if (++dec_count >= FT8_DECIM) {
       dec_count = 0;
-      if (fill_pos < SLOT_CAP) {
-        fill_buf[fill_pos++] = (float)lpf_z;
-      }
+      ring[ring_w % RING_CAP] = (float)lpf_z;
+      ring_w++;
     }
+  }
+
+  // Every DECODE_HOP samples, hand the most recent 15 s window to the worker.
+  if (ring_w >= SLOT_SAMPLES && (ring_w - last_decode_w) >= DECODE_HOP) {
+    g_mutex_lock(&work_mutex);
+    if (!work_ready) {               // skip if the worker is still busy
+      long start = ring_w - SLOT_SAMPLES;
+      for (int i = 0; i < SLOT_SAMPLES; i++) {
+        work_buf[i] = ring[(start + i) % RING_CAP];
+      }
+      work_len = SLOT_SAMPLES;
+      // Label with the 15 s slot boundary nearest the window end (cosmetic).
+      work_slot_time = (time(NULL) / FT8_SLOT_SEC) * FT8_SLOT_SEC;
+      work_ready = TRUE;
+      g_cond_signal(&work_cond);
+      last_decode_w = ring_w;
+    }
+    g_mutex_unlock(&work_mutex);
   }
 }
 

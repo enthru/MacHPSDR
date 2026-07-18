@@ -43,7 +43,10 @@ neutral default title **Decode** and stays blank.
 **FT8 decoding.** Selecting the **DIGU** mode on the active receiver automatically
 starts an FT8 decoder — no separate window or button. The receiver's demodulated
 audio is tapped, decimated to 12 kHz, buffered into 15-second UTC time slots and
-decoded in a background thread on each slot boundary. Decoded traffic (signal
+decoded in a background thread. Decoding runs on a sliding 15-second window
+(re-run every ~2 s) rather than a single clock-locked slot, so it still works
+when the system clock is slightly off and when driving it from a looped I/Q
+recording that is not aligned to real UTC slots. Decoded traffic (signal
 report, audio frequency and message text) appears in the bottom-bar decoder
 block, retitled **FT8** with the slot time; the three most recent decodes are
 shown with an "(+N more)" summary when a slot yields more. Switching away from
@@ -56,7 +59,10 @@ loop any 16-bit stereo I/Q WAV recording instead of the built-in noise+tones, so
 features can be exercised without hardware. Pass the file directly:
 `./machpsdr --faker ft8.wav` (or set `MACHPSDR_FAKE_IQ=...`); with no argument it
 falls back to `iq.wav`. The recording's sample rate is resampled to the
-receiver's rate and its carrier auto-centred to baseband, then looped.
+receiver's rate and its carrier auto-centred to baseband, then looped. Add
+`--revert-iq` to swap the recording's I and Q channels (mirrors the spectrum)
+when its sideband is inverted — i.e. the image is not suppressed or signals
+appear/decode as their mirror.
 
 **Ring-buffer depth is per device (latency vs. glitch-free wide reception).** Wide
 reception needs a deep WDSP output I/O ring so DSP-thread jitter at high sample rates
