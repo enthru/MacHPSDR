@@ -601,11 +601,30 @@ g_print("%s: tearing down old device/streams\n",__FUNCTION__);
     return FALSE;
   }
 
-g_print("%s: re-making receiver stream and re-applying settings\n",__FUNCTION__);
+g_print("%s: re-making streams and re-applying settings\n",__FUNCTION__);
 
-  // Rebuild the RX stream (create_receiver is idempotent) and re-apply the
-  // stored antenna / gain / frequency / AGC, mirroring the initial start path
-  // in radio.c.
+  // Re-create the TX stream FIRST, before the receiver.  On a half-duplex device
+  // (HackRF) RX and TX share one hardware sample-rate clock, so whichever stream
+  // is configured last wins.  The initial start path sets up TX (via
+  // add_transmitter) before the receiver, leaving the RX rate applied last; we
+  // must keep that order here or create_transmitter's TX rate would clobber the
+  // live RX rate and the RX stream would stop delivering samples (gain still
+  // sets, but no audio / no waterfall).
+  if(radio->can_transmit && radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    // create_transmitter re-opens the mic input; close the old handle first so
+    // we don't leak/double-open it across a reconnect.
+    if(radio->local_microphone) {
+      audio_close_input(radio);
+    }
+    soapy_protocol_create_transmitter(radio->transmitter);
+    soapy_protocol_set_tx_antenna(radio->transmitter,radio->dac[0].antenna);
+    soapy_protocol_set_tx_frequency(radio->transmitter);
+    soapy_protocol_set_tx_gain(&radio->dac[0]);
+  }
+
+  // Rebuild the RX stream (create_receiver is idempotent - it also re-applies the
+  // RX sample rate, which must be the last rate set) and re-apply the stored
+  // antenna / gain / frequency / AGC, mirroring the initial start path in radio.c.
   soapy_protocol_create_receiver(rx);
   soapy_protocol_set_rx_antenna(rx,radio->adc[0].antenna);
   for(int i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
@@ -619,18 +638,6 @@ g_print("%s: re-making receiver stream and re-applying settings\n",__FUNCTION__)
 
   soapy_protocol_start_receiver(rx);
   g_timeout_add(500,soapy_reconnect_reapply_gain,NULL);
-
-  if(radio->can_transmit && radio->transmitter!=NULL && radio->transmitter->rx==rx) {
-    // create_transmitter re-opens the mic input; close the old handle first so
-    // we don't leak/double-open it across a reconnect.
-    if(radio->local_microphone) {
-      audio_close_input(radio);
-    }
-    soapy_protocol_create_transmitter(radio->transmitter);
-    soapy_protocol_set_tx_antenna(radio->transmitter,radio->dac[0].antenna);
-    soapy_protocol_set_tx_frequency(radio->transmitter);
-    soapy_protocol_set_tx_gain(&radio->dac[0]);
-  }
 
 g_print("%s: done\n",__FUNCTION__);
   return TRUE;
