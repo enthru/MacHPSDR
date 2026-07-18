@@ -37,12 +37,17 @@ RTL-SDR) with a selectable bandwidth and de-emphasis (50/75 µs), stereo decodin
 and RDS. The RDS panel shows the station name, programme type, RadioText, the
 currently playing track, clock time and alternative frequencies.
 
-Note: the wide-band mode runs the whole DSP chain at the (wide) SDR sample rate on a
-larger 5120-sample block (vs the 1024-sample block of the narrow-band path), so audio
-latency is noticeably higher than in normal narrow-band operation. This is a
-deliberate trade-off — the larger buffer is what keeps WDSP's async I/O ring
-consistent and avoids the crackle/glitching at high sample rates — so it is expected,
-not a bug.
+**Latency trade-off (affects every mode).** To make wide-band reception glitch-free,
+the patched WDSP deepens its output I/O ring: the ring multiplier `DSP_MULT`
+(`wdsp/comm.h`) was raised from 2 to 16, giving the DSP output enough headroom that
+thread jitter at high sample rates (e.g. WFM at 1536k/1920k) no longer underruns into
+zero-fill clicks. Because this is a global WDSP constant, the deeper ring — and the
+extra audio latency it adds — applies to **all** receivers and **every** mode, not
+just WFM: the output ring pre-fills roughly `(DSP_MULT-1)` DSP output blocks, so on a
+normal 48 kHz narrow-band receiver the added delay is on the order of a few hundred
+milliseconds compared with the old value of 2. This is a deliberate trade-off for
+stable wide reception; if low latency matters more to you (e.g. SSB/CW break-in),
+`DSP_MULT` can be lowered in `wdsp/comm.h` and WDSP rebuilt.
 
 **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice modes
 require a microphone input to be selected; the Drive slider controls output power.
