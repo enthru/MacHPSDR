@@ -1085,6 +1085,25 @@ static void tune_cb(GtkToggleButton *widget,gpointer data) {
   }
 }
 
+#ifdef SOAPYSDR
+// One-shot, fired a short time after a SoapySDR RX stream starts.  HackRF only
+// writes the RX gain (in particular the +14 dB RF preamp/AMP) into hardware
+// when setGain is called while the stream is actually transferring samples.
+// Gain applied during startup is cached but not physically engaged, so
+// reception was weak until the user nudged the slider (any change re-ran
+// setGain on the live stream and switched the preamp on).  Re-apply the stored
+// gain here to reproduce that nudge automatically.
+static gboolean soapy_reapply_rx_gain(gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(rx==NULL || soapy_protocol_is_running()==FALSE) return G_SOURCE_REMOVE;
+  soapy_protocol_set_automatic_gain(rx,radio->adc[0].agc);
+  if(!radio->adc[0].agc) {
+    soapy_protocol_set_gain(&radio->adc[0]);
+  }
+  return G_SOURCE_REMOVE;
+}
+#endif
+
 int add_receiver(void *data, gboolean show_rx) {
   RADIO *r=(RADIO *)data;
   int i;
@@ -1121,6 +1140,9 @@ g_print("add_receiver: receivers now %d\n",r->receivers);
           soapy_protocol_set_gain(&radio->adc[adc]);
         }
         soapy_protocol_start_receiver(rx);
+        // HackRF only latches RX gain once the stream is actually transferring;
+        // re-apply shortly after streaming starts (see soapy_reapply_rx_gain).
+        g_timeout_add(500,soapy_reapply_rx_gain,rx);
         break;
 #endif
       default:
@@ -1891,7 +1913,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     r->adc[0].gain=20;
     r->adc[0].agc=FALSE;
     if(r->can_transmit) {
-      r->dac[0].antenna=radio->discovered->info.soapy.rx_antennas-1;
+      r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
       r->dac[0].gain=20;
     }
   }
@@ -1912,7 +1934,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
     r->adc[1].gain=20;
     r->adc[1].agc=FALSE;
     if(r->can_transmit) {
-      r->dac[0].antenna=radio->discovered->info.soapy.rx_antennas-1;
+      r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
       r->dac[1].gain=20;
     }
   }
@@ -2054,6 +2076,13 @@ g_print("create_radio for %s %d\n",d->name,d->device);
         soapy_protocol_set_gain(&radio->adc[0]);
       }
       soapy_protocol_start_receiver(rx);
+      // HackRF only latches RX gain into hardware once the stream is actually
+      // transferring samples: gain set before/at activation is cached but not
+      // physically applied, so reception stayed weak until the user nudged the
+      // slider (any change, up or down, made it take effect).  Re-apply the
+      // stored gain a moment after streaming has begun, emulating that nudge,
+      // so the saved gain is active from the first tune.
+      g_timeout_add(500,soapy_reapply_rx_gain,rx);
       if(r->can_transmit) {
         if(r->transmitter!=NULL && r->transmitter->rx==rx) {
           soapy_protocol_set_tx_antenna(r->transmitter,radio->dac[0].antenna);
