@@ -1514,10 +1514,25 @@ static gboolean default_output_apply(void) {
               rx->channel, ddev->name, rx->output_stream->sample_rate, want);
     }
 
-    // Either the default moved, its rate changed, or a previous (re)open left this receiver with
-    // no stream.  (Re)open onto the current default and keep retrying on later
-    // ticks if it fails — never leave a System Default receiver permanently
-    // muted because one transition failed.
+    // Either the default moved, its rate changed, or a previous (re)open left
+    // this receiver with no stream.  (Re)open onto the current default.
+    //
+    // Debounce: re-opening a soundio output is slow (tens of ms of
+    // soundio_outstream_destroy/open, worse on Bluetooth) and it happens under
+    // rx->local_audio_mutex, which the RX receive thread also takes in
+    // audio_write.  A Bluetooth A2DP<->HFP transition makes the device's
+    // reported rate flip-flop, so without a guard we would re-open again and
+    // again, stalling the receive thread each time until the WDSP RX ring
+    // starves (endless "fexchange0: error=-2").  Re-open at most once every few
+    // seconds so the transition can settle and the RX feed is not starved.
+    static gint64 last_reopen=0;
+    gint64 now=g_get_monotonic_time();
+    if(now-last_reopen < 3000000) {
+      g_print("audio: RX%d output change to '%s' debounced (recent re-open)\n",
+              rx->channel, ddev->name);
+      continue;
+    }
+    last_reopen=now;
     g_print("audio: (re)opening RX%d output on system default '%s'\n",
             rx->channel, ddev->name);
     audio_close_output(rx);
