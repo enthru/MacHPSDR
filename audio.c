@@ -614,6 +614,9 @@ int audio_open_input(RADIO *r) {
         g_print("audio_open_input: microphone name is NULL\n");
         return -1;
       }
+      // Idempotent: drop any mic stream already open (normal open path and the
+      // system-default input monitor must not race into two read threads).
+      if(r->input_stream!=NULL) audio_close_input(r);
 
       g_print("audio_open_input: %s\n",r->microphone_name);
       // find the device
@@ -916,10 +919,24 @@ void audio_close_input(RADIO *r) {
   g_print("Close audio input\n");
   switch(radio->which_audio) {
     case USE_SOUNDIO: {
+      // Stop the mic read thread first so it can't touch the ring buffer/stream
+      // we are about to destroy.  It may be blocked waiting for data, so clear
+      // `running` and wake it, then join.
+      running=FALSE;
+      g_mutex_lock(&r->ring_buffer_mutex);
+      g_cond_signal(&r->ring_buffer_cond);
+      g_mutex_unlock(&r->ring_buffer_mutex);
+      if(mic_read_thread_id!=NULL) {
+        g_thread_join(mic_read_thread_id);
+        mic_read_thread_id=NULL;
+      }
       g_mutex_lock(&r->local_microphone_mutex);
-      soundio_instream_destroy(r->input_stream);
-      soundio_device_unref(r->input_device);
-      soundio_ring_buffer_destroy(r->ring_buffer);
+      // Destroying the stream stops its read_callback before we free the ring
+      // buffer it writes into.
+      if(r->input_stream!=NULL) { soundio_instream_destroy(r->input_stream); r->input_stream=NULL; }
+      if(r->input_device!=NULL) { soundio_device_unref(r->input_device); r->input_device=NULL; }
+      if(r->ring_buffer!=NULL) { soundio_ring_buffer_destroy(r->ring_buffer); r->ring_buffer=NULL; }
+      r->input_started=FALSE;
       g_mutex_unlock(&r->local_microphone_mutex);
       break;
     }
@@ -1133,8 +1150,12 @@ static void *mic_read_thread(gpointer arg) {
     case USE_SOUNDIO:
       while(running) {
         g_mutex_lock (&r->ring_buffer_mutex);
-        while(soundio_ring_buffer_fill_count(r->ring_buffer)==0)
+        // Also watch `running` so audio_close_input can wake and stop us even
+        // when no more mic data is arriving (needed to join cleanly on a live
+        // input-device switch or shutdown).
+        while(running && soundio_ring_buffer_fill_count(r->ring_buffer)==0)
           g_cond_wait (&r->ring_buffer_cond, &r->ring_buffer_mutex);
+        if(!running) { g_mutex_unlock (&r->ring_buffer_mutex); break; }
         char *read_ptr = soundio_ring_buffer_read_ptr(r->ring_buffer);
         int fill_bytes = soundio_ring_buffer_fill_count(r->ring_buffer);
         if(fill_bytes>(r->local_microphone_buffer_size*sizeof(float))) {
@@ -1497,12 +1518,59 @@ static gboolean default_output_apply(void) {
   return TRUE;
 }
 
+// The microphone "follows the system default" input under the same rule as the
+// output: the user picked the synthetic "System Default" entry (or left it
+// unconfigured).  A mic pinned to a specific device is left alone.
+static gboolean mic_follows_system_default(RADIO *r) {
+  return r->microphone_name==NULL ||
+         strcmp(r->microphone_name,AUDIO_SYSTEM_DEFAULT_NAME)==0;
+}
+
+// Input counterpart of default_output_apply().  Unlike the output, the mic is
+// only open while the protocol/TX path wants it, so we act ONLY when a stream
+// is already open (input_stream!=NULL) and re-open it onto the new default.  A
+// failed re-open just leaves the mic closed until the next TX re-opens it — no
+// "permanently muted" hazard, so no recovery loop is needed here.
+static gboolean default_input_apply(void) {
+  if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
+    return FALSE;
+  RADIO *r=radio;
+  if(r->input_stream==NULL || !mic_follows_system_default(r)) return FALSE;
+
+  soundio_flush_events(soundio);
+  int def=soundio_default_input_device_index(soundio);
+  if(def<0) return TRUE;
+  struct SoundIoDevice *ddev=soundio_get_input_device(soundio,def);
+  if(ddev==NULL) return TRUE;
+
+  static char last_input[256]="";
+  const char *did = ddev->id ? ddev->id : "";
+  if(strncmp(last_input, did, sizeof(last_input)-1)!=0) {
+    g_print("audio: system default input = '%s' (%s)\n", ddev->name, did);
+    snprintf(last_input,sizeof(last_input),"%s",did);
+  }
+
+  // Already capturing from the current default device?  Nothing to do.
+  if(!(r->input_device!=NULL && r->input_device->id!=NULL &&
+       strcmp(r->input_device->id, ddev->id)==0 &&
+       r->input_device->is_raw==ddev->is_raw)) {
+    g_print("audio: re-opening microphone on system default '%s'\n", ddev->name);
+    audio_close_input(r);
+    if(audio_open_input(r)<0)
+      g_print("audio: microphone re-open on '%s' failed\n", ddev->name);
+  }
+
+  soundio_device_unref(ddev);
+  return TRUE;
+}
+
 // Fallback poll: a slow safety net that also handles retrying a failed re-open
 // (no CoreAudio event fires for that).  The instant path is the CoreAudio
 // listener below; on macOS this timer rarely does more than a cheap
 // flush_events + early-out, so it costs next to nothing.
 static gboolean default_output_monitor_cb(gpointer data) {
   default_output_apply();
+  default_input_apply();
   return TRUE;
 }
 
@@ -1542,6 +1610,40 @@ static void install_default_output_listener(void) {
     g_print("audio: installed CoreAudio default-output listener (instant switching)\n");
   } else {
     g_print("audio: AudioObjectAddPropertyListener failed (%d); using timer fallback only\n",(int)st);
+  }
+}
+
+// Same event-driven fast path for the microphone / default *input* device.
+static gboolean default_input_apply_idle(gpointer data) {
+  default_input_apply();
+  return FALSE;   // one-shot
+}
+static gboolean default_input_changed_idle(gpointer data) {
+  if(soundio!=NULL) soundio_force_device_scan(soundio);
+  g_timeout_add(120, default_input_apply_idle, NULL);
+  return FALSE;   // one-shot
+}
+static OSStatus default_input_listener(AudioObjectID objectID, UInt32 n,
+                                       const AudioObjectPropertyAddress *addr,
+                                       void *client) {
+  g_idle_add(default_input_changed_idle, NULL);
+  return noErr;
+}
+static void install_default_input_listener(void) {
+  static gboolean installed=FALSE;
+  if(installed) return;
+  AudioObjectPropertyAddress addr = {
+    kAudioHardwarePropertyDefaultInputDevice,
+    kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMaster
+  };
+  OSStatus st=AudioObjectAddPropertyListener(kAudioObjectSystemObject, &addr,
+                                             default_input_listener, NULL);
+  if(st==noErr) {
+    installed=TRUE;
+    g_print("audio: installed CoreAudio default-input listener (instant switching)\n");
+  } else {
+    g_print("audio: AudioObjectAddPropertyListener (input) failed (%d); using timer fallback only\n",(int)st);
   }
 }
 #endif
@@ -1596,6 +1698,7 @@ void create_audio(int backend_index,const char *backend) {
       // that also retries a failed re-open.
 #ifdef __APPLE__
       install_default_output_listener();
+      install_default_input_listener();
 #endif
       if(default_output_monitor_id==0)
         default_output_monitor_id=g_timeout_add(2000, default_output_monitor_cb, NULL);

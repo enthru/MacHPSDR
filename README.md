@@ -88,7 +88,10 @@ launch shows up without restarting. When **System Default** is selected, changin
 the macOS output device while audio is playing now takes effect live — the stream
 re-opens onto the new default automatically, instead of staying stuck on the old
 output. The switch is event-driven (a CoreAudio default-device listener), so it is
-near-instant and costs nothing while idle, with a slow timer as a safety net.
+near-instant and costs nothing while idle, with a slow timer as a safety net. The
+same live, instant follow applies to the **microphone** when its input is set to
+System Default: switch the macOS input device and the open mic stream re-opens onto
+the new default.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
