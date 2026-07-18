@@ -45,7 +45,7 @@ typedef struct _psignal {
 
 // Runtime PureSignal debug logging. Off by default; when zero, none of the
 // PS_DEBUG() diagnostics (including the per-TX-sample feedback trace) fire.
-// Enabled by running with the LINHPSDR_PS_DEBUG environment variable set
+// Enabled by running with the MACHPSDR_PS_DEBUG environment variable set
 // (any value); create_puresignal() reads it. Can also be set directly.
 extern int ps_debug;
 #define PS_DEBUG(...) do { if (ps_debug) g_print(__VA_ARGS__); } while (0)

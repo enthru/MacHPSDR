@@ -60,7 +60,7 @@ GtkWidget *create_about_dialog(RADIO *r) {
 
   int row=0;
 
-  snprintf(text,sizeof(text),"linHPSDR by John Melton G0ORX/N6LYT");
+  snprintf(text,sizeof(text),"MacHPSDR - a fork of LinHPSDR by John Melton G0ORX/N6LYT");
   label=gtk_label_new(text);
   gtk_label_set_justify(GTK_LABEL(label),GTK_JUSTIFY_LEFT);
   gtk_grid_attach(GTK_GRID(grid),label,1,row,1,1);

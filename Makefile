@@ -125,7 +125,7 @@ ifeq ($(UNAME_S), Darwin)
 LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
-# ./linhpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
+# ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
 RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
 endif
 
@@ -136,7 +136,7 @@ COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 .c.o:
 	$(COMPILE) -c -o $@ $<
 
-PROGRAM=linhpsdr
+PROGRAM=machpsdr
 
 SOURCES=\
 main.c\
@@ -355,7 +355,7 @@ clean:
 	-rm -f $(PROGRAM)
 	-rm -rf $(APP_NAME).app
 
-APP_NAME=LinHPSDR
+APP_NAME=MacHPSDR
 APP_BUNDLE=$(APP_NAME).app
 
 app: $(PROGRAM)
@@ -457,29 +457,29 @@ app: $(PROGRAM)
 
 	@# Copy application PNG resources
 	@echo "Copying application resources..."
-	@mkdir -p $(APP_BUNDLE)/Contents/Resources/share/linhpsdr
-	@for png in hpsdr.png hpsdr_icon.png hpsdr_small.png; do \
+	@mkdir -p $(APP_BUNDLE)/Contents/Resources/share/machpsdr
+	@for png in machpsdr.png machpsdr_icon.png machpsdr_small.png; do \
 		if [ -f "$$png" ]; then \
 			cp "$$png" $(APP_BUNDLE)/Contents/Resources/; \
-			cp "$$png" $(APP_BUNDLE)/Contents/Resources/share/linhpsdr/; \
+			cp "$$png" $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
 			cp "$$png" $(APP_BUNDLE)/Contents/MacOS/; \
 		fi; \
 	done
 
 	@# Create app icon
 	@echo "Creating app icon..."
-	@if [ -f "hpsdr_icon.png" ]; then \
+	@if [ -f "machpsdr_icon.png" ]; then \
 		mkdir -p $(APP_NAME).iconset; \
-		sips -z 16 16     hpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16.png >/dev/null 2>&1; \
-		sips -z 32 32     hpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16@2x.png >/dev/null 2>&1; \
-		sips -z 32 32     hpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32.png >/dev/null 2>&1; \
-		sips -z 64 64     hpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32@2x.png >/dev/null 2>&1; \
-		sips -z 128 128   hpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128.png >/dev/null 2>&1; \
-		sips -z 256 256   hpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128@2x.png >/dev/null 2>&1; \
-		sips -z 256 256   hpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
-		sips -z 512 512   hpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
-		sips -z 512 512   hpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
-		sips -z 1024 1024 hpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
+		sips -z 16 16     machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16.png >/dev/null 2>&1; \
+		sips -z 32 32     machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16@2x.png >/dev/null 2>&1; \
+		sips -z 32 32     machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32.png >/dev/null 2>&1; \
+		sips -z 64 64     machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32@2x.png >/dev/null 2>&1; \
+		sips -z 128 128   machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128.png >/dev/null 2>&1; \
+		sips -z 256 256   machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128@2x.png >/dev/null 2>&1; \
+		sips -z 256 256   machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
+		sips -z 512 512   machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
+		sips -z 512 512   machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
+		sips -z 1024 1024 machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
 		iconutil -c icns $(APP_NAME).iconset -o $(APP_BUNDLE)/Contents/Resources/$(APP_NAME).icns 2>/dev/null || true; \
 		rm -rf $(APP_NAME).iconset; \
 	fi
@@ -530,9 +530,9 @@ app: $(PROGRAM)
 	@echo '  <key>CFBundleName</key>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <string>$(APP_NAME)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <key>CFBundleDisplayName</key>' >> $(APP_BUNDLE)/Contents/Info.plist
-	@echo '  <string>LinHPSDR</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>MacHPSDR</string>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <key>CFBundleIdentifier</key>' >> $(APP_BUNDLE)/Contents/Info.plist
-	@echo '  <string>com.linhpsdr.app</string>' >> $(APP_BUNDLE)/Contents/Info.plist
+	@echo '  <string>com.machpsdr.app</string>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <key>CFBundleVersion</key>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <string>$(GIT_VERSION)</string>' >> $(APP_BUNDLE)/Contents/Info.plist
 	@echo '  <key>CFBundleShortVersionString</key>' >> $(APP_BUNDLE)/Contents/Info.plist

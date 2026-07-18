@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=0.1
+Type=Application
+Terminal=false
+Name[en_GB]=MacHPSDR
+Exec=machpsdr
+Icon=/usr/share/machpsdr/machpsdr_small.png
+Name=MacHPSDR

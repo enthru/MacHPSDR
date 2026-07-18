@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LinHPSDR is a GTK3-based SDR (Software Defined Radio) control application for HPSDR hardware, written in C. This is a personal fork with a primary focus on macOS compatibility and several feature additions (freetune mode, waterfall themes, ppm correction, att10/att20 filter control, etc.).
+MacHPSDR is a GTK3-based SDR (Software Defined Radio) control application for HPSDR hardware, written in C. It is a personal fork of [LinHPSDR](https://github.com/g0orx/linhpsdr) by John Melton (G0ORX/N6LYT), with a primary focus on macOS compatibility and several feature additions (freetune mode, waterfall themes, ppm correction, att10/att20 filter control, etc.). Licensed under the GNU GPL (v2 or later); see `LICENSE` and `NOTICE`.
+
+The binary, install paths and config directory use the lowercase name `machpsdr`; the display name (window title, About dialog, `.app` bundle) is `MacHPSDR`.
 
 ## Build Commands
 
@@ -21,7 +23,7 @@ make clean
 
 # Build self-contained macOS .app bundle (requires dylibbundler)
 make app
-open LinHPSDR.app
+open MacHPSDR.app
 ```
 
 No automated test suite exists — testing is manual with physical hardware.
@@ -80,7 +82,7 @@ The global `RADIO *radio` struct (`radio.h`) is the central application state. I
 - **`audio.c` / `portaudio.c`** — Audio I/O (platform-specific)
 - **`midi2.c`, `midi3.c`** — MIDI learn and control mapping (platform-agnostic); `mac_midi.c` / `alsa_midi.c` for platform I/O
 - **`actions.c`** — Global action dispatch (used for keybindings and MIDI mappings)
-- **`property.c`** — Persistence: save/load radio configuration to/from properties files (`~/.local/share/linhpsdr/<device-mac>.props`; MIDI mappings in `midi.props`)
+- **`property.c`** — Persistence: save/load radio configuration to/from properties files (`~/.local/share/machpsdr/<device-mac>.props`; MIDI mappings in `midi.props`)
 - **`waterfall_theme.c`** — Waterfall color theme definitions
 - **`hl2.c`** — Hermes-Lite 2 specific protocol extensions
 - **`wideband.c`, `wideband_panadapter.c`, `wideband_waterfall.c`** — Wideband spectrum display (separate from per-receiver panadapter)

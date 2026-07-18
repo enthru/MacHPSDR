@@ -1289,7 +1289,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 
     GtkWidget *cw_gen_combo = gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "Radio");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "linHPSDR");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "MacHPSDR");
     gtk_combo_box_set_active(GTK_COMBO_BOX(cw_gen_combo), radio->cw_generation_mode);
     g_signal_connect(cw_gen_combo, "changed", G_CALLBACK(cw_gen_cb), radio);
     gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_combo, x, y, 1, 1);

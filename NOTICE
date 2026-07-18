@@ -1,0 +1,39 @@
+MacHPSDR
+========
+
+MacHPSDR is a fork of LinHPSDR, a GTK3 SDR control application for HPSDR
+hardware.
+
+Original work:
+    LinHPSDR
+    Copyright (C) 2018 John Melton, G0ORX/N6LYT
+    https://github.com/g0orx/linhpsdr
+
+Modifications in this fork:
+    Copyright (C) 2024-2026 Gleb Sushko (enthru)
+
+This is a MODIFIED version of LinHPSDR. It has been renamed to MacHPSDR and
+carries a number of changes and feature additions (macOS support, a WFM/RDS
+demodulator, a single-window UI, skins, a fake test device, SoapySDR transmit,
+and more). The full list of changes is in README.md ("Changelist for this
+fork") and the detailed history is in this repository's git log.
+
+License
+-------
+
+MacHPSDR is free software licensed under the GNU General Public License, as
+published by the Free Software Foundation — GPL version 2, or (at your option)
+any later version. See the file LICENSE for the full text. Every source file
+retains the original LinHPSDR copyright and GPL notice.
+
+This distribution also includes a patched copy of the WDSP DSP library under
+wdsp/ (originally from g0orx/wdsp), which is licensed under the GNU General
+Public License version 2; see wdsp/COPYING.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+If you distribute this program (in source or binary/.app form), the GPL
+requires that you also make the complete corresponding source code — including
+your modifications — available to the recipients under the same license.

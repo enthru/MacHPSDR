@@ -198,10 +198,10 @@ int ps_get_tx_attenuation(PSIGNAL *ps) {
 PSIGNAL *create_puresignal(void) {
   PSIGNAL *ps = g_new0(PSIGNAL, 1);
 
-  // Enable PureSignal diagnostics if the LINHPSDR_PS_DEBUG env var is set
+  // Enable PureSignal diagnostics if the MACHPSDR_PS_DEBUG env var is set
   // (any value). Off unless the user opts in, so no rebuild is needed to
   // turn the logging on/off.
-  if (g_getenv("LINHPSDR_PS_DEBUG") != NULL) {
+  if (g_getenv("MACHPSDR_PS_DEBUG") != NULL) {
     ps_debug = 1;
   }
 

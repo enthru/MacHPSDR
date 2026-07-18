@@ -339,7 +339,7 @@ static int check_wisdom(void *data) {
   GtkWidget *dialog;
   char label[128];
 
-  sprintf(wisdom_directory,"%s/.local/share/linhpsdr/",g_get_home_dir());
+  sprintf(wisdom_directory,"%s/.local/share/machpsdr/",g_get_home_dir());
   snprintf(wisdom_file, sizeof(wisdom_file), "%swdspWisdom", wisdom_directory);
   if(access(wisdom_file,F_OK)<0) {
 #ifdef __APPLE__
@@ -356,7 +356,7 @@ static int check_wisdom(void *data) {
 
       dialog=gtk_dialog_new();
       g_signal_connect (dialog, "delete-event", G_CALLBACK (wisdom_delete), NULL);
-      gtk_window_set_title(GTK_WINDOW(dialog),"LinHPSDR: Creating FFTW3 wisdom file");
+      gtk_window_set_title(GTK_WINDOW(dialog),"MacHPSDR: Creating FFTW3 wisdom file");
       GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
       GtkWidget *grid=gtk_grid_new();
       gtk_grid_set_row_spacing(GTK_GRID(grid),10);
@@ -439,7 +439,7 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
         snprintf(iface, sizeof(iface), "on %s", d->info.network.interface_name);
         break;
     }
-    g_snprintf((gchar *)&title,sizeof(title),"LinHPSDR (%s): %s %s %s %s %s %s",
+    g_snprintf((gchar *)&title,sizeof(title),"MacHPSDR (%s): %s %s %s %s %s %s",
       version,
       d->name,
       protocol,
@@ -535,27 +535,35 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   g_print("opengl: %d\n",opengl);
 
 #ifdef __APPLE__
-  // On macOS, find resources relative to executable in .app bundle
+  // Load the window icon from the .app bundle (Contents/Resources), or from
+  // the current directory when running ./machpsdr straight from the repo.
+  // Never read it from a system-wide location on macOS.
   char exe_path[1024];
   uint32_t size = sizeof(exe_path);
+  png_path[0] = '\0';
   if (_NSGetExecutablePath(exe_path, &size) == 0) {
     char *last_slash = strrchr(exe_path, '/');
     if (last_slash) {
       *last_slash = '\0';
-      sprintf(png_path, "%s/../Resources/hpsdr.png", exe_path);
-    } else {
-      strcpy(png_path, "hpsdr.png");
+      snprintf(png_path, sizeof(png_path), "%s/../Resources/machpsdr.png", exe_path);
     }
-  } else {
-    strcpy(png_path, "hpsdr.png");
+  }
+  if (png_path[0] == '\0' || access(png_path, F_OK) != 0) {
+    strcpy(png_path, "machpsdr.png");   // local fallback (running from the repo)
   }
   g_print("PNG path (macOS): %s\n", png_path);
 #else
-  sprintf(png_path, "/usr/share/linhpsdr/hpsdr.png");
+  // Prefer an icon next to the binary / in the working directory; fall back to
+  // an installed copy under /usr/share only if there is no local one.
+  if (access("machpsdr.png", F_OK) == 0) {
+    strcpy(png_path, "machpsdr.png");
+  } else {
+    strcpy(png_path, "/usr/share/machpsdr/machpsdr.png");
+  }
 #endif
 
   main_window = gtk_application_window_new (app);
-  sprintf(title,"LinHPSDR (%s)",version);
+  sprintf(title,"MacHPSDR (%s)",version);
   gtk_window_set_title (GTK_WINDOW (main_window), title);
   gtk_window_set_resizable(GTK_WINDOW(main_window), TRUE);
   GError *error = NULL;
@@ -625,7 +633,24 @@ int main(int argc, char **argv) {
   rc=mkdir(text,0777);
   sprintf(text,"%s/.local/share",homedir);
   rc=mkdir(text,0777);
-  sprintf(text,"%s/.local/share/linhpsdr",homedir);
+
+  // One-time migration: this fork was renamed from linhpsdr to machpsdr.
+  // If the new config dir does not exist yet but the old one does, copy the
+  // saved configuration across (radio props, bookmarks, MIDI mappings,
+  // FFTW wisdom) so the rename does not lose the user's settings.
+  {
+    char newdir[1024], olddir[1024], cmd[2200];
+    snprintf(newdir,sizeof(newdir),"%s/.local/share/machpsdr",homedir);
+    snprintf(olddir,sizeof(olddir),"%s/.local/share/linhpsdr",homedir);
+    if(access(newdir,F_OK)!=0 && access(olddir,F_OK)==0) {
+      snprintf(cmd,sizeof(cmd),"cp -R \"%s\" \"%s\"",olddir,newdir);
+      if(system(cmd)==0) {
+        g_print("Migrated configuration from %s to %s\n",olddir,newdir);
+      }
+    }
+  }
+
+  sprintf(text,"%s/.local/share/machpsdr",homedir);
   rc=mkdir(text,0777);
 
   sprintf(text,"org.g0orx.hpsdr.pid%d",getpid());

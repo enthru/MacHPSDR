@@ -3,8 +3,12 @@
 *.dylib
 *.so
 *.a
-linhpsdr
-LinHPSDR.app/
+machpsdr
+MacHPSDR.app/
+
+# Debian package staging / generated packages (regenerated, never committed)
+pkg/
+*.deb
 
 # Vendored WDSP (wdsp/) is now tracked as part of this repo; its own
 # wdsp/.gitignore plus the globals above keep its build artifacts out.

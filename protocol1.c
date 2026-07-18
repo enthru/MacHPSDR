@@ -1398,7 +1398,7 @@ void ozy_send_buffer() {
             output_buffer[C1]|=0x00;
           } else {
             // Enabled internal keyer (radio generated cw) also enables
-            // cwx (no longer implemented in linHPSDR)
+            // cwx (no longer implemented in MacHPSDR)
             output_buffer[C1]|=0x01;
           }
         }

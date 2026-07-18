@@ -69,7 +69,7 @@ static char *split_char[] = {"OFF","SPLIT","SAT","RSAT"};
 
 static void save_bookmarks() {
   char filename[128];
-  sprintf(filename,"%s/.local/share/linhpsdr/bookmarks",
+  sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
   initProperties();
 
@@ -113,7 +113,7 @@ static void save_bookmarks() {
 
 static void restore_bookmarks() {
   char filename[128];
-  sprintf(filename,"%s/.local/share/linhpsdr/bookmarks",
+  sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
   int i=0;
   char name[80];

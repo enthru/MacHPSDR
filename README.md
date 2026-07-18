@@ -1,4 +1,21 @@
-# LinHPSDR
+# MacHPSDR
+
+**MacHPSDR** is a fork of [LinHPSDR](https://github.com/g0orx/linhpsdr) by
+John Melton (G0ORX/N6LYT), focused on macOS and with a number of feature
+additions. It is maintained by Gleb Sushko (enthru).
+
+### License
+
+MacHPSDR, like the LinHPSDR it derives from, is free software released under
+the **GNU General Public License** (GPLv2 or, at your option, any later
+version — see the `LICENSE` file). The bundled WDSP DSP library (in `wdsp/`)
+is licensed under the **GNU GPL v2** (see `wdsp/COPYING`).
+
+The original copyright of LinHPSDR (© 2018 John Melton, G0ORX/N6LYT) is
+retained in every source file; this is a modified version and the changes made
+in this fork are listed below and recorded in the project's git history. If you
+distribute MacHPSDR (source or a built binary / `.app`), the GPL requires you
+to make the complete corresponding source — including any modifications — available under the same license.
 
 ### Changelist for this fork
 
@@ -104,8 +121,8 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     per-TX-sample feedback trace
     and the 500 ms status dump) are now gated behind a single flag `ps_debug`,
     which defaults to off — no console spam unless you turn it on. Enable the
-    logging by starting linhpsdr with the environment variable
-    `LINHPSDR_PS_DEBUG=1` (any value works). Note: PureSignal remains an
+    logging by starting machpsdr with the environment variable
+    `MACHPSDR_PS_DEBUG=1` (any value works). Note: PureSignal remains an
     unfinished prototype (Protocol 1 only, peak values calibrated mainly for the
     Hermes-Lite 2).
 43) SoapySDR transmit (HackRF). Transmit now actually works over SoapySDR, not just
@@ -177,9 +194,21 @@ I'm using this software only on Mac OS, so some of this issues can be appeared o
     copy in `/usr/local/lib`, and the macOS `.app` bundle ships that same WDSP
     inside it. On macOS `make` builds `wdsp/libwdsp.dylib`, stamps its
     install-id to `@rpath/libwdsp.dylib`, and links with rpaths so it resolves
-    both when running `./linhpsdr` from the repo (`@loader_path/wdsp`) and from
+    both when running `./machpsdr` from the repo (`@loader_path/wdsp`) and from
     the bundle (`@executable_path/../Frameworks`); `make app` then bundles it via
     dylibbundler. No system-wide `make install` of WDSP is required anymore.
+
+48) Renamed the fork to **MacHPSDR**. The window title, About dialog and macOS
+    `.app` bundle now read "MacHPSDR"; the binary, install paths and the config
+    directory use the lowercase name `machpsdr`. The config directory moved from
+    `~/.local/share/linhpsdr/` to `~/.local/share/machpsdr/`, and on first run the
+    app copies the old directory across automatically if the new one does not
+    exist yet, so no saved settings, bookmarks or MIDI mappings are lost. The
+    original LinHPSDR copyright and GPL notices are retained in every source file;
+    attribution and license terms are documented in the `NOTICE` file and the
+    header of this README. The window icon is loaded only from the `.app` bundle
+    or a local `machpsdr.png` (never from a system path on macOS), so it shows
+    correctly whether the app runs from the bundle or `./machpsdr` in the repo.
 
 Note: some of these additions rely on a patched WDSP (this fork adds a WFM
 demodulator and a couple of tweaks). The patched WDSP sources are **vendored in
@@ -213,16 +242,12 @@ Development and testing has been run on Ubuntu and Arch Linux. If run on early v
 ```
 
 
-### linhpsdr requires WDSP to be built and installed
+### WDSP (vendored — built automatically)
 
-The patched WDSP is vendored in this repo under `wdsp/` (do not clone it
-separately). After cloning linhpsdr, build and install it from that directory:
-
-```
-  cd wdsp
-  make
-  sudo make install
-```
+The patched WDSP this fork needs is vendored in `wdsp/` (do not clone it
+separately). It is built automatically as part of `make`, and MacHPSDR links
+against that in-tree copy, so no separate WDSP build or system-wide install is
+required.
 ### CW support
 
 Hermes and HL2 CWX/cwdaemon support added. If you do not wish to use this, please ignore. This features requires the following to be installed (tested on Ubuntu 19.10, Kubuntu 18.04 LTS):
@@ -255,16 +280,18 @@ If CWX/cwdaemon is wanted/required. You must enable it in the Makefile. Uncommen
 #endif
 ```
 
-### To download, compile and install linHPSDR from here
+### To download and compile MacHPSDR from here
 
 ```
-  git clone https://github.com/m5evt/linhpsdr.git
-  cd linhpsdr
+  git clone https://github.com/enthru/MacHPSDR.git machpsdr
+  cd machpsdr
   make
-  sudo make install
 ```
 
-# LinHPSDR MacOS Support
+There is no `make install` target — the `machpsdr` binary runs in place; start
+it with `./machpsdr` from the build directory.
+
+# MacHPSDR MacOS Support
   
 ### Development environment
 
@@ -281,24 +308,24 @@ Development and testing has been run on MacOS Sierra 10.12.6 and MacOS high Sier
   brew install soapysdr
 ```
 
-### linhpsdr requires WDSP to be built and installed
+### WDSP (vendored — built automatically)
 
-The patched WDSP is vendored in this repo under `wdsp/` (do not clone it
-separately). After cloning linhpsdr, build and install it from that directory:
+The patched WDSP this fork needs is vendored in `wdsp/` (do not clone it
+separately). `make` and `make app` build it automatically and link/bundle that
+in-tree copy, so no separate WDSP build or system-wide install is required.
 
-```
-  cd wdsp
-  make install
-```
-
-### To download, compile and install linHPSDR
+### To download and compile MacHPSDR
 
 ```
-  git clone https://github.com/m5evt/linhpsdr.git
-  cd linhpsdr
-  make install
+  git clone https://github.com/enthru/MacHPSDR.git machpsdr
+  cd machpsdr
+  make          # build ./machpsdr (runs in place)
+  make app      # optional: build the self-contained MacHPSDR.app bundle
 ```
 
-The build installs linHPSDR into `/usr/local/bin`. To run it, type `linhpsdr` on the command line.
+`make` produces the `machpsdr` binary in the build directory; run it with
+`./machpsdr`. There is no `make install` target. `make app` bundles everything
+(GTK, the in-tree WDSP, resources) into `MacHPSDR.app`, which you can then
+`open MacHPSDR.app` or drag to /Applications.
 
 

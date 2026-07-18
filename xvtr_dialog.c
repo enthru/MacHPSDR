@@ -214,7 +214,7 @@ static void xvtr_pa_disable_changed_cb(GtkWidget *widget, gpointer user_data) {
 // HL2 clock 2 output can be used for transverters
 // However, testing has shown that if the Versaclock IC sets the 
 // frequency NOT in integer mode, spurs occur. This allows the option
-// for linHPSDR to calculate the LO frequency based in an integer divisor
+// for MacHPSDR to calculate the LO frequency based in an integer divisor
 // for the versaclock PLL.
 static void cl2_mode_cb(GtkWidget *widget, gpointer data) {
   HERMESLITE2 *hl2 = (HERMESLITE2 *)data;

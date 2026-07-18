@@ -339,7 +339,7 @@ g_print("audio_open_output: PULSEAUDIO: %s\n",rx->audio_name);
         sprintf(stream_id,"RX-%d",rx->channel);
     
         rx->playstream=pa_simple_new(NULL,               // Use the default server.
-                        "linHPSDR",           // Our application's name.
+                        "MacHPSDR",           // Our application's name.
                         PA_STREAM_PLAYBACK,
                         rx->audio_name,
                         stream_id,            // Description of our stream.
@@ -557,7 +557,7 @@ int audio_open_input(RADIO *r) {
       sample_spec.format=PA_SAMPLE_FLOAT32NE;
 
       r->microphone_stream=pa_simple_new(NULL,               // Use the default server.
-                      "linHPSDR",           // Our application's name.
+                      "MacHPSDR",           // Our application's name.
                       PA_STREAM_RECORD,
                       r->microphone_name,
                       "TX",            // Description of our stream.
@@ -1235,7 +1235,7 @@ void create_audio(int backend_index,const char *backend) {
 g_print("audio: create_audio: USE_PULSEAUDIO\n");
       main_loop=pa_glib_mainloop_new(NULL);
       main_loop_api=pa_glib_mainloop_get_api(main_loop);
-      pa_ctx=pa_context_new(main_loop_api,"linhpsdr");
+      pa_ctx=pa_context_new(main_loop_api,"machpsdr");
       pa_context_connect(pa_ctx,NULL,0,NULL);
       pa_context_set_state_callback(pa_ctx, state_cb, &ready);
       break;

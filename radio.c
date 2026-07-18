@@ -146,13 +146,13 @@ void radio_save_state(RADIO *radio) {
 
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      sprintf(filename,"%s/.local/share/linhpsdr/%s.props",
+      sprintf(filename,"%s/.local/share/machpsdr/%s.props",
                         g_get_home_dir(),
                         radio->discovered->name);
       break;
 #endif
     default:
-      sprintf(filename,"%s/.local/share/linhpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
+      sprintf(filename,"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
                         g_get_home_dir(),
                         radio->discovered->info.network.mac_address[0],
                         radio->discovered->info.network.mac_address[1],
@@ -401,13 +401,13 @@ void radio_restore_state(RADIO *radio) {
   switch(radio->discovered->protocol) {
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      sprintf(filename,"%s/.local/share/linhpsdr/%s.props",
+      sprintf(filename,"%s/.local/share/machpsdr/%s.props",
                         g_get_home_dir(),
                         radio->discovered->name);
       break;
 #endif
     default:
-      sprintf(filename,"%s/.local/share/linhpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
+      sprintf(filename,"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
                         g_get_home_dir(),
                         radio->discovered->info.network.mac_address[0],
                         radio->discovered->info.network.mac_address[1],
@@ -1946,7 +1946,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->qos_flag = FALSE;
 
   r->midi_enabled = FALSE;
-  sprintf(r->midi_filename,"%s/.local/share/linhpsdr/midi.props", g_get_home_dir());
+  sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());
 
   r->dialog=NULL;
 
@@ -1980,7 +1980,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
 #ifdef CWDAEMON
   radio_change_cwgeneration(r);
-  // Check if cwdaemon was running when linhpsdr was last closed cleanly (and
+  // Check if cwdaemon was running when machpsdr was last closed cleanly (and
   // thus wrote this to the props file)
   if (r->cwdaemon_running) {
     r->cwdaemon_running = FALSE;
