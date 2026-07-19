@@ -27,8 +27,13 @@
 #include <ft8/decode.h>
 #include <ft8/message.h>
 #include <common/monitor.h>
+#include <fft/kiss_fftr.h>
 
 #include "ft8_decoder.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // ---- FT8 timing / audio constants -----------------------------------------
 #define FT8_RATE        12000            // decoder sample rate (Hz)
@@ -375,4 +380,44 @@ int ft8_decoder_get_decodes(FT8_DECODE *out, int max, char *utc7) {
   }
   g_mutex_unlock(&list_mutex);
   return n;
+}
+
+// ---- live spectrum for the FT8 waterfall -----------------------------------
+// A windowed real FFT of the newest WF_FFT samples of the 12 kHz ring.  At 12
+// kHz a 4096-point FFT gives ~2.93 Hz/bin — fine enough to separate individual
+// FT8 tones (6.25 Hz apart), JTDX-like.  Called on the GTK thread ~15x/s; the
+// ring is written by the RX thread, but an occasional torn sample only smears a
+// single waterfall pixel, so no lock is taken.
+#define WF_FFT 4096
+
+int ft8_decoder_get_spectrum(float *out, int max_bins, float *hz_per_bin) {
+  static kiss_fftr_cfg cfg = NULL;
+  static float          window[WF_FFT];
+  static kiss_fft_scalar tin[WF_FFT];
+  static kiss_fft_cpx    fout[WF_FFT/2 + 1];
+
+  if (ring_w < WF_FFT) return 0;                 // not enough audio buffered yet
+  if (cfg == NULL) {
+    cfg = kiss_fftr_alloc(WF_FFT, 0, NULL, NULL);
+    for (int i = 0; i < WF_FFT; i++)
+      window[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (WF_FFT - 1)));
+  }
+  if (cfg == NULL) return 0;
+
+  long start = ring_w - WF_FFT;
+  for (int i = 0; i < WF_FFT; i++)
+    tin[i] = ring[(start + i) % RING_CAP] * window[i];
+  kiss_fftr(cfg, tin, fout);
+
+  float hpb = (float)FT8_RATE / (float)WF_FFT;
+  if (hz_per_bin != NULL) *hz_per_bin = hpb;
+
+  int nb = (int)(3000.0f / hpb);                 // show the 0..3000 Hz FT8 band
+  if (nb > max_bins)   nb = max_bins;
+  if (nb > WF_FFT / 2) nb = WF_FFT / 2;
+  for (int i = 0; i < nb; i++) {
+    float re = fout[i].r, im = fout[i].i;
+    out[i] = 10.0f * log10f(re * re + im * im + 1.0e-12f);
+  }
+  return nb;
 }

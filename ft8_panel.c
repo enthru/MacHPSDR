@@ -32,6 +32,7 @@
 #include "ft8_decoder.h"
 #include "ft8_qso.h"
 #include "ft8_panel.h"
+#include "ft8_waterfall.h"
 
 // Tree store columns.  CALLDE/EXTRA are hidden, kept so a clicked row can be
 // turned back into a QSO answer without a separate backing array.
@@ -253,6 +254,9 @@ GtkWidget *ft8_panel_create(void) {
   gtk_box_pack_start(GTK_BOX(cfg), slot, FALSE, FALSE, 0);
 
   gtk_box_pack_start(GTK_BOX(box), cfg, FALSE, FALSE, 0);
+
+  // --- FT8 band waterfall (JTDX-style): its own FFT of the decoder audio ---
+  gtk_box_pack_start(GTK_BOX(box), ft8_waterfall_create(), FALSE, FALSE, 0);
 
   // --- decode list ---
   store = gtk_list_store_new(N_COLS,

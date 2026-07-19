@@ -65,4 +65,10 @@ extern void ft8_decoder_add_audio(const gdouble *samples, int nframes);
 // "hhmmss" of the slot those decodes belong to.
 extern int ft8_decoder_get_decodes(FT8_DECODE *out, int max, char *utc7);
 
+// Fill `out` with a power spectrum (dB) of the most recent FT8-band audio taken
+// from the decoder's 12 kHz ring, covering 0..~3000 Hz (the FT8 audio passband).
+// Returns the number of bins written (<= max_bins), or 0 if not enough audio yet;
+// *hz_per_bin (if non-NULL) receives the bin spacing.  Drives the FT8 waterfall.
+extern int ft8_decoder_get_spectrum(float *out, int max_bins, float *hz_per_bin);
+
 #endif
