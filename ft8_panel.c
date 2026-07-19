@@ -41,7 +41,9 @@ enum { COL_UTC, COL_DB, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_CALLDE, COL_EXT
 #define MAX_ROWS 1000   // rolling band-activity cap
 
 // Single live panel instance (only one FT8 panel ever exists at a time).
-static GtkListStore *store = NULL;
+static GtkListStore     *store = NULL;
+static GtkTreeModel     *filter = NULL;   // CQ-only view over `store`
+static gboolean          cq_only = FALSE;
 static GtkWidget    *view = NULL;
 static GtkWidget    *status_label = NULL;
 static GtkWidget    *dx_label = NULL;
@@ -90,13 +92,24 @@ static void auto_toggled(GtkToggleButton *t, gpointer data) {
 static void free_send(GtkWidget *w, gpointer data) {
   if (free_entry) ft8_qso_send_free(gtk_entry_get_text(GTK_ENTRY(free_entry)));
 }
+static gboolean filter_visible(GtkTreeModel *m, GtkTreeIter *it, gpointer data) {
+  if (!cq_only) return TRUE;
+  gboolean cq = FALSE;
+  gtk_tree_model_get(m, it, COL_CQ, &cq, -1);
+  return cq;
+}
+static void cqonly_toggled(GtkToggleButton *t, gpointer data) {
+  cq_only = gtk_toggle_button_get_active(t);
+  if (filter) gtk_tree_model_filter_refilter(GTK_TREE_MODEL_FILTER(filter));
+}
 
 // Double-click a decode row: work that station.
 static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer data) {
+  GtkTreeModel *model = gtk_tree_view_get_model(tv);   // may be the CQ filter
   GtkTreeIter iter;
-  if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(store), &iter, path)) return;
+  if (!gtk_tree_model_get_iter(model, &iter, path)) return;
   gchar *callde = NULL, *extra = NULL, *utc = NULL;
-  gtk_tree_model_get(GTK_TREE_MODEL(store), &iter,
+  gtk_tree_model_get(model, &iter,
                      COL_CALLDE, &callde, COL_EXTRA, &extra, COL_UTC, &utc, -1);
   if (callde && callde[0]) {
     FT8_DECODE d;
@@ -147,10 +160,13 @@ static gboolean refresh(gpointer data) {
       gtk_list_store_remove(store, &first);
       rows--;
     }
-    // Keep the newest decode in view.
-    GtkTreePath *path = gtk_tree_path_new_from_indices(rows - 1, -1);
-    gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(view), path, NULL, FALSE, 0, 0);
-    gtk_tree_path_free(path);
+    // Keep the newest decode in view (count in the model the view shows).
+    int vis = gtk_tree_model_iter_n_children(gtk_tree_view_get_model(GTK_TREE_VIEW(view)), NULL);
+    if (vis > 0) {
+      GtkTreePath *path = gtk_tree_path_new_from_indices(vis - 1, -1);
+      gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(view), path, NULL, FALSE, 0, 0);
+      gtk_tree_path_free(path);
+    }
   }
 
   // Tx1..Tx6 message buttons: labels, availability, and active highlight.
@@ -201,7 +217,7 @@ static gboolean refresh(gpointer data) {
 
 static void on_destroy(GtkWidget *w, gpointer data) {
   if (refresh_id) { g_source_remove(refresh_id); refresh_id = 0; }
-  store = NULL; view = NULL; status_label = NULL; dx_label = NULL;
+  store = NULL; filter = NULL; view = NULL; status_label = NULL; dx_label = NULL;
   enable_btn = NULL; auto_chk = NULL; offset_spin = NULL; free_entry = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_utc[0] = '\0';
@@ -247,8 +263,12 @@ GtkWidget *ft8_panel_create(void) {
   store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT,
                              G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_BOOLEAN,
                              G_TYPE_STRING, G_TYPE_STRING);
-  view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+  filter = gtk_tree_model_filter_new(GTK_TREE_MODEL(store), NULL);
+  gtk_tree_model_filter_set_visible_func(GTK_TREE_MODEL_FILTER(filter),
+                                         filter_visible, NULL, NULL);
+  view = gtk_tree_view_new_with_model(filter);
   g_object_unref(store);
+  g_object_unref(filter);
   g_signal_connect(view, "row-activated", G_CALLBACK(row_activated), NULL);
 
   struct { const char *t; int c; } cols[] = {
@@ -295,6 +315,9 @@ GtkWidget *ft8_panel_create(void) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
   g_signal_connect(auto_chk, "toggled", G_CALLBACK(auto_toggled), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), auto_chk, FALSE, FALSE, 0);
+  GtkWidget *cqchk = gtk_check_button_new_with_label("CQ only");
+  g_signal_connect(cqchk, "toggled", G_CALLBACK(cqonly_toggled), NULL);
+  gtk_box_pack_start(GTK_BOX(ctl), cqchk, FALSE, FALSE, 0);
   GtkWidget *halt = gtk_button_new_with_label("Halt Tx");
   g_signal_connect(halt, "clicked", G_CALLBACK(halt_clicked), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), halt, FALSE, FALSE, 0);
