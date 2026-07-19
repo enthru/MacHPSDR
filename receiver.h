@@ -331,6 +331,9 @@ extern gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *even
 
 extern void receiver_filter_changed(RECEIVER *rx,int filter);
 extern void receiver_mode_changed(RECEIVER *rx,int mode);
+#ifdef FT8
+extern void receiver_ft8_waterfall_sync(RECEIVER *rx);
+#endif
 extern void receiver_band_changed(RECEIVER *rx,int band);
 extern void receiver_xvtr_changed(RECEIVER *rx);
 extern void set_filter(RECEIVER *rx,int low,int high);

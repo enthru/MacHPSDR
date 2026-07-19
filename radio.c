@@ -1362,6 +1362,9 @@ void radio_ft8_panel_sync(RADIO *r) {
   if(add_receiver_b!=NULL)
     gtk_widget_set_sensitive(add_receiver_b,
       r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+
+  // Add/remove the FT8 band waterfall (right of the RF spectrum) to match.
+  if(r->active_receiver!=NULL) receiver_ft8_waterfall_sync(r->active_receiver);
 }
 
 // Bottom-bar "FT8 Panel" toggle: open/close the big FT8 QSO panel (in place of
