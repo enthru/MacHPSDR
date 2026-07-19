@@ -30,6 +30,7 @@
 #include "radio.h"
 #include "settings_ui.h"
 #include "ft8_dialog.h"
+#include "ft8_dxcc.h"
 
 // Copy src into dst uppercased (callsigns and grids are conventionally upper).
 static void upper_copy(char *dst, size_t dstsz, const char *src) {
@@ -76,6 +77,24 @@ static void pskr_enable_cb(GtkWidget *w, gpointer data) {
   r->ft8_pskr=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
 }
 
+// One-line-ish status of the loaded DXCC country file.
+static void dxcc_status_text(char *buf, size_t n) {
+  int c = ft8_dxcc_count();
+  const char *p = ft8_dxcc_path();
+  if (c > 0)
+    snprintf(buf, n, "Loaded %d DXCC entities from:\n%s", c, p ? p : "?");
+  else
+    snprintf(buf, n, "cty.dat not found. Put it next to the app, in\n"
+                     "~/.local/share/machpsdr/, or set $MACHPSDR_CTY, then Reload.");
+}
+static void dxcc_reload_cb(GtkWidget *w, gpointer data) {
+  (void)w;
+  ft8_dxcc_reload();
+  char buf[1200];
+  dxcc_status_text(buf, sizeof(buf));
+  gtk_label_set_text(GTK_LABEL(data), buf);
+}
+
 GtkWidget *create_ft8_dialog(RADIO *r) {
   // ---- Station identity ----
   GtkWidget *frame=gtk_frame_new("Station");
@@ -110,6 +129,32 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_entry_set_text(GTK_ENTRY(loc),r->station_grid);
   gtk_grid_attach(GTK_GRID(grid),loc,1,2,1,1);
   g_signal_connect(loc,"changed",G_CALLBACK(grid_cb),r);
+
+  // ---- DXCC country file (cty.dat) ----
+  GtkWidget *dframe=gtk_frame_new("DXCC (new-one highlight)");
+  GtkWidget *dgrid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(dgrid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(dgrid),5);
+  sui_style_group(dgrid);
+  gtk_container_add(GTK_CONTAINER(dframe),dgrid);
+
+  GtkWidget *dinfo=gtk_label_new("Highlights decoded stations whose DXCC entity you have not\n"
+                                 "worked before, resolved from AD1C's cty.dat country file.");
+  gtk_widget_set_halign(dinfo,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(dinfo,12);
+  gtk_grid_attach(GTK_GRID(dgrid),dinfo,0,0,2,1);
+
+  char dbuf[1200];
+  dxcc_status_text(dbuf,sizeof(dbuf));
+  GtkWidget *dstatus=gtk_label_new(dbuf);
+  gtk_widget_set_halign(dstatus,GTK_ALIGN_START);
+  gtk_label_set_selectable(GTK_LABEL(dstatus),TRUE);
+  gtk_grid_attach(GTK_GRID(dgrid),dstatus,0,1,2,1);
+
+  GtkWidget *dreload=gtk_button_new_with_label("Reload cty.dat");
+  gtk_widget_set_halign(dreload,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(dgrid),dreload,0,2,1,1);
+  g_signal_connect(dreload,"clicked",G_CALLBACK(dxcc_reload_cb),dstatus);
 
   // ---- Network logging (WSJT-X/JTDX UDP) ----
   GtkWidget *lframe=gtk_frame_new("Network Logging");
@@ -172,6 +217,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
 
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(vbox),dframe,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),lframe,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),pframe,FALSE,FALSE,0);
   return vbox;

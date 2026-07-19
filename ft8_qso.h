@@ -81,4 +81,11 @@ extern void ft8_qso_send_free(const char *text);
 // TRUE if this callsign already appears in the ADIF log (worked-before).
 extern gboolean ft8_qso_worked(const char *call);
 
+// TRUE if this callsign's DXCC entity has never been logged (a "new one").
+// Unknown/unresolvable calls return FALSE.  Requires cty.dat (ft8_dxcc).
+extern gboolean ft8_qso_new_dxcc(const char *call);
+
+// DXCC country name for a callsign (via cty.dat), or NULL if unresolved.
+extern const char *ft8_qso_country(const char *call);
+
 #endif

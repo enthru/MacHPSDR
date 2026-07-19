@@ -38,6 +38,7 @@
 #include "ft8_encoder.h"
 #include "ft8_qso.h"
 #include "ft8_udp.h"
+#include "ft8_dxcc.h"
 
 // QSO sequence states.  "ANS" = we answered a CQ; "CQ" = we called CQ.
 typedef enum {
@@ -83,6 +84,9 @@ static gboolean prev_txen = FALSE;      // tx_enabled on the previous poll
 // Set of callsigns already logged (worked-before), loaded from the ADIF log and
 // kept updated as QSOs complete.  Keys are uppercased g_strdup'd callsigns.
 static GHashTable *worked = NULL;
+// Set of DXCC entity indices already worked (for the "new one" highlight),
+// resolved from each logged callsign via cty.dat.  Keys are GINT_TO_POINTER(ent).
+static GHashTable *worked_dxcc = NULL;
 
 static void worked_add(const char *call) {
   if (!worked || !call || !call[0]) return;
@@ -90,6 +94,10 @@ static void worked_add(const char *call) {
   for (int i = 0; call[i] && j < 15; i++) up[j++] = g_ascii_toupper(call[i]);
   up[j] = '\0';
   if (!g_hash_table_contains(worked, up)) g_hash_table_add(worked, g_strdup(up));
+  // Also remember the DXCC entity so a later decode from the same country is not
+  // flagged as new.
+  int ent = ft8_dxcc_entity(up);
+  if (ent >= 0 && worked_dxcc) g_hash_table_add(worked_dxcc, GINT_TO_POINTER(ent));
 }
 
 // Extract every "<CALL:len>value" from one ADIF line into the worked set.
@@ -112,6 +120,7 @@ static void worked_parse_line(const char *line) {
 
 static void worked_load(void) {
   worked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  worked_dxcc = g_hash_table_new(g_direct_hash, g_direct_equal);
   char path[512];
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
   FILE *f = fopen(path, "r");
@@ -127,6 +136,21 @@ gboolean ft8_qso_worked(const char *call) {
   for (int i = 0; call[i] && j < 15; i++) up[j++] = g_ascii_toupper(call[i]);
   up[j] = '\0';
   return g_hash_table_contains(worked, up);
+}
+
+// TRUE if `call` resolves to a DXCC entity we have not logged before — i.e. a
+// "new one".  Unknown/unresolvable calls return FALSE so we never false-alarm.
+gboolean ft8_qso_new_dxcc(const char *call) {
+  if (!worked_dxcc || !call || !call[0]) return FALSE;
+  int ent = ft8_dxcc_entity(call);
+  if (ent < 0) return FALSE;
+  return !g_hash_table_contains(worked_dxcc, GINT_TO_POINTER(ent));
+}
+
+// Country name for a decoded call (via cty.dat), or NULL if unresolved.
+const char *ft8_qso_country(const char *call) {
+  int ent = ft8_dxcc_entity(call);
+  return ent >= 0 ? ft8_dxcc_name(ent) : NULL;
 }
 
 // ---- small text helpers ----------------------------------------------------

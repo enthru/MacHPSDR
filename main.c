@@ -56,6 +56,7 @@
 #ifdef FT8
 #include "ft8_decoder.h"
 #include "ft8_qso.h"
+#include "ft8_dxcc.h"
 #endif
 
 #ifdef __APPLE__
@@ -663,6 +664,9 @@ int main(int argc, char **argv) {
   }
 
 #ifdef FT8
+  // Load the DXCC country file first so the QSO log's worked-before scan can tag
+  // worked entities as it reads the log.
+  ft8_dxcc_init();
   // Spin up the FT8 decode worker thread (idle until a DIGU receiver feeds it).
   ft8_decoder_init();
   // Start the auto-QSO poll timer (idle until a QSO/CQ is started from the panel).
