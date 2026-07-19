@@ -412,7 +412,7 @@ int ft8_decoder_get_spectrum(float *out, int max_bins, float *hz_per_bin) {
   float hpb = (float)FT8_RATE / (float)WF_FFT;
   if (hz_per_bin != NULL) *hz_per_bin = hpb;
 
-  int nb = (int)(3000.0f / hpb);                 // show the 0..3000 Hz FT8 band
+  int nb = (int)(5000.0f / hpb);                 // up to 5 kHz; caller shows a sub-span
   if (nb > max_bins)   nb = max_bins;
   if (nb > WF_FFT / 2) nb = WF_FFT / 2;
   for (int i = 0; i < nb; i++) {

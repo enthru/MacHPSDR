@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <gtk/gtk.h>
 
@@ -34,9 +35,9 @@
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
 
-#define WF_BAND_HZ   3000.0   // audio span shown (0..3000 Hz FT8 passband)
+#define WF_MAX_HZ    5000.0   // hard cap on the displayed audio span
 #define WF_ROWS      160      // spectrogram history depth (pixbuf rows)
-#define WF_MAXBINS   1200     // >= 3000 / (12000/4096) ≈ 1024
+#define WF_MAXBINS   1800     // >= 5000 / (12000/4096) ≈ 1706
 #define WF_HEIGHT    150      // widget height request (px)
 #define WF_INTERVAL  70       // refresh period (ms) ≈ 14 fps
 
@@ -47,11 +48,26 @@ static int        nbins  = 0;
 static guint      timer  = 0;
 static float      sm_low = -20.0f; // smoothed colour-map floor / ceiling (dB)
 static float      sm_high = 20.0f;
+static double     cur_span = 3000.0;   // audio span currently displayed (Hz)
 
 static int wf_theme(void) {
   if (radio != NULL && radio->active_receiver != NULL)
     return radio->active_receiver->waterfall_color_theme;
   return 0;
+}
+
+// Audio span to show: as wide as the DIGU receive filter (its upper edge),
+// clamped to a sane [500 Hz .. 5 kHz] range.
+static double wf_span_hz(void) {
+  double hi = 3000.0;
+  if (radio != NULL && radio->active_receiver != NULL) {
+    int fl = radio->active_receiver->filter_low_a;
+    int fh = radio->active_receiver->filter_high_a;
+    hi = (double)(abs(fl) > abs(fh) ? abs(fl) : abs(fh));
+  }
+  if (hi > WF_MAX_HZ) hi = WF_MAX_HZ;
+  if (hi < 500.0)     hi = 500.0;
+  return hi;
 }
 
 // Push one new spectrum row into the top of the pixbuf, scrolling the rest down.
@@ -92,9 +108,15 @@ static void push_row(const float *spec, int nb) {
 
 static gboolean tick(gpointer data) {
   float spec[WF_MAXBINS];
-  int nb = ft8_decoder_get_spectrum(spec, WF_MAXBINS, NULL);
-  if (nb > 0) {
-    push_row(spec, nb);
+  float hpb = 0.0f;
+  int nb = ft8_decoder_get_spectrum(spec, WF_MAXBINS, &hpb);
+  if (nb > 0 && hpb > 0.0f) {
+    // Display only the sub-span the DIGU filter covers (<= 5 kHz).
+    int span_bins = (int)(wf_span_hz() / hpb);
+    if (span_bins > nb) span_bins = nb;
+    if (span_bins < 1)  span_bins = 1;
+    cur_span = span_bins * hpb;              // exact span the pixbuf represents
+    push_row(spec, span_bins);
     if (area != NULL) gtk_widget_queue_draw(area);
   }
   return G_SOURCE_CONTINUE;
@@ -119,17 +141,17 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
     cairo_restore(cr);
   }
 
-  // Frequency grid + labels every 500 Hz.
+  // Frequency grid + labels every 500 Hz across the displayed span.
   cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
   cairo_set_font_size(cr, 10);
-  for (int f = 0; f <= (int)WF_BAND_HZ; f += 500) {
-    double x = (double)f / WF_BAND_HZ * W;
+  for (int f = 0; f <= (int)cur_span; f += 500) {
+    double x = (double)f / cur_span * W;
     cairo_set_source_rgba(cr, 1, 1, 1, 0.18);
     cairo_set_line_width(cr, 1.0);
     cairo_move_to(cr, x, 0);
     cairo_line_to(cr, x, H);
     cairo_stroke(cr);
-    if (f > 0 && f < (int)WF_BAND_HZ) {
+    if (f > 0 && f < (int)cur_span) {
       char lbl[8];
       snprintf(lbl, sizeof(lbl), "%d", f);
       cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
@@ -140,7 +162,7 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
 
   // FT8 TX offset marker (green), and its label.
   if (radio != NULL) {
-    double x = (double)radio->ft8_tx_offset / WF_BAND_HZ * W;
+    double x = (double)radio->ft8_tx_offset / cur_span * W;
     cairo_set_source_rgb(cr, 0.2, 0.9, 0.2);
     cairo_set_line_width(cr, 2.0);
     cairo_move_to(cr, x, 0);
@@ -159,7 +181,7 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
 static gboolean on_click(GtkWidget *w, GdkEventButton *ev, gpointer data) {
   if (ev->button != 1 || radio == NULL) return FALSE;
   int W = gtk_widget_get_allocated_width(w);
-  int off = (int)(ev->x / (double)W * WF_BAND_HZ);
+  int off = (int)(ev->x / (double)W * cur_span);
   if (off < 200)  off = 200;
   if (off > 2800) off = 2800;
   radio->ft8_tx_offset = off;
