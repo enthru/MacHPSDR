@@ -38,13 +38,26 @@ static void upper_copy(char *dst, size_t dstsz, const char *src) {
   dst[i]='\0';
 }
 
+// Reflect the uppercased value back into the entry so the field always displays
+// upper case as the user types.  Blocks `cb` around the set to avoid recursion
+// and preserves the caret position.
+static void reflect_upper(GtkWidget *w, const char *up, GCallback cb, gpointer data) {
+  if (strcmp(gtk_entry_get_text(GTK_ENTRY(w)), up) == 0) return;
+  gint pos = gtk_editable_get_position(GTK_EDITABLE(w));
+  g_signal_handlers_block_by_func(w, (gpointer)cb, data);
+  gtk_entry_set_text(GTK_ENTRY(w), up);
+  gtk_editable_set_position(GTK_EDITABLE(w), pos);
+  g_signal_handlers_unblock_by_func(w, (gpointer)cb, data);
+}
 static void call_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   upper_copy(r->station_call,sizeof(r->station_call),gtk_entry_get_text(GTK_ENTRY(w)));
+  reflect_upper(w, r->station_call, G_CALLBACK(call_cb), data);
 }
 static void grid_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   upper_copy(r->station_grid,sizeof(r->station_grid),gtk_entry_get_text(GTK_ENTRY(w)));
+  reflect_upper(w, r->station_grid, G_CALLBACK(grid_cb), data);
 }
 static void udp_enable_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;

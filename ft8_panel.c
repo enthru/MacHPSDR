@@ -184,6 +184,12 @@ static gboolean refresh(gpointer data) {
 
   // Sync the toggles from the engine without re-entering their handlers.
   if (enable_btn) {
+    // Tx needs both identity fields (Configure -> FT8); grey the toggle out and
+    // explain why until they're set, matching WSJT-X's "no call, no Tx" rule.
+    gboolean ready = radio->station_call[0] && radio->station_grid[0];
+    gtk_widget_set_sensitive(enable_btn, ready);
+    gtk_widget_set_tooltip_text(enable_btn,
+        ready ? NULL : "Set your callsign and grid in Configure \342\206\222 FT8");
     gboolean en = ft8_qso_tx_enabled();
     g_signal_handlers_block_by_func(enable_btn, (gpointer)enable_toggled, NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_btn), en);
