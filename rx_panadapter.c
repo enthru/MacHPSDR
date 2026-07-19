@@ -458,16 +458,32 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         cw_offset=+radio->cw_keyer_sidetone_frequency;
       }  
     }
-    // VFO B/sub rx filter        
-    if(rx->subrx!=NULL) { 
-      i=(int)(((double)rx->frequency_b-(double)min_display)/rx->hz_per_pixel);         
+    // VFO B/sub rx filter
+    if(rx->subrx!=NULL) {
+      i=(int)(((double)rx->frequency_b-(double)min_display)/rx->hz_per_pixel);
       filter_left = i + (rx->filter_low_a / rx->hz_per_pixel);
       filter_right = i + (rx->filter_high_a / rx->hz_per_pixel);
-      cairo_set_source_rgba (cr, 0.5, 0.5, 0.5, 0.75);    
+      cairo_set_source_rgba (cr, 0.5, 0.5, 0.5, 0.75);
       cairo_rectangle(cr, filter_left, 0.0, filter_right-filter_left, (double)display_height);
       cairo_fill(cr);
     }
-    
+
+#ifdef FT8
+    // FT8 TX audio-offset marker: a green vertical line where our transmission
+    // will land (dial + tx offset, USB), shown while this receiver is in DIGU.
+    if(rx->mode_a==DIGU) {
+      double tx_x=((double)(frequency + (long long)radio->ft8_tx_offset)
+                   - (double)min_display)/rx->hz_per_pixel;
+      cairo_set_source_rgba(cr, 0.2, 0.9, 0.2, 0.9);
+      cairo_set_line_width(cr, 1.0);
+      cairo_move_to(cr, tx_x, 0.0);
+      cairo_line_to(cr, tx_x, (double)display_height);
+      cairo_stroke(cr);
+      cairo_move_to(cr, tx_x+2.0, 10.0);
+      cairo_show_text(cr, "TX");
+    }
+#endif
+
     cairo_set_line_width (cr, LINE_WIDTH);
     // plot the levels
     
