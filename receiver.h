@@ -192,6 +192,8 @@ typedef struct _receiver {
   gint panadapter_single_color;
 
   GtkWidget *waterfall;
+  GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
+  GtkWidget *ft8_waterfall;  // FT8 band waterfall, 1/3 right (NULL unless DIGU)
   gint waterfall_width;
   gint waterfall_height;
   gint waterfall_resize_width;
@@ -329,6 +331,9 @@ extern gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *even
 
 extern void receiver_filter_changed(RECEIVER *rx,int filter);
 extern void receiver_mode_changed(RECEIVER *rx,int mode);
+#ifdef FT8
+extern void receiver_ft8_waterfall_sync(RECEIVER *rx);
+#endif
 extern void receiver_band_changed(RECEIVER *rx,int band);
 extern void receiver_xvtr_changed(RECEIVER *rx);
 extern void set_filter(RECEIVER *rx,int low,int high);

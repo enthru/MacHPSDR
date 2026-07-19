@@ -62,6 +62,7 @@
 #include "subrx.h"
 #ifdef FT8
 #include "ft8_decoder.h"
+#include "ft8_waterfall.h"
 #endif
 
 void receiver_save_state(RECEIVER *rx) {
@@ -1580,6 +1581,37 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
   update_vfo(rx);
 }
 
+#ifdef FT8
+// Set the waterfall split so the FT8 band waterfall takes ~1/3 on the right.
+// Polled until the hpaned has a real width (like restore_paned_position_cb).
+static gboolean ft8_wf_split_cb(gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(rx->wf_hpaned==NULL || rx->ft8_waterfall==NULL) return FALSE;
+  int w=gtk_widget_get_allocated_width(rx->wf_hpaned);
+  if(w<=1) return TRUE;                        // not allocated yet, keep waiting
+  gtk_paned_set_position(GTK_PANED(rx->wf_hpaned),(w*2)/3);
+  return FALSE;
+}
+
+// Slot the dedicated FT8 band waterfall in beside this receiver's main
+// waterfall while it is in DIGU, and remove it otherwise.  GTK thread only.
+void receiver_ft8_waterfall_sync(RECEIVER *rx) {
+  if(rx==NULL || rx->wf_hpaned==NULL) return;
+  gboolean want = (rx->mode_a==DIGU);
+  gboolean have = (rx->ft8_waterfall!=NULL);
+  if(want==have) return;
+  if(want) {
+    rx->ft8_waterfall=ft8_waterfall_create();
+    gtk_paned_pack2(GTK_PANED(rx->wf_hpaned),rx->ft8_waterfall,FALSE,TRUE);
+    gtk_widget_show_all(rx->ft8_waterfall);
+    g_timeout_add(50,ft8_wf_split_cb,rx);       // apply the 2/3 : 1/3 split
+  } else {
+    gtk_widget_destroy(rx->ft8_waterfall);      // "destroy" stops its refresh timer
+    rx->ft8_waterfall=NULL;
+  }
+}
+#endif
+
 void receiver_mode_changed(RECEIVER *rx,int mode) {
   set_mode(rx,mode);
   fprintf(stderr,"mode_changed: %d\n",mode);
@@ -1598,6 +1630,7 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
   // audio-thread decoder tap in process_rx_buffer().
   if(radio!=NULL && rx==radio->active_receiver) radio_ft8_panel_sync(radio);
+  receiver_ft8_waterfall_sync(rx);
 #endif
 }
 
@@ -1978,11 +2011,16 @@ static void create_visual(RECEIVER *rx) {
   g_signal_connect (rx->panadapter, "leave-notify-event", G_CALLBACK (leave), rx);
 
   rx->waterfall=create_waterfall(rx);
-  gtk_paned_pack2 (GTK_PANED(rx->vpaned), rx->waterfall,TRUE,TRUE);
   gtk_widget_add_events (rx->waterfall,GDK_ENTER_NOTIFY_MASK);
   gtk_widget_add_events (rx->waterfall,GDK_LEAVE_NOTIFY_MASK);
   g_signal_connect (rx->waterfall, "enter-notify-event", G_CALLBACK (enter), rx);
   g_signal_connect (rx->waterfall, "leave-notify-event", G_CALLBACK (leave), rx);
+  // The waterfall row is a horizontal split so the FT8 band waterfall can be
+  // slotted to its right (~1/3 width) in DIGU; see receiver_ft8_waterfall_sync().
+  rx->wf_hpaned=gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+  rx->ft8_waterfall=NULL;
+  gtk_paned_pack1 (GTK_PANED(rx->wf_hpaned), rx->waterfall,TRUE,TRUE);
+  gtk_paned_pack2 (GTK_PANED(rx->vpaned), rx->wf_hpaned,TRUE,TRUE);
 
   gtk_widget_set_size_request(rx->table, -1, 180);
   // Make sure the panel grows to fill the container on window resize (otherwise

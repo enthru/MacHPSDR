@@ -1336,60 +1336,22 @@ void radio_rebuild_rx_stack(RADIO *r) {
 // slot and the "Add Receiver" button is disabled (the panel owns that slot);
 // otherwise normal multi-RX operation resumes and FT8 decodes are shown in the
 // bottom-bar block.  Leaving DIGU also closes the panel.  GTK thread only.
-// Zoom the active RX panadapter/waterfall right in on the FT8 audio passband so
-// the operator can see individual signals when the big panel opens; the previous
-// zoom/pan is saved and restored when it closes.  FT8 occupies ~200..2900 Hz of
-// audio above the dial, so centre the pan window on ~1500 Hz at max zoom.
-#define FT8_PANEL_ZOOM 32   // deep zoom so individual FT8 signals are easy to see
-
-static void ft8_zoom_apply(RADIO *r) {
-  RECEIVER *rx=r->active_receiver;
-  if(rx==NULL || r->ft8_zoom_saved) return;
-  r->ft8_saved_zoom=rx->zoom;
-  r->ft8_saved_pan=rx->pan;
-  r->ft8_zoom_saved=TRUE;
-  receiver_change_zoom(rx,FT8_PANEL_ZOOM);
-  // Re-centre the zoomed window on the middle of the FT8 passband.
-  if(rx->pixels>rx->panadapter_width) {
-    double hz_per_pixel=(double)rx->sample_rate/(double)rx->pixels;
-    int cursor_px=(rx->pixels/2)+
-      (int)((double)(rx->ctun_frequency-rx->frequency_a+1500)/hz_per_pixel);
-    int pan=cursor_px-(rx->panadapter_width/2);
-    if(pan<0) pan=0;
-    if(pan>(rx->pixels-rx->panadapter_width)) pan=rx->pixels-rx->panadapter_width;
-    rx->pan=pan;
-  }
-  update_vfo(rx);
-}
-
-static void ft8_zoom_restore(RADIO *r) {
-  RECEIVER *rx=r->active_receiver;
-  if(!r->ft8_zoom_saved) return;
-  r->ft8_zoom_saved=FALSE;
-  if(rx==NULL) return;
-  receiver_change_zoom(rx,r->ft8_saved_zoom>=1?r->ft8_saved_zoom:1);
-  rx->pan=r->ft8_saved_pan;
-  update_vfo(rx);
-}
-
+// The zoomed FT8 view is now the dedicated FT8 band waterfall beside the main
+// waterfall (receiver_ft8_waterfall_sync), so the main panadapter is left at its
+// normal zoom to give RF context rather than being force-zoomed here.
 void radio_ft8_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean digu = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
   if(!digu) r->ft8_panel_open=FALSE;   // panel is meaningless outside DIGU
   gboolean want = digu && r->ft8_panel_open;
   gboolean have = (r->ft8_panel!=NULL);
-  if(want==have) {
-    if(!want) ft8_zoom_restore(r);     // leaving DIGU with the panel already shut
-    return;
-  }
+  if(want==have) return;
 
   if(want) {
-    ft8_zoom_apply(r);                          // zoom in on the FT8 passband
     r->ft8_panel=ft8_panel_create();
     g_object_ref_sink(r->ft8_panel);          // owned ref for the panel's lifetime
     radio_rebuild_rx_stack(r);
   } else {
-    ft8_zoom_restore(r);                        // restore the pre-panel zoom/pan
     GtkWidget *p=r->ft8_panel;
     r->ft8_panel=NULL;                         // hide from the rebuild below
     GtkWidget *parent=gtk_widget_get_parent(p);
