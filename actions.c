@@ -541,14 +541,14 @@ int switch_action(void * data) {
       break;
     case ZOOM_MINUS:
       i_temp = rx->zoom-1;
-      if(i_temp>=1 && i_temp<=8) {
+      if(i_temp>=1 && i_temp<=16) {
         receiver_change_zoom(rx,i_temp);
         update_vfo(rx);
       }
       break;
     case ZOOM_PLUS:
       i_temp = rx->zoom+1;
-      if(i_temp>=1 && i_temp<=8) {
+      if(i_temp>=1 && i_temp<=16) {
         receiver_change_zoom(rx,i_temp);
         update_vfo(rx);
       }

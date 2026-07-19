@@ -374,9 +374,12 @@ static gboolean qso_poll(gpointer data) {
     // non-standard call may be unencodable for this step (grid/report), in
     // which case we surface it rather than transmitting a stale waveform.
     if (strcmp(pending_msg, prepared_msg) == 0) {
+      fprintf(stderr, "ft8-qso: arming Tx '%s' (offset=%d even=%d)\n",
+              pending_msg, radio->ft8_tx_offset, tx_even);
       ft8_tx_arm(tx_even);
       need_arm = FALSE;
     } else {
+      fprintf(stderr, "ft8-qso: cannot encode '%s' — not arming\n", pending_msg);
       snprintf(status, sizeof(status), "Can't encode: %s", pending_msg);
     }
   }
@@ -393,7 +396,7 @@ void ft8_qso_init(void) {
 
 void ft8_qso_start_cq(void) {
   if (!radio || radio->station_call[0] == '\0') {
-    snprintf(status, sizeof(status), "Set your callsign first");
+    snprintf(status, sizeof(status), "Set your callsign in Configure -> FT8");
     return;
   }
   snprintf(my_call, sizeof(my_call), "%s", radio->station_call);
@@ -413,14 +416,16 @@ void ft8_qso_start_cq(void) {
 
 void ft8_qso_answer(const FT8_DECODE *d) {
   if (!radio || radio->station_call[0] == '\0') {
-    snprintf(status, sizeof(status), "Set your callsign first");
+    fprintf(stderr, "ft8-qso: no callsign set (Configure -> FT8) — cannot Tx\n");
+    snprintf(status, sizeof(status), "Set your callsign in Configure -> FT8");
     return;
   }
   if (d == NULL || d->call_de[0] == '\0') return;
   snprintf(my_call, sizeof(my_call), "%s", radio->station_call);
   snprintf(my_grid, sizeof(my_grid), "%s", radio->station_grid);
   if (my_grid[0] == '\0') {
-    snprintf(status, sizeof(status), "Set your grid to answer");
+    fprintf(stderr, "ft8-qso: no grid set (Configure -> FT8) — cannot answer\n");
+    snprintf(status, sizeof(status), "Set your grid in Configure -> FT8");
     return;
   }
   set_dx(d->call_de, d->extra);
@@ -500,7 +505,7 @@ int ft8_qso_messages(char out[6][32]) {
 // need a selected DX station.
 void ft8_qso_select_tx(int idx) {
   if (!radio || radio->station_call[0] == '\0') {
-    snprintf(status, sizeof(status), "Set your callsign first");
+    snprintf(status, sizeof(status), "Set your callsign in Configure -> FT8");
     return;
   }
   snprintf(my_call, sizeof(my_call), "%s", radio->station_call);

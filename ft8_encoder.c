@@ -198,6 +198,8 @@ static gboolean tx_tick(gpointer data) {
     last_started_slot = slot;
     tx_idx = 0;
     tx_active = TRUE;
+    fprintf(stderr, "ft8-tx: slot boundary reached, keying up (in_slot=%d even=%d mox=%d)\n",
+            in_slot, arm_even, radio->mox);
     if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
   }
   return G_SOURCE_CONTINUE;
@@ -221,7 +223,12 @@ gboolean ft8_tx_prepare(const char *text, float offset_hz) {
 }
 
 void ft8_tx_arm(gboolean tx_even) {
-  if (!have_wave) return;                 // nothing valid to send (e.g. encode failed)
+  if (!have_wave) {                       // nothing valid to send (e.g. encode failed)
+    fprintf(stderr, "ft8-tx: arm ignored — no valid waveform (encode failed?)\n");
+    return;
+  }
+  fprintf(stderr, "ft8-tx: armed for %s slots, waiting for boundary\n",
+          tx_even ? "even" : "odd");
   arm_even = tx_even;
   // Anchor on the current slot so we never start mid-slot: fire only when the
   // clock advances into a new slot of the desired parity.

@@ -551,6 +551,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         break;
       case 7:
       case 8:
+      default:   // 7, 8 and the higher FT8 zoom levels (up to 16x)
         divisor1=1000LL*factor;
         divisor2=200LL*factor;
         break;
