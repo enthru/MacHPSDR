@@ -2045,8 +2045,20 @@ void receiver_init_analyzer(RECEIVER *rx) {
 
 }
 
+// WDSP's analyzer keeps fixed-size internal buffers of dMAX_PIXELS (16384)
+// entries; asking SetAnalyzer for more pixels overruns them and corrupts the
+// heap (blank display + broken RX/decode).  rx->pixels == panadapter_width*zoom,
+// so cap the zoom to whatever keeps pixels within that ceiling.
+#define WDSP_MAX_PIXELS 16384
+
 void receiver_change_zoom(RECEIVER *rx,int zoom) {
 g_print("%s: %d\n",__FUNCTION__,zoom);
+  if(rx->panadapter_width>0) {
+    int max_zoom=WDSP_MAX_PIXELS/rx->panadapter_width;
+    if(max_zoom<1) max_zoom=1;
+    if(zoom>max_zoom) zoom=max_zoom;
+  }
+  if(zoom<1) zoom=1;
   rx->zoom=zoom;
   rx->pixels=rx->panadapter_width*rx->zoom;
   // Centre the zoomed view on the cursor (freetune/ctun listening frequency);

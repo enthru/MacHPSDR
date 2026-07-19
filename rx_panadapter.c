@@ -63,6 +63,13 @@ static gboolean resize_timeout(void *data) {
   g_mutex_lock(&rx->mutex);
   rx->panadapter_width=rx->panadapter_resize_width;
   rx->panadapter_height=rx->panadapter_resize_height;
+  // A wider window at a high zoom could push pixels past WDSP's dMAX_PIXELS
+  // ceiling and corrupt the analyzer, so re-clamp the zoom to the new width.
+  if(rx->panadapter_width>0) {
+    int max_zoom=16384/rx->panadapter_width;
+    if(max_zoom<1) max_zoom=1;
+    if(rx->zoom>max_zoom) rx->zoom=max_zoom;
+  }
   rx->pixels=rx->panadapter_width*rx->zoom;
 
   receiver_init_analyzer(rx);
