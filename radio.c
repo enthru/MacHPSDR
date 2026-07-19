@@ -204,6 +204,8 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_log_udp_host",radio->ft8_log_udp_host);
   sprintf(value,"%d",radio->ft8_log_udp_port);
   setProperty("radio.ft8_log_udp_port",value);
+  sprintf(value,"%d",radio->ft8_pskr);
+  setProperty("radio.ft8_pskr",value);
   sprintf(value,"%f",radio->meter_calibration);
   setProperty("radio.meter_calibration",value);
   sprintf(value,"%f",radio->panadapter_calibration);
@@ -1399,6 +1401,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) { strncpy(r->ft8_log_udp_host,value,sizeof(r->ft8_log_udp_host)-1); r->ft8_log_udp_host[sizeof(r->ft8_log_udp_host)-1]='\0'; }
   value=getProperty("radio.ft8_log_udp_port");
   if(value!=NULL) r->ft8_log_udp_port=atoi(value);
+  value=getProperty("radio.ft8_pskr");
+  if(value!=NULL) r->ft8_pskr=atoi(value);
 
   // always add receiver 0
   if(receivers==0) {
@@ -2185,6 +2189,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
+  r->ft8_pskr = FALSE;         // PSK Reporter spotting off until call/grid set
 
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());

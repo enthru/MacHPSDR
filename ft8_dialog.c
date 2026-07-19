@@ -58,6 +58,10 @@ static void udp_port_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->ft8_log_udp_port=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w));
 }
+static void pskr_enable_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->ft8_pskr=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
+}
 
 GtkWidget *create_ft8_dialog(RADIO *r) {
   // ---- Station identity ----
@@ -132,8 +136,30 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(lgrid),port,1,3,1,1);
   g_signal_connect(port,"value-changed",G_CALLBACK(udp_port_cb),r);
 
+  // ---- Spot reporting (PSK Reporter) ----
+  GtkWidget *pframe=gtk_frame_new("Spot Reporting");
+  GtkWidget *pgrid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(pgrid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(pgrid),5);
+  sui_style_group(pgrid);
+  gtk_container_add(GTK_CONTAINER(pframe),pgrid);
+
+  GtkWidget *pinfo=gtk_label_new("Report every decoded FT8 station to the PSK Reporter network\n"
+                                 "(report.pskreporter.info), as WSJT-X/JTDX do, so your spots\n"
+                                 "appear on the PSK Reporter map. Requires your callsign and grid\n"
+                                 "above; nothing is sent until both are set.");
+  gtk_widget_set_halign(pinfo,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(pinfo,12);
+  gtk_grid_attach(GTK_GRID(pgrid),pinfo,0,0,2,1);
+
+  GtkWidget *pen=gtk_check_button_new_with_label("Report spots to PSK Reporter");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pen),r->ft8_pskr);
+  gtk_grid_attach(GTK_GRID(pgrid),pen,0,1,2,1);
+  g_signal_connect(pen,"toggled",G_CALLBACK(pskr_enable_cb),r);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),lframe,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(vbox),pframe,FALSE,FALSE,0);
   return vbox;
 }

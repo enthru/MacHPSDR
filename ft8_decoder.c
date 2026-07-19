@@ -30,6 +30,7 @@
 #include <fft/kiss_fftr.h>
 
 #include "ft8_decoder.h"
+#include "ft8_pskreporter.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -280,6 +281,9 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
       fprintf(stderr, "  %s  %+3.0f dB  %4.0f Hz  %s\n",
               local[i].utc, local[i].snr, local[i].freq, local[i].text);
     }
+    // Feed the decoded spots to the PSK Reporter network (no-op unless enabled
+    // and the station call/grid are set).
+    ft8_pskreporter_report(local, n, slot_start);
   }
 }
 
