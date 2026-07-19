@@ -183,9 +183,15 @@ static gboolean refresh(gpointer data) {
 
   // Sync the toggles from the engine without re-entering their handlers.
   if (enable_btn) {
+    gboolean en = ft8_qso_tx_enabled();
     g_signal_handlers_block_by_func(enable_btn, (gpointer)enable_toggled, NULL);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_btn), ft8_qso_tx_enabled());
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_btn), en);
     g_signal_handlers_unblock_by_func(enable_btn, (gpointer)enable_toggled, NULL);
+    // Red only while armed; a plain grey button when Tx is off, so the state
+    // is obvious at a glance.
+    GtkStyleContext *sc = gtk_widget_get_style_context(enable_btn);
+    if (en) gtk_style_context_add_class(sc, "destructive-action");
+    else    gtk_style_context_remove_class(sc, "destructive-action");
   }
   if (auto_chk) {
     g_signal_handlers_block_by_func(auto_chk, (gpointer)auto_toggled, NULL);
@@ -306,7 +312,8 @@ GtkWidget *ft8_panel_create(void) {
   // --- TX controls + status ---
   GtkWidget *ctl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
   enable_btn = gtk_toggle_button_new_with_label("Enable Tx");
-  gtk_style_context_add_class(gtk_widget_get_style_context(enable_btn), "destructive-action");
+  // The red "destructive-action" class is applied only while Tx is armed (see
+  // refresh()); off, it stays a neutral grey toggle.
   g_signal_connect(enable_btn, "toggled", G_CALLBACK(enable_toggled), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), enable_btn, FALSE, FALSE, 0);
   auto_chk = gtk_check_button_new_with_label("Auto Seq");
