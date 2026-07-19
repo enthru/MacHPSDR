@@ -34,8 +34,11 @@
 #include "ft8_qso.h"
 #include "ft8_panel.h"
 
-// Tree store columns.
-enum { COL_UTC, COL_DB, COL_FREQ, COL_MSG, COL_TOME, COL_INDEX, N_COLS };
+// Tree store columns.  CALLDE/EXTRA are hidden, kept so a clicked row can be
+// turned back into a QSO answer without a separate backing array.
+enum { COL_UTC, COL_DB, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_CALLDE, COL_EXTRA, N_COLS };
+
+#define MAX_ROWS 1000   // rolling band-activity cap
 
 // Single live panel instance (only one FT8 panel ever exists at a time).
 static GtkListStore *store = NULL;
@@ -47,10 +50,7 @@ static GtkWidget    *auto_chk = NULL;     // GtkCheckButton "Auto Seq"
 static GtkWidget    *txbtn[6] = { NULL };  // Tx1..Tx6 message buttons
 static guint         refresh_id = 0;
 
-// Backing decodes for the displayed rows (index column maps into this).
-static FT8_DECODE    disp[64];
-static int           disp_n = 0;
-static char          disp_utc[8] = "";
+static char          disp_utc[8] = "";     // last slot appended to the list
 
 // ---- helpers ---------------------------------------------------------------
 static void upper_copy(char *dst, size_t dstsz, const char *src) {
@@ -87,12 +87,23 @@ static void auto_toggled(GtkToggleButton *t, gpointer data) {
 }
 
 // Double-click a decode row: work that station.
-static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer d) {
+static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer data) {
   GtkTreeIter iter;
   if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(store), &iter, path)) return;
-  gint idx = -1;
-  gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, COL_INDEX, &idx, -1);
-  if (idx >= 0 && idx < disp_n) ft8_qso_answer(&disp[idx]);
+  gchar *callde = NULL, *extra = NULL, *utc = NULL;
+  gtk_tree_model_get(GTK_TREE_MODEL(store), &iter,
+                     COL_CALLDE, &callde, COL_EXTRA, &extra, COL_UTC, &utc, -1);
+  if (callde && callde[0]) {
+    FT8_DECODE d;
+    memset(&d, 0, sizeof(d));
+    snprintf(d.call_de, sizeof(d.call_de), "%s", callde);
+    snprintf(d.extra, sizeof(d.extra), "%s", extra ? extra : "");
+    snprintf(d.utc, sizeof(d.utc), "%s", utc ? utc : "");
+    ft8_qso_answer(&d);
+  }
+  g_free(callde);
+  g_free(extra);
+  g_free(utc);
 }
 
 // ---- periodic refresh ------------------------------------------------------
@@ -101,28 +112,40 @@ static gboolean refresh(gpointer data) {
   char utc[8] = "";
   int n = ft8_decoder_get_decodes(d, 64, utc);
 
-  // Repopulate the list only when a new slot's decodes arrive.
+  // Append each new slot's decodes to a rolling band-activity list.
   if (n > 0 && utc[0] && strcmp(utc, disp_utc) != 0) {
-    memcpy(disp, d, n * sizeof(FT8_DECODE));
-    disp_n = n;
     snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 
     const char *mycall = radio->station_call;
-    gtk_list_store_clear(store);
+    GtkTreeIter it;
     for (int i = 0; i < n; i++) {
       gboolean tome = mycall[0] && d[i].call_to[0] &&
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
-      GtkTreeIter it;
+      gboolean iscq = strncmp(d[i].call_to, "CQ", 2) == 0;
       gtk_list_store_append(store, &it);
       gtk_list_store_set(store, &it,
-                         COL_UTC,  d[i].utc,
-                         COL_DB,   (gint)d[i].snr,
-                         COL_FREQ, (gint)d[i].freq,
-                         COL_MSG,  d[i].text,
-                         COL_TOME, tome,
-                         COL_INDEX, i,
+                         COL_UTC,    d[i].utc,
+                         COL_DB,     (gint)d[i].snr,
+                         COL_FREQ,   (gint)d[i].freq,
+                         COL_MSG,    d[i].text,
+                         COL_TOME,   tome,
+                         COL_CQ,     iscq,
+                         COL_CALLDE, d[i].call_de,
+                         COL_EXTRA,  d[i].extra,
                          -1);
     }
+    // Cap the history: drop the oldest rows from the top.
+    int rows = gtk_tree_model_iter_n_children(GTK_TREE_MODEL(store), NULL);
+    while (rows > MAX_ROWS) {
+      GtkTreeIter first;
+      if (!gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &first)) break;
+      gtk_list_store_remove(store, &first);
+      rows--;
+    }
+    // Keep the newest decode in view.
+    GtkTreePath *path = gtk_tree_path_new_from_indices(rows - 1, -1);
+    gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(view), path, NULL, FALSE, 0, 0);
+    gtk_tree_path_free(path);
   }
 
   // Tx1..Tx6 message buttons: labels, availability, and active highlight.
@@ -169,7 +192,7 @@ static void on_destroy(GtkWidget *w, gpointer data) {
   store = NULL; view = NULL; status_label = NULL; dx_label = NULL;
   enable_btn = NULL; auto_chk = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
-  disp_n = 0; disp_utc[0] = '\0';
+  disp_utc[0] = '\0';
 }
 
 // ---- construction ----------------------------------------------------------
@@ -210,7 +233,8 @@ GtkWidget *ft8_panel_create(void) {
 
   // --- decode list ---
   store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT,
-                             G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_INT);
+                             G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_BOOLEAN,
+                             G_TYPE_STRING, G_TYPE_STRING);
   view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
   g_object_unref(store);
   g_signal_connect(view, "row-activated", G_CALLBACK(row_activated), NULL);
@@ -225,6 +249,11 @@ GtkWidget *ft8_panel_create(void) {
     // Bold the rows addressed to our station.
     gtk_tree_view_column_add_attribute(c, r, "weight-set", COL_TOME);
     g_object_set(r, "weight", PANGO_WEIGHT_BOLD, NULL);
+    // Colour CQ messages green so they stand out in the band-activity list.
+    if (cols[k].c == COL_MSG) {
+      gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_CQ);
+      g_object_set(r, "foreground", "#33aa33", NULL);
+    }
     gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
   }
 
