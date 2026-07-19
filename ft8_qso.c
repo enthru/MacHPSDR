@@ -59,6 +59,8 @@ static char   dx_grid[8]  = "";
 static int    sent_report = 0;   // report we send the DX (from received SNR)
 static int    recv_report = 0;   // report the DX sends us
 static gboolean tx_even = TRUE;
+static gboolean tx_enabled = FALSE; // master TX gate (WSJT-X "Enable Tx")
+static gboolean auto_seq = TRUE;    // auto-advance the sequence on RX ("Auto Seq")
 
 static char   pending_msg[32]  = "";  // message to (re)transmit each of our slots
 static char   prepared_msg[32] = "";  // last message actually synthesized
@@ -183,6 +185,7 @@ static void go_idle(const char *why) {
   state = ST_IDLE;
   have_pending = FALSE;
   need_arm = FALSE;
+  tx_enabled = FALSE;
   pending_msg[0] = prepared_msg[0] = '\0';
   cycles = 0;
   ft8_tx_disarm();
@@ -196,6 +199,7 @@ static void set_dx(const char *call, const char *grid) {
 
 // Process one decoded message against the current QSO state.
 static void handle_decode(const FT8_DECODE *d) {
+  if (!auto_seq) return;   // manual operation: the user drives Tx selection
   if (d->call_de[0] == '\0' || my_call[0] == '\0') return;
   gboolean to_me = strcasecmp(d->call_to, my_call) == 0;
   if (!to_me) return;
@@ -283,7 +287,7 @@ static gboolean qso_poll(gpointer data) {
     cycles++;
     if (state == ST_ANS_SENT_73) {
       go_idle("QSO complete");                 // final 73 sent once
-    } else if (state != ST_CALLING_CQ && cycles >= WATCHDOG_CYCLES) {
+    } else if (auto_seq && state != ST_CALLING_CQ && cycles >= WATCHDOG_CYCLES) {
       go_idle("No reply — stopped");
     } else if (have_pending) {
       need_arm = TRUE;                         // repeat the current message next cycle
@@ -293,8 +297,8 @@ static gboolean qso_poll(gpointer data) {
 
   // 3) (Re)arm the pending message once per cycle for our next matching slot.
   // Arming exactly once (not every poll) keeps the scheduler's slot anchor
-  // stable, so we never accidentally skip our own slot.
-  if (need_arm && have_pending && !act && state != ST_IDLE) {
+  // stable, so we never accidentally skip our own slot.  Gated by Enable Tx.
+  if (need_arm && have_pending && tx_enabled && !act && state != ST_IDLE) {
     if (strcmp(pending_msg, prepared_msg) != 0) {
       if (ft8_tx_prepare(pending_msg, (float)radio->ft8_tx_offset))
         snprintf(prepared_msg, sizeof(prepared_msg), "%s", pending_msg);
@@ -327,6 +331,7 @@ void ft8_qso_start_cq(void) {
   last_utc[0] = '\0';
   cycles = 0;
   state = ST_CALLING_CQ;
+  tx_enabled = TRUE;
   msg_cq();
   snprintf(status, sizeof(status), "Calling CQ");
 }
@@ -352,6 +357,7 @@ void ft8_qso_answer(const FT8_DECODE *d) {
   last_utc[0] = '\0';
   cycles = 0;
   state = ST_ANS_SENT_GRID;
+  tx_enabled = TRUE;
   msg_grid();
   snprintf(status, sizeof(status), "Answering %s", dx_call);
 }
@@ -370,4 +376,83 @@ const char *ft8_qso_status(void) {
 
 const char *ft8_qso_next_tx(void) {
   return have_pending ? pending_msg : "";
+}
+
+const char *ft8_qso_dx_call(void) {
+  return dx_call;
+}
+
+void ft8_qso_set_tx_enabled(gboolean en) {
+  tx_enabled = en;
+  if (!en) {
+    ft8_tx_disarm();
+    if (state != ST_IDLE) snprintf(status, sizeof(status), "Tx disabled");
+  } else if (have_pending) {
+    need_arm = TRUE;
+  }
+}
+gboolean ft8_qso_tx_enabled(void) { return tx_enabled; }
+
+void ft8_qso_set_auto(gboolean en) { auto_seq = en; }
+gboolean ft8_qso_auto(void) { return auto_seq; }
+
+// Build the six standard messages (Tx1..Tx6) into out[0..5] from the current
+// call/grid/DX/report context.  Returns the 1-based index of the message that
+// equals the currently queued one, or 0 if none.
+int ft8_qso_messages(char out[6][32]) {
+  const char *mc = (radio && radio->station_call[0]) ? radio->station_call : my_call;
+  const char *mg = (radio && radio->station_grid[0]) ? radio->station_grid : my_grid;
+  int sr = sent_report ? sent_report : -15;   // placeholder until measured
+  if (dx_call[0]) {
+    snprintf(out[0], 32, "%s %s %s",  dx_call, mc, mg);
+    snprintf(out[1], 32, "%s %s %+03d",  dx_call, mc, sr);
+    snprintf(out[2], 32, "%s %s R%+03d", dx_call, mc, sr);
+    snprintf(out[3], 32, "%s %s RR73", dx_call, mc);
+    snprintf(out[4], 32, "%s %s 73",   dx_call, mc);
+  } else {
+    for (int i = 0; i < 5; i++) out[i][0] = '\0';
+  }
+  if (mg[0]) snprintf(out[5], 32, "CQ %s %s", mc, mg);
+  else       snprintf(out[5], 32, "CQ %s", mc);
+
+  for (int i = 0; i < 6; i++)
+    if (have_pending && strcmp(out[i], pending_msg) == 0) return i + 1;
+  return 0;
+}
+
+// Manually queue Tx message idx (1..6), setting the matching sequence state so
+// Auto Seq (if on) continues from there.  Tx6 (CQ) needs a callsign; Tx1..Tx5
+// need a selected DX station.
+void ft8_qso_select_tx(int idx) {
+  if (!radio || radio->station_call[0] == '\0') {
+    snprintf(status, sizeof(status), "Set your callsign first");
+    return;
+  }
+  snprintf(my_call, sizeof(my_call), "%s", radio->station_call);
+  snprintf(my_grid, sizeof(my_grid), "%s", radio->station_grid);
+
+  if (idx == 6) {                              // CQ: same as Call CQ but keep dx
+    tx_even = radio->ft8_tx_even;
+    logged = FALSE; prepared_msg[0] = '\0'; cycles = 0;
+    dx_call[0] = dx_grid[0] = '\0';
+    state = ST_CALLING_CQ;
+    msg_cq();
+    snprintf(status, sizeof(status), "Calling CQ");
+    return;
+  }
+  if (dx_call[0] == '\0') {
+    snprintf(status, sizeof(status), "Pick a station first");
+    return;
+  }
+  if (sent_report == 0) sent_report = -15;
+  logged = FALSE; prepared_msg[0] = '\0'; cycles = 0;
+  switch (idx) {
+    case 1: state = ST_ANS_SENT_GRID;    msg_grid();    break;
+    case 2: state = ST_CQ_SENT_REPORT;   msg_report();  break;
+    case 3: state = ST_ANS_SENT_RREPORT; msg_rreport(); break;
+    case 4: state = ST_CQ_SENT_RR73;     msg_rr73();    break;
+    case 5: state = ST_ANS_SENT_73;      msg_73();      break;
+    default: return;
+  }
+  snprintf(status, sizeof(status), "Tx%d -> %s", idx, dx_call);
 }

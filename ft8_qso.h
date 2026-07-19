@@ -57,4 +57,22 @@ extern const char *ft8_qso_status(void);
 // The message we will transmit on our next slot (empty string if none).
 extern const char *ft8_qso_next_tx(void);
 
+// Current DX callsign being worked ("" if none).
+extern const char *ft8_qso_dx_call(void);
+
+// Master TX gate (WSJT-X "Enable Tx").  Disabling drops MOX immediately.
+extern void ft8_qso_set_tx_enabled(gboolean en);
+extern gboolean ft8_qso_tx_enabled(void);
+
+// Auto-advance the sequence on received messages (WSJT-X "Auto Seq").
+extern void ft8_qso_set_auto(gboolean en);
+extern gboolean ft8_qso_auto(void);
+
+// Fill the six standard messages (Tx1..Tx6) into out[0..5]; returns the 1-based
+// index of the currently queued message, or 0 if none.
+extern int ft8_qso_messages(char out[6][32]);
+
+// Manually queue Tx message idx (1..6) as the next transmission.
+extern void ft8_qso_select_tx(int idx);
+
 #endif

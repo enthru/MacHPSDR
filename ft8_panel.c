@@ -41,7 +41,10 @@ enum { COL_UTC, COL_DB, COL_FREQ, COL_MSG, COL_TOME, COL_INDEX, N_COLS };
 static GtkListStore *store = NULL;
 static GtkWidget    *view = NULL;
 static GtkWidget    *status_label = NULL;
-static GtkWidget    *nexttx_label = NULL;
+static GtkWidget    *dx_label = NULL;
+static GtkWidget    *enable_btn = NULL;   // GtkToggleButton "Enable Tx"
+static GtkWidget    *auto_chk = NULL;     // GtkCheckButton "Auto Seq"
+static GtkWidget    *txbtn[6] = { NULL };  // Tx1..Tx6 message buttons
 static guint         refresh_id = 0;
 
 // Backing decodes for the displayed rows (index column maps into this).
@@ -71,8 +74,17 @@ static void slot_changed(GtkComboBox *cb, gpointer data) {
 }
 
 // ---- TX buttons ------------------------------------------------------------
-static void cq_clicked(GtkButton *b, gpointer data)   { ft8_qso_start_cq(); }
 static void halt_clicked(GtkButton *b, gpointer data)  { ft8_qso_halt(); }
+
+static void tx_clicked(GtkButton *b, gpointer data) {
+  ft8_qso_select_tx(GPOINTER_TO_INT(data));   // 1..6
+}
+static void enable_toggled(GtkToggleButton *t, gpointer data) {
+  ft8_qso_set_tx_enabled(gtk_toggle_button_get_active(t));
+}
+static void auto_toggled(GtkToggleButton *t, gpointer data) {
+  ft8_qso_set_auto(gtk_toggle_button_get_active(t));
+}
 
 // Double-click a decode row: work that station.
 static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer d) {
@@ -113,23 +125,50 @@ static gboolean refresh(gpointer data) {
     }
   }
 
+  // Tx1..Tx6 message buttons: labels, availability, and active highlight.
+  char msgs[6][32];
+  int active = ft8_qso_messages(msgs);
+  for (int i = 0; i < 6; i++) {
+    if (!txbtn[i]) continue;
+    char lbl[40];
+    snprintf(lbl, sizeof(lbl), "Tx%d  %s", i + 1, msgs[i][0] ? msgs[i] : "—");
+    gtk_button_set_label(GTK_BUTTON(txbtn[i]), lbl);
+    gtk_widget_set_sensitive(txbtn[i], msgs[i][0] != '\0');
+    GtkStyleContext *sc = gtk_widget_get_style_context(txbtn[i]);
+    if (i + 1 == active) gtk_style_context_add_class(sc, "suggested-action");
+    else                 gtk_style_context_remove_class(sc, "suggested-action");
+  }
+
+  // Sync the toggles from the engine without re-entering their handlers.
+  if (enable_btn) {
+    g_signal_handlers_block_by_func(enable_btn, (gpointer)enable_toggled, NULL);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_btn), ft8_qso_tx_enabled());
+    g_signal_handlers_unblock_by_func(enable_btn, (gpointer)enable_toggled, NULL);
+  }
+  if (auto_chk) {
+    g_signal_handlers_block_by_func(auto_chk, (gpointer)auto_toggled, NULL);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
+    g_signal_handlers_unblock_by_func(auto_chk, (gpointer)auto_toggled, NULL);
+  }
+  if (dx_label) {
+    const char *dx = ft8_qso_dx_call();
+    char buf[32];
+    snprintf(buf, sizeof(buf), "DX: %s", (dx && dx[0]) ? dx : "—");
+    gtk_label_set_text(GTK_LABEL(dx_label), buf);
+  }
   if (status_label) {
     char buf[128];
     snprintf(buf, sizeof(buf), "Status: %s", ft8_qso_status());
     gtk_label_set_text(GTK_LABEL(status_label), buf);
-  }
-  if (nexttx_label) {
-    const char *tx = ft8_qso_next_tx();
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Tx: %s", (tx && tx[0]) ? tx : "—");
-    gtk_label_set_text(GTK_LABEL(nexttx_label), buf);
   }
   return G_SOURCE_CONTINUE;
 }
 
 static void on_destroy(GtkWidget *w, gpointer data) {
   if (refresh_id) { g_source_remove(refresh_id); refresh_id = 0; }
-  store = NULL; view = NULL; status_label = NULL; nexttx_label = NULL;
+  store = NULL; view = NULL; status_label = NULL; dx_label = NULL;
+  enable_btn = NULL; auto_chk = NULL;
+  for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_n = 0; disp_utc[0] = '\0';
 }
 
@@ -195,16 +234,31 @@ GtkWidget *ft8_panel_create(void) {
   gtk_container_add(GTK_CONTAINER(scroll), view);
   gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
 
+  // --- Tx1..Tx6 message buttons (double-click a decode fills the DX call) ---
+  GtkWidget *txbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
+  for (int i = 0; i < 6; i++) {
+    txbtn[i] = gtk_button_new_with_label("—");
+    gtk_widget_set_halign(gtk_bin_get_child(GTK_BIN(txbtn[i])), GTK_ALIGN_START);
+    g_signal_connect(txbtn[i], "clicked", G_CALLBACK(tx_clicked), GINT_TO_POINTER(i + 1));
+    gtk_box_pack_start(GTK_BOX(txbox), txbtn[i], FALSE, FALSE, 0);
+  }
+  gtk_box_pack_start(GTK_BOX(box), txbox, FALSE, FALSE, 0);
+
   // --- TX controls + status ---
   GtkWidget *ctl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-  GtkWidget *cq = gtk_button_new_with_label("Call CQ");
-  g_signal_connect(cq, "clicked", G_CALLBACK(cq_clicked), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), cq, FALSE, FALSE, 0);
+  enable_btn = gtk_toggle_button_new_with_label("Enable Tx");
+  gtk_style_context_add_class(gtk_widget_get_style_context(enable_btn), "destructive-action");
+  g_signal_connect(enable_btn, "toggled", G_CALLBACK(enable_toggled), NULL);
+  gtk_box_pack_start(GTK_BOX(ctl), enable_btn, FALSE, FALSE, 0);
+  auto_chk = gtk_check_button_new_with_label("Auto Seq");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
+  g_signal_connect(auto_chk, "toggled", G_CALLBACK(auto_toggled), NULL);
+  gtk_box_pack_start(GTK_BOX(ctl), auto_chk, FALSE, FALSE, 0);
   GtkWidget *halt = gtk_button_new_with_label("Halt Tx");
   g_signal_connect(halt, "clicked", G_CALLBACK(halt_clicked), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), halt, FALSE, FALSE, 0);
-  nexttx_label = gtk_label_new("Tx: —");
-  gtk_box_pack_start(GTK_BOX(ctl), nexttx_label, FALSE, FALSE, 6);
+  dx_label = gtk_label_new("DX: —");
+  gtk_box_pack_start(GTK_BOX(ctl), dx_label, FALSE, FALSE, 6);
   gtk_box_pack_start(GTK_BOX(box), ctl, FALSE, FALSE, 0);
 
   status_label = gtk_label_new("Status: Idle");
