@@ -1841,25 +1841,32 @@ static void create_visual(RADIO *r) {
   gtk_label_set_yalign(GTK_LABEL(r->ft8_label),0.0);
   gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),PANGO_ELLIPSIZE_END);
   gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_label,TRUE,TRUE,0);
+
+  // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). It
+  // sits at the RIGHT edge of the Decode block (near the Setup module),
+  // top-aligned so it neither stretches nor steals vertical room from the
+  // decode rows. DIGU-only; label + visibility kept in sync by rds_update_cb.
+  r->ft8_expand_btn=gtk_button_new_with_label("Show FT8 Panel");
+  gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->ft8_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
+
+  // Decode block content: the text column (expands) with the toggle on its right.
+  GtkWidget *decode_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+  gtk_box_pack_start(GTK_BOX(decode_row),rds_col,TRUE,TRUE,0);
+  gtk_box_pack_start(GTK_BOX(decode_row),r->ft8_expand_btn,FALSE,FALSE,0);
+
   // Title is "RDS" only in WFM mode; for every other mode the block defaults to
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
   {
     gboolean wfm = r->active_receiver!=NULL && r->active_receiver->mode_a==WFM;
     gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                       bar_module_ex(wfm?"RDS":"Decode",rds_col,&r->rds_title),TRUE,TRUE,0);
+                       bar_module_ex(wfm?"RDS":"Decode",decode_row,&r->rds_title),TRUE,TRUE,0);
   }
   g_timeout_add(500,rds_update_cb,(gpointer)r);
 
   // Module: SETUP - Configure / Add Receiver / Add Wideband.
   GtkWidget *tool_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
-
-  // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). Lives
-  // here beside Setup (not in the Decode block, where it stole room from the
-  // decode rows); shown only in DIGU and kept in sync by rds_update_cb.
-  r->ft8_expand_btn=gtk_button_new_with_label("Show FT8 Panel");
-  gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
-  g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(tool_col),r->ft8_expand_btn,FALSE,FALSE,0);
 
   GtkWidget *configure=gtk_button_new_with_label("Configure");
   gtk_widget_set_name(configure,"toolbar-button");

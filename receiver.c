@@ -1552,6 +1552,11 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   }
   receiver_filter_changed(rx,rx->filter_a);
 #ifdef FT8
+  // Re-apply the WDSP panel gain: entering DIGU switches the channel to unity
+  // (so FT8 decodes regardless of volume/mute), leaving it restores the listen
+  // gain. rx_panel_gain() depends on the just-set mode. Guard against early
+  // calls before the WDSP channel exists (create_receiver sets the gain itself).
+  if(rx->channel>=0) receiver_set_volume(rx);
   // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
   // audio-thread decoder tap in process_rx_buffer().
@@ -1594,6 +1599,19 @@ void receiver_band_changed(RECEIVER *rx,int band) {
   frequency_changed(rx);
 }
 
+// WDSP audio-panel gain for a receiver's channel. Normally this is the listen
+// gain (volume, or 0 when muted). In DIGU we run the channel at unity instead:
+// the FT8 decoder taps rx->audio_output_buffer, which WDSP scales by this gain,
+// and the operator does not listen to FT8 — so it must decode regardless of the
+// volume slider or mute. The listen volume/mute is applied to the audible output
+// in software in process_rx_buffer() for DIGU. See receiver_set_volume().
+static gdouble rx_panel_gain(RECEIVER *rx) {
+#ifdef FT8
+  if(rx->mode_a==DIGU) return 1.0;
+#endif
+  return rx->mute ? 0.0 : rx->volume;
+}
+
 static void process_rx_buffer(RECEIVER *rx) {
   gdouble left_sample,right_sample;
   short left_audio_sample, right_audio_sample;
@@ -1624,6 +1642,16 @@ static void process_rx_buffer(RECEIVER *rx) {
         }
       }
     }
+#ifdef FT8
+    // In DIGU the WDSP channel runs at unity (see rx_panel_gain) so the FT8
+    // decoder always taps a full-level signal; apply the listen volume/mute to
+    // the audible output here instead, keeping the speaker behaviour unchanged.
+    if(rx->mode_a==DIGU) {
+      gdouble lg = rx->mute ? 0.0 : rx->volume;
+      left_sample  *= lg;
+      right_sample *= lg;
+    }
+#endif
     // Clamp to full scale before the 16-bit conversion below.  FM has no audio
     // AGC and WDSP's NBFM de-emphasis boosts the low end hard (a 300 Hz tone at
     // rated deviation demodulates to ~3x full scale), so the demod output swings
@@ -2363,7 +2391,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   frequency_changed(rx);
   receiver_mode_changed(rx,rx->mode_a);
 
-  SetRXAPanelGain1(rx->channel, rx->mute?0.0:rx->volume);
+  SetRXAPanelGain1(rx->channel, rx_panel_gain(rx));
   SetRXAPanelSelect(rx->channel, 3);
   SetRXAPanelPan(rx->channel, 0.5);
   SetRXAPanelCopy(rx->channel, 0);
@@ -2452,7 +2480,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 }
 
 void receiver_set_volume(RECEIVER *rx) {
-  SetRXAPanelGain1(rx->channel, rx->mute?0.0:rx->volume);
+  SetRXAPanelGain1(rx->channel, rx_panel_gain(rx));
   if(rx->subrx_enable) {
     subrx_volume_changed(rx);
   }
