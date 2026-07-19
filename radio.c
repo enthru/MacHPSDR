@@ -69,6 +69,7 @@
 #ifdef FT8
 #include "ft8_decoder.h"
 #include "ft8_panel.h"
+#include "ft8_qso.h"
 #endif
 
 #include "cwdaemon.h"
@@ -1324,13 +1325,17 @@ void radio_rebuild_rx_stack(RADIO *r) {
 }
 
 #ifdef FT8
-// Show or hide the embedded FT8 QSO panel to match the active receiver's mode.
-// When the active RX is in DIGU the panel occupies the second-receiver slot and
-// the "Add Receiver" button is disabled (the panel owns that slot); otherwise
-// the panel is torn down and normal multi-RX operation resumes.  GTK thread only.
+// Show or hide the embedded FT8 QSO panel.  The panel only makes sense in DIGU,
+// and is shown only while the user has toggled it open (ft8_panel_open, via the
+// bottom-bar "FT8 Panel" button).  When shown it occupies the second-receiver
+// slot and the "Add Receiver" button is disabled (the panel owns that slot);
+// otherwise normal multi-RX operation resumes and FT8 decodes are shown in the
+// bottom-bar block.  Leaving DIGU also closes the panel.  GTK thread only.
 void radio_ft8_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
-  gboolean want = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
+  gboolean digu = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
+  if(!digu) r->ft8_panel_open=FALSE;   // panel is meaningless outside DIGU
+  gboolean want = digu && r->ft8_panel_open;
   gboolean have = (r->ft8_panel!=NULL);
   if(want==have) return;
 
@@ -1350,6 +1355,14 @@ void radio_ft8_panel_sync(RADIO *r) {
   if(add_receiver_b!=NULL)
     gtk_widget_set_sensitive(add_receiver_b,
       r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+}
+
+// Bottom-bar "FT8 Panel" toggle: open/close the big FT8 QSO panel (in place of
+// RX2).  Only shown in DIGU; rds_update_cb keeps its label/visibility in sync.
+static void ft8_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->ft8_panel_open = !r->ft8_panel_open;
+  radio_ft8_panel_sync(r);
 }
 #endif
 
@@ -1653,32 +1666,47 @@ static gboolean rds_update_cb(gpointer data) {
   }
 #ifdef FT8
   else if(digu) {
-    // FT8 listening readout: the most recent window's decodes as one multi-line
-    // block (up to FT8_ROWS rows). Slot time is shown in the title; any overflow
-    // beyond the visible rows is summarised on the last line.
     show_ft8 = TRUE;
-    const int FT8_ROWS = 7;
-    FT8_DECODE d[64]; char utc[8]="";
-    int total = ft8_decoder_get_decodes(d, 64, utc);
-    if(r->rds_title!=NULL) {
-      char t[24];
-      if(total>0 && utc[0]) snprintf(t,sizeof(t),"FT8 %.2s:%.2s:%.2s",utc,utc+2,utc+4);
-      else                  snprintf(t,sizeof(t),"FT8");
-      gtk_label_set_text(GTK_LABEL(r->rds_title),t);
-    }
-    char *p=ft8buf; size_t n=sizeof(ft8buf);
-    if(total==0) {
-      snprintf(ft8buf,sizeof(ft8buf),"listening…");
+    if(r->ft8_panel_open) {
+      // Big FT8 panel owns the band-activity list; the bottom block would only
+      // duplicate it, so it carries the QSO status instead (DX, current Tx
+      // message, exchange state, offset/slot).
+      if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title),"FT8 QSO");
+      const char *dx=ft8_qso_dx_call();
+      const char *nexttx=ft8_qso_next_tx();
+      snprintf(ft8buf,sizeof(ft8buf),
+               "DX: %s      Tx: %s\n%s\nTx %d Hz   %s",
+               (dx&&dx[0])?dx:"—",
+               (nexttx&&nexttx[0])?nexttx:"—",
+               ft8_qso_status(),
+               r->ft8_tx_offset, r->ft8_tx_even?"Even":"Odd");
     } else {
-      int shown = total<FT8_ROWS ? total : FT8_ROWS;
-      for(int i=0;i<shown;i++) {
-        int last = (i==FT8_ROWS-1) && (total>FT8_ROWS);
-        int w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
-                       i?"\n":"", d[i].snr, d[i].freq, d[i].text);
-        if(w<0) w=0; else if((size_t)w>=n) w=(int)n-1; p+=w; n-=(size_t)w;
-        if(last) {
-          int e=snprintf(p,n,"   (+%d more)", total-FT8_ROWS);
-          if(e<0) e=0; else if((size_t)e>=n) e=(int)n-1; p+=e; n-=(size_t)e;
+      // FT8 listening readout: the most recent window's decodes as one multi-line
+      // block (up to FT8_ROWS rows). Slot time is shown in the title; any overflow
+      // beyond the visible rows is summarised on the last line.
+      const int FT8_ROWS = 7;
+      FT8_DECODE d[64]; char utc[8]="";
+      int total = ft8_decoder_get_decodes(d, 64, utc);
+      if(r->rds_title!=NULL) {
+        char t[24];
+        if(total>0 && utc[0]) snprintf(t,sizeof(t),"FT8 %.2s:%.2s:%.2s",utc,utc+2,utc+4);
+        else                  snprintf(t,sizeof(t),"FT8");
+        gtk_label_set_text(GTK_LABEL(r->rds_title),t);
+      }
+      char *p=ft8buf; size_t n=sizeof(ft8buf);
+      if(total==0) {
+        snprintf(ft8buf,sizeof(ft8buf),"listening…");
+      } else {
+        int shown = total<FT8_ROWS ? total : FT8_ROWS;
+        for(int i=0;i<shown;i++) {
+          int last = (i==FT8_ROWS-1) && (total>FT8_ROWS);
+          int w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
+                         i?"\n":"", d[i].snr, d[i].freq, d[i].text);
+          if(w<0) w=0; else if((size_t)w>=n) w=(int)n-1; p+=w; n-=(size_t)w;
+          if(last) {
+            int e=snprintf(p,n,"   (+%d more)", total-FT8_ROWS);
+            if(e<0) e=0; else if((size_t)e>=n) e=(int)n-1; p+=e; n-=(size_t)e;
+          }
         }
       }
     }
@@ -1689,6 +1717,12 @@ static gboolean rds_update_cb(gpointer data) {
   if(r->ft8_label!=NULL) {
     gtk_label_set_text(GTK_LABEL(r->ft8_label), ft8buf);
     gtk_widget_set_visible(r->ft8_label, show_ft8);
+  }
+  // The "FT8 Panel" toggle lives in this block but only makes sense in DIGU.
+  if(r->ft8_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->ft8_expand_btn, digu);
+    gtk_button_set_label(GTK_BUTTON(r->ft8_expand_btn),
+                         r->ft8_panel_open?"Hide FT8 Panel":"Show FT8 Panel");
   }
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
     gtk_widget_set_visible(r->rds_label[i], !show_ft8);
@@ -1807,6 +1841,15 @@ static void create_visual(RADIO *r) {
   gtk_label_set_yalign(GTK_LABEL(r->ft8_label),0.0);
   gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),PANGO_ELLIPSIZE_END);
   gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_label,TRUE,TRUE,0);
+  // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). Shown
+  // only in DIGU; when the panel is open this block carries the QSO status
+  // instead of the decode list (see rds_update_cb).
+  r->ft8_expand_btn=gtk_button_new_with_label("Show FT8 Panel");
+  gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
+  gtk_widget_set_halign(r->ft8_expand_btn,GTK_ALIGN_START);
+  gtk_widget_set_valign(r->ft8_expand_btn,GTK_ALIGN_END);
+  g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_expand_btn,FALSE,FALSE,0);
   // Title is "RDS" only in WFM mode; for every other mode the block defaults to
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
   {
@@ -2116,6 +2159,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->ft8_tx_offset = 1500;
   r->ft8_tx_even = TRUE;
   r->ft8_panel = NULL;
+  r->ft8_panel_open = FALSE;   // start collapsed to the bottom-bar decode block
 
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());

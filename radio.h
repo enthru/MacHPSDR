@@ -98,7 +98,8 @@ typedef struct _radio {
   char station_grid[8];    // 4/6-char Maidenhead locator
   gint ft8_tx_offset;      // FT8 audio TX offset (Hz)
   gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC 15 s slots
-  GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless in DIGU)
+  GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
+  gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   DIVMIXER *divmixer[MAX_DIVERSITY_MIXERS+1];
   gint alex_rx_antenna;
   gint alex_tx_antenna;
@@ -272,6 +273,7 @@ typedef struct _radio {
   GtkWidget *rds_label[3];   // bottom-bar decoder readout (3-line RDS in WFM)
   GtkWidget *rds_title;      // bottom-bar decoder module title ("RDS" in WFM, else "Decode")
   GtkWidget *ft8_label;      // bottom-bar FT8 readout (up to 6 decode lines in DIGU)
+  GtkWidget *ft8_expand_btn; // bottom-bar toggle: open/close the big FT8 panel (DIGU only)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)

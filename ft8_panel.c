@@ -308,7 +308,6 @@ GtkWidget *ft8_panel_create(void) {
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
   gtk_container_add(GTK_CONTAINER(scroll), view);
-  gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
 
   // --- Tx1..Tx6 message buttons (double-click a decode fills the DX call) ---
   GtkWidget *txbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
@@ -318,7 +317,12 @@ GtkWidget *ft8_panel_create(void) {
     g_signal_connect(txbtn[i], "clicked", G_CALLBACK(tx_clicked), GINT_TO_POINTER(i + 1));
     gtk_box_pack_start(GTK_BOX(txbox), txbtn[i], FALSE, FALSE, 0);
   }
-  gtk_box_pack_start(GTK_BOX(box), txbox, FALSE, FALSE, 0);
+
+  // --- main row: Tx message column on the left, band-activity list on the right ---
+  GtkWidget *mainrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_box_pack_start(GTK_BOX(mainrow), txbox, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(mainrow), scroll, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), mainrow, TRUE, TRUE, 0);
 
   // --- TX controls + status ---
   GtkWidget *ctl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
