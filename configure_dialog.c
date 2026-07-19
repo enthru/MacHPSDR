@@ -55,6 +55,9 @@
 #include "midi_dialog.h"
 #endif
 #include "diversity_dialog.h"
+#ifdef FT8
+#include "ft8_dialog.h"
+#endif
 
 int rx_base=3; // number of tabs before receivers
 
@@ -172,6 +175,10 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 #endif
 
   add_page(create_labels_dialog(radio),"Misc");
+
+#ifdef FT8
+  add_page(create_ft8_dialog(radio),"FT8");
+#endif
 
   add_page(create_about_dialog(radio),"About");
 

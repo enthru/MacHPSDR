@@ -100,6 +100,12 @@ typedef struct _radio {
   gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC 15 s slots
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
+  gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
+  char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
+  gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
+  gint ft8_saved_zoom;     // panadapter zoom/pan saved when the FT8 panel auto-zooms
+  gint ft8_saved_pan;
+  gboolean ft8_zoom_saved; // TRUE while the FT8 panel owns the zoom (restore on close)
   DIVMIXER *divmixer[MAX_DIVERSITY_MIXERS+1];
   gint alex_rx_antenna;
   gint alex_tx_antenna;

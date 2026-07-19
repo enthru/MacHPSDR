@@ -199,6 +199,11 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);
   setProperty("radio.ft8_tx_even",value);
+  sprintf(value,"%d",radio->ft8_log_udp);
+  setProperty("radio.ft8_log_udp",value);
+  setProperty("radio.ft8_log_udp_host",radio->ft8_log_udp_host);
+  sprintf(value,"%d",radio->ft8_log_udp_port);
+  setProperty("radio.ft8_log_udp_port",value);
   sprintf(value,"%f",radio->meter_calibration);
   setProperty("radio.meter_calibration",value);
   sprintf(value,"%f",radio->panadapter_calibration);
@@ -1331,19 +1336,60 @@ void radio_rebuild_rx_stack(RADIO *r) {
 // slot and the "Add Receiver" button is disabled (the panel owns that slot);
 // otherwise normal multi-RX operation resumes and FT8 decodes are shown in the
 // bottom-bar block.  Leaving DIGU also closes the panel.  GTK thread only.
+// Zoom the active RX panadapter/waterfall right in on the FT8 audio passband so
+// the operator can see individual signals when the big panel opens; the previous
+// zoom/pan is saved and restored when it closes.  FT8 occupies ~200..2900 Hz of
+// audio above the dial, so centre the pan window on ~1500 Hz at max zoom.
+#define FT8_PANEL_ZOOM 8    // matches the app-wide zoom bound (see actions.c)
+
+static void ft8_zoom_apply(RADIO *r) {
+  RECEIVER *rx=r->active_receiver;
+  if(rx==NULL || r->ft8_zoom_saved) return;
+  r->ft8_saved_zoom=rx->zoom;
+  r->ft8_saved_pan=rx->pan;
+  r->ft8_zoom_saved=TRUE;
+  receiver_change_zoom(rx,FT8_PANEL_ZOOM);
+  // Re-centre the zoomed window on the middle of the FT8 passband.
+  if(rx->pixels>rx->panadapter_width) {
+    double hz_per_pixel=(double)rx->sample_rate/(double)rx->pixels;
+    int cursor_px=(rx->pixels/2)+
+      (int)((double)(rx->ctun_frequency-rx->frequency_a+1500)/hz_per_pixel);
+    int pan=cursor_px-(rx->panadapter_width/2);
+    if(pan<0) pan=0;
+    if(pan>(rx->pixels-rx->panadapter_width)) pan=rx->pixels-rx->panadapter_width;
+    rx->pan=pan;
+  }
+  update_vfo(rx);
+}
+
+static void ft8_zoom_restore(RADIO *r) {
+  RECEIVER *rx=r->active_receiver;
+  if(!r->ft8_zoom_saved) return;
+  r->ft8_zoom_saved=FALSE;
+  if(rx==NULL) return;
+  receiver_change_zoom(rx,r->ft8_saved_zoom>=1?r->ft8_saved_zoom:1);
+  rx->pan=r->ft8_saved_pan;
+  update_vfo(rx);
+}
+
 void radio_ft8_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean digu = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
   if(!digu) r->ft8_panel_open=FALSE;   // panel is meaningless outside DIGU
   gboolean want = digu && r->ft8_panel_open;
   gboolean have = (r->ft8_panel!=NULL);
-  if(want==have) return;
+  if(want==have) {
+    if(!want) ft8_zoom_restore(r);     // leaving DIGU with the panel already shut
+    return;
+  }
 
   if(want) {
+    ft8_zoom_apply(r);                          // zoom in on the FT8 passband
     r->ft8_panel=ft8_panel_create();
     g_object_ref_sink(r->ft8_panel);          // owned ref for the panel's lifetime
     radio_rebuild_rx_stack(r);
   } else {
+    ft8_zoom_restore(r);                        // restore the pre-panel zoom/pan
     GtkWidget *p=r->ft8_panel;
     r->ft8_panel=NULL;                         // hide from the rebuild below
     GtkWidget *parent=gtk_widget_get_parent(p);
@@ -1383,6 +1429,12 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
   if(value!=NULL) r->ft8_tx_even=atoi(value);
+  value=getProperty("radio.ft8_log_udp");
+  if(value!=NULL) r->ft8_log_udp=atoi(value);
+  value=getProperty("radio.ft8_log_udp_host");
+  if(value!=NULL) { strncpy(r->ft8_log_udp_host,value,sizeof(r->ft8_log_udp_host)-1); r->ft8_log_udp_host[sizeof(r->ft8_log_udp_host)-1]='\0'; }
+  value=getProperty("radio.ft8_log_udp_port");
+  if(value!=NULL) r->ft8_log_udp_port=atoi(value);
 
   // always add receiver 0
   if(receivers==0) {
@@ -2166,6 +2218,10 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->ft8_tx_even = TRUE;
   r->ft8_panel = NULL;
   r->ft8_panel_open = FALSE;   // start collapsed to the bottom-bar decode block
+  r->ft8_log_udp = FALSE;
+  strcpy(r->ft8_log_udp_host, "127.0.0.1");
+  r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
+  r->ft8_zoom_saved = FALSE;
 
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());

@@ -37,6 +37,7 @@
 #include "ft8_decoder.h"
 #include "ft8_encoder.h"
 #include "ft8_qso.h"
+#include "ft8_udp.h"
 
 // QSO sequence states.  "ANS" = we answered a CQ; "CQ" = we called CQ.
 typedef enum {
@@ -231,6 +232,7 @@ static void log_qso(void) {
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
   FILE *f = fopen(path, "a");
   if (f) { fputs(rec, f); fclose(f); }
+  ft8_udp_log(rec);   // also push to a network logger (JTDX-style), if enabled
   worked_add(dx_call);
   fprintf(stderr, "ft8-qso: logged %s\n", dx_call);
 }

@@ -18,7 +18,6 @@
 */
 
 #include <string.h>
-#include <ctype.h>
 #include <gtk/gtk.h>
 
 #include "discovered.h"
@@ -57,20 +56,9 @@ static guint         refresh_id = 0;
 
 static char          disp_utc[8] = "";     // last slot appended to the list
 
-// ---- helpers ---------------------------------------------------------------
-static void upper_copy(char *dst, size_t dstsz, const char *src) {
-  size_t i = 0;
-  for (; src[i] && i < dstsz - 1; i++) dst[i] = (char)toupper((unsigned char)src[i]);
-  dst[i] = '\0';
-}
-
 // ---- station config callbacks ----------------------------------------------
-static void call_changed(GtkEditable *e, gpointer data) {
-  upper_copy(radio->station_call, sizeof(radio->station_call), gtk_entry_get_text(GTK_ENTRY(e)));
-}
-static void grid_changed(GtkEditable *e, gpointer data) {
-  upper_copy(radio->station_grid, sizeof(radio->station_grid), gtk_entry_get_text(GTK_ENTRY(e)));
-}
+// Callsign and grid live in the FT8 configuration page (Configure -> FT8), not
+// in this panel; only the operational TX offset/slot are adjusted live here.
 static void offset_changed(GtkSpinButton *sb, gpointer data) {
   radio->ft8_tx_offset = gtk_spin_button_get_value_as_int(sb);
 }
@@ -238,22 +226,8 @@ GtkWidget *ft8_panel_create(void) {
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   gtk_widget_set_name(box, "ft8-panel");
 
-  // --- station config row ---
+  // --- operational config row (callsign/grid live in Configure -> FT8) ---
   GtkWidget *cfg = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-  gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Call"), FALSE, FALSE, 0);
-  GtkWidget *call = gtk_entry_new();
-  gtk_entry_set_width_chars(GTK_ENTRY(call), 8);
-  gtk_entry_set_text(GTK_ENTRY(call), radio->station_call);
-  g_signal_connect(call, "changed", G_CALLBACK(call_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), call, FALSE, FALSE, 0);
-
-  gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Grid"), FALSE, FALSE, 0);
-  GtkWidget *grid = gtk_entry_new();
-  gtk_entry_set_width_chars(GTK_ENTRY(grid), 6);
-  gtk_entry_set_text(GTK_ENTRY(grid), radio->station_grid);
-  g_signal_connect(grid, "changed", G_CALLBACK(grid_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), grid, FALSE, FALSE, 0);
-
   gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Tx Hz"), FALSE, FALSE, 0);
   offset_spin = gtk_spin_button_new_with_range(200, 2800, 1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset_spin), radio->ft8_tx_offset);
