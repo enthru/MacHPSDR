@@ -429,7 +429,7 @@ static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
   g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   // Deep zoom levels (handy for FT8 / narrow digital signals).
-  int deep_zoom[]={10,12,16};
+  int deep_zoom[]={10,12,16,32};
   for(unsigned dz=0;dz<sizeof(deep_zoom)/sizeof(deep_zoom[0]);dz++) {
     char lbl[8];
     snprintf(lbl,sizeof(lbl),"x%d",deep_zoom[dz]);

@@ -1139,13 +1139,13 @@ static int midi_action(void *data) {
             switch (type) {
               case MIDI_WHEEL:
 		new=rx->zoom+val;
-		if(new>=1 && new<=16) {
+		if(new>=1 && new<=32) {
 		  receiver_change_zoom(rx,new);
 		}
 		update_vfo(rx);
                 break;
               case MIDI_KNOB:
-                if(val>=1 && val<=16) {
+                if(val>=1 && val<=32) {
 		  receiver_change_zoom(rx,val);
 		  update_vfo(rx);
 		}
@@ -1162,14 +1162,14 @@ static int midi_action(void *data) {
 	    switch (type) {
 	      case MIDI_KEY:
 		new = rx->zoom+(action==ZOOM_UP?1:-1);
-	        if(new>=1 && new<=16) {
+	        if(new>=1 && new<=32) {
 		  receiver_change_zoom(rx,new);
 		  update_vfo(rx);
 		}
 		break;
 	      case MIDI_WHEEL:
 		new = rx->zoom+(action==ZOOM_UP?1:-1);
-	        if(new>=1 && new<=16) {
+	        if(new>=1 && new<=32) {
 		  receiver_change_zoom(rx,new);
 		  update_vfo(rx);
 		}

@@ -1340,7 +1340,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
 // the operator can see individual signals when the big panel opens; the previous
 // zoom/pan is saved and restored when it closes.  FT8 occupies ~200..2900 Hz of
 // audio above the dial, so centre the pan window on ~1500 Hz at max zoom.
-#define FT8_PANEL_ZOOM 16   // deep zoom so individual FT8 signals are easy to see
+#define FT8_PANEL_ZOOM 32   // deep zoom so individual FT8 signals are easy to see
 
 static void ft8_zoom_apply(RADIO *r) {
   RECEIVER *rx=r->active_receiver;
