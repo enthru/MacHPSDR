@@ -66,6 +66,18 @@ static void offset_changed(GtkSpinButton *sb, gpointer data) {
 static void slot_changed(GtkComboBox *cb, gpointer data) {
   radio->ft8_tx_even = (gtk_combo_box_get_active(cb) == 0);
 }
+// Directed-CQ modifier: blank = plain CQ, else a region ("DX"/"EU"/…) or 3
+// digits.  Keep only alnum, uppercased (the FT8 codec accepts 1-4 letters or
+// exactly 3 digits after "CQ "); an unencodable value is surfaced at Tx time.
+static void cq_dir_changed(GtkComboBoxText *cb, gpointer data) {
+  gchar *t = gtk_combo_box_text_get_active_text(cb);
+  char clean[8]; int j = 0;
+  if (t) for (const char *p = t; *p && j < 7; p++)
+    if (g_ascii_isalnum(*p)) clean[j++] = g_ascii_toupper(*p);
+  clean[j] = '\0';
+  g_strlcpy(radio->ft8_cq_dir, clean, sizeof(radio->ft8_cq_dir));
+  g_free(t);
+}
 
 // ---- TX buttons ------------------------------------------------------------
 static void halt_clicked(GtkButton *b, gpointer data)  { ft8_qso_halt(); }
@@ -288,6 +300,21 @@ GtkWidget *ft8_panel_create(void) {
   gtk_combo_box_set_active(GTK_COMBO_BOX(slot), radio->ft8_tx_even ? 0 : 1);
   g_signal_connect(slot, "changed", G_CALLBACK(slot_changed), NULL);
   gtk_box_pack_start(GTK_BOX(cfg), slot, FALSE, FALSE, 0);
+
+  // Directed CQ: blank = plain CQ, or pick/type a region (DX/EU/NA/…) or 3 digits.
+  gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("CQ"), FALSE, FALSE, 0);
+  GtkWidget *cqdir = gtk_combo_box_text_new_with_entry();
+  const char *dirs[] = { "", "DX", "EU", "NA", "SA", "AS", "AF", "OC" };
+  for (unsigned i = 0; i < G_N_ELEMENTS(dirs); i++)
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(cqdir), dirs[i]);
+  GtkWidget *cqentry = gtk_bin_get_child(GTK_BIN(cqdir));
+  gtk_entry_set_width_chars(GTK_ENTRY(cqentry), 4);
+  gtk_entry_set_max_length(GTK_ENTRY(cqentry), sizeof(radio->ft8_cq_dir) - 1);
+  gtk_entry_set_text(GTK_ENTRY(cqentry), radio->ft8_cq_dir);
+  gtk_widget_set_tooltip_text(cqdir,
+      "Directed CQ: blank = CQ; a region (DX/EU/NA/SA/AS/AF/OC) or 3 digits");
+  g_signal_connect(cqdir, "changed", G_CALLBACK(cq_dir_changed), NULL);
+  gtk_box_pack_start(GTK_BOX(cfg), cqdir, FALSE, FALSE, 0);
 
   gtk_box_pack_start(GTK_BOX(box), cfg, FALSE, FALSE, 0);
 

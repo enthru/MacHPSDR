@@ -199,6 +199,7 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);
   setProperty("radio.ft8_tx_even",value);
+  setProperty("radio.ft8_cq_dir",radio->ft8_cq_dir);
   sprintf(value,"%d",radio->ft8_log_udp);
   setProperty("radio.ft8_log_udp",value);
   setProperty("radio.ft8_log_udp_host",radio->ft8_log_udp_host);
@@ -1395,6 +1396,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
   if(value!=NULL) r->ft8_tx_even=atoi(value);
+  value=getProperty("radio.ft8_cq_dir");
+  if(value!=NULL) { strncpy(r->ft8_cq_dir,value,sizeof(r->ft8_cq_dir)-1); r->ft8_cq_dir[sizeof(r->ft8_cq_dir)-1]='\0'; }
   value=getProperty("radio.ft8_log_udp");
   if(value!=NULL) r->ft8_log_udp=atoi(value);
   value=getProperty("radio.ft8_log_udp_host");
@@ -2184,6 +2187,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->station_grid[0] = '\0';
   r->ft8_tx_offset = 1500;
   r->ft8_tx_even = TRUE;
+  r->ft8_cq_dir[0] = '\0';     // plain CQ by default
   r->ft8_panel = NULL;
   r->ft8_panel_open = FALSE;   // start collapsed to the bottom-bar decode block
   r->ft8_log_udp = FALSE;

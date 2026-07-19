@@ -98,6 +98,7 @@ typedef struct _radio {
   char station_grid[8];    // 4/6-char Maidenhead locator
   gint ft8_tx_offset;      // FT8 audio TX offset (Hz)
   gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC 15 s slots
+  char ft8_cq_dir[8];      // directed-CQ modifier ("" = plain CQ; "DX"/"EU"/... or nnn)
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network

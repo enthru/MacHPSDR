@@ -259,8 +259,12 @@ static void set_pending(const char *fmt, ...) {
 }
 
 static void msg_cq(void) {
-  if (my_grid[0]) set_pending("CQ %s %s", my_call, my_grid);
-  else            set_pending("CQ %s", my_call);
+  // Optional directed-CQ modifier ("DX"/"EU"/… or nnn) → "CQ <dir> CALL GRID".
+  const char *dir = (radio && radio->ft8_cq_dir[0]) ? radio->ft8_cq_dir : NULL;
+  if (dir && my_grid[0]) set_pending("CQ %s %s %s", dir, my_call, my_grid);
+  else if (dir)          set_pending("CQ %s %s", dir, my_call);
+  else if (my_grid[0])   set_pending("CQ %s %s", my_call, my_grid);
+  else                   set_pending("CQ %s", my_call);
 }
 static void msg_grid(void)    { set_pending("%s %s %s", dx_call, my_call, my_grid); }
 static void msg_report(void)  { set_pending("%s %s %+03d", dx_call, my_call, sent_report); }
@@ -574,8 +578,11 @@ int ft8_qso_messages(char out[6][32]) {
   } else {
     for (int i = 0; i < 5; i++) out[i][0] = '\0';
   }
-  if (mg[0]) snprintf(out[5], 32, "CQ %s %s", mc, mg);
-  else       snprintf(out[5], 32, "CQ %s", mc);
+  const char *dir = (radio && radio->ft8_cq_dir[0]) ? radio->ft8_cq_dir : NULL;
+  if (dir && mg[0]) snprintf(out[5], 32, "CQ %s %s %s", dir, mc, mg);
+  else if (dir)     snprintf(out[5], 32, "CQ %s %s", dir, mc);
+  else if (mg[0])   snprintf(out[5], 32, "CQ %s %s", mc, mg);
+  else              snprintf(out[5], 32, "CQ %s", mc);
 
   for (int i = 0; i < 6; i++)
     if (have_pending && strcmp(out[i], pending_msg) == 0) return i + 1;
