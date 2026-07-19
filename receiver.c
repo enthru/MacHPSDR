@@ -1581,41 +1581,6 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
   update_vfo(rx);
 }
 
-#ifdef FT8
-// Set the waterfall split so the FT8 band waterfall takes ~1/3 on the right.
-// Polled until the hpaned has a real width (like restore_paned_position_cb).
-static gboolean ft8_wf_split_cb(gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  if(rx->wf_hpaned==NULL || rx->ft8_waterfall==NULL) return FALSE;
-  int w=gtk_widget_get_allocated_width(rx->wf_hpaned);
-  if(w<=1) return TRUE;                        // not allocated yet, keep waiting
-  gtk_paned_set_position(GTK_PANED(rx->wf_hpaned),(w*2)/3);
-  return FALSE;
-}
-
-// Slot the dedicated FT8 band waterfall in to the right of this receiver's whole
-// RF spectrum (~1/3 width) while it is in DIGU *and* the FT8 panel is open, and
-// remove it otherwise.  GTK thread only.
-void receiver_ft8_waterfall_sync(RECEIVER *rx) {
-  if(rx==NULL || rx->wf_hpaned==NULL) return;
-  gboolean want = (rx->mode_a==DIGU) && radio!=NULL && radio->ft8_panel_open;
-  gboolean have = (rx->ft8_waterfall!=NULL);
-  if(want==have) return;
-  if(want) {
-    rx->ft8_waterfall=ft8_waterfall_create();
-    gtk_paned_pack2(GTK_PANED(rx->wf_hpaned),rx->ft8_waterfall,FALSE,TRUE);
-    gtk_widget_show_all(rx->ft8_waterfall);
-    g_timeout_add(50,ft8_wf_split_cb,rx);       // apply the 2/3 : 1/3 split
-  } else {
-    gtk_widget_destroy(rx->ft8_waterfall);      // "destroy" stops its refresh timer
-    rx->ft8_waterfall=NULL;
-    // Give the whole width back to the RF spectrum (no leftover blank pane).
-    int w=gtk_widget_get_allocated_width(rx->wf_hpaned);
-    if(w>1) gtk_paned_set_position(GTK_PANED(rx->wf_hpaned),w);
-  }
-}
-#endif
-
 void receiver_mode_changed(RECEIVER *rx,int mode) {
   set_mode(rx,mode);
   fprintf(stderr,"mode_changed: %d\n",mode);
@@ -1634,7 +1599,6 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
   // audio-thread decoder tap in process_rx_buffer().
   if(radio!=NULL && rx==radio->active_receiver) radio_ft8_panel_sync(radio);
-  receiver_ft8_waterfall_sync(rx);
 #endif
 }
 
@@ -2001,6 +1965,7 @@ static void create_visual(RECEIVER *rx) {
 
   rx->vpaned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
   gtk_widget_set_name(rx->vpaned,"rx-spectrum");   // hairline inset frame (CSS)
+  gtk_grid_attach(GTK_GRID(rx->table), rx->vpaned, 0, 1, 7, 2);
   gtk_widget_set_hexpand(rx->vpaned, TRUE);
   gtk_widget_set_vexpand(rx->vpaned, TRUE);
   // Breathing room between the VFO mode/filter row and the spectrum below it.
@@ -2019,18 +1984,8 @@ static void create_visual(RECEIVER *rx) {
   gtk_widget_add_events (rx->waterfall,GDK_LEAVE_NOTIFY_MASK);
   g_signal_connect (rx->waterfall, "enter-notify-event", G_CALLBACK (enter), rx);
   g_signal_connect (rx->waterfall, "leave-notify-event", G_CALLBACK (leave), rx);
-
-  // Horizontal split holding the WHOLE RF spectrum (panadapter+waterfall) on the
-  // left and, when the FT8 panel is open in DIGU, the FT8 band waterfall on the
-  // right (~1/3).  Wrapping the whole vpaned (not just the waterfall) keeps the
-  // panadapter and waterfall the same width so they stay aligned and nothing is
-  // clipped.  The FT8 side is added/removed by receiver_ft8_waterfall_sync().
-  rx->wf_hpaned=gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+  rx->wf_hpaned=NULL;
   rx->ft8_waterfall=NULL;
-  gtk_paned_pack1 (GTK_PANED(rx->wf_hpaned), rx->vpaned,TRUE,TRUE);
-  gtk_grid_attach(GTK_GRID(rx->table), rx->wf_hpaned, 0, 1, 7, 2);
-  gtk_widget_set_hexpand(rx->wf_hpaned, TRUE);
-  gtk_widget_set_vexpand(rx->wf_hpaned, TRUE);
 
   gtk_widget_set_size_request(rx->table, -1, 180);
   // Make sure the panel grows to fill the container on window resize (otherwise
@@ -2545,11 +2500,6 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   create_visual(rx);
   gtk_widget_show_all(rx->table);
   radio->active_receiver=rx;
-#ifdef FT8
-  // The mode was applied (receiver_mode_changed) before create_visual built the
-  // waterfall row, so add the FT8 band waterfall now if this RX started in DIGU.
-  receiver_ft8_waterfall_sync(rx);
-#endif
   if(rx->vpaned!=NULL && rx->paned_position!=-1 && rx->paned_percent>0.0) {
     // Defer until the vpaned actually has a height (see restore_paned_position_cb).
     g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);

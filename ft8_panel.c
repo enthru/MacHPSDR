@@ -255,8 +255,11 @@ GtkWidget *ft8_panel_create(void) {
 
   gtk_box_pack_start(GTK_BOX(box), cfg, FALSE, FALSE, 0);
 
-  // (The FT8 band waterfall now lives beside the main RX waterfall, 1/3 width —
-  // see receiver_ft8_waterfall_sync(); it is no longer inside this panel.)
+  // --- FT8 band waterfall (JTDX-style): its own FFT of the decoder audio.
+  // Kept inside this panel so it is fully isolated from the main RX spectrum
+  // (which nesting it beside the main waterfall broke) and only ever shown while
+  // the FT8 panel is open. ---
+  gtk_box_pack_start(GTK_BOX(box), ft8_waterfall_create(), FALSE, FALSE, 0);
 
   // --- decode list ---
   store = gtk_list_store_new(N_COLS,
