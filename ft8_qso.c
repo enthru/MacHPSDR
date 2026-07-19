@@ -75,6 +75,59 @@ static gboolean logged = FALSE;        // this QSO already written to the log
 static char   status[96] = "Idle";
 static guint  poll_id = 0;
 
+#define TX_WATCHDOG_SEC (6*60)         // auto-disable Tx after this long w/o progress
+static time_t tx_enabled_since = 0;    // when Tx was last enabled or progressed
+static gboolean prev_txen = FALSE;      // tx_enabled on the previous poll
+
+// Set of callsigns already logged (worked-before), loaded from the ADIF log and
+// kept updated as QSOs complete.  Keys are uppercased g_strdup'd callsigns.
+static GHashTable *worked = NULL;
+
+static void worked_add(const char *call) {
+  if (!worked || !call || !call[0]) return;
+  char up[16]; int j = 0;
+  for (int i = 0; call[i] && j < 15; i++) up[j++] = g_ascii_toupper(call[i]);
+  up[j] = '\0';
+  if (!g_hash_table_contains(worked, up)) g_hash_table_add(worked, g_strdup(up));
+}
+
+// Extract every "<CALL:len>value" from one ADIF line into the worked set.
+static void worked_parse_line(const char *line) {
+  const char *p = line;
+  while ((p = strstr(p, "<CALL:")) != NULL) {
+    p += 6;
+    int len = atoi(p);
+    const char *gt = strchr(p, '>');
+    if (gt == NULL || len <= 0) break;
+    const char *val = gt + 1;
+    char call[16];
+    int n = len < 15 ? len : 15;
+    strncpy(call, val, n);
+    call[n] = '\0';
+    worked_add(call);
+    p = val + len;
+  }
+}
+
+static void worked_load(void) {
+  worked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  char path[512];
+  snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
+  FILE *f = fopen(path, "r");
+  if (f == NULL) return;
+  char line[1024];
+  while (fgets(line, sizeof(line), f) != NULL) worked_parse_line(line);
+  fclose(f);
+}
+
+gboolean ft8_qso_worked(const char *call) {
+  if (!worked || !call || !call[0]) return FALSE;
+  char up[16]; int j = 0;
+  for (int i = 0; call[i] && j < 15; i++) up[j++] = g_ascii_toupper(call[i]);
+  up[j] = '\0';
+  return g_hash_table_contains(worked, up);
+}
+
 // ---- small text helpers ----------------------------------------------------
 static gboolean is_grid(const char *s) {
   int n = (int)strlen(s);
@@ -139,7 +192,7 @@ static void msg_rreport(void) { set_pending("%s %s R%+03d", dx_call, my_call, se
 static void msg_rr73(void)    { set_pending("%s %s RR73", dx_call, my_call); }
 static void msg_73(void)      { set_pending("%s %s 73", dx_call, my_call); }
 
-static void progress(void) { cycles = 0; }
+static void progress(void) { cycles = 0; tx_enabled_since = time(NULL); }
 
 // ---- ADIF logging ----------------------------------------------------------
 static void adif_field(char **p, const char *name, const char *val) {
@@ -178,6 +231,7 @@ static void log_qso(void) {
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
   FILE *f = fopen(path, "a");
   if (f) { fputs(rec, f); fclose(f); }
+  worked_add(dx_call);
   fprintf(stderr, "ft8-qso: logged %s\n", dx_call);
 }
 
@@ -271,7 +325,16 @@ static void handle_decode(const FT8_DECODE *d) {
 
 // ---- poll timer (GTK main thread) ------------------------------------------
 static gboolean qso_poll(gpointer data) {
-  if (state == ST_IDLE) { prev_active = FALSE; return G_SOURCE_CONTINUE; }
+  if (state == ST_IDLE) { prev_active = FALSE; prev_txen = FALSE; return G_SOURCE_CONTINUE; }
+
+  // 0) Tx watchdog: auto-disable Tx after a long stretch with no progress so a
+  // forgotten CQ or unanswered call can't key the rig indefinitely.
+  if (tx_enabled && !prev_txen) tx_enabled_since = time(NULL);
+  prev_txen = tx_enabled;
+  if (tx_enabled && (time(NULL) - tx_enabled_since) > TX_WATCHDOG_SEC) {
+    ft8_qso_set_tx_enabled(FALSE);
+    snprintf(status, sizeof(status), "Tx watchdog — disabled");
+  }
 
   // 1) Process a freshly completed slot's decodes exactly once.
   FT8_DECODE d[64];
@@ -322,6 +385,7 @@ static gboolean qso_poll(gpointer data) {
 // Public API
 // ===========================================================================
 void ft8_qso_init(void) {
+  worked_load();
   if (poll_id == 0) poll_id = g_timeout_add(500, qso_poll, NULL);
 }
 

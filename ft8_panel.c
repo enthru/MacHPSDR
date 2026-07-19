@@ -36,7 +36,8 @@
 
 // Tree store columns.  CALLDE/EXTRA are hidden, kept so a clicked row can be
 // turned back into a QSO answer without a separate backing array.
-enum { COL_UTC, COL_DB, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_CALLDE, COL_EXTRA, N_COLS };
+enum { COL_UTC, COL_DB, COL_DT, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_B4,
+       COL_CALLDE, COL_EXTRA, N_COLS };
 
 #define MAX_ROWS 1000   // rolling band-activity cap
 
@@ -102,6 +103,10 @@ static void cqonly_toggled(GtkToggleButton *t, gpointer data) {
   cq_only = gtk_toggle_button_get_active(t);
   if (filter) gtk_tree_model_filter_refilter(GTK_TREE_MODEL_FILTER(filter));
 }
+static void erase_clicked(GtkButton *b, gpointer data) {
+  if (store) gtk_list_store_clear(store);
+  disp_utc[0] = '\0';
+}
 
 // Double-click a decode row: work that station.
 static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer data) {
@@ -140,14 +145,19 @@ static gboolean refresh(gpointer data) {
       gboolean tome = mycall[0] && d[i].call_to[0] &&
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
       gboolean iscq = strncmp(d[i].call_to, "CQ", 2) == 0;
+      gboolean b4 = d[i].call_de[0] && ft8_qso_worked(d[i].call_de);
+      char dt[8];
+      snprintf(dt, sizeof(dt), "%+.1f", d[i].dt);
       gtk_list_store_append(store, &it);
       gtk_list_store_set(store, &it,
                          COL_UTC,    d[i].utc,
                          COL_DB,     (gint)d[i].snr,
+                         COL_DT,     dt,
                          COL_FREQ,   (gint)d[i].freq,
                          COL_MSG,    d[i].text,
                          COL_TOME,   tome,
                          COL_CQ,     iscq,
+                         COL_B4,     b4,
                          COL_CALLDE, d[i].call_de,
                          COL_EXTRA,  d[i].extra,
                          -1);
@@ -260,9 +270,12 @@ GtkWidget *ft8_panel_create(void) {
   gtk_box_pack_start(GTK_BOX(box), cfg, FALSE, FALSE, 0);
 
   // --- decode list ---
-  store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT,
-                             G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_BOOLEAN,
-                             G_TYPE_STRING, G_TYPE_STRING);
+  store = gtk_list_store_new(N_COLS,
+                             G_TYPE_STRING,  /* UTC  */ G_TYPE_INT,     /* dB   */
+                             G_TYPE_STRING,  /* DT   */ G_TYPE_INT,     /* Hz   */
+                             G_TYPE_STRING,  /* Msg  */ G_TYPE_BOOLEAN, /* tome */
+                             G_TYPE_BOOLEAN, /* cq   */ G_TYPE_BOOLEAN, /* b4   */
+                             G_TYPE_STRING,  /* de   */ G_TYPE_STRING   /* extra*/);
   filter = gtk_tree_model_filter_new(GTK_TREE_MODEL(store), NULL);
   gtk_tree_model_filter_set_visible_func(GTK_TREE_MODEL_FILTER(filter),
                                          filter_visible, NULL, NULL);
@@ -272,15 +285,17 @@ GtkWidget *ft8_panel_create(void) {
   g_signal_connect(view, "row-activated", G_CALLBACK(row_activated), NULL);
 
   struct { const char *t; int c; } cols[] = {
-    {"UTC", COL_UTC}, {"dB", COL_DB}, {"Hz", COL_FREQ}, {"Message", COL_MSG}
+    {"UTC", COL_UTC}, {"dB", COL_DB}, {"DT", COL_DT}, {"Hz", COL_FREQ}, {"Message", COL_MSG}
   };
   for (unsigned k = 0; k < G_N_ELEMENTS(cols); k++) {
     GtkCellRenderer *r = gtk_cell_renderer_text_new();
     GtkTreeViewColumn *c =
       gtk_tree_view_column_new_with_attributes(cols[k].t, r, "text", cols[k].c, NULL);
-    // Bold the rows addressed to our station.
+    // Bold the rows addressed to our station; strike out worked-before calls.
     gtk_tree_view_column_add_attribute(c, r, "weight-set", COL_TOME);
     g_object_set(r, "weight", PANGO_WEIGHT_BOLD, NULL);
+    gtk_tree_view_column_add_attribute(c, r, "strikethrough-set", COL_B4);
+    g_object_set(r, "strikethrough", TRUE, NULL);
     // Colour CQ messages green so they stand out in the band-activity list.
     if (cols[k].c == COL_MSG) {
       gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_CQ);
@@ -318,6 +333,9 @@ GtkWidget *ft8_panel_create(void) {
   GtkWidget *cqchk = gtk_check_button_new_with_label("CQ only");
   g_signal_connect(cqchk, "toggled", G_CALLBACK(cqonly_toggled), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), cqchk, FALSE, FALSE, 0);
+  GtkWidget *erase = gtk_button_new_with_label("Erase");
+  g_signal_connect(erase, "clicked", G_CALLBACK(erase_clicked), NULL);
+  gtk_box_pack_start(GTK_BOX(ctl), erase, FALSE, FALSE, 0);
   GtkWidget *halt = gtk_button_new_with_label("Halt Tx");
   g_signal_connect(halt, "clicked", G_CALLBACK(halt_clicked), NULL);
   gtk_box_pack_start(GTK_BOX(ctl), halt, FALSE, FALSE, 0);

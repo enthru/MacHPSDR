@@ -78,4 +78,7 @@ extern void ft8_qso_select_tx(int idx);
 // Queue an arbitrary free-text message (<=13 chars) and start sending it.
 extern void ft8_qso_send_free(const char *text);
 
+// TRUE if this callsign already appears in the ADIF log (worked-before).
+extern gboolean ft8_qso_worked(const char *call);
+
 #endif
