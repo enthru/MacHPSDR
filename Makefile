@@ -160,7 +160,7 @@ INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
 .c.o:
-	$(COMPILE) -c -o $@ $<
+	$(COMPILE) -MMD -MP -c -o $@ $<
 
 PROGRAM=machpsdr
 
@@ -358,6 +358,13 @@ waterfall_theme.o
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
 	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(LIBS) $(RPATH_FLAGS)
 
+# Header dependencies: the .c.o rule emits a .d per object (-MMD -MP). Pulling
+# them in here makes a plain `make` recompile every object that includes a
+# changed header (e.g. a struct field added to radio.h) — without this, stale
+# objects keep the old struct layout and corrupt memory at run time.
+ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
+-include $(ALL_OBJS:.o=.d)
+
 ifeq ($(UNAME_S), Darwin)
 # Build the in-tree WDSP and stamp its install-id to @rpath so it can be found
 # via rpath (repo run) or bundled into the .app. Order-only prereq of $(PROGRAM):
@@ -379,7 +386,7 @@ prebuild:
 
 
 clean:
-	-rm -f *.o
+	-rm -f *.o *.d
 	-rm -f ft8_lib/ft8/*.o ft8_lib/fft/*.o ft8_lib/common/*.o
 	-rm -f $(PROGRAM)
 	-rm -rf $(APP_NAME).app

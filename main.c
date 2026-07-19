@@ -211,6 +211,15 @@ fprintf(stderr,"tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp
   }
 }
 
+gboolean start_cb(GtkWidget *widget,gpointer data);
+
+// --faker one-shot auto-start: fire start_cb once, then remove the timeout so we
+// don't keep re-creating the radio every tick.
+static gboolean faker_autostart(gpointer data) {
+  start_cb(NULL,NULL);
+  return G_SOURCE_REMOVE;
+}
+
 static int discover(void *data) {
   char v[32];
   char mac[32];
@@ -330,6 +339,9 @@ g_print("adding %s\n",d->name);
 
   gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_ARROW));
 
+  // --faker: skip the device-selection dialog and start straight into the fake
+  // device (the default selection = first/only row, which the faker occupies).
+  if(enable_fake && devices>0) g_timeout_add(300,faker_autostart,NULL);
   return 0;
 }
 
