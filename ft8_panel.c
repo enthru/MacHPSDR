@@ -47,6 +47,7 @@ static GtkWidget    *status_label = NULL;
 static GtkWidget    *dx_label = NULL;
 static GtkWidget    *enable_btn = NULL;   // GtkToggleButton "Enable Tx"
 static GtkWidget    *auto_chk = NULL;     // GtkCheckButton "Auto Seq"
+static GtkWidget    *offset_spin = NULL;  // TX offset (Hz), synced to shift-click
 static GtkWidget    *txbtn[6] = { NULL };  // Tx1..Tx6 message buttons
 static guint         refresh_id = 0;
 
@@ -173,6 +174,13 @@ static gboolean refresh(gpointer data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
     g_signal_handlers_unblock_by_func(auto_chk, (gpointer)auto_toggled, NULL);
   }
+  if (offset_spin) {   // reflect shift-click changes made on the panadapter
+    if (gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(offset_spin)) != radio->ft8_tx_offset) {
+      g_signal_handlers_block_by_func(offset_spin, (gpointer)offset_changed, NULL);
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset_spin), radio->ft8_tx_offset);
+      g_signal_handlers_unblock_by_func(offset_spin, (gpointer)offset_changed, NULL);
+    }
+  }
   if (dx_label) {
     const char *dx = ft8_qso_dx_call();
     char buf[32];
@@ -190,7 +198,7 @@ static gboolean refresh(gpointer data) {
 static void on_destroy(GtkWidget *w, gpointer data) {
   if (refresh_id) { g_source_remove(refresh_id); refresh_id = 0; }
   store = NULL; view = NULL; status_label = NULL; dx_label = NULL;
-  enable_btn = NULL; auto_chk = NULL;
+  enable_btn = NULL; auto_chk = NULL; offset_spin = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_utc[0] = '\0';
 }
@@ -217,10 +225,10 @@ GtkWidget *ft8_panel_create(void) {
   gtk_box_pack_start(GTK_BOX(cfg), grid, FALSE, FALSE, 0);
 
   gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Tx Hz"), FALSE, FALSE, 0);
-  GtkWidget *offset = gtk_spin_button_new_with_range(200, 2800, 1);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset), radio->ft8_tx_offset);
-  g_signal_connect(offset, "value-changed", G_CALLBACK(offset_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), offset, FALSE, FALSE, 0);
+  offset_spin = gtk_spin_button_new_with_range(200, 2800, 1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset_spin), radio->ft8_tx_offset);
+  g_signal_connect(offset_spin, "value-changed", G_CALLBACK(offset_changed), NULL);
+  gtk_box_pack_start(GTK_BOX(cfg), offset_spin, FALSE, FALSE, 0);
 
   GtkWidget *slot = gtk_combo_box_text_new();
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(slot), "Even");

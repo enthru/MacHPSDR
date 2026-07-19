@@ -872,6 +872,21 @@ gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event
   radio->active_receiver=(RECEIVER *)data;
   switch(event->button) {
     case 1: // left button
+#ifdef FT8
+      // Shift+click in DIGU sets the FT8 TX audio offset (dial+offset) without
+      // tuning the dial.  Mirrors WSJT-X double-click-to-set-Tx.
+      if(rx->mode_a==DIGU && (event->state & GDK_SHIFT_MASK)) {
+        long long half=(long long)rx->sample_rate/2LL;
+        long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+        double clicked=(double)min_display + (double)event->x*rx->hz_per_pixel;
+        int off=(int)(clicked - (double)rx->frequency_a);
+        if(off<200) off=200;
+        if(off>2800) off=2800;
+        radio->ft8_tx_offset=off;
+        if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
+        return TRUE;
+      }
+#endif
       //if(!rx->locked) {
         rx->last_x=(int)event->x;
         rx->has_moved=FALSE;
