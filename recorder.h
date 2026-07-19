@@ -28,4 +28,9 @@ gboolean recorder_active(void);
 void recorder_iq(RECEIVER *rx, double *iq, int nsamples);
 void recorder_audio(RECEIVER *rx, double *audio, int nstereo);
 
+/* Build the "Recording" page for the Configure dialog (output directory + the
+ * I/Q / AF stream check boxes). Defined in recorder.c. */
+struct _radio;
+GtkWidget *create_recording_dialog(struct _radio *radio);
+
 #endif

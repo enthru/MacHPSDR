@@ -55,6 +55,7 @@
 #include "midi_dialog.h"
 #endif
 #include "diversity_dialog.h"
+#include "recorder.h"
 #ifdef FT8
 #include "ft8_dialog.h"
 #endif
@@ -175,6 +176,8 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 #endif
 
   add_page(create_labels_dialog(radio),"Misc");
+
+  add_page(create_recording_dialog(radio),"Recording");
 
 #ifdef FT8
   add_page(create_ft8_dialog(radio),"FT8");
