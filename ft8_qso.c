@@ -81,46 +81,84 @@ static guint  poll_id = 0;
 static time_t tx_enabled_since = 0;    // when Tx was last enabled or progressed
 static gboolean prev_txen = FALSE;      // tx_enabled on the previous poll
 
+// Map a dial frequency (Hz) to an amateur band in metres (0 = unknown).  Used
+// both to stamp the log's BAND field and to key per-band worked tracking.
+static int band_from_hz(long long hz) {
+  double m = (double)hz / 1.0e6;
+  if (m >= 1.8   && m < 2.0)    return 160;
+  if (m >= 3.5   && m < 4.0)    return 80;
+  if (m >= 5.25  && m < 5.5)    return 60;
+  if (m >= 7.0   && m < 7.3)    return 40;
+  if (m >= 10.1  && m < 10.15)  return 30;
+  if (m >= 14.0  && m < 14.35)  return 20;
+  if (m >= 18.06 && m < 18.17)  return 17;
+  if (m >= 21.0  && m < 21.45)  return 15;
+  if (m >= 24.89 && m < 24.99)  return 12;
+  if (m >= 28.0  && m < 29.7)   return 10;
+  if (m >= 50.0  && m < 54.0)   return 6;
+  if (m >= 70.0  && m < 71.0)   return 4;
+  if (m >= 144.0 && m < 148.0)  return 2;
+  return 0;
+}
+
+// Fetch one "<FIELD:len>value" from an ADIF line into out; FALSE if absent.
+static gboolean adif_get(const char *line, const char *field, char *out, int outsz) {
+  char tag[32];
+  int tn = snprintf(tag, sizeof(tag), "<%s:", field);
+  const char *p = strstr(line, tag);
+  if (!p) return FALSE;
+  p += tn;
+  int len = atoi(p);
+  const char *gt = strchr(p, '>');
+  if (!gt || len <= 0) return FALSE;
+  const char *val = gt + 1;
+  int n = len < outsz - 1 ? len : outsz - 1;
+  memcpy(out, val, n);
+  out[n] = '\0';
+  return TRUE;
+}
+
 // Set of callsigns already logged (worked-before), loaded from the ADIF log and
 // kept updated as QSOs complete.  Keys are uppercased g_strdup'd callsigns.
 static GHashTable *worked = NULL;
-// Set of DXCC entity indices already worked (for the "new one" highlight),
-// resolved from each logged callsign via cty.dat.  Keys are GINT_TO_POINTER(ent).
+// Set of DXCC entity indices worked on ANY band ("new DXCC ever"): key = ent.
 static GHashTable *worked_dxcc = NULL;
+// Set of (band,entity) pairs worked ("new DXCC on this band"): key = band*1000+ent.
+static GHashTable *worked_dxcc_band = NULL;
 
-static void worked_add(const char *call) {
+static void worked_add(const char *call, int band) {
   if (!worked || !call || !call[0]) return;
   char up[16]; int j = 0;
   for (int i = 0; call[i] && j < 15; i++) up[j++] = g_ascii_toupper(call[i]);
   up[j] = '\0';
   if (!g_hash_table_contains(worked, up)) g_hash_table_add(worked, g_strdup(up));
-  // Also remember the DXCC entity so a later decode from the same country is not
-  // flagged as new.
+  // Remember the DXCC entity (mixed-band and per-band) so a later decode from the
+  // same country is not flagged as new.
   int ent = ft8_dxcc_entity(up);
-  if (ent >= 0 && worked_dxcc) g_hash_table_add(worked_dxcc, GINT_TO_POINTER(ent));
+  if (ent >= 0) {
+    if (worked_dxcc) g_hash_table_add(worked_dxcc, GINT_TO_POINTER(ent));
+    if (band > 0 && worked_dxcc_band)
+      g_hash_table_add(worked_dxcc_band, GINT_TO_POINTER(band * 1000 + ent));
+  }
 }
 
-// Extract every "<CALL:len>value" from one ADIF line into the worked set.
+// Parse one ADIF record line (our log writes one <...><EOR> per line): pull the
+// callsign and its band (from BAND, or derived from FREQ for older records).
 static void worked_parse_line(const char *line) {
-  const char *p = line;
-  while ((p = strstr(p, "<CALL:")) != NULL) {
-    p += 6;
-    int len = atoi(p);
-    const char *gt = strchr(p, '>');
-    if (gt == NULL || len <= 0) break;
-    const char *val = gt + 1;
-    char call[16];
-    int n = len < 15 ? len : 15;
-    strncpy(call, val, n);
-    call[n] = '\0';
-    worked_add(call);
-    p = val + len;
-  }
+  char call[16];
+  if (!adif_get(line, "CALL", call, sizeof(call))) return;
+  int band = 0;
+  char buf[16];
+  if (adif_get(line, "BAND", buf, sizeof(buf))) band = atoi(buf);        // "20M" -> 20
+  else if (adif_get(line, "FREQ", buf, sizeof(buf)))
+    band = band_from_hz((long long)(atof(buf) * 1.0e6));
+  worked_add(call, band);
 }
 
 static void worked_load(void) {
   worked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   worked_dxcc = g_hash_table_new(g_direct_hash, g_direct_equal);
+  worked_dxcc_band = g_hash_table_new(g_direct_hash, g_direct_equal);
   char path[512];
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
   FILE *f = fopen(path, "r");
@@ -138,13 +176,26 @@ gboolean ft8_qso_worked(const char *call) {
   return g_hash_table_contains(worked, up);
 }
 
-// TRUE if `call` resolves to a DXCC entity we have not logged before — i.e. a
-// "new one".  Unknown/unresolvable calls return FALSE so we never false-alarm.
+// TRUE if `call` resolves to a DXCC entity we have not logged before on ANY band
+// — i.e. a brand "new one".  Unknown/unresolvable calls return FALSE so we never
+// false-alarm.
 gboolean ft8_qso_new_dxcc(const char *call) {
   if (!worked_dxcc || !call || !call[0]) return FALSE;
   int ent = ft8_dxcc_entity(call);
   if (ent < 0) return FALSE;
   return !g_hash_table_contains(worked_dxcc, GINT_TO_POINTER(ent));
+}
+
+// TRUE if `call`'s DXCC entity has not been worked on the band that `dial_hz`
+// falls in — a "new one on this band".  FALSE for unknown calls or an
+// out-of-band dial.
+gboolean ft8_qso_new_dxcc_band(const char *call, long long dial_hz) {
+  if (!worked_dxcc_band || !call || !call[0]) return FALSE;
+  int band = band_from_hz(dial_hz);
+  if (band <= 0) return FALSE;
+  int ent = ft8_dxcc_entity(call);
+  if (ent < 0) return FALSE;
+  return !g_hash_table_contains(worked_dxcc_band, GINT_TO_POINTER(band * 1000 + ent));
 }
 
 // Country name for a decoded call (via cty.dat), or NULL if unresolved.
@@ -237,9 +288,15 @@ static void log_qso(void) {
   snprintf(rs, sizeof(rs), "%+03d", sent_report);
   snprintf(rr, sizeof(rr), "%+03d", recv_report);
   double mhz = 0.0;
-  if (radio && radio->active_receiver)
-    mhz = (double)(radio->active_receiver->frequency_a + radio->ft8_tx_offset) / 1.0e6;
+  long long dial = 0;
+  if (radio && radio->active_receiver) {
+    dial = radio->active_receiver->frequency_a;
+    mhz = (double)(dial + radio->ft8_tx_offset) / 1.0e6;
+  }
   snprintf(freq, sizeof(freq), "%.6f", mhz);
+  int band = band_from_hz(dial);
+  char bandstr[8];
+  snprintf(bandstr, sizeof(bandstr), "%dm", band);
 
   char rec[512], *p = rec;
   adif_field(&p, "CALL", dx_call);
@@ -249,6 +306,7 @@ static void log_qso(void) {
   adif_field(&p, "RST_RCVD", rr);
   adif_field(&p, "QSO_DATE", date);
   adif_field(&p, "TIME_ON", tm_on);
+  if (band > 0) adif_field(&p, "BAND", bandstr);
   if (mhz > 0.0) adif_field(&p, "FREQ", freq);
   p += sprintf(p, "<EOR>\n");
 
@@ -257,8 +315,8 @@ static void log_qso(void) {
   FILE *f = fopen(path, "a");
   if (f) { fputs(rec, f); fclose(f); }
   ft8_udp_log(rec);   // also push to a network logger (JTDX-style), if enabled
-  worked_add(dx_call);
-  fprintf(stderr, "ft8-qso: logged %s\n", dx_call);
+  worked_add(dx_call, band);
+  fprintf(stderr, "ft8-qso: logged %s on %dm\n", dx_call, band);
 }
 
 // ---- state control ---------------------------------------------------------

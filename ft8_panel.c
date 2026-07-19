@@ -37,7 +37,7 @@
 // Tree store columns.  CALLDE/EXTRA are hidden, kept so a clicked row can be
 // turned back into a QSO answer without a separate backing array.
 enum { COL_UTC, COL_DB, COL_DT, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_B4,
-       COL_NEWDX, COL_COUNTRY, COL_CALLDE, COL_EXTRA, N_COLS };
+       COL_BG, COL_BGSET, COL_COUNTRY, COL_CALLDE, COL_EXTRA, N_COLS };
 
 #define MAX_ROWS 1000   // rolling band-activity cap
 
@@ -148,13 +148,19 @@ static gboolean refresh(gpointer data) {
     snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 
     const char *mycall = radio->station_call;
+    long long dial = (radio && radio->active_receiver) ? radio->active_receiver->frequency_a : 0;
     GtkTreeIter it;
     for (int i = 0; i < n; i++) {
       gboolean tome = mycall[0] && d[i].call_to[0] &&
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
       gboolean iscq = strncmp(d[i].call_to, "CQ", 2) == 0;
       gboolean b4 = d[i].call_de[0] && ft8_qso_worked(d[i].call_de);
-      gboolean newdx = d[i].call_de[0] && ft8_qso_new_dxcc(d[i].call_de);
+      // Two-level "new one" highlight: a brand-new DXCC (any band) is gold; a
+      // country worked elsewhere but new on THIS band is blue.
+      gboolean new_ever = d[i].call_de[0] && ft8_qso_new_dxcc(d[i].call_de);
+      gboolean new_band = d[i].call_de[0] && !new_ever &&
+                          ft8_qso_new_dxcc_band(d[i].call_de, dial);
+      const char *bg = new_ever ? "#b8860b" : (new_band ? "#2f6fb0" : NULL);
       const char *country = d[i].call_de[0] ? ft8_qso_country(d[i].call_de) : NULL;
       char dt[8];
       snprintf(dt, sizeof(dt), "%+.1f", d[i].dt);
@@ -168,7 +174,8 @@ static gboolean refresh(gpointer data) {
                          COL_TOME,    tome,
                          COL_CQ,      iscq,
                          COL_B4,      b4,
-                         COL_NEWDX,   newdx,
+                         COL_BG,      bg ? bg : "",
+                         COL_BGSET,   bg != NULL,
                          COL_COUNTRY, country ? country : "",
                          COL_CALLDE,  d[i].call_de,
                          COL_EXTRA,   d[i].extra,
@@ -293,7 +300,8 @@ GtkWidget *ft8_panel_create(void) {
                              G_TYPE_STRING,  /* DT    */ G_TYPE_INT,     /* Hz    */
                              G_TYPE_STRING,  /* Msg   */ G_TYPE_BOOLEAN, /* tome  */
                              G_TYPE_BOOLEAN, /* cq    */ G_TYPE_BOOLEAN, /* b4    */
-                             G_TYPE_BOOLEAN, /* newdx */ G_TYPE_STRING,  /* cntry */
+                             G_TYPE_STRING,  /* bg    */ G_TYPE_BOOLEAN, /* bgset */
+                             G_TYPE_STRING,  /* cntry */
                              G_TYPE_STRING,  /* de    */ G_TYPE_STRING   /* extra */);
   filter = gtk_tree_model_filter_new(GTK_TREE_MODEL(store), NULL);
   gtk_tree_model_filter_set_visible_func(GTK_TREE_MODEL_FILTER(filter),
@@ -317,9 +325,10 @@ GtkWidget *ft8_panel_create(void) {
     g_object_set(r, "weight", PANGO_WEIGHT_BOLD, NULL);
     gtk_tree_view_column_add_attribute(c, r, "strikethrough-set", COL_B4);
     g_object_set(r, "strikethrough", TRUE, NULL);
-    // Highlight a station whose DXCC entity we've never worked (a "new one").
-    gtk_tree_view_column_add_attribute(c, r, "cell-background-set", COL_NEWDX);
-    g_object_set(r, "cell-background", "#b8860b", NULL);
+    // Highlight new DXCC (gold = new ever, blue = new on this band); the colour
+    // and on/off flag come from the model so both levels share one renderer.
+    gtk_tree_view_column_add_attribute(c, r, "cell-background", COL_BG);
+    gtk_tree_view_column_add_attribute(c, r, "cell-background-set", COL_BGSET);
     // Colour CQ messages green so they stand out in the band-activity list.
     if (cols[k].c == COL_MSG) {
       gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_CQ);

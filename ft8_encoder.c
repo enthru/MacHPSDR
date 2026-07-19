@@ -65,6 +65,13 @@ static gboolean          arm_even = FALSE;    // desired slot parity
 static long              last_started_slot = -1; // slot we last keyed up in
 static gboolean          we_keyed = FALSE;    // did we raise MOX (so we drop it)
 static guint             tick_id = 0;         // scheduler g_timeout id
+static time_t            key_time = 0;        // when WE last raised MOX (watchdog)
+
+// Hard safety cap on how long our keying may hold MOX.  The GFSK waveform is
+// ~12.64 s; if the TX path never clocks it out (e.g. MOX didn't actually engage,
+// or a half-duplex/hardware stall), tx_idx never reaches wave_len and MOX would
+// stick on forever.  This forces key-down regardless.
+#define FT8_TX_MAX_SEC   14
 
 // ===========================================================================
 // Callsign hash table — ftx_message_encode() needs it to hash non-standard
@@ -181,6 +188,18 @@ static gboolean tx_tick(gpointer data) {
   int  in_slot = (int)(now % FT8_SLOT_SEC);
 
   if (tx_active) {
+    // Safety watchdog: never let our keying hold MOX past the waveform length +
+    // margin, even if the TX path stops pulling samples (tx_idx would stall).
+    if (we_keyed && key_time && (now - key_time) > FT8_TX_MAX_SEC) {
+      fprintf(stderr, "ft8-tx: WATCHDOG — MOX held >%ds (tx_idx=%ld/%d), forcing key-down\n",
+              FT8_TX_MAX_SEC, tx_idx, wave_len);
+      tx_active = FALSE;
+      armed = FALSE;
+      we_keyed = FALSE;
+      set_mox(radio, FALSE);
+      tick_id = 0;
+      return G_SOURCE_REMOVE;
+    }
     // Key down once the whole waveform has been clocked into the TX chain.
     if (tx_idx >= wave_len) {
       tx_active = FALSE;
@@ -200,6 +219,7 @@ static gboolean tx_tick(gpointer data) {
     tx_active = TRUE;
     fprintf(stderr, "ft8-tx: slot boundary reached, keying up (in_slot=%d even=%d mox=%d)\n",
             in_slot, arm_even, radio->mox);
+    key_time = now;                     // arm the MOX safety watchdog
     if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
   }
   return G_SOURCE_CONTINUE;
