@@ -48,6 +48,7 @@ static GtkWidget    *dx_label = NULL;
 static GtkWidget    *enable_btn = NULL;   // GtkToggleButton "Enable Tx"
 static GtkWidget    *auto_chk = NULL;     // GtkCheckButton "Auto Seq"
 static GtkWidget    *offset_spin = NULL;  // TX offset (Hz), synced to shift-click
+static GtkWidget    *free_entry = NULL;   // free-text message entry
 static GtkWidget    *txbtn[6] = { NULL };  // Tx1..Tx6 message buttons
 static guint         refresh_id = 0;
 
@@ -85,6 +86,9 @@ static void enable_toggled(GtkToggleButton *t, gpointer data) {
 }
 static void auto_toggled(GtkToggleButton *t, gpointer data) {
   ft8_qso_set_auto(gtk_toggle_button_get_active(t));
+}
+static void free_send(GtkWidget *w, gpointer data) {
+  if (free_entry) ft8_qso_send_free(gtk_entry_get_text(GTK_ENTRY(free_entry)));
 }
 
 // Double-click a decode row: work that station.
@@ -198,7 +202,7 @@ static gboolean refresh(gpointer data) {
 static void on_destroy(GtkWidget *w, gpointer data) {
   if (refresh_id) { g_source_remove(refresh_id); refresh_id = 0; }
   store = NULL; view = NULL; status_label = NULL; dx_label = NULL;
-  enable_btn = NULL; auto_chk = NULL; offset_spin = NULL;
+  enable_btn = NULL; auto_chk = NULL; offset_spin = NULL; free_entry = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_utc[0] = '\0';
 }
@@ -297,6 +301,18 @@ GtkWidget *ft8_panel_create(void) {
   dx_label = gtk_label_new("DX: —");
   gtk_box_pack_start(GTK_BOX(ctl), dx_label, FALSE, FALSE, 6);
   gtk_box_pack_start(GTK_BOX(box), ctl, FALSE, FALSE, 0);
+
+  // --- free-text message row ---
+  GtkWidget *frow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  free_entry = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(free_entry), 13);
+  gtk_entry_set_placeholder_text(GTK_ENTRY(free_entry), "free text (≤13)");
+  g_signal_connect(free_entry, "activate", G_CALLBACK(free_send), NULL);
+  gtk_box_pack_start(GTK_BOX(frow), free_entry, TRUE, TRUE, 0);
+  GtkWidget *freebtn = gtk_button_new_with_label("Send Free");
+  g_signal_connect(freebtn, "clicked", G_CALLBACK(free_send), NULL);
+  gtk_box_pack_start(GTK_BOX(frow), freebtn, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(box), frow, FALSE, FALSE, 0);
 
   status_label = gtk_label_new("Status: Idle");
   gtk_widget_set_halign(status_label, GTK_ALIGN_START);

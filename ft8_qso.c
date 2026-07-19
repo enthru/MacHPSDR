@@ -46,7 +46,8 @@ typedef enum {
   ST_CQ_SENT_RR73,     // sent "DX MYCALL RR73", waiting for 73 (or done)
   ST_ANS_SENT_GRID,    // sent "DX MYCALL GRID", waiting for a report
   ST_ANS_SENT_RREPORT, // sent "DX MYCALL R-rpt", waiting for RR73
-  ST_ANS_SENT_73       // sent "DX MYCALL 73" (final, one shot)
+  ST_ANS_SENT_73,      // sent "DX MYCALL 73" (final, one shot)
+  ST_FREE              // repeating a manual free-text message
 } qso_state_t;
 
 #define WATCHDOG_CYCLES 5     // give up after this many of our TX with no progress
@@ -287,7 +288,8 @@ static gboolean qso_poll(gpointer data) {
     cycles++;
     if (state == ST_ANS_SENT_73) {
       go_idle("QSO complete");                 // final 73 sent once
-    } else if (auto_seq && state != ST_CALLING_CQ && cycles >= WATCHDOG_CYCLES) {
+    } else if (auto_seq && state != ST_CALLING_CQ && state != ST_FREE &&
+               cycles >= WATCHDOG_CYCLES) {
       go_idle("No reply — stopped");
     } else if (have_pending) {
       need_arm = TRUE;                         // repeat the current message next cycle
@@ -462,4 +464,19 @@ void ft8_qso_select_tx(int idx) {
     default: return;
   }
   snprintf(status, sizeof(status), "Tx%d -> %s", idx, dx_call);
+}
+
+// Queue an arbitrary free-text message (up to 13 chars, uppercased) and start
+// repeating it each of our slots until halted.  Enables Tx.
+void ft8_qso_send_free(const char *text) {
+  if (text == NULL || text[0] == '\0') return;
+  char msg[16];
+  int j = 0;
+  for (int i = 0; text[i] && j < 13; i++) msg[j++] = (char)g_ascii_toupper(text[i]);
+  msg[j] = '\0';
+  logged = FALSE; prepared_msg[0] = '\0'; cycles = 0;
+  state = ST_FREE;
+  tx_enabled = TRUE;
+  set_pending("%s", msg);
+  snprintf(status, sizeof(status), "Free: %s", msg);
 }

@@ -75,4 +75,7 @@ extern int ft8_qso_messages(char out[6][32]);
 // Manually queue Tx message idx (1..6) as the next transmission.
 extern void ft8_qso_select_tx(int idx);
 
+// Queue an arbitrary free-text message (<=13 chars) and start sending it.
+extern void ft8_qso_send_free(const char *text);
+
 #endif
