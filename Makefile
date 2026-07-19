@@ -78,15 +78,15 @@ ifeq ($(FT8_INCLUDE),FT8)
 FT8_OPTIONS=-D FT8
 FT8_INCLUDES=-Ift8_lib
 FT8_SOURCES= \
-ft8_decoder.c \
+ft8_decoder.c ft8_encoder.c \
 ft8_lib/ft8/constants.c ft8_lib/ft8/crc.c ft8_lib/ft8/decode.c \
 ft8_lib/ft8/encode.c ft8_lib/ft8/ldpc.c ft8_lib/ft8/message.c ft8_lib/ft8/text.c \
 ft8_lib/fft/kiss_fft.c ft8_lib/fft/kiss_fftr.c \
 ft8_lib/common/monitor.c
 FT8_HEADERS= \
-ft8_decoder.h
+ft8_decoder.h ft8_encoder.h
 FT8_OBJS= \
-ft8_decoder.o \
+ft8_decoder.o ft8_encoder.o \
 ft8_lib/ft8/constants.o ft8_lib/ft8/crc.o ft8_lib/ft8/decode.o \
 ft8_lib/ft8/encode.o ft8_lib/ft8/ldpc.o ft8_lib/ft8/message.o ft8_lib/ft8/text.o \
 ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \

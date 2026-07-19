@@ -56,6 +56,9 @@
 #ifdef CWDAEMON
 #include "cwdaemon.h"
 #endif
+#ifdef FT8
+#include "ft8_encoder.h"
+#endif
 
 double ctcss_frequencies[CTCSS_FREQUENCIES]= {
   67.0,71.9,74.4,77.0,79.7,82.5,85.4,88.5,91.5,94.8,
@@ -1416,6 +1419,12 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
 
     if(mode==CWL || mode==CWU || radio->tune) {
       mic_sample_double=0.0;
+#ifdef FT8
+    } else if(mode==DIGU && ft8_tx_active()) {
+      // FT8 TX: substitute the synthesized FT8 waveform for the mic input so
+      // the normal DIGU (USB) TX chain modulates it up to dial+offset.
+      mic_sample_double=(double)ft8_tx_next_sample();
+#endif
     } else {
       mic_sample_double=(double)mic_sample;
     }
