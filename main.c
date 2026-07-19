@@ -55,6 +55,7 @@
 #include "version.h"
 #ifdef FT8
 #include "ft8_decoder.h"
+#include "ft8_qso.h"
 #endif
 
 #ifdef __APPLE__
@@ -479,6 +480,12 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     gtk_grid_attach(GTK_GRID(grid), radio->bottom_bar, 0, 3, 5, 1);
     gtk_widget_show_all(grid);
 
+#ifdef FT8
+    // If the radio restored a receiver already in DIGU, show the FT8 panel now
+    // (the global `radio` and its rx_container exist only at this point).
+    radio_ft8_panel_sync(radio);
+#endif
+
     //launch_rigctl(radio);
 
     value=getProperty("radio.x");
@@ -645,6 +652,8 @@ int main(int argc, char **argv) {
 #ifdef FT8
   // Spin up the FT8 decode worker thread (idle until a DIGU receiver feeds it).
   ft8_decoder_init();
+  // Start the auto-QSO poll timer (idle until a QSO/CQ is started from the panel).
+  ft8_qso_init();
 #endif
 
   if((homedir=getenv("HOME"))==NULL) {

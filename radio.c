@@ -68,6 +68,7 @@
 #include "hl2.h"
 #ifdef FT8
 #include "ft8_decoder.h"
+#include "ft8_panel.h"
 #endif
 
 #include "cwdaemon.h"
@@ -191,6 +192,12 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.buffer_size",value);
   sprintf(value,"%d",radio->receivers);
   setProperty("radio.receivers",value);
+  setProperty("radio.station_call",radio->station_call);
+  setProperty("radio.station_grid",radio->station_grid);
+  sprintf(value,"%d",radio->ft8_tx_offset);
+  setProperty("radio.ft8_tx_offset",value);
+  sprintf(value,"%d",radio->ft8_tx_even);
+  setProperty("radio.ft8_tx_even",value);
   sprintf(value,"%f",radio->meter_calibration);
   setProperty("radio.meter_calibration",value);
   sprintf(value,"%f",radio->panadapter_calibration);
@@ -723,7 +730,7 @@ void frequency_changed(RECEIVER *rx) {
         HL2clock2Status(radio->hl2, TRUE, &rx->lo_a);
       }
       else {
-        gtk_widget_set_sensitive(add_receiver_b, TRUE);
+        gtk_widget_set_sensitive(add_receiver_b, radio->ft8_panel==NULL);
         radio->hl2->xvtr = FALSE;
         HL2clock2Status(radio->hl2, FALSE, &rx->lo_a);
       }
@@ -882,7 +889,7 @@ g_print("delete_receiver: receivers now %d\n",radio->receivers);
     }
   }
 
-  gtk_widget_set_sensitive(add_receiver_b,radio->receivers<radio->discovered->supported_receivers);
+  gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
   if(radio->dialog) {
     gtk_widget_destroy(radio->dialog);
     radio->dialog=NULL;
@@ -1165,7 +1172,7 @@ g_print("add_receiver: no receivers available\n");
   }
 
   if (radio->hl2 == NULL || radio->hl2->xvtr == FALSE) {
-    gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
   }
 
   if(radio->dialog) {
@@ -1258,7 +1265,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
   // Collect the live panels in channel order, holding a temporary reference on
   // each and unparenting it so the teardown of the old layout below does not
   // destroy them.
-  GtkWidget *tables[MAX_RECEIVERS];
+  GtkWidget *tables[MAX_RECEIVERS+1];
   int n=0;
   for(int i=0;i<r->discovered->supported_receivers;i++) {
     RECEIVER *rx=r->receiver[i];
@@ -1269,6 +1276,14 @@ void radio_rebuild_rx_stack(RADIO *r) {
       if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),t);
       tables[n++]=t;
     }
+  }
+  // The FT8 QSO panel, when present, occupies the slot the second receiver
+  // would (see radio_ft8_panel_sync); include it as the last stack entry.
+  if(r->ft8_panel!=NULL) {
+    g_object_ref(r->ft8_panel);
+    GtkWidget *parent=gtk_widget_get_parent(r->ft8_panel);
+    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->ft8_panel);
+    tables[n++]=r->ft8_panel;
   }
 
   // Destroy whatever remains in the container: the old paned skeleton plus any
@@ -1308,6 +1323,36 @@ void radio_rebuild_rx_stack(RADIO *r) {
   if(n>1) g_timeout_add(100,rx_stack_balance,r);
 }
 
+#ifdef FT8
+// Show or hide the embedded FT8 QSO panel to match the active receiver's mode.
+// When the active RX is in DIGU the panel occupies the second-receiver slot and
+// the "Add Receiver" button is disabled (the panel owns that slot); otherwise
+// the panel is torn down and normal multi-RX operation resumes.  GTK thread only.
+void radio_ft8_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean want = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
+  gboolean have = (r->ft8_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->ft8_panel=ft8_panel_create();
+    g_object_ref_sink(r->ft8_panel);          // owned ref for the panel's lifetime
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->ft8_panel;
+    r->ft8_panel=NULL;                         // hide from the rebuild below
+    GtkWidget *parent=gtk_widget_get_parent(p);
+    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),p);
+    g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+}
+#endif
+
 void add_receivers(RADIO *r) {
   char name[80];
   char *value;
@@ -1317,6 +1362,14 @@ void add_receivers(RADIO *r) {
   receivers=0;
   value=getProperty("radio.receivers");
   if(value!=NULL) receivers=atoi(value);
+  value=getProperty("radio.station_call");
+  if(value!=NULL) { strncpy(r->station_call,value,sizeof(r->station_call)-1); r->station_call[sizeof(r->station_call)-1]='\0'; }
+  value=getProperty("radio.station_grid");
+  if(value!=NULL) { strncpy(r->station_grid,value,sizeof(r->station_grid)-1); r->station_grid[sizeof(r->station_grid)-1]='\0'; }
+  value=getProperty("radio.ft8_tx_offset");
+  if(value!=NULL) r->ft8_tx_offset=atoi(value);
+  value=getProperty("radio.ft8_tx_even");
+  if(value!=NULL) r->ft8_tx_even=atoi(value);
 
   // always add receiver 0
   if(receivers==0) {
@@ -1779,7 +1832,7 @@ static void create_visual(RADIO *r) {
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
-        gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
+        gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
       }
       else {
         gtk_widget_set_sensitive(add_receiver_b, FALSE);
@@ -2057,6 +2110,13 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->temperature_alarm_value = 50;
   r->qos_flag = FALSE;
 
+  // FT8 (Phase 2) defaults
+  r->station_call[0] = '\0';
+  r->station_grid[0] = '\0';
+  r->ft8_tx_offset = 1500;
+  r->ft8_tx_even = TRUE;
+  r->ft8_panel = NULL;
+
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());
 
@@ -2132,7 +2192,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   // saved properties), so set the Add Receiver button sensitivity to match.
   // The button only exists when supported_receivers>1; leave HL2-with-xvtr as-is.
   if(r->discovered->supported_receivers>1 && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
-    gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
   }
 
   radio_rebuild_rx_stack(r);

@@ -1536,6 +1536,12 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     SetRXAFMSQRun(rx->channel, rx->squelch_enable);
   }
   receiver_filter_changed(rx,rx->filter_a);
+#ifdef FT8
+  // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
+  // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
+  // audio-thread decoder tap in process_rx_buffer().
+  if(radio!=NULL && rx==radio->active_receiver) radio_ft8_panel_sync(radio);
+#endif
 }
 
 void receiver_band_changed(RECEIVER *rx,int band) {

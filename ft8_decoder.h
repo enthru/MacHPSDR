@@ -36,11 +36,16 @@
 
 // One decoded FT8 message from a completed 15-second slot.
 typedef struct _ft8_decode {
-  char  utc[8];    // "hhmmss" slot start (UTC)
-  float snr;       // approximate signal report (dB-ish, sync-score based)
-  float dt;        // time offset within the slot, seconds
-  float freq;      // audio frequency, Hz
-  char  text[40];  // decoded message text
+  char  utc[8];      // "hhmmss" slot start (UTC)
+  float snr;         // approximate signal report (dB-ish, sync-score based)
+  float dt;          // time offset within the slot, seconds
+  float freq;        // audio frequency, Hz
+  char  text[40];    // decoded message text
+  // Structured fields for the QSO engine, filled when the message parses as a
+  // standard type (empty strings otherwise).
+  char  call_to[14]; // recipient: "CQ"/"CQ DX"/a callsign
+  char  call_de[14]; // sender callsign
+  char  extra[16];   // grid / report ("-12"/"R-09") / "RRR"/"RR73"/"73"
 } FT8_DECODE;
 
 // Create the worker thread and buffers.  Call once at start-up.

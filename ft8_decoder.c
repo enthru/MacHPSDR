@@ -217,6 +217,17 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
     d->dt = time_sec - 0.5f;   // reference the slot's nominal TX start (~0.5 s)
     d->freq = freq_hz;
     snprintf(d->text, sizeof(d->text), "%s", text);
+
+    // Structured fields for the QSO engine: split standard messages into
+    // recipient / sender / extra.  Leave blank for free-text/telemetry/etc.
+    d->call_to[0] = d->call_de[0] = d->extra[0] = '\0';
+    char to[FTX_MAX_MESSAGE_LENGTH], de[FTX_MAX_MESSAGE_LENGTH], ex[FTX_MAX_MESSAGE_LENGTH];
+    ftx_field_t ftypes[FTX_MAX_MESSAGE_FIELDS];
+    if (ftx_message_decode_std(&message, &hash_if, to, de, ex, ftypes) == FTX_MESSAGE_RC_OK) {
+      snprintf(d->call_to, sizeof(d->call_to), "%s", to);
+      snprintf(d->call_de, sizeof(d->call_de), "%s", de);
+      snprintf(d->extra, sizeof(d->extra), "%s", ex);
+    }
   }
 
   monitor_free(&mon);

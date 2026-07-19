@@ -93,6 +93,12 @@ typedef struct _radio {
   TRANSMITTER *transmitter;
   HERMESLITE2 *hl2;
   RECEIVER *active_receiver;
+  // FT8 (Phase 2): station identity + TX state. Persisted in radio_save_state.
+  char station_call[16];   // operator callsign, used for FT8 TX/QSO
+  char station_grid[8];    // 4/6-char Maidenhead locator
+  gint ft8_tx_offset;      // FT8 audio TX offset (Hz)
+  gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC 15 s slots
+  GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless in DIGU)
   DIVMIXER *divmixer[MAX_DIVERSITY_MIXERS+1];
   gint alex_rx_antenna;
   gint alex_tx_antenna;
@@ -293,6 +299,9 @@ extern void vox_changed(RADIO *r);
 extern void ptt_changed(RADIO *r);
 extern gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
 extern void set_mox(RADIO *r,gboolean state);
+#ifdef FT8
+extern void radio_ft8_panel_sync(RADIO *r);
+#endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);
 extern void radio_change_audio(RADIO *r,int selected);

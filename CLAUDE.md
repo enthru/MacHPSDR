@@ -61,7 +61,7 @@ Platform is detected via `uname -s` in the Makefile (`Darwin` vs `Linux`).
 | `CWDAEMON` | enabled (Linux only) | CW keying via unixcw |
 | `PURESIGNAL` | disabled | Adaptive distortion correction (Protocol 1 only) |
 | `OPENGL` | disabled | OpenGL rendering |
-| `FT8` | enabled | FT8 receive decoder (auto-enabled in DIGU); vendored `ft8_lib/` |
+| `FT8` | enabled | FT8 RX decoder + TX/auto-QSO (auto-enabled in DIGU); vendored `ft8_lib/` |
 
 To toggle, comment/uncomment the `*_INCLUDE=*` lines near the top of the Makefile.
 
@@ -87,7 +87,10 @@ The global `RADIO *radio` struct (`radio.h`) is the central application state. I
 - **`waterfall_theme.c`** — Waterfall color theme definitions
 - **`hl2.c`** — Hermes-Lite 2 specific protocol extensions
 - **`wideband.c`, `wideband_panadapter.c`, `wideband_waterfall.c`** — Wideband spectrum display (separate from per-receiver panadapter)
-- **`ft8_decoder.c/h`** — FT8 receive decoder. Auto-enabled when the active receiver's mode is DIGU (tap in `receiver.c:process_rx_buffer`); decimates the 48 kHz demod audio to 12 kHz, buffers 15-second UTC slots, decodes in a background `GThread`. Displayed in the bottom-bar decoder block (see `rds_update_cb` in `radio.c`). Uses the vendored `ft8_lib/` (Karlis Goba, MIT); gated by the `FT8` Makefile flag. TX/QSO is a planned Phase 2.
+- **`ft8_decoder.c/h`** — FT8 receive decoder. Auto-enabled when the active receiver's mode is DIGU (tap in `receiver.c:process_rx_buffer`); decimates the 48 kHz demod audio to 12 kHz, buffers 15-second UTC slots, decodes in a background `GThread`. Displayed in the bottom-bar decoder block (see `rds_update_cb` in `radio.c`). Uses the vendored `ft8_lib/` (Karlis Goba, MIT); gated by the `FT8` Makefile flag. Each `FT8_DECODE` also carries structured `call_to`/`call_de`/`extra` fields (via `ftx_message_decode_std`) for the QSO engine.
+- **`ft8_encoder.c/h`** — FT8 **TX engine** (Phase 2). `ft8_tx_prepare()` packs a message (`ftx_message_encode` + `ft8_encode`) and synthesizes the GFSK waveform at the 48 kHz mic rate (ported `gfsk_pulse`/`synth_gfsk`, BT=2.0, 79 symbols ≈ 12.64 s). A ~100 ms slot scheduler (`ft8_tx_arm`, GTK thread) keys MOX (`set_mox`) at the top of the chosen even/odd UTC slot and drops it when the waveform ends. `add_mic_sample()` in `transmitter.c` substitutes `ft8_tx_next_sample()` for the mic input in DIGU while `ft8_tx_active()`, so the normal DIGU (USB) TX chain modulates the tone to dial+offset (universal across protocol1/2/soapy).
+- **`ft8_qso.c/h`** — FT8 **auto-QSO state machine** (Phase 2). Polls the decoder every ~500 ms (GTK thread), drives the standard WSJT-X exchange (CQ → grid → report → R-report → RR73 → 73), keys TX on the opposite slot, and appends completed QSOs to `~/.local/share/machpsdr/ft8_log.adi` (ADIF). Station call/grid + TX offset/slot live on `RADIO` (`station_call`, `station_grid`, `ft8_tx_offset`, `ft8_tx_even`), persisted in `radio_save_state`.
+- **`ft8_panel.c/h`** — Embedded **FT8 QSO panel** (Phase 2). A GtkWidget slotted into the RX stack *in place of the second receiver* while the active RX is in DIGU (orchestrated by `radio_ft8_panel_sync()` in `radio.c`, hooked from `receiver_mode_changed`); disables the "Add Receiver" button so no real second RX takes that slot. Shows the live decode list (double-click a row to work that station), station config, and auto-QSO status.
 - **`subrx.c`** — Sub-receiver support
 - **`ext.c`** — Thread-safe UI dispatch helpers (`ext_*` functions wrap `g_idle_add()` calls)
 
