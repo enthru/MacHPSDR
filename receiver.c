@@ -41,6 +41,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "recorder.h"
 #include "main.h"
 #include "vfo.h"
 #include "meter.h"
@@ -1797,6 +1798,9 @@ static void process_rx_buffer(RECEIVER *rx) {
     audio_start_output(rx);
   }
 
+  // Tap the clean demodulated audio (pre listen-volume) for recording.
+  recorder_audio(rx, rx->audio_output_buffer, rx->output_samples);
+
 #ifdef FT8
   // FT8 listening: tap the active receiver's demodulated audio when it is in
   // DIGU.  Driving enable/disable from the active RX's own buffer covers mode
@@ -1816,6 +1820,9 @@ static void full_rx_buffer(RECEIVER *rx) {
   int error;
 
   if(isTransmitting(radio) && (!rx->duplex)) return;
+
+  // Tap the genuine off-air I/Q before the noise blanker mutates it in place.
+  recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {
@@ -1847,6 +1854,8 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   int error;
 
   if(isTransmitting(radio) && (!rx->duplex)) return;
+
+  recorder_iq(rx, rx->diviq_input_buffer, rx->buffer_size);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {

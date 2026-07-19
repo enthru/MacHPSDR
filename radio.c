@@ -44,6 +44,7 @@
 #include "dac.h"
 #include "diversity_mixer.h"
 #include "radio.h"
+#include "recorder.h"
 #include "tx_panadapter.h"
 #include "protocol1.h"
 #include "protocol2.h"
@@ -1509,6 +1510,15 @@ static gboolean add_wideband_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
+// Toggle recording of the active receiver's I/Q + demodulated audio. The button
+// label flips Record/Stop; two WAVs land in ~/.local/share/machpsdr/ (see
+// recorder.c). The I/Q file is faker-replayable.
+static void record_cb(GtkWidget *widget,gpointer data) {
+  RADIO *r=(RADIO *)data;
+  gboolean on = recorder_toggle(r->active_receiver);
+  gtk_button_set_label(GTK_BUTTON(widget), on ? "Stop" : "Record");
+}
+
 static gboolean configure_cb(GtkWidget *widget,gpointer data) {
   RADIO *radio=(RADIO *)data;
   if(radio->dialog==NULL) {
@@ -1895,6 +1905,11 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_name(configure,"toolbar-button");
   g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
   gtk_box_pack_start(GTK_BOX(tool_col),configure,FALSE,FALSE,0);
+
+  GtkWidget *record=gtk_button_new_with_label(recorder_active()?"Stop":"Record");
+  gtk_widget_set_name(record,"toolbar-button");
+  g_signal_connect(record,"clicked",G_CALLBACK(record_cb),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(tool_col),record,FALSE,FALSE,0);
 
   if(r->discovered->supported_receivers>1) {
     add_receiver_b=gtk_button_new_with_label("Add Receiver");

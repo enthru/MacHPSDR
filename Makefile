@@ -352,6 +352,7 @@ tx_info_meter.o \
 peak_detect.o \
 subrx.o \
 actions.o \
+recorder.o \
 waterfall_theme.o
 
 
