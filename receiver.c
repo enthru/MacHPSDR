@@ -867,6 +867,28 @@ static void focus_in_event_cb(GtkWindow *window,GdkEventFocus *event,gpointer da
   }
 }
 
+#ifdef FT8
+// TRUE when a panadapter gesture should place the FT8 TX offset rather than
+// tune the RX: Shift held while the active receiver is in DIGU.
+static gboolean ft8_tx_offset_gesture(RECEIVER *rx, guint state) {
+  return rx->mode_a==DIGU && (state & GDK_SHIFT_MASK);
+}
+
+// Set the FT8 TX audio offset from a panadapter x-coordinate, clamped to the
+// FT8 passband.  Purely sets dial+offset inside the *static* display window — it
+// never tunes/pans the RX, so the operator can drop TX on a clear frequency.
+static void ft8_set_tx_offset_from_x(RECEIVER *rx, double ex) {
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+  double clicked=(double)min_display + ex*rx->hz_per_pixel;
+  int off=(int)(clicked - (double)rx->frequency_a);
+  if(off<200) off=200;
+  if(off>2800) off=2800;
+  radio->ft8_tx_offset=off;
+  if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
+}
+#endif
+
 gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   radio->active_receiver=(RECEIVER *)data;
@@ -874,16 +896,13 @@ gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event
     case 1: // left button
 #ifdef FT8
       // Shift+click in DIGU sets the FT8 TX audio offset (dial+offset) without
-      // tuning the dial.  Mirrors WSJT-X double-click-to-set-Tx.
-      if(rx->mode_a==DIGU && (event->state & GDK_SHIFT_MASK)) {
-        long long half=(long long)rx->sample_rate/2LL;
-        long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
-        double clicked=(double)min_display + (double)event->x*rx->hz_per_pixel;
-        int off=(int)(clicked - (double)rx->frequency_a);
-        if(off<200) off=200;
-        if(off>2800) off=2800;
-        radio->ft8_tx_offset=off;
-        if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
+      // tuning the dial.  Mirrors WSJT-X double-click-to-set-Tx.  The matching
+      // guards in the release/motion handlers keep the RX from retuning.
+      if(ft8_tx_offset_gesture(rx,event->state)) {
+        ft8_set_tx_offset_from_x(rx,(double)event->x);
+        rx->last_x=(int)event->x;
+        rx->has_moved=FALSE;
+        rx->is_panning=FALSE;
         return TRUE;
       }
 #endif
@@ -1217,6 +1236,16 @@ gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *eve
   int moved=x-rx->last_x;
   switch(event->button) {
     case 1: // left button
+#ifdef FT8
+      // FT8 TX-offset gesture (Shift+click/drag in DIGU): update the offset from
+      // the release point and return — never tune/pan the RX.
+      if(ft8_tx_offset_gesture(rx,state)) {
+        ft8_set_tx_offset_from_x(rx,(double)x);
+        rx->last_x=x;
+        rx->has_moved=FALSE;
+        return TRUE;
+      }
+#endif
       if(rx->is_panning) {
         int pan=rx->pan+(moved*rx->zoom);
         if(pan<0) {
@@ -1256,6 +1285,14 @@ gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *even
   y=event->y;
   state=event->state;
   int moved=x-rx->last_x;
+#ifdef FT8
+  // Shift+drag in DIGU slides the FT8 TX offset live, without tuning the RX.
+  if(ft8_tx_offset_gesture(rx,state) && (state & GDK_BUTTON1_MASK)) {
+    ft8_set_tx_offset_from_x(rx,(double)x);
+    rx->last_x=x;
+    return TRUE;
+  }
+#endif
   if(rx->is_panning) {
     int pan=rx->pan+(moved*rx->zoom);
     if(pan<0) {
