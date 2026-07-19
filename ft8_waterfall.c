@@ -177,7 +177,9 @@ static void on_destroy(GtkWidget *w, gpointer data) {
 GtkWidget *ft8_waterfall_create(void) {
   area = gtk_drawing_area_new();
   gtk_widget_set_name(area, "ft8-waterfall");
-  gtk_widget_set_size_request(area, -1, WF_HEIGHT);
+  // A non-zero minimum width so the pane is visible immediately, before the
+  // 2/3 : 1/3 split position is applied (see receiver_ft8_waterfall_sync).
+  gtk_widget_set_size_request(area, 140, WF_HEIGHT);
   gtk_widget_add_events(area, GDK_BUTTON_PRESS_MASK);
   g_signal_connect(area, "draw", G_CALLBACK(on_draw), NULL);
   g_signal_connect(area, "button-press-event", G_CALLBACK(on_click), NULL);

@@ -2535,6 +2535,11 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   create_visual(rx);
   gtk_widget_show_all(rx->table);
   radio->active_receiver=rx;
+#ifdef FT8
+  // The mode was applied (receiver_mode_changed) before create_visual built the
+  // waterfall row, so add the FT8 band waterfall now if this RX started in DIGU.
+  receiver_ft8_waterfall_sync(rx);
+#endif
   if(rx->vpaned!=NULL && rx->paned_position!=-1 && rx->paned_percent>0.0) {
     // Defer until the vpaned actually has a height (see restore_paned_position_cb).
     g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
