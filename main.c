@@ -211,14 +211,7 @@ fprintf(stderr,"tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp
   }
 }
 
-gboolean start_cb(GtkWidget *widget,gpointer data);
-
-// --faker one-shot auto-start: fire start_cb once, then remove the timeout so we
-// don't keep re-creating the radio every tick.
-static gboolean faker_autostart(gpointer data) {
-  start_cb(NULL,NULL);
-  return G_SOURCE_REMOVE;
-}
+gboolean start_cb(GtkWidget *widget,gpointer data);  /* defined below; called for --faker */
 
 static int discover(void *data) {
   char v[32];
@@ -335,13 +328,21 @@ g_print("adding %s\n",d->name);
   }
 
   //gtk_widget_show_all(grid);
+
+  // --faker: skip the device-selection dialog entirely. Realize (but don't yet
+  // map) the window so start_cb's cursor calls have a valid GdkWindow, build the
+  // fake radio straight into the grid (default selection = the only row, the
+  // faker), then reveal the fully-built radio window — the selection UI is never
+  // shown.  Non-faker runs show the selection window as before.
+  if(enable_fake && devices>0) {
+    gtk_widget_realize(main_window);
+    start_cb(NULL,NULL);
+  }
+
   gtk_widget_show_all(main_window);
 
   gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_ARROW));
 
-  // --faker: skip the device-selection dialog and start straight into the fake
-  // device (the default selection = first/only row, which the faker occupies).
-  if(enable_fake && devices>0) g_timeout_add(300,faker_autostart,NULL);
   return 0;
 }
 
