@@ -1191,6 +1191,30 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
   }
 }
 
+// Layout-independent test for the physical "Q" key. GTK reports event->keyval
+// after the active keyboard layout, so on a Russian layout Cmd-Q arrives as the
+// Cyrillic "й" and a plain keyval==GDK_KEY_q test misses it. Instead we look up
+// every keyval the pressed hardware keycode produces across all layout groups
+// (there is always a Latin group where the physical Q key is q) so Cmd-Q quits
+// on any keyboard layout.
+static gboolean key_is_q(GdkEventKey *event) {
+  if(event->keyval==GDK_KEY_q || event->keyval==GDK_KEY_Q) return TRUE;
+  GdkKeymap *km=gdk_keymap_get_for_display(gdk_display_get_default());
+  if(!km || event->hardware_keycode==0) return FALSE;
+  GdkKeymapKey *keys=NULL;
+  guint *keyvals=NULL;
+  gint n=0;
+  gboolean found=FALSE;
+  if(gdk_keymap_get_entries_for_keycode(km,event->hardware_keycode,&keys,&keyvals,&n)) {
+    for(gint i=0;i<n;i++) {
+      if(keyvals[i]==GDK_KEY_q || keyvals[i]==GDK_KEY_Q) { found=TRUE; break; }
+    }
+  }
+  g_free(keys);
+  g_free(keyvals);
+  return found;
+}
+
 gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   g_print("Pressed: ");
@@ -1198,7 +1222,9 @@ gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointe
   g_print("\n");
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
-  if((event->keyval==GDK_KEY_q || event->keyval==GDK_KEY_Q) &&
+  // key_is_q() matches the physical Q key on any keyboard layout (e.g. Cmd-й on
+  // a Russian layout).
+  if(key_is_q(event) &&
      (event->state & (GDK_META_MASK|GDK_MOD2_MASK|GDK_CONTROL_MASK))) {
     main_delete(NULL);
     return TRUE;
