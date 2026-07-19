@@ -225,6 +225,11 @@ static void on_destroy(GtkWidget *w, gpointer data) {
 GtkWidget *ft8_panel_create(void) {
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   gtk_widget_set_name(box, "ft8-panel");
+  // Breathing room so the rows don't sit flush against the panel edges.
+  gtk_widget_set_margin_start(box, 8);
+  gtk_widget_set_margin_end(box, 6);
+  gtk_widget_set_margin_top(box, 4);
+  gtk_widget_set_margin_bottom(box, 4);
 
   // --- operational config row (callsign/grid live in Configure -> FT8) ---
   GtkWidget *cfg = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
