@@ -1336,9 +1336,8 @@ void radio_rebuild_rx_stack(RADIO *r) {
 // slot and the "Add Receiver" button is disabled (the panel owns that slot);
 // otherwise normal multi-RX operation resumes and FT8 decodes are shown in the
 // bottom-bar block.  Leaving DIGU also closes the panel.  GTK thread only.
-// The zoomed FT8 view is now the dedicated FT8 band waterfall beside the main
-// waterfall (receiver_ft8_waterfall_sync), so the main panadapter is left at its
-// normal zoom to give RF context rather than being force-zoomed here.
+// The zoomed FT8 view is the dedicated FT8 band waterfall inside the panel, so
+// the main panadapter is left at its normal zoom (no auto-zoom on open).
 void radio_ft8_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean digu = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
@@ -2183,7 +2182,6 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
-  r->ft8_zoom_saved = FALSE;
 
   r->midi_enabled = FALSE;
   sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());

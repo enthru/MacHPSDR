@@ -103,9 +103,6 @@ typedef struct _radio {
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
-  gint ft8_saved_zoom;     // panadapter zoom/pan saved when the FT8 panel auto-zooms
-  gint ft8_saved_pan;
-  gboolean ft8_zoom_saved; // TRUE while the FT8 panel owns the zoom (restore on close)
   DIVMIXER *divmixer[MAX_DIVERSITY_MIXERS+1];
   gint alex_rx_antenna;
   gint alex_tx_antenna;
