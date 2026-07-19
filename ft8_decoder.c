@@ -137,6 +137,16 @@ static ftx_callsign_hash_interface_t hash_if = {
   .save_hash = hashtable_add
 };
 
+// Strip the angle brackets a hashed callsign is rendered with ("<K1ABC>" ->
+// "K1ABC") in place, so callsigns compare as plain strings.
+static void strip_brackets(char *s) {
+  int n = (int)strlen(s);
+  if (n >= 2 && s[0] == '<' && s[n-1] == '>') {
+    memmove(s, s + 1, n - 2);
+    s[n - 2] = '\0';
+  }
+}
+
 // ===========================================================================
 // Decode one accumulated slot buffer into the results[] list (worker thread).
 // ===========================================================================
@@ -218,12 +228,25 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
     d->freq = freq_hz;
     snprintf(d->text, sizeof(d->text), "%s", text);
 
-    // Structured fields for the QSO engine: split standard messages into
-    // recipient / sender / extra.  Leave blank for free-text/telemetry/etc.
+    // Structured fields for the QSO engine: split into recipient / sender /
+    // extra.  Dispatch on the message type — the non-standard-call parser
+    // (Type 4: /P, /R, compound and hashed calls) and the standard parser
+    // interpret the same bits differently, so picking by type avoids one
+    // "succeeding" with garbage.  Blank for free-text/telemetry/etc.
     d->call_to[0] = d->call_de[0] = d->extra[0] = '\0';
     char to[FTX_MAX_MESSAGE_LENGTH], de[FTX_MAX_MESSAGE_LENGTH], ex[FTX_MAX_MESSAGE_LENGTH];
     ftx_field_t ftypes[FTX_MAX_MESSAGE_FIELDS];
-    if (ftx_message_decode_std(&message, &hash_if, to, de, ex, ftypes) == FTX_MESSAGE_RC_OK) {
+    ftx_message_type_t mtype = ftx_message_get_type(&message);
+    ftx_message_rc_t frc = FTX_MESSAGE_RC_ERROR_TYPE;
+    if (mtype == FTX_MESSAGE_TYPE_NONSTD_CALL)
+      frc = ftx_message_decode_nonstd(&message, &hash_if, to, de, ex, ftypes);
+    else if (mtype == FTX_MESSAGE_TYPE_STANDARD || mtype == FTX_MESSAGE_TYPE_EU_VHF)
+      frc = ftx_message_decode_std(&message, &hash_if, to, de, ex, ftypes);
+    if (frc == FTX_MESSAGE_RC_OK) {
+      // Drop the <> that mark a hashed callsign so the QSO engine can string-
+      // compare against the plain callsign it knows.
+      strip_brackets(to);
+      strip_brackets(de);
       snprintf(d->call_to, sizeof(d->call_to), "%s", to);
       snprintf(d->call_de, sizeof(d->call_de), "%s", de);
       snprintf(d->extra, sizeof(d->extra), "%s", ex);

@@ -303,8 +303,15 @@ static gboolean qso_poll(gpointer data) {
       if (ft8_tx_prepare(pending_msg, (float)radio->ft8_tx_offset))
         snprintf(prepared_msg, sizeof(prepared_msg), "%s", pending_msg);
     }
-    ft8_tx_arm(tx_even);
-    need_arm = FALSE;
+    // Arm only when a valid waveform for the current message is ready; a
+    // non-standard call may be unencodable for this step (grid/report), in
+    // which case we surface it rather than transmitting a stale waveform.
+    if (strcmp(pending_msg, prepared_msg) == 0) {
+      ft8_tx_arm(tx_even);
+      need_arm = FALSE;
+    } else {
+      snprintf(status, sizeof(status), "Can't encode: %s", pending_msg);
+    }
   }
   return G_SOURCE_CONTINUE;
 }

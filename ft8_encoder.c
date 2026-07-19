@@ -221,6 +221,7 @@ gboolean ft8_tx_prepare(const char *text, float offset_hz) {
 }
 
 void ft8_tx_arm(gboolean tx_even) {
+  if (!have_wave) return;                 // nothing valid to send (e.g. encode failed)
   arm_even = tx_even;
   // Anchor on the current slot so we never start mid-slot: fire only when the
   // clock advances into a new slot of the desired parity.
