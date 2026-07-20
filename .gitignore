@@ -29,6 +29,3 @@ screenshot.jpg
 
 # transient build artifact (entitlements for codesign)
 machpsdr_entitlements.plist
-
-# built patched libusb (arch-specific, rebuild via make libusb-compat)
-third_party/

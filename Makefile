@@ -395,14 +395,6 @@ clean:
 APP_NAME=MacHPSDR
 APP_BUNDLE=$(APP_NAME).app
 
-# Build the minimally-patched libusb (darwin_kernel_driver_active -> no driver, so
-# a HackRF/RTL-SDR is claimed via plain USBInterfaceOpen without the macOS "device
-# capture" that needs root/entitlement) that `make app` bundles. Run once per
-# machine/arch; cached in third_party/libusb-compat/ (git-ignored).
-.PHONY: libusb-compat
-libusb-compat:
-	@sh tools/build-libusb-compat.sh
-
 app: $(PROGRAM)
 	@echo "Building fully self-contained macOS .app bundle..."
 	@if [ ! -f "$(PROGRAM)" ]; then \
@@ -525,20 +517,6 @@ app: $(PROGRAM)
 			done; \
 		fi; \
 	done
-
-	@# Swap in the patched libusb (darwin_kernel_driver_active -> no driver) if it
-	@# has been built with `make libusb-compat`, so a HackRF/RTL-SDR can be claimed
-	@# without root (stock libusb takes the privileged USB "device capture" path on
-	@# recent macOS; the entitlement that would satisfy it can't be used on an
-	@# ad-hoc signature). Same version/compat as the bundled libusb -> transparent.
-	@if [ -f third_party/libusb-compat/libusb-1.0.0.dylib ]; then \
-		cp third_party/libusb-compat/libusb-1.0.0.dylib $(APP_BUNDLE)/Contents/Frameworks/libusb-1.0.0.dylib; \
-		codesign --force --sign - $(APP_BUNDLE)/Contents/Frameworks/libusb-1.0.0.dylib 2>/dev/null || true; \
-		echo "Bundled patched libusb (HackRF/RTL-SDR usable without root)"; \
-	else \
-		echo "NOTE: third_party/libusb-compat not built — run 'make libusb-compat'"; \
-		echo "      or HackRF/RTL-SDR will need root on recent macOS (USB capture)."; \
-	fi
 
 	@# Copy GTK settings
 	@if [ -f "$(BREW_PREFIX)/etc/gtk-3.0/settings.ini" ]; then \
