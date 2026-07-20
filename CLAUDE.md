@@ -52,8 +52,10 @@ git clone https://github.com/g0orx/wdsp.git && cd wdsp && make && sudo make inst
 
 ## Platform Differences
 
-- **macOS**: Uses `portaudio.c` for audio, `mac_midi.c` for MIDI (CoreMIDI framework), no CWDAEMON support
+- **macOS**: Uses `audio.c` (SoundIO + CoreAudio) for audio, `mac_midi.c` for MIDI (CoreMIDI framework), no CWDAEMON support
 - **Linux**: Uses `audio.c` with ALSA/PulseAudio/SoundIO, `alsa_midi.c` for MIDI, CWDAEMON enabled by default
+
+> Note: `audio.c` is the audio backend on **both** platforms. The Makefile's `AUDIO_SOURCES=portaudio.c` (Darwin) is a dead variable — `portaudio.c` does not exist and is never compiled; `audio.c` is hardcoded in `SOURCES`/`OBJS`.
 
 Platform is detected via `uname -s` in the Makefile (`Darwin` vs `Linux`).
 
@@ -85,7 +87,7 @@ The global `RADIO *radio` struct (`radio.h`) is the central application state. I
 - **`discovery.c`, `protocol1_discovery.c`, `protocol2_discovery.c`, `soapy_discovery.c`** — Network device discovery
 - **`vfo.c`** — Frequency display and VFO control widget
 - **`waterfall.c`, `rx_panadapter.c`, `tx_panadapter.c`** — Spectrum display rendering
-- **`audio.c` / `portaudio.c`** — Audio I/O (platform-specific)
+- **`audio.c`** — Audio I/O (SoundIO on both platforms; ALSA/PulseAudio on Linux, CoreAudio on macOS). Includes the synthetic "System Default" output device (`AUDIO_SYSTEM_DEFAULT_NAME`), which new receivers use by default
 - **`midi2.c`, `midi3.c`** — MIDI learn and control mapping (platform-agnostic); `mac_midi.c` / `alsa_midi.c` for platform I/O
 - **`actions.c`** — Global action dispatch (used for keybindings and MIDI mappings)
 - **`property.c`** — Persistence: save/load radio configuration to/from properties files (`~/.local/share/machpsdr/<device-mac>.props`; MIDI mappings in `midi.props`)
