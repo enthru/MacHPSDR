@@ -14,9 +14,7 @@
 
 MacHPSDR is a personal fork of [LinHPSDR](https://github.com/g0orx/linhpsdr) by
 John Melton (**G0ORX / N6LYT**), maintained mainly on macOS and with a number of
-feature additions. The binary and config paths use the lowercase name
-`machpsdr`; the display name (window title, About dialog, `.app` bundle) is
-**MacHPSDR**.
+feature additions.
 
 ---
 
