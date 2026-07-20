@@ -257,6 +257,34 @@ make app      # optional: self-contained MacHPSDR.app bundle
 `MacHPSDR.app`, which you can then `open MacHPSDR.app` or drag to `/Applications`.
 See [MacOS.md](./MacOS.md) for more detail.
 
+**Self-contained bundle.** `make app` produces a `.app` that needs **no Homebrew
+(or anything else) on the target machine** — all GTK/GLib libraries, gdk-pixbuf
+loaders, themes and the in-tree WDSP are bundled and relinked into the app.
+
+It also bundles the **SoapySDR device-driver modules** that are installed at build
+time: every `.so` under `$(brew --prefix)/lib/SoapySDR/modules*` is copied into the
+app and relinked (its `libhackrf` / `librtlsdr` / `libiio` / `libsdrplay_api` /
+`libusb` dependencies are pulled into `Frameworks`), and the launcher points
+`SOAPY_SDR_PLUGIN_PATH` at them. So whichever of these you install before
+`make app` become usable from the bundle with nothing extra on the target:
+
+| SoapySDR module | Devices | Install |
+|---|---|---|
+| SoapyHackRF | HackRF | `brew install soapyhackrf` |
+| SoapyRTLSDR | RTL-SDR | `brew install soapyrtlsdr` |
+| SoapyPlutoSDR | ADALM-Pluto | build from source (needs `libiio` + `libad9361-iio`) |
+| SoapySDRPlay3 | SDRplay RSP1/RSP1A/RSP1B/RSP2/RSPduo/RSPdx | build from source (needs the SDRplay API v3) |
+
+> **SDRplay caveat.** The SoapySDRPlay3 module and `libsdrplay_api` are bundled,
+> but SDRplay's proprietary **API service daemon** must still be installed and
+> running on the target machine — it can't be shipped inside the `.app`. So RSP
+> devices are *almost* install-free, minus the SDRplay API package.
+
+> **Gatekeeper.** The bundle is ad-hoc signed, not notarized. If the `.app` is
+> *downloaded* (and thus quarantined), first launch needs a right-click → **Open**,
+> or `xattr -dr com.apple.quarantine MacHPSDR.app`. Copied locally, it just opens.
+> The bundle is built for the architecture of the build machine (arm64 / Intel).
+
 ### Linux
 
 Development and testing has been run on Ubuntu and Arch Linux. On very early GTK
