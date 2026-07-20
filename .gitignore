@@ -6,6 +6,7 @@
 *.a
 machpsdr
 MacHPSDR.app/
+MacHPSDR.zip
 
 # Debian package staging / generated packages (regenerated, never committed)
 pkg/

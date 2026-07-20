@@ -392,6 +392,30 @@ Start it from the build directory:
 ./machpsdr --faker ft8.wav # no hardware: loop an I/Q WAV through the RX chain
 ```
 
+### Passing flags to the `.app` bundle
+
+The `MacHPSDR.app` bundle's launcher
+(`MacHPSDR.app/Contents/MacOS/MacHPSDR`) is a small wrapper that sets up the
+bundled library/plugin environment and then `exec`s the real binary, **passing
+any arguments straight through**. So the same flags work on the bundle — call
+the launcher directly:
+
+```bash
+# no hardware: loop an I/Q WAV through the RX chain
+MacHPSDR.app/Contents/MacOS/MacHPSDR --faker /full/path/to/ft8.wav
+```
+
+Two gotchas:
+
+- The launcher `cd`s into the bundle's `Resources` directory before starting,
+  so give the WAV as an **absolute path** — a relative one won't be found.
+- `open MacHPSDR.app` (double-clicking, or `open`) launches via LaunchServices
+  and does **not** forward these arguments; run the launcher directly (as
+  above) when you need `--faker`, `--usb-only`, etc. `sudo open …` likewise does
+  not elevate — to run as root, `sudo` the launcher directly:
+  `sudo MacHPSDR.app/Contents/MacOS/MacHPSDR` (note: as root the config/logs go
+  to `/var/root/.local/share/machpsdr/`).
+
 ---
 
 ## License
