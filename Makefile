@@ -395,6 +395,13 @@ clean:
 APP_NAME=MacHPSDR
 APP_BUNDLE=$(APP_NAME).app
 
+# Build the capture-free libusb (libusb 1.0.26) that `make app` bundles so a
+# HackRF/RTL-SDR can be claimed without root on recent macOS. Run once per
+# machine/arch; result cached in third_party/libusb-compat/ (git-ignored).
+.PHONY: libusb-compat
+libusb-compat:
+	@sh tools/build-libusb-compat.sh
+
 app: $(PROGRAM)
 	@echo "Building fully self-contained macOS .app bundle..."
 	@if [ ! -f "$(PROGRAM)" ]; then \
@@ -517,6 +524,22 @@ app: $(PROGRAM)
 			done; \
 		fi; \
 	done
+
+	@# Swap in the "capture-free" libusb (libusb 1.0.26) if it has been built with
+	@# `make libusb-compat`. Newer libusb needs root or the restricted
+	@# com.apple.vm.device-access entitlement to claim a HackRF/RTL-SDR interface on
+	@# recent macOS; the entitlement can't be used on an ad-hoc signature (breaks
+	@# launch), so we drop in the older lib whose claim path needs neither. It has
+	@# the same install name + compatibility version, so it is a transparent
+	@# replacement for the libusb dylibbundler just bundled above.
+	@if [ -f third_party/libusb-compat/libusb-1.0.0.dylib ]; then \
+		cp third_party/libusb-compat/libusb-1.0.0.dylib $(APP_BUNDLE)/Contents/Frameworks/libusb-1.0.0.dylib; \
+		codesign --force --sign - $(APP_BUNDLE)/Contents/Frameworks/libusb-1.0.0.dylib 2>/dev/null || true; \
+		echo "Bundled capture-free libusb (HackRF/RTL-SDR usable without root)"; \
+	else \
+		echo "NOTE: third_party/libusb-compat not built — run 'make libusb-compat'"; \
+		echo "      or HackRF/RTL-SDR will need root on recent macOS (USB capture)."; \
+	fi
 
 	@# Copy GTK settings
 	@if [ -f "$(BREW_PREFIX)/etc/gtk-3.0/settings.ini" ]; then \
