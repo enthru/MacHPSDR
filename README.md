@@ -263,27 +263,66 @@ loaders, themes and the in-tree WDSP are bundled and relinked into the app.
 
 It also bundles the **SoapySDR device-driver modules** that are installed at build
 time: every `.so` under `$(brew --prefix)/lib/SoapySDR/modules*` is copied into the
-app and relinked (its `libhackrf` / `librtlsdr` / `libiio` / `libsdrplay_api` /
-`libusb` dependencies are pulled into `Frameworks`), and the launcher points
-`SOAPY_SDR_PLUGIN_PATH` at them. So whichever of these you install before
-`make app` become usable from the bundle with nothing extra on the target:
+app and relinked (its `libhackrf` / `librtlsdr` / `libusb` dependencies are pulled
+into `Frameworks`), and the launcher points `SOAPY_SDR_PLUGIN_PATH` at them. The
+modules bundled and tested so far:
 
 | SoapySDR module | Devices | Install |
 |---|---|---|
 | SoapyHackRF | HackRF | `brew install soapyhackrf` |
 | SoapyRTLSDR | RTL-SDR | `brew install soapyrtlsdr` |
-| SoapyPlutoSDR | ADALM-Pluto | build from source (needs `libiio` + `libad9361-iio`) |
-| SoapySDRPlay3 | SDRplay RSP1/RSP1A/RSP1B/RSP2/RSPduo/RSPdx | build from source (needs the SDRplay API v3) |
 
-> **SDRplay caveat.** The SoapySDRPlay3 module and `libsdrplay_api` are bundled,
-> but SDRplay's proprietary **API service daemon** must still be installed and
-> running on the target machine — it can't be shipped inside the `.app`. So RSP
-> devices are *almost* install-free, minus the SDRplay API package.
+Install whichever you need **before** running `make app`.
 
 > **Gatekeeper.** The bundle is ad-hoc signed, not notarized. If the `.app` is
 > *downloaded* (and thus quarantined), first launch needs a right-click → **Open**,
 > or `xattr -dr com.apple.quarantine MacHPSDR.app`. Copied locally, it just opens.
 > The bundle is built for the architecture of the build machine (arm64 / Intel).
+
+#### Adding other SoapySDR devices (optional, untested)
+
+The bundling mechanism is generic — any SoapySDR module present under
+`$(brew --prefix)/lib/SoapySDR/modules*` at `make app` time is packaged. The two
+below aren't in Homebrew and haven't been tested with MacHPSDR yet, but if you
+have the hardware you can build the module, then re-run `make app` to bundle it.
+Build each with `-DCMAKE_INSTALL_PREFIX=$(brew --prefix)` so the `.so` lands in the
+directory `make app` scans, and verify with `SoapySDRUtil --info` (the new driver
+should appear under *Available factories*).
+
+**ADALM-Pluto (SoapyPlutoSDR)** — needs `libiio` + `libad9361-iio`, both built
+from source (Analog Devices):
+
+```bash
+git clone https://github.com/analogdevicesinc/libiio.git
+cmake -S libiio -B libiio/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix) -DHAVE_DNS_SD=OFF
+cmake --build libiio/build -j$(sysctl -n hw.ncpu) && cmake --install libiio/build
+
+git clone https://github.com/analogdevicesinc/libad9361-iio.git
+cmake -S libad9361-iio -B libad9361-iio/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix)
+cmake --build libad9361-iio/build -j$(sysctl -n hw.ncpu) && cmake --install libad9361-iio/build
+
+git clone https://github.com/pothosware/SoapyPlutoSDR.git
+cmake -S SoapyPlutoSDR -B SoapyPlutoSDR/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix)
+cmake --build SoapyPlutoSDR/build -j$(sysctl -n hw.ncpu) && cmake --install SoapyPlutoSDR/build
+```
+
+> If SoapyPlutoSDR fails against libiio's API, check out libiio `v0.25`
+> (`git -C libiio checkout v0.25`) and rebuild — libiio 1.x can be incompatible.
+
+**SDRplay RSP1/RSP1A/RSP1B/RSP2/RSPduo/RSPdx (SoapySDRPlay3)** — first install the
+proprietary **SDRplay API v3** (macOS installer from
+<https://www.sdrplay.com/downloads/>; it also installs the `sdrplay_apiService`
+daemon), then build the module:
+
+```bash
+git clone https://github.com/pothosware/SoapySDRPlay3.git
+cmake -S SoapySDRPlay3 -B SoapySDRPlay3/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix)
+cmake --build SoapySDRPlay3/build -j$(sysctl -n hw.ncpu) && cmake --install SoapySDRPlay3/build
+```
+
+> Note: even after bundling, SDRplay's **API service daemon must be installed and
+> running on the target machine** — it can't be shipped inside the `.app`, so RSP
+> devices are not fully install-free.
 
 ### Linux
 
