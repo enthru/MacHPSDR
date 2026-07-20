@@ -499,6 +499,25 @@ app: $(PROGRAM)
 		done; \
 	fi
 
+	@# Copy SoapySDR device-driver modules (dlopen'd at runtime, so dylibbundler
+	@# on the main binary does not pull them in). They in turn drag in libhackrf /
+	@# librtlsdr / libusb, which dylibbundler then bundles + relinks into
+	@# Frameworks. SOAPY_SDR_PLUGIN_PATH (set in the launcher) points Soapy here,
+	@# so HackRF/RTL-SDR work without a Homebrew SoapySDR install on the target.
+	@echo "Copying SoapySDR modules..."
+	@for moddir in $(BREW_PREFIX)/lib/SoapySDR/modules*; do \
+		if [ -d "$$moddir" ]; then \
+			dest=$(APP_BUNDLE)/Contents/Resources/lib/SoapySDR/`basename $$moddir`; \
+			mkdir -p "$$dest"; \
+			cp $$moddir/*.so "$$dest"/ 2>/dev/null || true; \
+			for lib in "$$dest"/*.so; do \
+				[ -f "$$lib" ] || continue; \
+				dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
+					-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
+			done; \
+		fi; \
+	done
+
 	@# Copy GTK settings
 	@if [ -f "$(BREW_PREFIX)/etc/gtk-3.0/settings.ini" ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0; \
@@ -568,6 +587,9 @@ app: $(PROGRAM)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '# Icon theme' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GSETTINGS_SCHEMA_DIR="$$RES/share/glib-2.0/schemas"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# SoapySDR device-driver modules (HackRF / RTL-SDR)' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'export SOAPY_SDR_PLUGIN_PATH="$$(echo "$$RES"/lib/SoapySDR/modules* | tr " " ":")"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '# Launch application' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'cd "$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
