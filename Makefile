@@ -443,12 +443,16 @@ app: $(PROGRAM)
 	@echo "Copying gdk-pixbuf loaders..."
 	@if [ -d "$(BREW_PREFIX)/lib/gdk-pixbuf-2.0" ]; then \
 		cp -r $(BREW_PREFIX)/lib/gdk-pixbuf-2.0 $(APP_BUNDLE)/Contents/Resources/lib/; \
-		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 -name "*.dylib" | while read lib; do \
+		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 \( -name "*.dylib" -o -name "*.so" \) | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
 				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
+			while [ $$(otool -l "$$lib" | grep -c "path @executable_path/../Frameworks/ (offset") -gt 1 ]; do \
+				install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null || break; \
+			done; \
+			codesign --force --sign - "$$lib" 2>/dev/null || true; \
 		done; \
 		if [ -f "$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]; then \
-			sed -i '' 's|$(BREW_PREFIX)/.*lib|@executable_path/../Resources/lib|g' \
+			sed -i '' 's|$(BREW_PREFIX)/lib|@executable_path/../Resources/lib|g' \
 				$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache; \
 		fi; \
 	fi
