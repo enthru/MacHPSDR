@@ -36,6 +36,7 @@ feature additions.
   - [WDSP (vendored)](#wdsp-vendored)
   - [CW support (Linux, optional)](#cw-support-linux-optional)
 - [Running](#running)
+- [User manual](#user-manual)
 - [License](#license)
 
 ---
@@ -415,6 +416,17 @@ Two gotchas:
   not elevate — to run as root, `sudo` the launcher directly:
   `sudo MacHPSDR.app/Contents/MacOS/MacHPSDR` (note: as root the config/logs go
   to `/var/root/.local/share/machpsdr/`).
+
+---
+
+## User manual
+
+A general overview of the main functions (window layout, tuning, receiver
+controls, TX, FT8/FT4, the recorder, configuration, MIDI, the fake device) is in
+[`doc/`](./doc):
+
+- English — [`doc/manual-en.md`](./doc/manual-en.md)
+- Русский — [`doc/manual-ru.md`](./doc/manual-ru.md)
 
 ---
 
