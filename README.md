@@ -43,15 +43,15 @@ feature additions. The binary and config paths use the lowercase name
 
 ## Highlights
 
-| | |
+| Feature | Summary |
 |---|---|
-| 🪟 **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
-| 🎨 **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
-| 📻 **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
-| 📡 **FT8 / FT4** | Automatic decode in DIGU, plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
-| 📤 **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
-| ⏺️ **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
-| 🧪 **Fake device** | Run with no hardware and loop back a recorded I/Q file. |
+| **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
+| **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
+| **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
+| **FT8 / FT4** | Automatic decode in DIGU, plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
+| **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
+| **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
+| **Fake device** | Run with no hardware and loop back a recorded I/Q file. |
 
 ---
 
