@@ -23,6 +23,7 @@ feature additions. The binary and config paths use the lowercase name
 ## Table of contents
 
 - [Highlights](#highlights)
+- [Screenshots](#screenshots)
 - [Features](#features)
   - [Interface & appearance](#interface--appearance)
   - [Modes & decoding](#modes--decoding)
@@ -52,6 +53,28 @@ feature additions. The binary and config paths use the lowercase name
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **Fake device** | Run with no hardware and loop back a recorded I/Q file. |
+
+---
+
+## Screenshots
+
+**Main window** — all receivers in a single resizable window: panadapter and
+waterfall, S-meter and frequency display, and the bottom toolbar (TX Monitor,
+Mic & Drive, Transmit, RX Front-end, decoder block, Setup).
+
+![Main window](./main.jpg)
+
+**FT8 panel** — the opt-in QSO panel with the rolling band-activity list (CQ rows
+in green), Tx1–Tx6 messages, FT8/FT4 protocol selector and TX offset, alongside
+the dedicated FT8 band waterfall on the right.
+
+![FT8 panel](./ft8.jpg)
+
+**Settings** — Configure → Misc: colour-skin selection (applied immediately and
+remembered per radio), custom attenuator-button labels, and Broadcast FM
+de-emphasis / RDS options.
+
+![Settings — appearance & skin selection](./settings.jpg)
 
 ---
 
