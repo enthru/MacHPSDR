@@ -273,7 +273,17 @@ void soapy_discovery() {
   SoapySDRKwargs args={};
 
   fprintf(stderr,"%s\n",__FUNCTION__);
-  SoapySDRKwargs_set(&input_args, "hostname", "pluto.local");
+  // Passing hostname=pluto.local unconditionally forces SoapySDR/libiio to
+  // resolve that mDNS name on every startup. With no PlutoSDR on the LAN the
+  // Avahi lookup blocks until it times out (~30 s), hanging discovery — the
+  // "Avahi Resolver: Failed to resolve host 'pluto.local'" stall. So only hint
+  // a network Pluto when the user opts in via MACHPSDR_PLUTO_HOST=<host>;
+  // otherwise enumerate with empty args (USB Pluto and all other Soapy devices
+  // are still found by their own drivers, without the blocking name lookup).
+  const char *pluto_host = getenv("MACHPSDR_PLUTO_HOST");
+  if(pluto_host!=NULL && pluto_host[0]!='\0') {
+    SoapySDRKwargs_set(&input_args, "hostname", pluto_host);
+  }
   SoapySDRKwargs *results = SoapySDRDevice_enumerate(&input_args, &length);
   fprintf(stderr,"%s: length=%ld\n",__FUNCTION__,length);
   for (i = 0; i < length; i++) {

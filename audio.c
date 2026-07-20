@@ -377,6 +377,10 @@ int audio_open_output(RECEIVER *rx) {
   switch(radio->which_audio) {
     case USE_SOUNDIO: {
 g_print("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
+      if(soundio==NULL) {
+        g_print("audio_open_output: no soundio backend connected\n");
+        return -1;
+      }
       // Idempotent: drop any stream already open for this receiver so callers
       // (normal startup and the system-default monitor) can never race into
       // leaking a stream/device.
@@ -610,6 +614,10 @@ int audio_open_input(RADIO *r) {
   g_print("%s\n",__FUNCTION__);
   switch(radio->which_audio) {
     case USE_SOUNDIO: {
+      if(soundio==NULL) {
+        g_print("audio_open_input: no soundio backend connected\n");
+        return -1;
+      }
       if(r->microphone_name==NULL) {
         g_print("audio_open_input: microphone name is NULL\n");
         return -1;
@@ -1723,11 +1731,29 @@ void create_audio(int backend_index,const char *backend) {
         g_print("audio: create_audio: USE_SOUNDIO backend=%s\n",soundio_backend_name(want));
         if(want==SoundIoBackendNone)
           rc=soundio_connect(soundio);            // let soundio auto-pick a real backend
-        else
+        else {
           rc=soundio_connect_backend(soundio,want);
+          // The saved backend (index 0 is often JACK on Linux) may be compiled
+          // into libsoundio but not actually usable (no server running), so
+          // connect_backend fails. Rather than bail out — which used to leave
+          // the global `soundio` created but unconnected, so the very first
+          // audio_open_output crashed on soundio_flush_events'
+          // `current_backend != SoundIoBackendNone` assertion — fall back to
+          // letting libsoundio auto-pick a working backend (PulseAudio/ALSA/…).
+          if(rc) {
+            g_print("create_audio: backend %s failed (%s); auto-selecting\n",
+                    soundio_backend_name(want),soundio_strerror(rc));
+            rc=soundio_connect(soundio);
+          }
+        }
       }
       if(rc) {
-        g_print("create_audio: soundio_connect_backend: %s\n",soundio_strerror(rc));
+        // No backend could be connected at all: destroy and NULL the object so
+        // the audio_open_*/monitor paths skip it instead of dereferencing an
+        // unconnected soundio (which asserts in libsoundio).
+        g_print("create_audio: soundio_connect: %s\n",soundio_strerror(rc));
+        soundio_destroy(soundio);
+        soundio=NULL;
         return;
       }
 
