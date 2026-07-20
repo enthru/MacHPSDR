@@ -43,8 +43,9 @@ The window is organised top-to-bottom around one or more **receivers**:
   noise reduction, and a **SETUP** module with Configure, Add Receiver, Record,
   and (in DIGU) the FT8 panel toggle.
 
-MacHPSDR supports up to 8 receivers; **Add Receiver** opens a second slice with
-its own VFO, panadapter and waterfall.
+MacHPSDR is deliberately limited to **2 receivers** for now (a UI decision — the
+underlying engine can do more). **Add Receiver** opens a second slice with its
+own VFO, panadapter and waterfall.
 
 ---
 
