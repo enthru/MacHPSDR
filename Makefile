@@ -638,6 +638,26 @@ app: $(PROGRAM)
 	@xattr -cr $(APP_BUNDLE)
 	@touch $(APP_BUNDLE)
 
+	@# Sign the main binary with the USB device-access entitlement. On recent
+	@# macOS, libusb's USB "device capture" — needed to claim the interface of a
+	@# HackRF/RTL-SDR — requires either root or the com.apple.vm.device-access
+	@# entitlement. Without it SoapySDR opens the device for descriptor reads but
+	@# claim_interface fails ("USB device capture requires ... entitlement or root
+	@# privilege"), so the device never enumerates (soapy_discovery length=0).
+	@# Must run AFTER xattr -cr so the signature is the final state of the binary.
+	@echo "Signing binary with USB device-access entitlement..."
+	@printf '%s\n' \
+		'<?xml version="1.0" encoding="UTF-8"?>' \
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+		'<plist version="1.0"><dict>' \
+		'  <key>com.apple.vm.device-access</key><true/>' \
+		'  <key>com.apple.security.cs.disable-library-validation</key><true/>' \
+		'</dict></plist>' > machpsdr_entitlements.plist
+	@codesign --force --sign - --entitlements machpsdr_entitlements.plist \
+		$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin 2>/dev/null && \
+		echo "  signed OK" || echo "  WARNING: entitlement codesign failed"
+	@rm -f machpsdr_entitlements.plist
+
 	@# Summary
 	@echo ""
 	@echo "=========================================="

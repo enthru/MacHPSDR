@@ -26,3 +26,6 @@ screenshot.jpg
 .DS_Store
 .claude/
 .vscode/
+
+# transient build artifact (entitlements for codesign)
+machpsdr_entitlements.plist
