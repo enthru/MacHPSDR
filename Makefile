@@ -96,10 +96,13 @@ endif
 
 ifeq ($(UNAME_S), Linux)
 # cwdaemon support. Allows linux based logging software to key an Hermes/HermesLite2
-# needs :
+# OPTIONAL and OFF by default: it needs the unixcw dev library (libcw.h / -lcw),
+# which is not installed on a stock system, so enabling it by default would break
+# a plain `make`. To use CW keying, install unixcw (see the "CW support" section
+# in README.md) and uncomment the line below.
 #			https://github.com/m5evt/unixcw-3.5.1.git
 
-CWDAEMON_INCLUDE=CWDAEMON
+#CWDAEMON_INCLUDE=CWDAEMON
 
 ifeq ($(CWDAEMON_INCLUDE),CWDAEMON)
 CWDAEMON_OPTIONS=-D CWDAEMON
