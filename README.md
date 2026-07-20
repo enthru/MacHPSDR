@@ -427,6 +427,8 @@ controls, TX, FT8/FT4, the recorder, configuration, MIDI, the fake device) is in
 
 - English — [`doc/manual-en.md`](./doc/manual-en.md)
 - Русский — [`doc/manual-ru.md`](./doc/manual-ru.md)
+- Українська — [`doc/manual-uk.md`](./doc/manual-uk.md)
+- Беларуская — [`doc/manual-be.md`](./doc/manual-be.md)
 
 ---
 

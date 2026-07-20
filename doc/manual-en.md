@@ -5,7 +5,7 @@ Hermes-Lite 2, Orion, …) plus SoapySDR devices (RTL-SDR, LimeSDR, HackRF). It 
 macOS-focused fork of LinHPSDR. This manual describes the main functions in
 general terms; it is not a per-button reference.
 
-> Русская версия: [manual-ru.md](./manual-ru.md)
+> Other languages: [Русский](./manual-ru.md) · [Українська](./manual-uk.md) · [Беларуская](./manual-be.md)
 
 ---
 
