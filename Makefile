@@ -131,7 +131,12 @@ MIDI_LIBS= -lasound
 endif
 endif
 
-CFLAGS= -g -Wno-deprecated-declarations -O3
+# -std=gnu11: this codebase (inherited from LinHPSDR) uses many K&R-style empty
+# prototypes `void f()`. GCC 14+ defaults to C23, where `()` means `(void)` and
+# calling `f(x)` is a hard error; macOS clang defaults to a lenient C17. Pinning
+# gnu11 restores the "unspecified args" meaning of `()` so the build is identical
+# and warning-clean on both compilers, rather than error-per-callsite on Linux.
+CFLAGS= -g -Wno-deprecated-declarations -O3 -std=gnu11
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
