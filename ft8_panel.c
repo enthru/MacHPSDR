@@ -114,7 +114,16 @@ static void cqonly_toggled(GtkToggleButton *t, gpointer data) {
 }
 static void erase_clicked(GtkButton *b, gpointer data) {
   if (store) gtk_list_store_clear(store);
-  disp_utc[0] = '\0';
+  // The decoder keeps the last non-empty slot's decodes until a NEW slot decodes
+  // (so the compact bottom-bar readout doesn't blank every ~2 s).  If we reset
+  // disp_utc to empty here, refresh() would see that retained batch as "new"
+  // (its utc != "") and immediately re-append the stations we just cleared.
+  // Instead, stamp disp_utc with the current batch's label so only a genuinely
+  // new slot re-populates the list; the top block stays clean until then.
+  FT8_DECODE tmp[64];
+  char utc[8] = "";
+  ft8_decoder_get_decodes(tmp, 64, utc);
+  snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 }
 
 // Hovering a decode row shows the sender's DXCC country (from cty.dat).

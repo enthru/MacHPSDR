@@ -160,16 +160,28 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
     }
   }
 
-  // FT8 TX offset marker (green), and its label.
+  // TX offset marker (green): a line at the base tone plus a translucent band
+  // spanning the signal's occupied bandwidth, which is protocol-dependent — FT8 =
+  // 8 tones × 6.25 Hz ≈ 50 Hz, FT4 = 4 tones × 20.83 Hz ≈ 83 Hz.  The tones climb
+  // from the base offset, so the band runs [offset, offset+bw]; it makes picking a
+  // clear TX slot honest for FT4's wider footprint.
   if (radio != NULL) {
-    double x = (double)radio->ft8_tx_offset / cur_span * W;
-    cairo_set_source_rgb(cr, 0.2, 0.9, 0.2);
+    gboolean ft4 = radio->ft8_proto;
+    // Occupied bandwidth = tones × spacing; spacing = 1/symbol_period
+    // (FT8 6.25 Hz over 8 tones = 50 Hz; FT4 20.833 Hz over 4 tones ≈ 83 Hz).
+    double bw = ft4 ? (4.0 * 20.8333) : (8.0 * 6.25);
+    double x  = (double)radio->ft8_tx_offset / cur_span * W;
+    double xb = (double)(radio->ft8_tx_offset + bw) / cur_span * W;
+    cairo_set_source_rgba(cr, 0.2, 0.9, 0.2, 0.20);         // occupied-band fill
+    cairo_rectangle(cr, x, 0, xb - x, H);
+    cairo_fill(cr);
+    cairo_set_source_rgb(cr, 0.2, 0.9, 0.2);                // base-tone line
     cairo_set_line_width(cr, 2.0);
     cairo_move_to(cr, x, 0);
     cairo_line_to(cr, x, H);
     cairo_stroke(cr);
-    char lbl[16];
-    snprintf(lbl, sizeof(lbl), "TX %d", radio->ft8_tx_offset);
+    char lbl[24];
+    snprintf(lbl, sizeof(lbl), "%s %d", ft4 ? "FT4" : "TX", radio->ft8_tx_offset);
     cairo_move_to(cr, x + 3, 12);
     cairo_show_text(cr, lbl);
   }

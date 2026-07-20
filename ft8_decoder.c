@@ -166,42 +166,44 @@ static void strip_brackets(char *s) {
 // ===========================================================================
 // WSJT-X-style SNR (dB in a 2500 Hz reference bandwidth).
 // ===========================================================================
-// We know the 79 transmitted tones (re-encoded from the decoded payload), so for
+// We know the transmitted tones (re-encoded from the decoded payload), so for
 // each symbol we measure the power in the *actual* tone bin (signal) against the
-// average of the other seven FT8 tone bins (noise), both via a per-symbol DFT at
-// the 6.25 Hz-spaced tone frequencies.  Summed over the 79 symbols the per-symbol
-// normalisation cancels, leaving a signal-to-noise ratio per 6.25 Hz bin; the
-// SNR_REF_DB term (10log10(2500/6.25)) references it to the 2500 Hz WSJT-X band.
-// SNR_CAL is an empirical trim; a synthetic AWGN calibration (scratchpad
-// snr_test.c) confirmed measured==target within ~0.3 dB across the operational
-// -20..-5 dB range with SNR_CAL=0, so the physical -26.02 dB reference stands on
-// its own.  (Above ~0 dB the estimate compresses as the signal's own splatter
-// inflates the off-tone noise bins — as WSJT-X also does, and outside the range
-// that matters for completing a QSO.)
-#define SNR_TONE_HZ  (1.0f / FT8_SYMBOL_PERIOD)             // 6.25 Hz tone spacing
-#define SNR_NSPS     ((int)(FT8_RATE * FT8_SYMBOL_PERIOD))  // 1920 samples/symbol
-#define SNR_REF_DB   26.02f                                 // 10log10(2500/6.25)
-#define SNR_CAL      0.0f                                    // calibration offset
+// average of the other tone bins (noise), both via a per-symbol DFT at the
+// protocol's tone spacing.  Summed over all symbols the per-symbol normalisation
+// cancels, leaving a signal-to-noise ratio per tone-spacing bin; the reference
+// term 10log10(2500/tone_hz) rescales it to the 2500 Hz WSJT-X band.
+// The estimator is parametric so it serves both FT8 (8 tones, 6.25 Hz, 79 sym)
+// and FT4 (4 tones, 20.833 Hz, 105 sym).  SNR_CAL is an empirical trim; a
+// synthetic AWGN calibration (scratchpad snr_test.c / ft4_loopback.c) confirmed
+// measured==target within ~0.3 dB across the operational -20..-5 dB range with
+// SNR_CAL=0, so the physical reference stands on its own.  (Above ~0 dB the
+// estimate compresses as the signal's own splatter inflates the off-tone noise
+// bins — as WSJT-X also does, outside the range that matters for a QSO.)
+#define SNR_MAX_TONES 8                                      // FT8 = 8, FT4 = 4
+#define SNR_CAL       0.0f                                   // calibration offset
 
 static float measure_snr(const float *sig, int len, float f0, float t0,
-                         const uint8_t *tones) {
-  int nsps = SNR_NSPS;
+                         const uint8_t *tones, int n_sym, int n_tones,
+                         float symbol_period) {
+  int nsps = (int)(FT8_RATE * symbol_period);
+  float tone_hz = 1.0f / symbol_period;
+  float ref_db  = 10.0f * log10f(2500.0f / tone_hz);  // FT8: 26.02, FT4: 20.79
   int start0 = (int)lroundf(t0 * FT8_RATE);
   if (start0 < 0) start0 = 0;
-  if (start0 + FT8_NN * nsps > len) return NAN;   // message runs past the buffer
+  if (start0 + n_sym * nsps > len) return NAN;   // message runs past the buffer
 
-  // Per-sample complex rotation for each of the 8 tone bins (e^{-j w}).
-  float cw[8], sw[8];
-  for (int k = 0; k < 8; k++) {
-    float w = 2.0f * (float)M_PI * (f0 + k * SNR_TONE_HZ) / FT8_RATE;
+  // Per-sample complex rotation for each tone bin (e^{-j w}).
+  float cw[SNR_MAX_TONES], sw[SNR_MAX_TONES];
+  for (int k = 0; k < n_tones; k++) {
+    float w = 2.0f * (float)M_PI * (f0 + k * tone_hz) / FT8_RATE;
     cw[k] = cosf(w); sw[k] = sinf(w);
   }
 
   double Ssig = 0.0, Snoise = 0.0;
-  for (int i = 0; i < FT8_NN; i++) {
+  for (int i = 0; i < n_sym; i++) {
     const float *seg = sig + start0 + i * nsps;
-    float pw[8];
-    for (int k = 0; k < 8; k++) {
+    float pw[SNR_MAX_TONES];
+    for (int k = 0; k < n_tones; k++) {
       float pr = 1.0f, pi = 0.0f, ar = 0.0f, ai = 0.0f;   // running phasor / accum
       for (int n = 0; n < nsps; n++) {
         ar += seg[n] * pr;
@@ -212,16 +214,16 @@ static float measure_snr(const float *sig, int len, float f0, float t0,
       }
       pw[k] = ar * ar + ai * ai;
     }
-    int t = tones[i] & 7;
+    int t = tones[i] & (n_tones - 1);
     float nz = 0.0f;
-    for (int k = 0; k < 8; k++) if (k != t) nz += pw[k];
+    for (int k = 0; k < n_tones; k++) if (k != t) nz += pw[k];
     Ssig   += pw[t];
-    Snoise += nz / 7.0f;
+    Snoise += nz / (n_tones - 1);
   }
   if (Snoise <= 0.0) return NAN;
   double ratio = (Ssig - Snoise) / Snoise;        // signal / per-bin noise
   if (ratio < 1.0e-3) ratio = 1.0e-3;
-  float snr = 10.0f * log10f((float)ratio) - SNR_REF_DB + SNR_CAL;
+  float snr = 10.0f * log10f((float)ratio) - ref_db + SNR_CAL;
   if (snr < -24.0f) snr = -24.0f;
   if (snr >  40.0f) snr =  40.0f;
   return snr;
@@ -302,15 +304,18 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
     FT8_DECODE *d = &local[n++];
     snprintf(d->utc, sizeof(d->utc), "%02d%02d%02d",
              tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
-    // Measure a real WSJT-X-style SNR from the known tone sequence; fall back to
-    // the Costas sync-score approximation only if the message runs off the buffer.
-    // measure_snr() is FT8-specific (8 tones, 6.25 Hz, ft8_encode); for FT4 we use
-    // the sync-score approximation until a 4-GFSK SNR estimator is added.
-    float snr = NAN;
-    if (!proto) {
+    // Measure a real WSJT-X-style SNR from the known tone sequence (FT8 8-GFSK or
+    // FT4 4-GFSK); fall back to the Costas sync-score approximation only if the
+    // message runs off the buffer.
+    float snr;
+    if (proto) {
+      uint8_t tones[FT4_NN];
+      ft4_encode(message.payload, tones);
+      snr = measure_snr(sig, len, freq_hz, time_sec, tones, FT4_NN, 4, FT4_SYMBOL_PERIOD);
+    } else {
       uint8_t tones[FT8_NN];
       ft8_encode(message.payload, tones);
-      snr = measure_snr(sig, len, freq_hz, time_sec, tones);
+      snr = measure_snr(sig, len, freq_hz, time_sec, tones, FT8_NN, 8, FT8_SYMBOL_PERIOD);
     }
     d->snr = isnan(snr) ? (cand->score * 0.5f - 20.0f) : snr;
     d->dt = time_sec - 0.5f;   // reference the slot's nominal TX start (~0.5 s)
