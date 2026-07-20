@@ -457,8 +457,9 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
         snprintf(iface, sizeof(iface), "on %s", d->info.network.interface_name);
         break;
     }
-    g_snprintf((gchar *)&title,sizeof(title),"MacHPSDR (%s): %s %s %s %s %s %s",
+    g_snprintf((gchar *)&title,sizeof(title),"MacHPSDR (%s, %s): %s %s %s %s %s %s",
       version,
+      build_date,
       d->name,
       protocol,
       d->software_version,
@@ -587,7 +588,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 #endif
 
   main_window = gtk_application_window_new (app);
-  sprintf(title,"MacHPSDR (%s)",version);
+  snprintf(title,sizeof(title),"MacHPSDR (%s, %s)",version,build_date);
   gtk_window_set_title (GTK_WINDOW (main_window), title);
   gtk_window_set_resizable(GTK_WINDOW(main_window), TRUE);
   GError *error = NULL;
