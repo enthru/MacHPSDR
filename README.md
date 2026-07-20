@@ -195,36 +195,6 @@ de-emphasis / RDS options.
   low-latency ring; only genuinely wide spans pay for the deeper ring. The
   transmitter always uses depth 2.
 
-<details>
-<summary><strong>Other fixes & smaller changes</strong></summary>
-
-<br>
-
-The SoapySDR RX frequency and gain are now re-applied just after the stream
-starts, so the saved gain (and the HackRF RF preamp) takes effect on startup
-instead of staying weak until you nudge the slider, and a cold HackRF tunes
-correctly from the first go instead of receiving garbage until re-tuned. The RX
-sample rate is also re-asserted when the receive stream starts, so a half-duplex
-HackRF no longer receives with artefacts on a fresh launch.
-
-Broadcast FM crackle at high sample rates fixed; `Space` toggles transmit;
-waterfall shows the passband and centre cursor; assorted FM/squelch/NFM fixes.
-Half-duplex receive no longer dies after a transmit-over (the HackRF RX stream
-was left in a runaway overflow that flooded the DSP with `fexchange0: error=-2`);
-the RX stream is now rebuilt fresh on each return to receive.
-
-A receiver that was left muted now really starts muted after a restart (the DSP
-gain had been set to full volume on launch despite the saved mute state).
-
-Enabling the receive equalizer no longer crashes on SoapySDR/HackRF: the wide
-WFM chain runs a 5120-sample DSP block, but the RX equalizer's partitioned filter
-was still built with the historic 2048 coefficients — so it had zero partitions
-and dereferenced an empty FFT-plan array when switched on. Its length is now sized
-to the DSP block. Switching to narrow FM (FMN) no longer crashes for the same
-reason (FM de-emphasis and squelch-noise filters), fixed the same way.
-
-</details>
-
 ### HPSDR hardware
 
 - **PPM frequency correction.**
