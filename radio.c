@@ -196,6 +196,8 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.receivers",value);
   setProperty("radio.station_call",radio->station_call);
   setProperty("radio.station_grid",radio->station_grid);
+  sprintf(value,"%d",radio->ft8_proto);
+  setProperty("radio.ft8_proto",value);
   sprintf(value,"%d",radio->ft8_tx_offset);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);
@@ -1398,6 +1400,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) { strncpy(r->station_call,value,sizeof(r->station_call)-1); r->station_call[sizeof(r->station_call)-1]='\0'; }
   value=getProperty("radio.station_grid");
   if(value!=NULL) { strncpy(r->station_grid,value,sizeof(r->station_grid)-1); r->station_grid[sizeof(r->station_grid)-1]='\0'; }
+  value=getProperty("radio.ft8_proto");
+  if(value!=NULL) r->ft8_proto=atoi(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -2211,6 +2215,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   // FT8 (Phase 2) defaults
   r->station_call[0] = '\0';
   r->station_grid[0] = '\0';
+  r->ft8_proto = 0;            // FT8 (15 s slot) by default
   r->ft8_tx_offset = 1500;
   r->ft8_tx_even = TRUE;
   r->ft8_cq_dir[0] = '\0';     // plain CQ by default

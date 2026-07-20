@@ -1810,6 +1810,7 @@ static void process_rx_buffer(RECEIVER *rx) {
     gboolean want = (rx->mode_a==DIGU);
     ft8_decoder_set_enabled(want);
     if(want) {
+      ft8_decoder_set_protocol(radio->ft8_proto);   // FT8 vs FT4 (single source of truth)
       ft8_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
     }
   }

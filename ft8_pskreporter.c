@@ -200,7 +200,7 @@ void ft8_pskreporter_report(const FT8_DECODE *decodes, int n, time_t slot_time) 
     off=put_vstr(buf,off,d->call_de);            // senderCallsign
     off=put_u40(buf,off,(uint64_t)rf);           // frequency (Hz)
     off=put_u8(buf,off,(uint8_t)(int8_t)snr);    // sNR
-    off=put_vstr(buf,off,"FT8");                 // mode
+    off=put_vstr(buf,off,radio->ft8_proto?"FT4":"FT8"); // mode
     off=put_vstr(buf,off,grid);                  // senderLocator
     off=put_u8(buf,off,1);                        // informationSource (1 = auto)
     off=put_u32(buf,off,(uint32_t)slot_time);    // dateTimeSeconds

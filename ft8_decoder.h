@@ -55,6 +55,11 @@ extern void ft8_decoder_init(void);
 extern void ft8_decoder_set_enabled(gboolean enabled);
 extern gboolean ft8_decoder_is_enabled(void);
 
+// Select the digital protocol: 0 = FT8 (15 s slot), 1 = FT4 (7.5 s slot).  Drives
+// the decode window length, cadence and the ft8_lib monitor's protocol.  Cheap;
+// safe to call from the RX thread each buffer to track radio->ft8_proto.
+extern void ft8_decoder_set_protocol(int ft4);
+
 // Feed one block of the active receiver's demodulated audio (48 kHz,
 // interleaved stereo doubles; only the left channel is used).  Cheap: called
 // from the RX/audio thread.  No-op unless the decoder is enabled.

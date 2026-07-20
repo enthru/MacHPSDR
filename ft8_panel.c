@@ -63,6 +63,14 @@ static char          disp_utc[8] = "";     // last slot appended to the list
 static void offset_changed(GtkSpinButton *sb, gpointer data) {
   radio->ft8_tx_offset = gtk_spin_button_get_value_as_int(sb);
 }
+// Digital protocol selector: 0 = FT8 (15 s slot), 1 = FT4 (7.5 s slot).  The RX
+// thread propagates this to the decoder each buffer; the encoder/QSO/reporters
+// read radio->ft8_proto directly, so setting it here is all that's needed.
+static void proto_changed(GtkComboBox *cb, gpointer data) {
+  int p = gtk_combo_box_get_active(cb);
+  if (p < 0) p = 0;
+  radio->ft8_proto = p;
+}
 static void slot_changed(GtkComboBox *cb, gpointer data) {
   radio->ft8_tx_even = (gtk_combo_box_get_active(cb) == 0);
 }
@@ -288,6 +296,16 @@ GtkWidget *ft8_panel_create(void) {
 
   // --- operational config row (callsign/grid live in Configure -> FT8) ---
   GtkWidget *cfg = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+
+  // Protocol selector (FT8 / FT4) — leftmost, beside the TX frequency controls.
+  GtkWidget *mode = gtk_combo_box_text_new();
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "FT8");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "FT4");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(mode), radio->ft8_proto ? 1 : 0);
+  gtk_widget_set_tooltip_text(mode, "Digital protocol: FT8 (15 s) or FT4 (7.5 s)");
+  g_signal_connect(mode, "changed", G_CALLBACK(proto_changed), NULL);
+  gtk_box_pack_start(GTK_BOX(cfg), mode, FALSE, FALSE, 0);
+
   gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Tx Hz"), FALSE, FALSE, 0);
   offset_spin = gtk_spin_button_new_with_range(200, 2800, 1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset_spin), radio->ft8_tx_offset);

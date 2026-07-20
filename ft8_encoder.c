@@ -43,14 +43,23 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// ---- FT8 waveform constants -----------------------------------------------
+// ---- waveform constants ----------------------------------------------------
+// FT8 and FT4 share this engine; the per-symbol sample count, symbol count and
+// Gaussian BT differ by protocol (selected via radio->ft8_proto at prepare time).
 #define FT8_TX_RATE     48000                 // mic / TX exchange rate (Hz)
-#define FT8_TX_SPS      7680                  // samples per symbol (0.5 + 48000*0.16)
-#define FT8_TX_SAMPLES  (FT8_NN * FT8_TX_SPS) // full waveform length (606720, ~12.64 s)
-#define GFSK_BT         2.0f                  // Gaussian filter bandwidth-time product
+#define FT8_TX_SPS      7680                  // FT8 samples per symbol (48000*0.16)
+#define FT4_TX_SPS      2304                  // FT4 samples per symbol (48000*0.048)
+#define FT8_TX_SAMPLES  (FT8_NN * FT8_TX_SPS) // longest waveform (606720, ~12.64 s)
+#define GFSK_BT_FT8     2.0f                  // FT8 Gaussian filter bandwidth-time product
+#define GFSK_BT_FT4     1.0f                  // FT4 Gaussian filter bandwidth-time product
 #define GFSK_CONST_K    5.336446f             // pi * sqrt(2 / ln(2))
 #define FT8_TX_AMPL     0.9f                  // waveform peak (leaves TX headroom)
-#define FT8_SLOT_SEC    15                    // FT8 time slot (s)
+
+// TRUE when FT4 is the selected protocol.  FT4_NN*FT4_TX_SPS (241920) < the FT8
+// buffer size, so the shared wave[] buffer holds either waveform.
+#define TX_IS_FT4()     (radio && radio->ft8_proto)
+// UTC slot length in milliseconds (FT8 = 15 s, FT4 = 7.5 s).
+#define TX_SLOT_MS()    (TX_IS_FT4() ? 7500L : 15000L)
 
 // ---- synthesized waveform (GTK thread writes, audio thread reads) ----------
 static float            wave[FT8_TX_SAMPLES];
@@ -65,13 +74,14 @@ static gboolean          arm_even = FALSE;    // desired slot parity
 static long              last_started_slot = -1; // slot we last keyed up in
 static gboolean          we_keyed = FALSE;    // did we raise MOX (so we drop it)
 static guint             tick_id = 0;         // scheduler g_timeout id
-static time_t            key_time = 0;        // when WE last raised MOX (watchdog)
+static gint64            key_time_ms = 0;     // when WE last raised MOX (watchdog, ms)
 
-// Hard safety cap on how long our keying may hold MOX.  The GFSK waveform is
-// ~12.64 s; if the TX path never clocks it out (e.g. MOX didn't actually engage,
-// or a half-duplex/hardware stall), tx_idx never reaches wave_len and MOX would
-// stick on forever.  This forces key-down regardless.
-#define FT8_TX_MAX_SEC   14
+// Hard safety cap on how long our keying may hold MOX.  Derived from the actual
+// waveform length (FT8 ~12.64 s, FT4 ~5.04 s) plus a fixed margin: if the TX path
+// never clocks the waveform out (e.g. MOX didn't actually engage, or a
+// half-duplex/hardware stall), tx_idx never reaches wave_len and MOX would stick
+// on forever.  This forces key-down regardless.
+#define FT8_TX_MAX_MARGIN_MS  2000
 
 // ===========================================================================
 // Callsign hash table — ftx_message_encode() needs it to hash non-standard
@@ -133,14 +143,13 @@ static void gfsk_pulse(int n_spsym, float bt, float *pulse) {
   }
 }
 
-static void synth_gfsk(const uint8_t *sym, int n_sym, float f0) {
-  const int nsps = FT8_TX_SPS;
+static void synth_gfsk(const uint8_t *sym, int n_sym, int nsps, float bt, float f0) {
   const int n_wave = n_sym * nsps;
   const float dphi_peak = 2.0f * (float)M_PI / nsps;   // hmod = 1
 
   float *dphi = g_malloc0(sizeof(float) * (n_wave + 2 * nsps));
   float *pulse = g_malloc(sizeof(float) * 3 * nsps);
-  gfsk_pulse(nsps, GFSK_BT, pulse);
+  gfsk_pulse(nsps, bt, pulse);
 
   // Baseline carrier phase increment for the audio offset f0.
   for (int i = 0; i < n_wave + 2 * nsps; i++) {
@@ -183,16 +192,20 @@ static void synth_gfsk(const uint8_t *sym, int n_sym, float f0) {
 static gboolean tx_tick(gpointer data) {
   if (!armed && !tx_active) { tick_id = 0; return G_SOURCE_REMOVE; }
 
-  time_t now = time(NULL);
-  long slot = now / FT8_SLOT_SEC;
-  int  in_slot = (int)(now % FT8_SLOT_SEC);
+  // Work in wall-clock milliseconds so FT4's 7.5 s slot boundaries (which fall on
+  // half-seconds) are honoured; FT8's 15 s slots are a special case of the same.
+  gint64 now_ms = g_get_real_time() / 1000;
+  long   slot_ms = TX_SLOT_MS();
+  long   slot = (long)(now_ms / slot_ms);
+  long   in_slot = (long)(now_ms % slot_ms);
 
   if (tx_active) {
     // Safety watchdog: never let our keying hold MOX past the waveform length +
     // margin, even if the TX path stops pulling samples (tx_idx would stall).
-    if (we_keyed && key_time && (now - key_time) > FT8_TX_MAX_SEC) {
-      fprintf(stderr, "ft8-tx: WATCHDOG — MOX held >%ds (tx_idx=%ld/%d), forcing key-down\n",
-              FT8_TX_MAX_SEC, tx_idx, wave_len);
+    gint64 max_ms = (gint64)wave_len * 1000 / FT8_TX_RATE + FT8_TX_MAX_MARGIN_MS;
+    if (we_keyed && key_time_ms && (now_ms - key_time_ms) > max_ms) {
+      fprintf(stderr, "ft8-tx: WATCHDOG — MOX held >%lldms (tx_idx=%ld/%d), forcing key-down\n",
+              (long long)max_ms, tx_idx, wave_len);
       tx_active = FALSE;
       armed = FALSE;
       we_keyed = FALSE;
@@ -211,15 +224,17 @@ static gboolean tx_tick(gpointer data) {
     return G_SOURCE_CONTINUE;
   }
 
-  // Armed and waiting: key up at the top of the next matching-parity slot.
-  if (have_wave && in_slot < 2 && slot != last_started_slot &&
+  // Armed and waiting: key up early in the next matching-parity slot.  The 2 s
+  // window tolerates GTK timer jitter yet still leaves the waveform room to finish
+  // inside the slot (FT8 12.64 s / 15 s; FT4 5.04 s / 7.5 s).
+  if (have_wave && in_slot < 2000 && slot != last_started_slot &&
       ((slot % 2) == 0) == arm_even) {
     last_started_slot = slot;
     tx_idx = 0;
     tx_active = TRUE;
-    fprintf(stderr, "ft8-tx: slot boundary reached, keying up (in_slot=%d even=%d mox=%d)\n",
+    fprintf(stderr, "ft8-tx: slot boundary reached, keying up (in_slot=%ldms even=%d mox=%d)\n",
             in_slot, arm_even, radio->mox);
-    key_time = now;                     // arm the MOX safety watchdog
+    key_time_ms = now_ms;               // arm the MOX safety watchdog
     if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
   }
   return G_SOURCE_CONTINUE;
@@ -235,9 +250,15 @@ gboolean ft8_tx_prepare(const char *text, float offset_hz) {
     have_wave = FALSE;
     return FALSE;
   }
-  uint8_t tones[FT8_NN];
-  ft8_encode(msg.payload, tones);
-  synth_gfsk(tones, FT8_NN, offset_hz);
+  if (TX_IS_FT4()) {
+    uint8_t tones[FT4_NN];
+    ft4_encode(msg.payload, tones);
+    synth_gfsk(tones, FT4_NN, FT4_TX_SPS, GFSK_BT_FT4, offset_hz);
+  } else {
+    uint8_t tones[FT8_NN];
+    ft8_encode(msg.payload, tones);
+    synth_gfsk(tones, FT8_NN, FT8_TX_SPS, GFSK_BT_FT8, offset_hz);
+  }
   have_wave = TRUE;
   return TRUE;
 }
@@ -252,7 +273,7 @@ void ft8_tx_arm(gboolean tx_even) {
   arm_even = tx_even;
   // Anchor on the current slot so we never start mid-slot: fire only when the
   // clock advances into a new slot of the desired parity.
-  last_started_slot = time(NULL) / FT8_SLOT_SEC;
+  last_started_slot = (long)((g_get_real_time() / 1000) / TX_SLOT_MS());
   armed = TRUE;
   if (tick_id == 0) {
     tick_id = g_timeout_add(100, tx_tick, NULL);

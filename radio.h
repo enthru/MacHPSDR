@@ -96,8 +96,9 @@ typedef struct _radio {
   // FT8 (Phase 2): station identity + TX state. Persisted in radio_save_state.
   char station_call[16];   // operator callsign, used for FT8 TX/QSO
   char station_grid[8];    // 4/6-char Maidenhead locator
+  gint ft8_proto;          // digital protocol: 0 = FT8 (15 s slot), 1 = FT4 (7.5 s slot)
   gint ft8_tx_offset;      // FT8 audio TX offset (Hz)
-  gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC 15 s slots
+  gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC slot
   char ft8_cq_dir[8];      // directed-CQ modifier ("" = plain CQ; "DX"/"EU"/... or nnn)
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)

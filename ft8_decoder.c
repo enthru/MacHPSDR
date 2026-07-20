@@ -50,8 +50,16 @@
 // clock — need overlapping windows rather than a single hard UTC-slot cut.  A hop
 // shorter than that tolerance guarantees every complete transmission in the ring
 // lands decodably in at least one window.
-#define DECODE_HOP      (FT8_RATE * 2)                    // ~2 s between decodes
+#define DECODE_HOP      (FT8_RATE * 2)                    // ~2 s between decodes (FT8)
 #define MAX_DECODES     64               // per-window cap we surface to the UI
+
+// ---- protocol (0 = FT8, 1 = FT4), set by ft8_decoder_set_protocol() ---------
+// FT4 has a 7.5 s slot and a ~5 s waveform, so its decode window, decode cadence
+// and minimum-audio guard are all half/shorter than FT8's.  SLOT_SAMPLES/RING_CAP
+// above stay sized for the longer FT8 window (the FT4 window fits inside them).
+static volatile int proto = 0;
+static int slot_samples(void) { return proto ? FT8_RATE * 15 / 2 : FT8_RATE * 15; }  // 90000 / 180000
+static int decode_hop(void)   { return proto ? FT8_RATE * 1     : FT8_RATE * 2; }     // 1 s / 2 s
 
 // ft8_lib decode tuning (mirrors the reference decoder in demo/decode_ft8.c)
 #define KMIN_SCORE      10
@@ -229,7 +237,7 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
     .sample_rate = FT8_RATE,
     .time_osr = 2,
     .freq_osr = 2,
-    .protocol = FTX_PROTOCOL_FT8
+    .protocol = proto ? FTX_PROTOCOL_FT4 : FTX_PROTOCOL_FT8
   };
 
   monitor_t mon;
@@ -296,9 +304,14 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
              tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
     // Measure a real WSJT-X-style SNR from the known tone sequence; fall back to
     // the Costas sync-score approximation only if the message runs off the buffer.
-    uint8_t tones[FT8_NN];
-    ft8_encode(message.payload, tones);
-    float snr = measure_snr(sig, len, freq_hz, time_sec, tones);
+    // measure_snr() is FT8-specific (8 tones, 6.25 Hz, ft8_encode); for FT4 we use
+    // the sync-score approximation until a 4-GFSK SNR estimator is added.
+    float snr = NAN;
+    if (!proto) {
+      uint8_t tones[FT8_NN];
+      ft8_encode(message.payload, tones);
+      snr = measure_snr(sig, len, freq_hz, time_sec, tones);
+    }
     d->snr = isnan(snr) ? (cand->score * 0.5f - 20.0f) : snr;
     d->dt = time_sec - 0.5f;   // reference the slot's nominal TX start (~0.5 s)
     d->freq = freq_hz;
@@ -357,10 +370,11 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
   }
 }
 
-// A slot needs enough audio to hold at least the FT8 waveform (~12.6 s); below
-// that a decode is pointless.  Guards against tiny partial slots at start-up.
+// A slot needs enough audio to hold at least the full waveform (FT8 ~12.6 s,
+// FT4 ~5 s); below that a decode is pointless.  Guards against tiny partial slots
+// at start-up.
 static int mon_min_samples(void) {
-  return FT8_RATE * 13;
+  return proto ? FT8_RATE * 5 : FT8_RATE * 13;
 }
 
 // ---- worker thread ---------------------------------------------------------
@@ -413,6 +427,10 @@ gboolean ft8_decoder_is_enabled(void) {
   return enabled;
 }
 
+void ft8_decoder_set_protocol(int ft4) {
+  proto = ft4 ? 1 : 0;
+}
+
 void ft8_decoder_add_audio(const gdouble *samples, int nframes) {
   if (!enabled) return;
 
@@ -425,17 +443,25 @@ void ft8_decoder_add_audio(const gdouble *samples, int nframes) {
     }
   }
 
-  // Every DECODE_HOP samples, hand the most recent 15 s window to the worker.
-  if (ring_w >= SLOT_SAMPLES && (ring_w - last_decode_w) >= DECODE_HOP) {
+  // Every decode_hop() samples, hand the most recent slot-length window to the
+  // worker.  Both lengths are protocol-dependent (FT4 is half of FT8).
+  int ss = slot_samples();
+  if (ring_w >= ss && (ring_w - last_decode_w) >= decode_hop()) {
     g_mutex_lock(&work_mutex);
     if (!work_ready) {               // skip if the worker is still busy
-      long start = ring_w - SLOT_SAMPLES;
-      for (int i = 0; i < SLOT_SAMPLES; i++) {
+      long start = ring_w - ss;
+      for (int i = 0; i < ss; i++) {
         work_buf[i] = ring[(start + i) % RING_CAP];
       }
-      work_len = SLOT_SAMPLES;
-      // Label with the 15 s slot boundary nearest the window end (cosmetic).
-      work_slot_time = (time(NULL) / FT8_SLOT_SEC) * FT8_SLOT_SEC;
+      work_len = ss;
+      // Label with the slot boundary nearest the window end (cosmetic + drives
+      // the QSO engine's slot-parity).  Work in ms and round to the nearest second
+      // so FT4's half-second (7.5 s) boundaries map back to the right slot index
+      // in slot_even_from_utc() (ft8_qso.c) — floored seconds would be off-by-one.
+      long   slot_ms = proto ? 7500L : 15000L;
+      gint64 now_ms  = g_get_real_time() / 1000;
+      gint64 bound   = (now_ms / slot_ms) * slot_ms;
+      work_slot_time = (time_t)((bound + 500) / 1000);
       work_ready = TRUE;
       g_cond_signal(&work_cond);
       last_decode_w = ring_w;

@@ -238,13 +238,17 @@ static gboolean same_dx(const char *call) {
   return dx_call[0] && strcasecmp(call, dx_call) == 0;
 }
 
-// Slot parity from a decoder "hhmmss" label.  There are 5760 (even) 15 s slots
-// per UTC day, so parity of seconds-of-day/15 == parity of epoch/15.
+// Slot parity from a decoder "hhmmss" label.  For FT8 the 15 s slot index is
+// seconds-of-day/15.  For FT4 the slot is 7.5 s: the decoder rounds each 7.5 s
+// boundary to the nearest whole second when it stamps the label (see
+// ft8_decoder.c add_audio), so slot index = seconds-of-day*2/15 recovers the
+// right parity (odd-index boundaries land on x.5 → rounded up).
 static gboolean slot_even_from_utc(const char *utc) {
   int hh = (utc[0]-'0')*10 + (utc[1]-'0');
   int mm = (utc[2]-'0')*10 + (utc[3]-'0');
   int ss = (utc[4]-'0')*10 + (utc[5]-'0');
-  long slot = (hh*3600L + mm*60L + ss) / 15;
+  long sod = hh*3600L + mm*60L + ss;
+  long slot = (radio && radio->ft8_proto) ? (sod * 2) / 15 : sod / 15;
   return (slot % 2) == 0;
 }
 
@@ -305,7 +309,7 @@ static void log_qso(void) {
   char rec[512], *p = rec;
   adif_field(&p, "CALL", dx_call);
   if (dx_grid[0]) adif_field(&p, "GRIDSQUARE", dx_grid);
-  adif_field(&p, "MODE", "FT8");
+  adif_field(&p, "MODE", (radio && radio->ft8_proto) ? "FT4" : "FT8");
   adif_field(&p, "RST_SENT", rs);
   adif_field(&p, "RST_RCVD", rr);
   adif_field(&p, "QSO_DATE", date);
