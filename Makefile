@@ -142,9 +142,17 @@ WDSP_DIR=wdsp
 WDSP_LIB=$(WDSP_DIR)/libwdsp.dylib
 
 ifeq ($(UNAME_S), Linux)
-LIBS=-lrt -lm -lpthread -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS)
-WDSP_INCLUDE=
-RPATH_FLAGS=
+# Link against the in-tree ./wdsp (libwdsp.so, built by the wdsp-local target)
+# and use its in-tree headers — NOT a system-wide WDSP. This fork patches WDSP
+# (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
+# but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
+# require `sudo make install` of an upstream WDSP.
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS)
+WDSP_INCLUDE=-I$(WDSP_DIR)
+# $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
+# so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
+# make; single-quoted so the shell passes $ORIGIN through to the linker literally.)
+RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)'
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
@@ -366,16 +374,22 @@ $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_
 ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
-ifeq ($(UNAME_S), Darwin)
-# Build the in-tree WDSP and stamp its install-id to @rpath so it can be found
-# via rpath (repo run) or bundled into the .app. Order-only prereq of $(PROGRAM):
-# it must exist before linking but a rebuild here does not force a relink.
+# Build the in-tree WDSP (patched: WFM demod + tweaks) on BOTH platforms, so the
+# app links the vendored copy and never a system-wide WDSP. Order-only prereq of
+# $(PROGRAM): it must exist before linking but a rebuild here does not force a
+# relink. On macOS the install-id is stamped to @rpath so it resolves via rpath
+# (repo run) or when bundled into the .app; on Linux the $ORIGIN rpath (above)
+# handles resolution, so no post-build fix-up is needed.
 .PHONY: wdsp-local
+$(PROGRAM): | wdsp-local
+
+ifeq ($(UNAME_S), Darwin)
 wdsp-local:
 	$(MAKE) -C $(WDSP_DIR)
 	install_name_tool -id @rpath/libwdsp.dylib $(WDSP_LIB)
-
-$(PROGRAM): | wdsp-local
+else
+wdsp-local:
+	$(MAKE) -C $(WDSP_DIR)
 endif
 
 

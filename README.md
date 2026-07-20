@@ -341,12 +341,23 @@ cd machpsdr
 make
 ```
 
+> **Do not** `git clone .../wdsp` and `sudo make install` it. This fork links the
+> **vendored, patched** WDSP under `wdsp/`; a system-wide upstream WDSP would
+> build but silently break this fork's WFM demod and other DSP tweaks. `make`
+> builds `wdsp/libwdsp.so` for you and the binary finds it via an `$ORIGIN` rpath,
+> so `./machpsdr` runs straight from the repo with no WDSP install. See
+> [WDSP (vendored)](#wdsp-vendored).
+
 ### WDSP (vendored)
 
-The patched WDSP this fork needs is vendored in `wdsp/` (do not clone it
-separately). It is built automatically as part of `make` / `make app`, and
-MacHPSDR links against that in-tree copy — no separate WDSP build or system-wide
-install is required.
+The patched WDSP this fork needs is vendored in `wdsp/` (do **not** clone or
+install it separately — see above). On **both macOS and Linux** it is built
+automatically as part of `make` / `make app`, and MacHPSDR links against that
+in-tree copy: `wdsp/libwdsp.dylib` on macOS, `wdsp/libwdsp.so` on Linux. No
+separate WDSP build or system-wide install is required or wanted — an upstream
+`-lwdsp` from `/usr/local` would compile but break the fork's patches. The binary
+locates the in-tree library at run time via an rpath (`@loader_path/wdsp` on
+macOS, `$ORIGIN/wdsp` on Linux), so it runs in place from the repo.
 
 ### CW support (Linux, optional)
 

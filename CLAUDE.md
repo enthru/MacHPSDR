@@ -45,10 +45,14 @@ brew install fftw gtk+3 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
 sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev libasound2-dev libgtk-3-dev libsoapysdr-dev
 ```
 
-### WDSP (required on all platforms)
-```bash
-git clone https://github.com/g0orx/wdsp.git && cd wdsp && make && sudo make install
-```
+### WDSP (vendored — do NOT install upstream)
+The patched WDSP this fork needs is vendored in-tree under `wdsp/` and is built
+automatically by `make` on **both platforms** (`wdsp/libwdsp.dylib` on macOS,
+`wdsp/libwdsp.so` on Linux); the binary finds it via rpath (`@loader_path/wdsp`
+on macOS, `$ORIGIN/wdsp` on Linux). Do **not** `git clone g0orx/wdsp` and
+`sudo make install` it — a stock system `-lwdsp` compiles but silently breaks
+this fork's WFM demod and other DSP patches. The Makefile's `wdsp-local` target
+(`$(MAKE) -C wdsp`) is an order-only prereq of the main binary on both platforms.
 
 ## Platform Differences
 
