@@ -36,6 +36,13 @@ typedef struct _audio_device {
 
 #define MAX_AUDIO_DEVICES 64
 
+// Sentinel device name for the synthetic "System Default" entry.  A receiver
+// whose audio_name is this string (re)opens on whatever the OS currently calls
+// the default output, resolved fresh each time — pick it once, never touch the
+// device again when e.g. Bluetooth headphones connect.  New receivers default to
+// it (see create_receiver) so a freshly-added radio makes sound out of the box.
+#define AUDIO_SYSTEM_DEFAULT_NAME "__system_default__"
+
 extern int n_input_devices;
 extern AUDIO_DEVICE input_devices[MAX_AUDIO_DEVICES];
 extern int n_output_devices;

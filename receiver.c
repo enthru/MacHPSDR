@@ -2415,7 +2415,12 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
 #ifdef SOAPYSDR
   }
 #endif
-  rx->local_audio=FALSE;
+  // Default a freshly-added radio to Local Audio on the "System Default" output
+  // so it makes sound out of the box.  receiver_restore_state only overrides
+  // these when the property actually exists, so an existing device's saved audio
+  // choice (including a deliberate "off") is preserved — only brand-new devices
+  // get this default.
+  rx->local_audio=TRUE;
   rx->local_audio_buffer_size=2048;
   rx->local_audio_buffer_offset=0;
   rx->local_audio_buffer=NULL;
@@ -2424,7 +2429,7 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
   g_mutex_init(&rx->local_audio_mutex);
 
 
-  rx->audio_name=NULL;
+  rx->audio_name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
   rx->mute_when_not_active=FALSE;
 
   rx->zoom=1;
