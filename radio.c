@@ -1666,6 +1666,7 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU)
   gboolean show_ft8=FALSE;
+  gboolean ft8_markup=FALSE;         // ft8buf carries Pango markup (worked-call colour)
   // The decode block is named for the currently selected digital mode (the
   // single source of truth is radio->ft8_proto: 0=FT8, 1=FT4).
   const char *ftname = r->ft8_proto ? "FT4" : "FT8";
@@ -1769,11 +1770,22 @@ static gboolean rds_update_cb(gpointer data) {
       if(total==0) {
         snprintf(ft8buf,sizeof(ft8buf),"listening…");
       } else {
+        // Decodes are rendered as Pango markup so already-worked callsigns can be
+        // greyed (the message text is escaped since markup is XML).
+        ft8_markup=TRUE;
         int shown = total<FT8_ROWS ? total : FT8_ROWS;
         for(int i=0;i<shown;i++) {
           int last = (i==FT8_ROWS-1) && (total>FT8_ROWS);
-          int w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
-                         i?"\n":"", d[i].snr, d[i].freq, d[i].text);
+          gboolean b4 = d[i].call_de[0] && ft8_qso_worked(d[i].call_de);
+          gchar *msg = g_markup_escape_text(d[i].text, -1);
+          int w;
+          if(b4)
+            w=snprintf(p,n,"%s<span foreground=\"#888888\">%+3.0f  %4.0f Hz  %s</span>",
+                       i?"\n":"", d[i].snr, d[i].freq, msg);
+          else
+            w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
+                       i?"\n":"", d[i].snr, d[i].freq, msg);
+          g_free(msg);
           if(w<0) w=0; else if((size_t)w>=n) w=(int)n-1; p+=w; n-=(size_t)w;
           if(last) {
             int e=snprintf(p,n,"   (+%d more)", total-FT8_ROWS);
@@ -1787,7 +1799,8 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef FT8
   // Swap between the 3 RDS rows and the single FT8 block depending on the mode.
   if(r->ft8_label!=NULL) {
-    gtk_label_set_text(GTK_LABEL(r->ft8_label), ft8buf);
+    if(ft8_markup) gtk_label_set_markup(GTK_LABEL(r->ft8_label), ft8buf);
+    else           gtk_label_set_text  (GTK_LABEL(r->ft8_label), ft8buf);
     gtk_widget_set_visible(r->ft8_label, show_ft8);
   }
   // The "FT8 Panel" toggle lives in this block but only makes sense in DIGU.
