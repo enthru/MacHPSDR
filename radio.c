@@ -2005,7 +2005,7 @@ static void create_visual(RADIO *r) {
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"FT4");
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"SSTV");
   gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel),r->decode_mode);
-  gtk_widget_set_name(r->decode_sel,"toolbar-button");
+  gtk_widget_set_name(r->decode_sel,"decode-combo");   // flat themed combo (css.c)
   g_signal_connect(r->decode_sel,"changed",G_CALLBACK(decode_sel_changed),(gpointer)r);
   gtk_box_pack_start(GTK_BOX(dec_ctl),r->decode_sel,FALSE,FALSE,0);
 #endif
