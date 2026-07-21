@@ -440,6 +440,7 @@ void protocol2_high_priority() {
         if(radio->receiver[r]!=NULL) {
           //int v=radio->receiver[r]->channel; // UNUSED
           rxFrequency=radio->receiver[r]->frequency_a-radio->receiver[r]->lo_a+radio->receiver[r]->error_a;
+          rxFrequency+=radio_ppm_correction(radio->receiver[r]->frequency_a-radio->receiver[r]->lo_a);
           if(radio->receiver[r]->rit_enabled) {
             rxFrequency+=radio->receiver[r]->rit;
           }
@@ -470,11 +471,14 @@ void protocol2_high_priority() {
         if(rx!=NULL) {
           if(rx->split) {
             txFrequency=rx->frequency_b-rx->lo_b+rx->error_b;
+            txFrequency+=radio_ppm_correction(rx->frequency_b-rx->lo_b);
           } else {
             if(rx->ctun) {
               txFrequency=rx->ctun_frequency-rx->lo_a+rx->error_a;
+              txFrequency+=radio_ppm_correction(rx->ctun_frequency-rx->lo_a);
             } else {
               txFrequency=rx->frequency_a-rx->lo_a+rx->error_a;
+              txFrequency+=radio_ppm_correction(rx->frequency_a-rx->lo_a);
             }
           }
 

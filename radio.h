@@ -118,6 +118,7 @@ typedef struct _radio {
   gdouble swr_alarm_value;
   gint temperature_alarm_value;
   int ppm_correction_value;
+  int ppm_ref_station;     // index into the ppm_cal.c reference-station table
 
   gint cw_keyer_sidetone_frequency;
   gint cw_keyer_sidetone_volume;
@@ -297,6 +298,10 @@ extern RADIO *create_radio(DISCOVERED *d);
 extern void delete_receiver(RECEIVER *rx);
 extern void delete_diversity_mixer(DIVMIXER *dmix);
 extern void frequency_changed(RECEIVER *rx);
+// PPM oscillator-error correction (Hz) to add to an RF tune frequency f_rf
+// (dial minus LO offset, Hz). Scales the configured ppm by f_rf in whole MHz,
+// matching the long-standing Protocol-1 formula.
+extern long long radio_ppm_correction(long long f_rf);
 extern void radio_set_wfm_deemphasis(RADIO *radio, int sel);
 extern int add_receiver(void *data, gboolean show_rx);
 extern int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden); // TODO - does this *need* a prototype?

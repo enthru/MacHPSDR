@@ -223,6 +223,7 @@ vox.c\
 ext.c\
 configure_dialog.c\
 labels_dialog.c\
+ppm_cal.c\
 bookmark_dialog.c\
 puresignal_dialog.c\
 oc_dialog.c\
@@ -285,6 +286,7 @@ vox.h\
 ext.h\
 configure_dialog.h\
 labels_dialog.h\
+ppm_cal.h\
 bookmark_dialog.h\
 puresignal_dialog.h\
 oc_dialog.h\
@@ -349,6 +351,7 @@ vox.o\
 ext.o\
 configure_dialog.o\
 labels_dialog.o\
+ppm_cal.o\
 bookmark_dialog.o\
 puresignal_dialog.o\
 oc_dialog.o\

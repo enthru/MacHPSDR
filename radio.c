@@ -345,6 +345,8 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.swr_alarm",value);
   sprintf(value,"%d",radio->ppm_correction_value);
   setProperty("radio.ppm_correction_value",value);
+  sprintf(value,"%d",radio->ppm_ref_station);
+  setProperty("radio.ppm_ref_station",value);
   sprintf(value,"%d",radio->wfm_deemphasis);
   setProperty("radio.wfm_deemphasis",value);
   sprintf(value,"%d",radio->rds_rbds);
@@ -587,6 +589,8 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->swr_alarm_value=atof(value);
   value=getProperty("radio.ppm_correction_value");
   if(value!=NULL) radio->ppm_correction_value=atoi(value);
+  value=getProperty("radio.ppm_ref_station");
+  if(value!=NULL) radio->ppm_ref_station=atoi(value);
   value=getProperty("radio.wfm_deemphasis");
   if(value!=NULL) radio->wfm_deemphasis=atoi(value);
   value=getProperty("radio.rds_rbds");
@@ -828,6 +832,10 @@ void frequency_changed(RECEIVER *rx) {
     }
     subrx_frequency_changed(rx);
   }
+}
+
+long long radio_ppm_correction(long long f_rf) {
+  return (long long)(f_rf/1000000)*radio->ppm_correction_value;
 }
 
 gboolean isTransmitting(RADIO *r) {
@@ -2209,6 +2217,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 
   r->swr_alarm_value = 2.0;
   r->ppm_correction_value = 0;
+  r->ppm_ref_station = 0;
   r->temperature_alarm_value = 50;
   r->qos_flag = FALSE;
 

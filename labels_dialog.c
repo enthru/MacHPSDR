@@ -28,6 +28,7 @@
 #include "radio.h"
 #include "settings_ui.h"
 #include "css.h"
+#include "ppm_cal.h"
 
 // Apply an entry's text to a stored label and update every widget that carries
 // it live: the bottom-bar toolbar button and the check button on the Radio
@@ -75,6 +76,47 @@ static void theme_cb(GtkWidget *widget, gpointer data) {
   radio->theme=sel;
   css_set_theme(sel);         // restyle the CSS chrome live
   radio_refresh_skin(radio);  // repaint idle Cairo surfaces (e.g. TX monitor)
+}
+
+// ---- Frequency calibration (PPM) ----
+// Widget refs kept static so the callbacks can cross-update the readout. Only
+// one Configure dialog exists at a time, so re-opening simply re-seeds these.
+static GtkWidget *ppm_status_label;
+static GtkWidget *ppm_station_combo;
+
+static void ppm_status_refresh(RADIO *r) {
+  if(ppm_status_label==NULL) return;
+  const PPM_STATION *st=ppm_station(r->ppm_ref_station);
+  char buf[256];
+  snprintf(buf,sizeof(buf),"Correction: %+d ppm    Reference: %s",
+           r->ppm_correction_value, st?st->name:"(none)");
+  gtk_label_set_text(GTK_LABEL(ppm_status_label),buf);
+}
+
+static void ppm_value_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->ppm_correction_value=(int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  // Protocol 1 reads ppm live in its output thread; Protocol 2 / SoapySDR must
+  // be re-tuned to pick up the new correction.
+  if(r->active_receiver!=NULL) frequency_changed(r->active_receiver);
+  ppm_status_refresh(r);
+}
+
+static void ppm_station_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  if(sel<0) sel=0;
+  r->ppm_ref_station=sel;
+  ppm_status_refresh(r);
+}
+
+static void ppm_tune_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  int sel=r->ppm_ref_station;
+  if(ppm_station_combo!=NULL) sel=gtk_combo_box_get_active(GTK_COMBO_BOX(ppm_station_combo));
+  if(sel<0) sel=0;
+  ppm_cal_tune_to_station(r,sel);
+  ppm_status_refresh(r);
 }
 
 GtkWidget *create_labels_dialog(RADIO *r) {
@@ -174,8 +216,56 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
   g_signal_connect(skin_combo,"changed",G_CALLBACK(theme_cb),r);
 
+  // ---- Frequency Calibration (PPM) ----
+  GtkWidget *ppm_frame=gtk_frame_new("Frequency Calibration (PPM)");
+  GtkWidget *ppm_grid=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(ppm_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(ppm_grid),FALSE);
+  gtk_grid_set_column_spacing(GTK_GRID(ppm_grid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(ppm_grid),5);
+  sui_style_group(ppm_grid);
+  gtk_container_add(GTK_CONTAINER(ppm_frame),ppm_grid);
+
+  GtkWidget *ppm_info=gtk_label_new(
+      "Correct the radio's reference-oscillator error in parts-per-million.\n"
+      "Pick a time/frequency-standard station, press Tune to park its carrier\n"
+      "at the CW pitch, then adjust the correction until the tone sits on zero beat.");
+  gtk_widget_set_halign(ppm_info,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(ppm_info,12);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_info,0,0,3,1);
+
+  GtkWidget *ppm_lbl=gtk_label_new("Correction (ppm):");
+  gtk_widget_set_halign(ppm_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_lbl,0,1,1,1);
+  GtkWidget *ppm_spin=gtk_spin_button_new_with_range(-500,500,1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),r->ppm_correction_value);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_spin,1,1,1,1);
+  g_signal_connect(ppm_spin,"value_changed",G_CALLBACK(ppm_value_cb),r);
+
+  GtkWidget *st_lbl=gtk_label_new("Reference station:");
+  gtk_widget_set_halign(st_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(ppm_grid),st_lbl,0,2,1,1);
+  ppm_station_combo=gtk_combo_box_text_new();
+  for(int s=0;s<ppm_station_count();s++) {
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(ppm_station_combo),NULL,ppm_station(s)->name);
+  }
+  gtk_combo_box_set_active(GTK_COMBO_BOX(ppm_station_combo),r->ppm_ref_station);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_station_combo,1,2,1,1);
+  g_signal_connect(ppm_station_combo,"changed",G_CALLBACK(ppm_station_cb),r);
+
+  GtkWidget *tune_b=gtk_button_new_with_label("Tune");
+  gtk_grid_attach(GTK_GRID(ppm_grid),tune_b,2,2,1,1);
+  g_signal_connect(tune_b,"clicked",G_CALLBACK(ppm_tune_cb),r);
+
+  ppm_status_label=gtk_label_new("");
+  gtk_widget_set_halign(ppm_status_label,GTK_ALIGN_START);
+  gtk_widget_set_margin_top(ppm_status_label,6);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_status_label,0,3,3,1);
+  ppm_status_refresh(r);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_pack_start(GTK_BOX(vbox),skin_frame,FALSE,FALSE,0);
+  gtk_box_pack_start(GTK_BOX(vbox),ppm_frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),fm_frame,FALSE,FALSE,0);
   return vbox;

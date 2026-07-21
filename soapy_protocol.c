@@ -683,6 +683,7 @@ void soapy_protocol_set_rx_frequency(RECEIVER *rx) {
 
   if(soapy_device!=NULL) {
     double f=(double)(rx->frequency_a-rx->lo_a+rx->error_a);
+    f+=(double)radio_ppm_correction(rx->frequency_a-rx->lo_a);
     if(!rx->ctun) {
       if(rx->rit_enabled) {
         f+=(double)rx->rit;
@@ -705,11 +706,14 @@ void soapy_protocol_set_tx_frequency(TRANSMITTER *tx) {
     if(rx!=NULL) {
       if(rx->split) {
         f=rx->frequency_b-rx->lo_b+rx->error_b;
+        f+=(double)radio_ppm_correction(rx->frequency_b-rx->lo_b);
       } else {
         if(rx->ctun) {
           f=rx->ctun_frequency-rx->lo_a+rx->error_a;
+          f+=(double)radio_ppm_correction(rx->ctun_frequency-rx->lo_a);
         } else {
           f=rx->frequency_a-rx->lo_a+rx->error_a;
+          f+=(double)radio_ppm_correction(rx->frequency_a-rx->lo_a);
         }
       }
       if(tx->xit_enabled) {
