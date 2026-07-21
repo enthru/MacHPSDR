@@ -117,6 +117,13 @@ static RECEIVER *meas_rx;
 static double    meas_base;           // carrier − lo_a (Hz), the ppm scaling base
 static double    meas_ppm0;           // ppm value when the run started
 static int       meas_fs;             // sample rate captured at start
+static char      meas_label[80];      // station name, for the progress readout
+
+// RX state saved at start so the operator's radio can be put back afterwards.
+static RECEIVER *saved_rx;
+static gboolean  saved_valid;
+static long long saved_freq_a, saved_ctun_freq;
+static int       saved_ctun, saved_mode, saved_filter;
 
 static double fre[PPM_FFT_N];         // accumulation / FFT scratch (I in re, Q in im)
 static double fim[PPM_FFT_N];
@@ -228,11 +235,28 @@ gboolean ppm_cal_measuring(void) {
   return g_atomic_int_get(&ppm_measuring)!=0;
 }
 
+void ppm_cal_restore_rx(void) {
+  if(!saved_valid) return;
+  RECEIVER *rx=saved_rx;
+  saved_valid=FALSE;
+  saved_rx=NULL;
+  if(rx==NULL) return;
+  rx->frequency_a=saved_freq_a;
+  rx->ctun=saved_ctun;
+  rx->ctun_frequency=saved_ctun_freq;
+  receiver_mode_changed(rx,saved_mode);
+  receiver_filter_changed(rx,saved_filter);
+  frequency_changed(rx);
+}
+
 void ppm_cal_measure_cancel(void) {
+  gboolean was=g_atomic_int_get(&ppm_measuring)!=0;
   g_atomic_int_set(&ppm_measuring,0);
   g_mutex_lock(&ppm_mtx);
   meas_rx=NULL;
+  if(was) g_strlcpy(status,"Cancelled",sizeof(status));
   g_mutex_unlock(&ppm_mtx);
+  ppm_cal_restore_rx();
 }
 
 gboolean ppm_cal_measure_start(RADIO *r) {
@@ -249,8 +273,18 @@ gboolean ppm_cal_measure_start(RADIO *r) {
   meas_fs=rx->sample_rate;
   acc_n=0; frames_done=0; valid_frames=0; settle_left=PPM_SETTLE; offset_sum=0.0;
   have_result=FALSE; result_ok=FALSE; result_offset=0.0; result_ppm=meas_ppm0;
+  g_strlcpy(meas_label,st->name,sizeof(meas_label));
   snprintf(status,sizeof(status),"Measuring %s\342\200\246",st->name);
   g_mutex_unlock(&ppm_mtx);
+
+  // Remember where the operator was so we can put the radio back afterwards.
+  saved_rx=rx;
+  saved_freq_a=rx->frequency_a;
+  saved_ctun=rx->ctun;
+  saved_ctun_freq=rx->ctun_frequency;
+  saved_mode=rx->mode_a;
+  saved_filter=rx->filter_a;
+  saved_valid=TRUE;
 
   // Retune so the carrier lands at +PPM_MEAS_OFFSET in the baseband spectrum.
   rx->frequency_a=st->freq-(long long)PPM_MEAS_OFFSET;
@@ -295,8 +329,10 @@ void ppm_cal_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
           valid_frames++;
         }
         frames_done++;
+        snprintf(status,sizeof(status),"Measuring %s  %d/%d",
+                 meas_label,frames_done,PPM_FRAMES);
         if(frames_done>=PPM_FRAMES) {
-          finalize();
+          finalize();   // overwrites status with the result line
           acc_n=0;
           break;
         }

@@ -59,8 +59,14 @@ gboolean ppm_cal_measure_start(RADIO *r);
 // TRUE while a measurement is running.
 gboolean ppm_cal_measuring(void);
 
-// Abort any measurement in progress.
+// Abort any measurement in progress (also restores the RX to where it was).
 void ppm_cal_measure_cancel(void);
+
+// Restore the active RX to the VFO frequency / mode / filter it had before the
+// measurement retuned it. GTK thread only. A no-op if nothing was saved (e.g.
+// already restored). Called by the UI once a run finishes so the operator's
+// radio does not stay parked on the reference station.
+void ppm_cal_restore_rx(void);
 
 // Copy the current measurement state for the UI (thread-safe).  *status gets a
 // short human-readable line.  When *done is TRUE the run has finished and

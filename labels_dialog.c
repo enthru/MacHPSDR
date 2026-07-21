@@ -134,10 +134,15 @@ static gboolean ppm_poll(gpointer data) {
   char st[160];
   ppm_cal_measure_poll(&done,st,sizeof(st),&off,&sugg,&ok);
   if(ppm_result_label!=NULL) gtk_label_set_text(GTK_LABEL(ppm_result_label),st);
-  if(done) {
+  if(done || !ppm_cal_measuring()) {   // finished normally, or stopped/cancelled
     ppm_poll_id=0;
-    if(ppm_calib_btn!=NULL) gtk_widget_set_sensitive(ppm_calib_btn,TRUE);
-    if(ok && ppm_spin!=NULL) gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),sugg);
+    if(ppm_calib_btn!=NULL) {
+      gtk_button_set_label(GTK_BUTTON(ppm_calib_btn),"Calibrate");
+      gtk_widget_set_sensitive(ppm_calib_btn,TRUE);
+    }
+    if(done && ok && ppm_spin!=NULL)
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),sugg);  // auto-apply new ppm
+    ppm_cal_restore_rx();              // put the radio back where the operator was
     return FALSE;
   }
   return TRUE;
@@ -145,7 +150,10 @@ static gboolean ppm_poll(gpointer data) {
 
 static void ppm_calib_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
-  if(ppm_cal_measuring()) return;
+  if(ppm_cal_measuring()) {            // button is acting as "Stop"
+    ppm_cal_measure_cancel();
+    return;                            // the poll relabels the button and restores the RX
+  }
   if(ppm_station_combo!=NULL) {
     int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(ppm_station_combo));
     if(sel>=0) r->ppm_ref_station=sel;
@@ -155,7 +163,7 @@ static void ppm_calib_cb(GtkWidget *widget, gpointer data) {
       gtk_label_set_text(GTK_LABEL(ppm_result_label),"Cannot start (no active receiver)");
     return;
   }
-  gtk_widget_set_sensitive(widget,FALSE);
+  gtk_button_set_label(GTK_BUTTON(widget),"Stop");
   if(ppm_poll_id!=0) g_source_remove(ppm_poll_id);
   ppm_poll_id=g_timeout_add(150,ppm_poll,r);
 }
