@@ -59,8 +59,10 @@ own VFO, panadapter and waterfall.
   the panadapter width (WDSP's analyzer has a fixed internal buffer, so a very
   wide window caps the zoom automatically).
 - **Freetune** — a smooth continuous-tuning mode added in this fork.
-- **PPM correction** — a frequency-calibration offset for the reference
-  oscillator (Configure).
+- **PPM correction & auto-calibration** — corrects the reference-oscillator
+  error (fractional ppm; applied on Protocol 1, Protocol 2 and SoapySDR alike).
+  It can be measured automatically from a time-signal station's carrier — see
+  §9 (Configure → Misc).
 
 ---
 
@@ -148,9 +150,17 @@ Which streams are written and the output folder are set in
 ## 9. Configuration
 
 The **Configure** dialog groups settings into pages: Radio, Receiver,
-Transmitter, MIDI, Bookmarks, Diversity, PA, EER, PureSignal, **FT8**, and
-**Recording**. All settings are saved automatically to a per-device properties
-file under `~/.local/share/machpsdr/` and restored on the next start.
+Transmitter, MIDI, Bookmarks, Diversity, PA, EER, PureSignal, **FT8**,
+**Recording**, and **Misc**. All settings are saved automatically to a
+per-device properties file under `~/.local/share/machpsdr/` and restored on the
+next start.
+
+The **Misc** page holds the colour skin, custom attenuator-button labels,
+Broadcast-FM options, and **Frequency Calibration (PPM)**: pick a
+time/frequency-standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich
+on LF) and press **Calibrate** to measure its carrier and set the oscillator
+correction automatically, **Tune** to zero-beat it by ear, or type the value in
+manually.
 
 ---
 

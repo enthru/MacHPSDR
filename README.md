@@ -51,6 +51,7 @@ feature additions.
 | **FT8 / FT4** | Automatic decode in DIGU, plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
+| **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
 | **Fake device** | Run with no hardware and loop back a recorded I/Q file. |
 
 ---
@@ -198,7 +199,15 @@ de-emphasis / RDS options.
 
 ### HPSDR hardware
 
-- **PPM frequency correction.**
+- **PPM frequency correction with automatic calibration.** Corrects the
+  reference-oscillator error (in fractional parts-per-million, so sub-ppm
+  accuracy is possible on the high bands) and is applied on **all** device types
+  — Classic HPSDR (Protocol 1), the enhanced Protocol 2, and SoapySDR. In
+  **Configure → Misc → Frequency Calibration (PPM)** you pick a time/frequency
+  standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich on LF) and
+  press **Calibrate** to measure its carrier and set the correction
+  automatically, or **Tune** to zero-beat it by ear. The correction can also be
+  entered manually.
 - **Att 10 / Att 20 outputs usable as custom switches** — for example the
   attenuator outputs on a TRX-DUO or Red Pitaya can drive a transverter or filter
   switch. Labels are configurable in settings.
