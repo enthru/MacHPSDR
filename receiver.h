@@ -29,6 +29,16 @@
 
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
+// Per-call sample block for feeding WDSP's display analyzer (Spectrum0).
+// The analyzer's input ring is max_size*dSAMP_BUFF_MULT = 262144*2 = 2^19
+// samples and REQUIRES the per-call block to divide it exactly; a block that
+// doesn't (e.g. the 5120-sample wide-span RX buffer, or a 40960-sample TX
+// output block at 1920k) writes up to one block past the ring's end on every
+// wrap (~every few seconds) -> heap corruption / random SIGSEGV.  So all
+// Spectrum0 feeds go in SPECTRUM_BLOCK-sized sub-blocks: 1024 divides 2^19 and
+// every RX buffer_size (1024/5120) and TX output_samples (1024*integer) used.
+#define SPECTRUM_BLOCK 1024
+
 typedef struct _receiver {
 
   gint channel; // WDSP channel

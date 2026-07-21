@@ -1844,7 +1844,9 @@ static void full_rx_buffer(RECEIVER *rx) {
     subrx_iq_buffer(rx);
   }
 
-  Spectrum0(1, rx->channel, 0, 0, rx->iq_input_buffer);
+  for(int i=0;i<rx->buffer_size;i+=SPECTRUM_BLOCK) {
+    Spectrum0(1, rx->channel, 0, 0, rx->iq_input_buffer+2*i);
+  }
 
   process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
@@ -1877,7 +1879,9 @@ void full_diviqrx_buffer(RECEIVER *rx) {
     subrx_iq_buffer(rx);
   }
 
-  Spectrum0(1, rx->channel, 0, 0, rx->diviq_input_buffer);
+  for(int i=0;i<rx->buffer_size;i+=SPECTRUM_BLOCK) {
+    Spectrum0(1, rx->channel, 0, 0, rx->diviq_input_buffer+2*i);
+  }
   process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
 
@@ -2110,7 +2114,7 @@ void receiver_init_analyzer(RECEIVER *rx) {
             data_type,
             flp,
             fft_size,
-            rx->buffer_size,
+            SPECTRUM_BLOCK,
             window_type,
             kaiser_pi,
             overlap,
