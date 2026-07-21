@@ -1666,12 +1666,22 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU)
   gboolean show_ft8=FALSE;
+  // The decode block is named for the currently selected digital mode (the
+  // single source of truth is radio->ft8_proto: 0=FT8, 1=FT4).
+  const char *ftname = r->ft8_proto ? "FT4" : "FT8";
 #endif
-  // The decoder block is the RDS readout in WFM and the FT8 readout in DIGU; in
-  // any other mode it carries no decode of its own, so the title falls back to
-  // the neutral "Decode".
+  // The decoder block is the RDS readout in WFM and the FT8/FT4 readout in DIGU;
+  // in any other mode it carries no decode of its own, so the title falls back
+  // to the neutral "Decode".
   if(r->rds_title!=NULL)
-    gtk_label_set_text(GTK_LABEL(r->rds_title),wfm?"RDS":digu?"FT8":"Decode");
+    gtk_label_set_text(GTK_LABEL(r->rds_title),
+                       wfm?"RDS":digu?
+#ifdef FT8
+                       ftname
+#else
+                       "FT8"
+#endif
+                       :"Decode");
   if(wfm) {
     int chn=rx->channel;
     char ps[9], rt[65], title[65], artist[65];
@@ -1730,7 +1740,10 @@ static gboolean rds_update_cb(gpointer data) {
       // Big FT8 panel owns the band-activity list; the bottom block would only
       // duplicate it, so it carries the QSO status instead (DX, current Tx
       // message, exchange state, offset/slot).
-      if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title),"FT8 QSO");
+      if(r->rds_title!=NULL) {
+        char qt[16]; snprintf(qt,sizeof(qt),"%s QSO",ftname);
+        gtk_label_set_text(GTK_LABEL(r->rds_title),qt);
+      }
       const char *dx=ft8_qso_dx_call();
       const char *nexttx=ft8_qso_next_tx();
       snprintf(ft8buf,sizeof(ft8buf),
@@ -1748,8 +1761,8 @@ static gboolean rds_update_cb(gpointer data) {
       int total = ft8_decoder_get_decodes(d, 64, utc);
       if(r->rds_title!=NULL) {
         char t[24];
-        if(total>0 && utc[0]) snprintf(t,sizeof(t),"FT8 %.2s:%.2s:%.2s",utc,utc+2,utc+4);
-        else                  snprintf(t,sizeof(t),"FT8");
+        if(total>0 && utc[0]) snprintf(t,sizeof(t),"%s %.2s:%.2s:%.2s",ftname,utc,utc+2,utc+4);
+        else                  snprintf(t,sizeof(t),"%s",ftname);
         gtk_label_set_text(GTK_LABEL(r->rds_title),t);
       }
       char *p=ft8buf; size_t n=sizeof(ft8buf);
