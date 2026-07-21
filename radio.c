@@ -343,7 +343,7 @@ g_print("radio_save_state: %s\n",filename);
   setProperty("radio.temp_alarm",value);
   sprintf(value,"%f",radio->swr_alarm_value);
   setProperty("radio.swr_alarm",value);
-  sprintf(value,"%d",radio->ppm_correction_value);
+  sprintf(value,"%f",radio->ppm_correction_value);
   setProperty("radio.ppm_correction_value",value);
   sprintf(value,"%d",radio->ppm_ref_station);
   setProperty("radio.ppm_ref_station",value);
@@ -588,7 +588,7 @@ void radio_restore_state(RADIO *radio) {
   value=getProperty("radio.swr_alarm");
   if(value!=NULL) radio->swr_alarm_value=atof(value);
   value=getProperty("radio.ppm_correction_value");
-  if(value!=NULL) radio->ppm_correction_value=atoi(value);
+  if(value!=NULL) radio->ppm_correction_value=atof(value);
   value=getProperty("radio.ppm_ref_station");
   if(value!=NULL) radio->ppm_ref_station=atoi(value);
   value=getProperty("radio.wfm_deemphasis");
@@ -835,7 +835,10 @@ void frequency_changed(RECEIVER *rx) {
 }
 
 long long radio_ppm_correction(long long f_rf) {
-  return (long long)(f_rf/1000000)*radio->ppm_correction_value;
+  // Full-precision floating math (not whole-MHz integer steps) so a fractional
+  // ppm resolves to a Hz-accurate shift — matters on the high bands where a
+  // fraction of a ppm is already several Hz.
+  return llround((double)f_rf * radio->ppm_correction_value / 1.0e6);
 }
 
 gboolean isTransmitting(RADIO *r) {
@@ -2216,7 +2219,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->which_audio_backend=0;
 
   r->swr_alarm_value = 2.0;
-  r->ppm_correction_value = 0;
+  r->ppm_correction_value = 0.0;
   r->ppm_ref_station = 0;
   r->temperature_alarm_value = 50;
   r->qos_flag = FALSE;

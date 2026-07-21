@@ -80,22 +80,27 @@ static void theme_cb(GtkWidget *widget, gpointer data) {
 
 // ---- Frequency calibration (PPM) ----
 // Widget refs kept static so the callbacks can cross-update the readout. Only
-// one Configure dialog exists at a time, so re-opening simply re-seeds these.
-static GtkWidget *ppm_status_label;
+// one Configure dialog exists at a time; the page's "destroy" handler nulls
+// these so the measurement poll never touches freed widgets.
+static GtkWidget *ppm_status_label;   // summary: current correction + reference
+static GtkWidget *ppm_result_label;   // auto-measurement progress / result
 static GtkWidget *ppm_station_combo;
+static GtkWidget *ppm_spin;
+static GtkWidget *ppm_calib_btn;
+static guint      ppm_poll_id;
 
 static void ppm_status_refresh(RADIO *r) {
   if(ppm_status_label==NULL) return;
   const PPM_STATION *st=ppm_station(r->ppm_ref_station);
   char buf[256];
-  snprintf(buf,sizeof(buf),"Correction: %+d ppm    Reference: %s",
+  snprintf(buf,sizeof(buf),"Correction: %+.2f ppm    Reference: %s",
            r->ppm_correction_value, st?st->name:"(none)");
   gtk_label_set_text(GTK_LABEL(ppm_status_label),buf);
 }
 
 static void ppm_value_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->ppm_correction_value=(int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  r->ppm_correction_value=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
   // Protocol 1 reads ppm live in its output thread; Protocol 2 / SoapySDR must
   // be re-tuned to pick up the new correction.
   if(r->active_receiver!=NULL) frequency_changed(r->active_receiver);
@@ -117,6 +122,49 @@ static void ppm_tune_cb(GtkWidget *widget, gpointer data) {
   if(sel<0) sel=0;
   ppm_cal_tune_to_station(r,sel);
   ppm_status_refresh(r);
+}
+
+// Poll the background measurement (GTK thread). Refreshes the result label; on
+// completion re-enables the button and, if a carrier was found, writes the
+// suggested ppm into the spinner (which applies it via ppm_value_cb).
+static gboolean ppm_poll(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  gboolean done=FALSE, ok=FALSE;
+  double off=0.0, sugg=0.0;
+  char st[160];
+  ppm_cal_measure_poll(&done,st,sizeof(st),&off,&sugg,&ok);
+  if(ppm_result_label!=NULL) gtk_label_set_text(GTK_LABEL(ppm_result_label),st);
+  if(done) {
+    ppm_poll_id=0;
+    if(ppm_calib_btn!=NULL) gtk_widget_set_sensitive(ppm_calib_btn,TRUE);
+    if(ok && ppm_spin!=NULL) gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),sugg);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static void ppm_calib_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  if(ppm_cal_measuring()) return;
+  if(ppm_station_combo!=NULL) {
+    int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(ppm_station_combo));
+    if(sel>=0) r->ppm_ref_station=sel;
+  }
+  if(!ppm_cal_measure_start(r)) {
+    if(ppm_result_label!=NULL)
+      gtk_label_set_text(GTK_LABEL(ppm_result_label),"Cannot start (no active receiver)");
+    return;
+  }
+  gtk_widget_set_sensitive(widget,FALSE);
+  if(ppm_poll_id!=0) g_source_remove(ppm_poll_id);
+  ppm_poll_id=g_timeout_add(150,ppm_poll,r);
+}
+
+static void ppm_dialog_destroy(GtkWidget *widget, gpointer data) {
+  if(ppm_poll_id!=0) { g_source_remove(ppm_poll_id); ppm_poll_id=0; }
+  ppm_cal_measure_cancel();
+  ppm_status_label=NULL; ppm_result_label=NULL;
+  ppm_station_combo=NULL; ppm_spin=NULL; ppm_calib_btn=NULL;
 }
 
 GtkWidget *create_labels_dialog(RADIO *r) {
@@ -228,8 +276,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
 
   GtkWidget *ppm_info=gtk_label_new(
       "Correct the radio's reference-oscillator error in parts-per-million.\n"
-      "Pick a time/frequency-standard station, press Tune to park its carrier\n"
-      "at the CW pitch, then adjust the correction until the tone sits on zero beat.");
+      "Pick a time/frequency-standard station and press Calibrate to measure the\n"
+      "carrier and set the correction automatically, or Tune to zero-beat it by ear.");
   gtk_widget_set_halign(ppm_info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(ppm_info,12);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_info,0,0,3,1);
@@ -237,7 +285,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *ppm_lbl=gtk_label_new("Correction (ppm):");
   gtk_widget_set_halign(ppm_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_lbl,0,1,1,1);
-  GtkWidget *ppm_spin=gtk_spin_button_new_with_range(-500,500,1);
+  ppm_spin=gtk_spin_button_new_with_range(-500,500,0.01);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ppm_spin),2);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),r->ppm_correction_value);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_spin,1,1,1,1);
   g_signal_connect(ppm_spin,"value_changed",G_CALLBACK(ppm_value_cb),r);
@@ -253,9 +302,14 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_station_combo,1,2,1,1);
   g_signal_connect(ppm_station_combo,"changed",G_CALLBACK(ppm_station_cb),r);
 
+  GtkWidget *btn_box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
+  ppm_calib_btn=gtk_button_new_with_label("Calibrate");
+  gtk_box_pack_start(GTK_BOX(btn_box),ppm_calib_btn,FALSE,FALSE,0);
+  g_signal_connect(ppm_calib_btn,"clicked",G_CALLBACK(ppm_calib_cb),r);
   GtkWidget *tune_b=gtk_button_new_with_label("Tune");
-  gtk_grid_attach(GTK_GRID(ppm_grid),tune_b,2,2,1,1);
+  gtk_box_pack_start(GTK_BOX(btn_box),tune_b,FALSE,FALSE,0);
   g_signal_connect(tune_b,"clicked",G_CALLBACK(ppm_tune_cb),r);
+  gtk_grid_attach(GTK_GRID(ppm_grid),btn_box,2,1,1,2);
 
   ppm_status_label=gtk_label_new("");
   gtk_widget_set_halign(ppm_status_label,GTK_ALIGN_START);
@@ -263,10 +317,15 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_status_label,0,3,3,1);
   ppm_status_refresh(r);
 
+  ppm_result_label=gtk_label_new("");
+  gtk_widget_set_halign(ppm_result_label,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(ppm_grid),ppm_result_label,0,4,3,1);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_pack_start(GTK_BOX(vbox),skin_frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),ppm_frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
   gtk_box_pack_start(GTK_BOX(vbox),fm_frame,FALSE,FALSE,0);
+  g_signal_connect(vbox,"destroy",G_CALLBACK(ppm_dialog_destroy),NULL);
   return vbox;
 }

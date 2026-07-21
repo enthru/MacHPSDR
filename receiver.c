@@ -42,6 +42,7 @@
 #include "dac.h"
 #include "radio.h"
 #include "recorder.h"
+#include "ppm_cal.h"
 #include "main.h"
 #include "vfo.h"
 #include "meter.h"
@@ -1844,6 +1845,7 @@ static void full_rx_buffer(RECEIVER *rx) {
 
   // Tap the genuine off-air I/Q before the noise blanker mutates it in place.
   recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
+  ppm_cal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {
@@ -1877,6 +1879,7 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   if(isTransmitting(radio) && (!rx->duplex)) return;
 
   recorder_iq(rx, rx->diviq_input_buffer, rx->buffer_size);
+  ppm_cal_iq_feed(rx, rx->diviq_input_buffer, rx->buffer_size);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {

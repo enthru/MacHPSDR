@@ -1142,7 +1142,7 @@ void ozy_send_buffer() {
             
             long long rx_frequency=0;
             if(rx!=NULL) {
-              rx_frequency=rx->frequency_a-rx->lo_a+rx->error_a+(long long)(rx->frequency_a-rx->lo_a)/1000000*radio->ppm_correction_value;
+              rx_frequency=rx->frequency_a-rx->lo_a+rx->error_a+radio_ppm_correction(rx->frequency_a-rx->lo_a);
               if(rx->rit_enabled) {
                 rx_frequency+=rx->rit;
               }

@@ -117,7 +117,7 @@ typedef struct _radio {
   gdouble panadapter_calibration;
   gdouble swr_alarm_value;
   gint temperature_alarm_value;
-  int ppm_correction_value;
+  double ppm_correction_value;  // oscillator error, parts-per-million (fractional)
   int ppm_ref_station;     // index into the ppm_cal.c reference-station table
 
   gint cw_keyer_sidetone_frequency;
