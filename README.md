@@ -48,7 +48,7 @@ feature additions.
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
 | **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
-| **FT8 / FT4** | Automatic decode in DIGU, plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
+| **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -113,16 +113,22 @@ de-emphasis / RDS options.
   is in WFM; in other modes it carries the neutral **Decode** title and stays
   blank.
 
-- **FT8 / FT4 decoding.** Selecting **DIGU** on the active receiver automatically
-  starts the decoder — no separate window or button. The demodulated audio is
-  tapped, decimated to 12 kHz, buffered into UTC time slots and decoded in a
-  background thread. Decoding runs on a sliding window (re-run every ~2 s) rather
-  than a single clock-locked slot, so it still works when the system clock is
-  slightly off or when driving it from a looped I/Q recording. Decoded traffic
-  (signal report, audio frequency, message text) appears in the bottom-bar
-  decoder block, and the readout holds the last decodes until the next batch
-  arrives. Requires an accurate system clock (UTC), like WSJT-X. The codec is the
-  vendored [ft8_lib](https://github.com/kgoba/ft8_lib) by Kārlis Goba (MIT).
+- **Decoder selection (DIGU/DIGL).** In the digital modes the Decode block shows
+  a **decoder selector** (right-aligned): **Off / FT8 / FT4 / SSTV**. No decoder
+  runs by default — pick one to start it. FT8/FT4 decode the audio and show the
+  traffic in the Decode block (below); **SSTV** is a placeholder for now (image
+  decoding is planned). The selection is remembered between sessions.
+
+- **FT8 / FT4 decoding.** Choose **FT8** or **FT4** from the Decode-block selector
+  while the active receiver is in **DIGU** (or **DIGL**) — no separate window. The
+  demodulated audio is tapped, decimated to 12 kHz, buffered into UTC time slots
+  and decoded in a background thread. Decoding runs on a sliding window (re-run
+  every ~2 s) rather than a single clock-locked slot, so it still works when the
+  system clock is slightly off or when driving it from a looped I/Q recording.
+  Decoded traffic (signal report, audio frequency, message text) appears in the
+  bottom-bar decoder block, and the readout holds the last decodes until the next
+  batch arrives. Requires an accurate system clock (UTC), like WSJT-X. The codec
+  is the vendored [ft8_lib](https://github.com/kgoba/ft8_lib) by Kārlis Goba (MIT).
 
 - **FT8 / FT4 transmit & auto-QSO.** An opt-in QSO panel drives the standard
   WSJT-X exchange (CQ → grid → report → RR73 → 73), keys TX on the opposite slot,

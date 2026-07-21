@@ -199,6 +199,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.station_grid",radio->station_grid);
   sprintf(value,"%d",radio->ft8_proto);
   setProperty("radio.ft8_proto",value);
+  sprintf(value,"%d",radio->decode_mode);
+  setProperty("radio.decode_mode",value);
   sprintf(value,"%d",radio->ft8_tx_offset);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);
@@ -1363,9 +1365,13 @@ void radio_rebuild_rx_stack(RADIO *r) {
 // the main panadapter is left at its normal zoom (no auto-zoom on open).
 void radio_ft8_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
-  gboolean digu = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU);
-  if(!digu) r->ft8_panel_open=FALSE;   // panel is meaningless outside DIGU
-  gboolean want = digu && r->ft8_panel_open;
+  // The QSO panel is FT8/FT4-specific and DIGU-bound (USB convention, TX-offset
+  // gestures, etc.), so it is meaningful only when an FT8/FT4 decoder is selected
+  // in DIGU. Any other mode/decoder closes it.
+  gboolean ft8mode = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU) &&
+                     (r->decode_mode==DECODE_FT8 || r->decode_mode==DECODE_FT4);
+  if(!ft8mode) r->ft8_panel_open=FALSE;
+  gboolean want = ft8mode && r->ft8_panel_open;
   gboolean have = (r->ft8_panel!=NULL);
   if(want==have) return;
 
@@ -1397,6 +1403,21 @@ static void ft8_expand_cb(GtkButton *b, gpointer data) {
   r->ft8_panel_open = !r->ft8_panel_open;
   radio_ft8_panel_sync(r);
 }
+
+// Bottom-bar decoder selector (Off / FT8 / FT4 / SSTV). Sets radio->decode_mode
+// — the single source of truth for which decoder taps the active RX's audio in
+// DIGU/DIGL — and keeps radio->ft8_proto (0/1) in sync so the TX/QSO/reporter
+// path stays consistent. Leaving FT8/FT4 closes the QSO panel (handled by
+// radio_ft8_panel_sync). Combo entry order matches the decode_mode_t enum.
+static void decode_sel_changed(GtkComboBox *cb, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  int m = gtk_combo_box_get_active(cb);
+  if(m<0) return;
+  r->decode_mode = m;
+  if(m==DECODE_FT8) r->ft8_proto = 0;
+  else if(m==DECODE_FT4) r->ft8_proto = 1;
+  radio_ft8_panel_sync(r);   // close the QSO panel if we left FT8/FT4
+}
 #endif
 
 void add_receivers(RADIO *r) {
@@ -1414,6 +1435,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) { strncpy(r->station_grid,value,sizeof(r->station_grid)-1); r->station_grid[sizeof(r->station_grid)-1]='\0'; }
   value=getProperty("radio.ft8_proto");
   if(value!=NULL) r->ft8_proto=atoi(value);
+  value=getProperty("radio.decode_mode");
+  if(value!=NULL) r->decode_mode=atoi(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -1664,26 +1687,29 @@ static gboolean rds_update_cb(gpointer data) {
   l0[0]=l1[0]=l2[0]=0;
   gboolean wfm = rx!=NULL && rx->mode_a==WFM;
   gboolean digu = rx!=NULL && rx->mode_a==DIGU;
+  gboolean digi = rx!=NULL && (rx->mode_a==DIGU || rx->mode_a==DIGL);  // digital modes
 #ifdef FT8
-  char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU)
+  char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
   gboolean ft8_markup=FALSE;         // ft8buf carries Pango markup (worked-call colour)
-  // The decode block is named for the currently selected digital mode (the
-  // single source of truth is radio->ft8_proto: 0=FT8, 1=FT4).
-  const char *ftname = r->ft8_proto ? "FT4" : "FT8";
+  // Which decoder is selected for the digital modes (radio->decode_mode is the
+  // single source of truth; off by default). The FT8/FT4 name follows it.
+  gboolean ft8_active  = digi && (r->decode_mode==DECODE_FT8 || r->decode_mode==DECODE_FT4);
+  gboolean sstv_active = digi &&  r->decode_mode==DECODE_SSTV;
+  const char *ftname = r->decode_mode==DECODE_FT4 ? "FT4" : "FT8";
 #endif
-  // The decoder block is the RDS readout in WFM and the FT8/FT4 readout in DIGU;
-  // in any other mode it carries no decode of its own, so the title falls back
-  // to the neutral "Decode".
-  if(r->rds_title!=NULL)
-    gtk_label_set_text(GTK_LABEL(r->rds_title),
-                       wfm?"RDS":digu?
+  // The decoder block is the RDS readout in WFM and the selected-decoder readout
+  // in DIGU/DIGL; in any other mode (or with no decoder selected) it carries no
+  // decode of its own, so the title falls back to the neutral "Decode".
+  if(r->rds_title!=NULL) {
+    const char *title = "Decode";
+    if(wfm) title = "RDS";
 #ifdef FT8
-                       ftname
-#else
-                       "FT8"
+    else if(ft8_active)  title = ftname;
+    else if(sstv_active) title = "SSTV";
 #endif
-                       :"Decode");
+    gtk_label_set_text(GTK_LABEL(r->rds_title), title);
+  }
   if(wfm) {
     int chn=rx->channel;
     char ps[9], rt[65], title[65], artist[65];
@@ -1736,7 +1762,7 @@ static gboolean rds_update_cb(gpointer data) {
     }
   }
 #ifdef FT8
-  else if(digu) {
+  else if(ft8_active) {
     show_ft8 = TRUE;
     if(r->ft8_panel_open) {
       // Big FT8 panel owns the band-activity list; the bottom block would only
@@ -1803,17 +1829,34 @@ static gboolean rds_update_cb(gpointer data) {
       }
     }
   }
+  else if(sstv_active) {
+    // SSTV image decoder is not yet implemented — show a placeholder in the same
+    // bottom block so the selection is acknowledged. Decoded images will surface
+    // here (or a dedicated view) once the decoder lands.
+    show_ft8 = TRUE;
+    snprintf(ft8buf,sizeof(ft8buf),"SSTV decoding — not yet implemented");
+  }
 #endif
 #ifdef FT8
-  // Swap between the 3 RDS rows and the single FT8 block depending on the mode.
+  // Swap between the 3 RDS rows and the single decoder block depending on the mode.
   if(r->ft8_label!=NULL) {
     if(ft8_markup) gtk_label_set_markup(GTK_LABEL(r->ft8_label), ft8buf);
     else           gtk_label_set_text  (GTK_LABEL(r->ft8_label), ft8buf);
     gtk_widget_set_visible(r->ft8_label, show_ft8);
   }
-  // The "FT8 Panel" toggle lives in this block but only makes sense in DIGU.
+  // Decoder selector: shown in the digital modes (DIGU/DIGL), kept in sync with
+  // radio->decode_mode (which the FT8 panel's protocol combo can also change).
+  if(r->decode_sel!=NULL) {
+    gtk_widget_set_visible(r->decode_sel, digi);
+    if(gtk_combo_box_get_active(GTK_COMBO_BOX(r->decode_sel)) != r->decode_mode) {
+      g_signal_handlers_block_by_func(r->decode_sel,G_CALLBACK(decode_sel_changed),r);
+      gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel), r->decode_mode);
+      g_signal_handlers_unblock_by_func(r->decode_sel,G_CALLBACK(decode_sel_changed),r);
+    }
+  }
+  // The "FT8 Panel" toggle only makes sense in DIGU with an FT8/FT4 decoder.
   if(r->ft8_expand_btn!=NULL) {
-    gtk_widget_set_visible(r->ft8_expand_btn, digu);
+    gtk_widget_set_visible(r->ft8_expand_btn, digu && ft8_active);
     gtk_button_set_label(GTK_BUTTON(r->ft8_expand_btn),
                          r->ft8_panel_open?"Hide FT8 Panel":"Show FT8 Panel");
   }
@@ -1935,19 +1978,42 @@ static void create_visual(RADIO *r) {
   gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),PANGO_ELLIPSIZE_END);
   gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_label,TRUE,TRUE,0);
 
-  // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). It
-  // sits at the RIGHT edge of the Decode block (near the Setup module),
-  // top-aligned so it neither stretches nor steals vertical room from the
-  // decode rows. DIGU-only; label + visibility kept in sync by rds_update_cb.
+  // Right-aligned decoder controls, top-aligned so they neither stretch nor
+  // steal vertical room from the decode rows. Stacked: the decoder SELECTOR on
+  // top, then the FT8 Panel toggle below it. Visibility is mode-dependent and
+  // kept in sync by rds_update_cb.
+  GtkWidget *dec_ctl=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+  gtk_widget_set_valign(dec_ctl,GTK_ALIGN_START);
+  gtk_widget_set_halign(dec_ctl,GTK_ALIGN_END);
+
+#ifdef FT8
+  // Decoder selector (Off / FT8 / FT4 / SSTV): picks which decoder taps the
+  // active RX's audio in DIGU/DIGL. Entry order matches decode_mode_t so the
+  // active index is the mode value. Shown only in DIGU/DIGL (see rds_update_cb).
+  r->decode_sel=gtk_combo_box_text_new();
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"Off");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"FT8");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"FT4");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"SSTV");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel),r->decode_mode);
+  gtk_widget_set_name(r->decode_sel,"toolbar-button");
+  g_signal_connect(r->decode_sel,"changed",G_CALLBACK(decode_sel_changed),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(dec_ctl),r->decode_sel,FALSE,FALSE,0);
+#endif
+
+  // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). Shown
+  // only in DIGU with an FT8/FT4 decoder selected; label + visibility kept in
+  // sync by rds_update_cb.
   r->ft8_expand_btn=gtk_button_new_with_label("Show FT8 Panel");
   gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
   gtk_widget_set_valign(r->ft8_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(dec_ctl),r->ft8_expand_btn,FALSE,FALSE,0);
 
-  // Decode block content: the text column (expands) with the toggle on its right.
+  // Decode block content: the text column (expands) with the controls on the right.
   GtkWidget *decode_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
   gtk_box_pack_start(GTK_BOX(decode_row),rds_col,TRUE,TRUE,0);
-  gtk_box_pack_start(GTK_BOX(decode_row),r->ft8_expand_btn,FALSE,FALSE,0);
+  gtk_box_pack_end(GTK_BOX(decode_row),dec_ctl,FALSE,FALSE,0);
 
   // Title is "RDS" only in WFM mode; for every other mode the block defaults to
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
@@ -2262,6 +2328,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->station_call[0] = '\0';
   r->station_grid[0] = '\0';
   r->ft8_proto = 0;            // FT8 (15 s slot) by default
+  r->decode_mode = DECODE_OFF; // no decoder auto-runs in DIGU/DIGL; operator picks one
+  r->decode_sel = NULL;
   r->ft8_tx_offset = 1500;
   r->ft8_tx_even = TRUE;
   r->ft8_cq_dir[0] = '\0';     // plain CQ by default

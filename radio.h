@@ -81,6 +81,18 @@ enum {
 };
 #endif
 
+// Bottom-bar decoder selection for the digital modes (DIGU/DIGL). Single source
+// of truth for which decoder, if any, taps the active receiver's demodulated
+// audio. No decoder runs by default; the operator picks one from the Decode
+// block. FT8/FT4 keep radio->ft8_proto in sync (0/1) for the TX/QSO/reporter
+// path, which continues to read it. Persisted in radio_save_state.
+typedef enum {
+  DECODE_OFF = 0,   // no decoder (plain DIGU/DIGL listening)
+  DECODE_FT8,       // FT8 decoder (ft8_proto = 0)
+  DECODE_FT4,       // FT4 decoder (ft8_proto = 1)
+  DECODE_SSTV,      // SSTV image decoder (stub for now)
+} decode_mode_t;
+
 typedef struct _radio {
   DISCOVERED *discovered;
   gboolean can_transmit;
@@ -102,6 +114,8 @@ typedef struct _radio {
   char ft8_cq_dir[8];      // directed-CQ modifier ("" = plain CQ; "DX"/"EU"/... or nnn)
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
+  gint decode_mode;        // decode_mode_t: which decoder taps DIGU/DIGL audio (OFF by default)
+  GtkWidget *decode_sel;   // bottom-bar decoder selector combo (Off/FT8/FT4/SSTV)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)

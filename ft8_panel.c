@@ -65,11 +65,14 @@ static void offset_changed(GtkSpinButton *sb, gpointer data) {
 }
 // Digital protocol selector: 0 = FT8 (15 s slot), 1 = FT4 (7.5 s slot).  The RX
 // thread propagates this to the decoder each buffer; the encoder/QSO/reporters
-// read radio->ft8_proto directly, so setting it here is all that's needed.
+// read radio->ft8_proto directly.  Also mirror the choice into radio->decode_mode
+// so the bottom-bar decoder selector (the source of truth for which decoder runs)
+// stays consistent — the panel is only shown while an FT8/FT4 decoder is active.
 static void proto_changed(GtkComboBox *cb, gpointer data) {
   int p = gtk_combo_box_get_active(cb);
   if (p < 0) p = 0;
   radio->ft8_proto = p;
+  radio->decode_mode = p ? DECODE_FT4 : DECODE_FT8;
 }
 static void slot_changed(GtkComboBox *cb, gpointer data) {
   radio->ft8_tx_even = (gtk_combo_box_get_active(cb) == 0);

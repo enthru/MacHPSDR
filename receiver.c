@@ -1697,15 +1697,30 @@ void receiver_band_changed(RECEIVER *rx,int band) {
   frequency_changed(rx);
 }
 
+#ifdef FT8
+// TRUE when a decoder (FT8/FT4/SSTV) is selected and this receiver is in a
+// digital mode (DIGU/DIGL) — i.e. its demodulated audio is being tapped by a
+// decoder rather than (only) listened to. The decoder is off by default, so
+// plain DIGU/DIGL listening is unaffected; the operator opts in from the
+// bottom-bar Decode block (radio->decode_mode). Used to force unity WDSP panel
+// gain (so the decoder always sees full level) and to apply the listen
+// volume/mute in software instead — see rx_panel_gain / process_rx_buffer.
+static gboolean decoder_taps_audio(RECEIVER *rx) {
+  if(radio==NULL || radio->decode_mode==DECODE_OFF) return FALSE;
+  return rx->mode_a==DIGU || rx->mode_a==DIGL;
+}
+#endif
+
 // WDSP audio-panel gain for a receiver's channel. Normally this is the listen
-// gain (volume, or 0 when muted). In DIGU we run the channel at unity instead:
-// the FT8 decoder taps rx->audio_output_buffer, which WDSP scales by this gain,
-// and the operator does not listen to FT8 — so it must decode regardless of the
-// volume slider or mute. The listen volume/mute is applied to the audible output
-// in software in process_rx_buffer() for DIGU. See receiver_set_volume().
+// gain (volume, or 0 when muted). When a decoder is active on this RX we run the
+// channel at unity instead: the decoder taps rx->audio_output_buffer, which WDSP
+// scales by this gain, and the operator does not listen to the decoded signal —
+// so it must decode regardless of the volume slider or mute. The listen
+// volume/mute is applied to the audible output in software in
+// process_rx_buffer() for that case. See receiver_set_volume().
 static gdouble rx_panel_gain(RECEIVER *rx) {
 #ifdef FT8
-  if(rx->mode_a==DIGU) return 1.0;
+  if(decoder_taps_audio(rx)) return 1.0;
 #endif
   return rx->mute ? 0.0 : rx->volume;
 }
@@ -1741,10 +1756,11 @@ static void process_rx_buffer(RECEIVER *rx) {
       }
     }
 #ifdef FT8
-    // In DIGU the WDSP channel runs at unity (see rx_panel_gain) so the FT8
-    // decoder always taps a full-level signal; apply the listen volume/mute to
-    // the audible output here instead, keeping the speaker behaviour unchanged.
-    if(rx->mode_a==DIGU) {
+    // When a decoder is tapping this RX the WDSP channel runs at unity (see
+    // rx_panel_gain) so the decoder always sees a full-level signal; apply the
+    // listen volume/mute to the audible output here instead, keeping the speaker
+    // behaviour unchanged.
+    if(decoder_taps_audio(rx)) {
       gdouble lg = rx->mute ? 0.0 : rx->volume;
       left_sample  *= lg;
       right_sample *= lg;
@@ -1800,17 +1816,23 @@ static void process_rx_buffer(RECEIVER *rx) {
   recorder_audio(rx, rx->audio_output_buffer, rx->output_samples);
 
 #ifdef FT8
-  // FT8 listening: tap the active receiver's demodulated audio when it is in
-  // DIGU.  Driving enable/disable from the active RX's own buffer covers mode
-  // changes, active-receiver switches and start-up in one place (only the
-  // active receiver ever toggles the flag, so there is no cross-RX thrash).
+  // Decoder tap: feed the active receiver's demodulated audio to the selected
+  // decoder while it is in a digital mode (DIGU/DIGL).  Which decoder — if any —
+  // runs is radio->decode_mode (off by default; the operator picks FT8/FT4/SSTV
+  // from the bottom-bar Decode block).  Driving enable/disable from the active
+  // RX's own buffer covers mode changes, active-receiver switches and start-up
+  // in one place (only the active receiver ever toggles the flag, so there is no
+  // cross-RX thrash).
   if(radio->active_receiver==rx) {
-    gboolean want = (rx->mode_a==DIGU);
-    ft8_decoder_set_enabled(want);
-    if(want) {
-      ft8_decoder_set_protocol(radio->ft8_proto);   // FT8 vs FT4 (single source of truth)
+    gboolean digimode = (rx->mode_a==DIGU || rx->mode_a==DIGL);
+    gboolean ft8_on = digimode &&
+                      (radio->decode_mode==DECODE_FT8 || radio->decode_mode==DECODE_FT4);
+    ft8_decoder_set_enabled(ft8_on);
+    if(ft8_on) {
+      ft8_decoder_set_protocol(radio->decode_mode==DECODE_FT4 ? 1 : 0);  // FT8 vs FT4
       ft8_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
     }
+    // DECODE_SSTV: image decoder not yet implemented (stub) — no audio consumer.
   }
 #endif
 }
