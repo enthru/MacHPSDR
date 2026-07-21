@@ -1770,18 +1770,25 @@ static gboolean rds_update_cb(gpointer data) {
       if(total==0) {
         snprintf(ft8buf,sizeof(ft8buf),"listening…");
       } else {
-        // Decodes are rendered as Pango markup so already-worked callsigns can be
-        // greyed (the message text is escaped since markup is XML).
+        // Decodes are rendered as Pango markup so "new one" callsigns can be
+        // coloured by the same two-level DXCC principle as the big panel — gold
+        // for a brand-new entity (any band), blue for one new on THIS band —
+        // only via font colour here instead of a cell background. The message
+        // text is markup-escaped since markup is XML.
         ft8_markup=TRUE;
+        long long dial = rx->frequency_a;
         int shown = total<FT8_ROWS ? total : FT8_ROWS;
         for(int i=0;i<shown;i++) {
           int last = (i==FT8_ROWS-1) && (total>FT8_ROWS);
-          gboolean b4 = d[i].call_de[0] && ft8_qso_worked(d[i].call_de);
+          gboolean new_ever = d[i].call_de[0] && ft8_qso_new_dxcc(d[i].call_de);
+          gboolean new_band = d[i].call_de[0] && !new_ever &&
+                              ft8_qso_new_dxcc_band(d[i].call_de, dial);
+          const char *fg = new_ever ? "#b8860b" : (new_band ? "#2f6fb0" : NULL);
           gchar *msg = g_markup_escape_text(d[i].text, -1);
           int w;
-          if(b4)
-            w=snprintf(p,n,"%s<span foreground=\"#888888\">%+3.0f  %4.0f Hz  %s</span>",
-                       i?"\n":"", d[i].snr, d[i].freq, msg);
+          if(fg)
+            w=snprintf(p,n,"%s<span foreground=\"%s\">%+3.0f  %4.0f Hz  %s</span>",
+                       i?"\n":"", fg, d[i].snr, d[i].freq, msg);
           else
             w=snprintf(p,n,"%s%+3.0f  %4.0f Hz  %s",
                        i?"\n":"", d[i].snr, d[i].freq, msg);
