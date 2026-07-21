@@ -18,6 +18,7 @@
 */
 
 #include "waterfall.h"
+#include "log.h"
 #include "waterfall_theme.h"
 #include <gtk/gtk.h>
 #include <string.h>
@@ -173,7 +174,7 @@ static void update_filters(RECEIVER *rx) {
   }
 
   rx->filter_grid=gtk_grid_new();
-g_print("update_filters: new filter grid %p\n",rx->filter_grid);
+log_info("update_filters: new filter grid %p\n",rx->filter_grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(rx->filter_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(rx->filter_grid),FALSE);
   gtk_container_add(GTK_CONTAINER(rx->filter_frame),rx->filter_grid);
@@ -464,9 +465,9 @@ static void audio_choice_cb(GtkComboBox *widget,gpointer data) {
     gtk_widget_set_sensitive(rx->local_audio_b, TRUE);
   }
   if(i>=0) {
-    g_print("Output device changed: %d: %s (%s)\n",i,output_devices[i].name,output_devices[i].description);
+    log_info("Output device changed: %d: %s (%s)\n",i,output_devices[i].name,output_devices[i].description);
   } else {
-    g_print("Output device changed: %d\n",i);
+    log_info("Output device changed: %d\n",i);
   }
 }
 

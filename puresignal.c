@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include "puresignal.h"
 
@@ -66,7 +67,7 @@ static gboolean info_timer_cb(void *data) {
 
   if (!ps_debug) return TRUE;
 
-  g_print("**********************************\n");
+  log_info("**********************************\n");
 
   static int info[INFO_SIZE];
   
@@ -75,65 +76,65 @@ static gboolean info_timer_cb(void *data) {
     switch(i) {
       case 4:
         // Feedback
-        g_print("Feedback: %i\n", info[i]);
+        log_info("Feedback: %i\n", info[i]);
         break;
 
       case 5:
         // Corrections count
-        g_print("cor.count: %i\n", info[i]);
+        log_info("cor.count: %i\n", info[i]);
         break;
 
       case 6:
         // Computed correction solution
-        g_print("sln.chk: %i\n", info[i]);
+        log_info("sln.chk: %i\n", info[i]);
         break;
 
       case 13:
         // Dog count
-        g_print("dg.count: %i\n", info[i]);
+        log_info("dg.count: %i\n", info[i]);
         break;
 
       case 14:
         // 
-        g_print("State: %i\n", info[i]);
+        log_info("State: %i\n", info[i]);
         break;
 
       case 15:
-        g_print("Control state: \n");
+        log_info("Control state: \n");
         // State of the control state-machine
         switch(info[i]) {
           case 0:
-            g_print("RESET\n");
+            log_info("RESET\n");
             break;
           case 1:
-            g_print("WAIT\n");
+            log_info("WAIT\n");
             break;
           case 2:
-            g_print("MOXDELAY\n");
+            log_info("MOXDELAY\n");
             break;
           case 3:
-            g_print("SETUP\n");
+            log_info("SETUP\n");
             break;
           case 4:
-            g_print("COLLECT\n");
+            log_info("COLLECT\n");
             break;
           case 5:
-            g_print("MOXCHECK\n");
+            log_info("MOXCHECK\n");
             break;
           case 6:
-            g_print("CALC\n");
+            log_info("CALC\n");
             break;
           case 7:
-            g_print("DELAY\n");
+            log_info("DELAY\n");
             break;
           case 8:
-            g_print("STAYON\n");
+            log_info("STAYON\n");
             break;
           case 9:
-            g_print("TURNON\n");
+            log_info("TURNON\n");
             break;
           default:
-            g_print("?\n");
+            log_info("?\n");
             break;
         }
         break;
@@ -142,10 +143,10 @@ static gboolean info_timer_cb(void *data) {
 
   double pk;
   GetPSMaxTX(radio->transmitter->channel, &pk);
-  g_print("Get Peak: %f\n", pk);
+  log_info("Get Peak: %f\n", pk);
 
   GetPSHWPeak(radio->transmitter->channel, &pk);
-  g_print("Set Peak: %f\n", pk);
+  log_info("Set Peak: %f\n", pk);
 
   return TRUE;
 }

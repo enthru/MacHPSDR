@@ -32,6 +32,7 @@
 #include <arpa/inet.h>
 #include <wdsp.h>
 
+#include "log.h"
 #include "css.h"
 #include "discovery.h"
 #include "fake_protocol.h"
@@ -122,7 +123,7 @@ static void quit_action(GSimpleAction *action, GVariant *parameter, gpointer dat
 }
 
 static gpointer wisdom_thread(gpointer arg) {
-g_print("Creating wisdom file: %s\n", (char *)arg);
+log_info("Creating wisdom file: %s\n", (char *)arg);
   WDSPwisdom ((char *)arg);
   sem_post(wisdom_sem);
   return NULL;
@@ -144,14 +145,14 @@ static void tree_selection_changed_cb (GtkTreeSelection *selection, gpointer dat
   gchar *temp_mac;
   gint i;
 
-g_print("tree_selection_changed_cb\n");
+log_info("tree_selection_changed_cb\n");
   if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
     gtk_tree_model_get (model, &iter, NAME_COLUMN, &name, -1);
     gtk_tree_model_get (model, &iter, PROTOCOL_COLUMN, &protocol, -1);
     gtk_tree_model_get (model, &iter, VERSION_COLUMN, &version, -1);
     gtk_tree_model_get (model, &iter, IP_COLUMN, &ip, -1);
     gtk_tree_model_get (model, &iter, MAC_COLUMN, &mac, -1);
-fprintf(stderr,"tree_selection_changed_cb: selected=%s,%s,%s,%s,%s\n",name,protocol,version,ip,mac);
+log_info("tree_selection_changed_cb: selected=%s,%s,%s,%s,%s\n",name,protocol,version,ip,mac);
     gboolean found=FALSE;
 
     i=0;
@@ -163,7 +164,7 @@ fprintf(stderr,"tree_selection_changed_cb: selected=%s,%s,%s,%s,%s\n",name,proto
       gtk_tree_model_get (model, &temp_iter, IP_COLUMN, &temp_ip, -1);
       gtk_tree_model_get (model, &temp_iter, MAC_COLUMN, &temp_mac, -1);
 
-fprintf(stderr,"tree_selection_changed_cb: first=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
+log_info("tree_selection_changed_cb: first=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
       if(g_strcmp0(name,temp_name)==0) {
         if(g_strcmp0(protocol,temp_protocol)==0 &&
           g_strcmp0(version,temp_version)==0 &&
@@ -182,7 +183,7 @@ fprintf(stderr,"tree_selection_changed_cb: first=%s,%s,%s,%s,%s\n",temp_name,tem
           gtk_tree_model_get (model, &temp_iter, VERSION_COLUMN, &temp_version, -1);
           gtk_tree_model_get (model, &temp_iter, IP_COLUMN, &temp_ip, -1);
           gtk_tree_model_get (model, &temp_iter, MAC_COLUMN, &temp_mac, -1);
-fprintf(stderr,"tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
+log_info("tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
           if(g_strcmp0(protocol,temp_protocol)==0 &&
             g_strcmp0(version,temp_version)==0 &&
             g_strcmp0(ip,temp_ip)==0 &&
@@ -194,7 +195,7 @@ fprintf(stderr,"tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp
     }
 
     if(found) {
-      g_print("found %d\n",i);
+      log_info("found %d\n",i);
       d=&discovered[i];
       switch(d->status) {
         case STATE_AVAILABLE:
@@ -206,7 +207,7 @@ fprintf(stderr,"tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp
       }
     } else {
       d=NULL;
-      g_print("could not find selection\n");
+      log_info("could not find selection\n");
     }
     g_free (ip);
   }
@@ -226,7 +227,7 @@ static int discover(void *data) {
   GtkTreeIter iter0;
 
   discovery();
-  g_print("main: discovery found %d devices\n",devices);
+  log_info("main: discovery found %d devices\n",devices);
 
   if(devices>0) {
     view=gtk_tree_view_new();
@@ -259,7 +260,7 @@ static int discover(void *data) {
     for(i=0;i<devices;i++) {
       d=&discovered[i];
 
-g_print("discovered: %d device=%d\n",i,discovered[i].device);
+log_info("discovered: %d device=%d\n",i,discovered[i].device);
 
       switch(d->device) {
 #ifdef SOAPYSDR
@@ -299,7 +300,7 @@ g_print("discovered: %d device=%d\n",i,discovered[i].device);
       }
 
 
-g_print("adding %s\n",d->name);
+log_info("adding %s\n",d->name);
       gtk_list_store_append(store,i==0?&iter0:&iter);
       gtk_list_store_set(store,i==0?&iter0:&iter,
         NAME_COLUMN, d->name,
@@ -368,7 +369,7 @@ static int check_wisdom(void *data) {
 #endif
       wisdom_thread_id = g_thread_new( "Wisdom", wisdom_thread, (gpointer)wisdom_directory);
       if( ! wisdom_thread_id ) {
-        g_print("g_thread_new failed for wisdom_thread\n");
+        log_info("g_thread_new failed for wisdom_thread\n");
         exit( -1 );
       }
 
@@ -467,7 +468,7 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
       mac,
       iface);
 
-    g_print("starting %s\n",title);
+    log_info("starting %s\n",title);
     gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_WATCH));
     gtk_widget_set_name(main_window,"receiver-window");
     gtk_window_set_title(GTK_WINDOW (main_window),title);
@@ -507,9 +508,9 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     if(value!=NULL) x=atoi(value);
     value=getProperty("radio.y");
     if(value!=NULL) y=atoi(value);
-g_print("x=%d y=%d\n",x,y);
+log_info("x=%d y=%d\n",x,y);
     if(x!=-1 && y!=-1) {
-g_print("moving main_window to x=%d y=%d\n",x,y);
+log_info("moving main_window to x=%d y=%d\n",x,y);
       gtk_window_move(GTK_WINDOW(main_window),x,y);
     }
 
@@ -533,20 +534,20 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   char title[64];
   char png_path[256];
 
-  g_print("Build: %s %s\n",build_date,version);
-  g_print("GTK+ version %d.%d.%d\n", gtk_major_version, gtk_minor_version, gtk_micro_version);
+  log_info("Build: %s %s\n",build_date,version);
+  log_info("GTK+ version %d.%d.%d\n", gtk_major_version, gtk_minor_version, gtk_micro_version);
   uname(&unameData);
-  g_print("sysname: %s\n",unameData.sysname);
-  g_print("nodename: %s\n",unameData.nodename);
-  g_print("release: %s\n",unameData.release);
-  g_print("version: %s\n",unameData.version);
-  g_print("machine: %s\n",unameData.machine);
+  log_info("sysname: %s\n",unameData.sysname);
+  log_info("nodename: %s\n",unameData.nodename);
+  log_info("release: %s\n",unameData.release);
+  log_info("version: %s\n",unameData.version);
+  log_info("machine: %s\n",unameData.machine);
 
   load_css();
 
   GdkScreen *screen=gdk_screen_get_default();
   if(screen==NULL) {
-    g_print("HPSDR: no default screen!\n");
+    log_info("HPSDR: no default screen!\n");
     _exit(0);
   }
 
@@ -557,7 +558,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
     gtk_widget_destroy(opengl_widget);
   }
 #endif
-  g_print("opengl: %d\n",opengl);
+  log_info("opengl: %d\n",opengl);
 
 #ifdef __APPLE__
   // Load the window icon from the .app bundle (Contents/Resources), or from
@@ -576,7 +577,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   if (png_path[0] == '\0' || access(png_path, F_OK) != 0) {
     strcpy(png_path, "machpsdr.png");   // local fallback (running from the repo)
   }
-  g_print("PNG path (macOS): %s\n", png_path);
+  log_info("PNG path (macOS): %s\n", png_path);
 #else
   // Prefer an icon next to the binary / in the working directory; fall back to
   // an installed copy under /usr/share only if there is no local one.
@@ -593,9 +594,9 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   gtk_window_set_resizable(GTK_WINDOW(main_window), TRUE);
   GError *error = NULL;
   if(!gtk_window_set_icon_from_file (GTK_WINDOW(main_window), png_path, &error)) {
-    g_print("Warning: failed to set icon for main_window: %s\n",png_path);
+    log_info("Warning: failed to set icon for main_window: %s\n",png_path);
     if(error!=NULL) {
-      g_print("%s\n",error->message);
+      log_info("%s\n",error->message);
     }
   }
   g_signal_connect (main_window, "delete-event", G_CALLBACK (main_delete), NULL);
@@ -636,12 +637,35 @@ int main(int argc, char **argv) {
   int rc;
   const char *homedir;
 
+  // Log verbosity: environment first (MACHPSDR_LOG=debug|info|error), then the
+  // command line below can override it. Default stays INFO (see log.c).
+  {
+    const char *env=getenv("MACHPSDR_LOG");
+    if(env!=NULL && log_set_level_name(env)!=0) {
+      log_error("unknown MACHPSDR_LOG value '%s' (use error|info|debug)\n",env);
+    }
+  }
+
   // --faker: offer the synthetic fake test device (see fake_protocol.c).
   // Strip it from argv so GtkApplication does not reject the unknown option.
   {
     int i, j;
     for(i=1,j=1;i<argc;i++) {
-      if(strcmp(argv[i],"--faker")==0) {
+      if(strcmp(argv[i],"--log-level")==0 && i+1<argc) {
+        // --log-level <error|info|debug>
+        if(log_set_level_name(argv[++i])!=0)
+          log_error("unknown --log-level '%s' (use error|info|debug)\n",argv[i]);
+      } else if(strncmp(argv[i],"--log-level=",12)==0) {
+        // --log-level=<error|info|debug>
+        if(log_set_level_name(argv[i]+12)!=0)
+          log_error("unknown --log-level '%s' (use error|info|debug)\n",argv[i]+12);
+      } else if(strcmp(argv[i],"--debug")==0) {
+        log_set_level(LOG_LEVEL_DEBUG);
+      } else if(strcmp(argv[i],"--verbose")==0 || strcmp(argv[i],"-v")==0) {
+        log_set_level(LOG_LEVEL_DEBUG);
+      } else if(strcmp(argv[i],"--quiet")==0 || strcmp(argv[i],"-q")==0) {
+        log_set_level(LOG_LEVEL_ERROR);
+      } else if(strcmp(argv[i],"--faker")==0) {
         enable_fake=1;
         // Optional following argument: the I/Q WAV to loop (e.g. --faker ft8.wav).
         // Only consume it if it is not another option.
@@ -663,6 +687,8 @@ int main(int argc, char **argv) {
     argc=j;
     argv[argc]=NULL;
   }
+
+  log_debug("log level = %s\n", log_level_name(log_get_level()));
 
 #ifdef FT8
   // Load the DXCC country file first so the QSO log's worked-before scan can tag
@@ -693,7 +719,7 @@ int main(int argc, char **argv) {
     if(access(newdir,F_OK)!=0 && access(olddir,F_OK)==0) {
       snprintf(cmd,sizeof(cmd),"cp -R \"%s\" \"%s\"",olddir,newdir);
       if(system(cmd)==0) {
-        g_print("Migrated configuration from %s to %s\n",olddir,newdir);
+        log_info("Migrated configuration from %s to %s\n",olddir,newdir);
       }
     }
   }

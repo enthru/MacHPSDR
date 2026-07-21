@@ -21,6 +21,7 @@
 //#define ECHO_MIC
 
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -200,7 +201,7 @@ void cw_changed() {
 }
 
 void protocol2_start_receiver(RECEIVER *r) {
-  fprintf(stderr, "iq_thread: channel=%d\n", r->channel);
+  log_info("iq_thread: channel=%d\n", r->channel);
   protocol2_general();
   protocol2_high_priority();
   protocol2_receive_specific();
@@ -212,7 +213,7 @@ void protocol2_stop_receiver(RECEIVER *r) {
 }
 
 void protocol2_start_wideband(WIDEBAND *w) {
-g_print("protocol2_start_wideband\n");
+log_info("protocol2_start_wideband\n");
   protocol2_general();
 }
 
@@ -224,7 +225,7 @@ void protocol2_init(RADIO *r) {
     int i;
     // int rc; // UNUSED
 
-    fprintf(stderr,"protocol2_init: MIC_SAMPLES=%d\n",MIC_SAMPLES);
+    log_info("protocol2_init: MIC_SAMPLES=%d\n",MIC_SAMPLES);
 
 #ifdef INCLUDED
     outputsamples=r->buffer_size;
@@ -233,7 +234,7 @@ void protocol2_init(RADIO *r) {
 
     if(r->local_microphone) {
       if(audio_open_input(r)!=0) {
-        fprintf(stderr,"audio_open_input failed\n");
+        log_error("audio_open_input failed\n");
         r->local_microphone=FALSE;
       }
     }
@@ -250,7 +251,7 @@ void protocol2_init(RADIO *r) {
 
     data_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(data_socket<0) {
-        fprintf(stderr,"protocol2_init: create socket failed for data_socket\n");
+        log_error("protocol2_init: create socket failed for data_socket\n");
         exit(-1);
     }
 
@@ -260,11 +261,11 @@ void protocol2_init(RADIO *r) {
 
     // bind to the interface
     if(bind(data_socket,(struct sockaddr*)&r->discovered->info.network.interface_address,r->discovered->info.network.interface_length)<0) {
-        fprintf(stderr,"protocol2_init: bind socket failed for data_socket\n");
+        log_error("protocol2_init: bind socket failed for data_socket\n");
         exit(-1);
     }
 
-fprintf(stderr,"protocol2_init: date_socket %d bound to interface\n",data_socket);
+log_info("protocol2_init: date_socket %d bound to interface\n",data_socket);
 
     memcpy(&base_addr,&r->discovered->info.network.address,r->discovered->info.network.address_length);
     base_addr_length=r->discovered->info.network.address_length;
@@ -282,7 +283,7 @@ fprintf(stderr,"protocol2_init: date_socket %d bound to interface\n",data_socket
     high_priority_addr_length=r->discovered->info.network.address_length;
     high_priority_addr.sin_port=htons(HIGH_PRIORITY_FROM_HOST_PORT);
 
-fprintf(stderr,"protocol2_init: high_priority_addr setup for port %d\n",HIGH_PRIORITY_FROM_HOST_PORT);
+log_info("protocol2_init: high_priority_addr setup for port %d\n",HIGH_PRIORITY_FROM_HOST_PORT);
 
     memcpy(&audio_addr,&r->discovered->info.network.address,r->discovered->info.network.address_length);
     audio_addr_length=r->discovered->info.network.address_length;
@@ -307,10 +308,10 @@ fprintf(stderr,"protocol2_init: high_priority_addr setup for port %d\n",HIGH_PRI
     protocol2_thread_id = g_thread_new( "protocol2", protocol2_thread, NULL);
     if( ! protocol2_thread_id )
     {
-        fprintf(stderr,"g_thread_new failed on protocol2_thread\n");
+        log_error("g_thread_new failed on protocol2_thread\n");
         exit( -1 );
     }
-    fprintf(stderr, "protocol2_thread: id=%p\n",protocol2_thread_id);
+    log_info("protocol2_thread: id=%p\n",protocol2_thread_id);
 
 }
 
@@ -371,7 +372,7 @@ void protocol2_general() {
     }
 
     if(sendto(data_socket,general_buffer,sizeof(general_buffer),0,(struct sockaddr*)&base_addr,base_addr_length)<0) {
-      fprintf(stderr,"sendto socket failed for general: seq=%ld\n",general_sequence);
+      log_error("sendto socket failed for general: seq=%ld\n",general_sequence);
     }
     general_sequence++;
 }
@@ -560,7 +561,7 @@ void protocol2_high_priority() {
       }
 
       level=(int)(actual_volts*255.0);
-g_print("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx->band_a, band->title, level);
+log_info("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx->band_a, band->title, level);
     }
 
     high_priority_buffer_to_radio[345]=level&0xFF;
@@ -885,7 +886,7 @@ g_print("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx-
 
     int rc;
     if((rc=sendto(data_socket,high_priority_buffer_to_radio,sizeof(high_priority_buffer_to_radio),0,(struct sockaddr*)&high_priority_addr,high_priority_addr_length))<0) {
-        fprintf(stderr,"sendto socket failed for high priority: rc=%d errno=%d\n",rc,errno);
+        log_error("sendto socket failed for high priority: rc=%d errno=%d\n",rc,errno);
         //abort();
     }
 
@@ -976,7 +977,7 @@ static void protocol2_transmit_specific() {
     }     
 
     if(sendto(data_socket,transmit_specific_buffer,sizeof(transmit_specific_buffer),0,(struct sockaddr*)&transmitter_addr,transmitter_addr_length)<0) {
-        fprintf(stderr,"sendto socket failed for tx specific: sequence=%ld\n",tx_specific_sequence);
+        log_error("sendto socket failed for tx specific: sequence=%ld\n",tx_specific_sequence);
     }
 
     tx_specific_sequence++;
@@ -1037,7 +1038,7 @@ void protocol2_receive_specific() {
 
 //fprintf(stderr,"protocol2_receive_specific: enable=%02X\n",receive_specific_buffer[7]);
     if(sendto(data_socket,receive_specific_buffer,sizeof(receive_specific_buffer),0,(struct sockaddr*)&receiver_addr,receiver_addr_length)<0) {
-      fprintf(stderr,"sendto socket failed for receive_specific: sequence=%ld\n",rx_specific_sequence);
+      log_error("sendto socket failed for receive_specific: sequence=%ld\n",rx_specific_sequence);
     }
     rx_specific_sequence++;
 }
@@ -1048,10 +1049,10 @@ static void protocol2_start() {
     protocol2_timer_thread_id = g_thread_new( "protocol2 timer", protocol2_timer_thread, NULL);
     if( ! protocol2_timer_thread_id )
     {
-        fprintf(stderr,"g_thread_new failed on protocol2_timer_thread\n");
+        log_error("g_thread_new failed on protocol2_timer_thread\n");
         exit( -1 );
     }
-    fprintf(stderr, "protocol2_timer_thread: id=%p\n",protocol2_timer_thread_id);
+    log_info("protocol2_timer_thread: id=%p\n",protocol2_timer_thread_id);
 
 }
 
@@ -1070,7 +1071,7 @@ void protocol2_run() {
 // protocol2_thread, which re-creates the socket and re-issues the general/start/
 // high-priority sequence (and its timer thread).  Runs on the GTK main thread.
 void protocol2_reconnect() {
-    fprintf(stderr,"protocol2_reconnect\n");
+    log_info("protocol2_reconnect\n");
     running=0;
     if(protocol2_thread_id!=NULL) {
         g_thread_join(protocol2_thread_id);  // returns within one SO_RCVTIMEO period
@@ -1082,7 +1083,7 @@ void protocol2_reconnect() {
     }
     protocol2_thread_id = g_thread_new( "protocol2", protocol2_thread, NULL);
     if( ! protocol2_thread_id ) {
-        fprintf(stderr,"g_thread_new failed on protocol2_thread (reconnect)\n");
+        log_error("g_thread_new failed on protocol2_thread (reconnect)\n");
     }
 }
 
@@ -1102,14 +1103,14 @@ static gpointer protocol2_thread(gpointer data) {
     static unsigned char *buffer;
     int bytesread;
 
-fprintf(stderr,"protocol2_thread\n");
+log_info("protocol2_thread\n");
 
     micsamples=0;
     iqindex=4;
 
     data_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(data_socket<0) {
-        fprintf(stderr,"protocol2_thread: create socket failed for data_socket\n");
+        log_error("protocol2_thread: create socket failed for data_socket\n");
         exit(-1);
     }
 
@@ -1127,11 +1128,11 @@ fprintf(stderr,"protocol2_thread\n");
 
     // bind to the interface
     if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
-        fprintf(stderr,"protocol2_thread: bind socket failed for data_socket\n");
+        log_error("protocol2_thread: bind socket failed for data_socket\n");
         exit(-1);
     }
 
-fprintf(stderr,"protocol2_thread: data_socket bound to interface\n");
+log_info("protocol2_thread: data_socket bound to interface\n");
 
     memcpy(&base_addr,&radio->discovered->info.network.address,radio->discovered->info.network.address_length);
     base_addr_length=radio->discovered->info.network.address_length;
@@ -1149,7 +1150,7 @@ fprintf(stderr,"protocol2_thread: data_socket bound to interface\n");
     high_priority_addr_length=radio->discovered->info.network.address_length;
     high_priority_addr.sin_port=htons(HIGH_PRIORITY_FROM_HOST_PORT);
 
-fprintf(stderr,"protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORITY_FROM_HOST_PORT);
+log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORITY_FROM_HOST_PORT);
 
     memcpy(&audio_addr,&radio->discovered->info.network.address,radio->discovered->info.network.address_length);
     audio_addr_length=radio->discovered->info.network.address_length;
@@ -1186,7 +1187,7 @@ fprintf(stderr,"protocol2_thread: high_priority_addr setup for port %d\n",HIGH_P
             // disconnect watchdog decide, rather than killing the whole app.
             free(buffer);
             if(errno!=EAGAIN && errno!=EWOULDBLOCK) {
-                fprintf(stderr,"recvfrom socket failed for protocol2_thread: %s\n",strerror(errno));
+                log_error("recvfrom socket failed for protocol2_thread: %s\n",strerror(errno));
             }
             continue;
         }
@@ -1205,7 +1206,7 @@ fprintf(stderr,"protocol2_thread: high_priority_addr setup for port %d\n",HIGH_P
             case RX_IQ_TO_HOST_PORT_7:
               ddc=sourceport-RX_IQ_TO_HOST_PORT_0;
               if(ddc>=radio->discovered->supported_receivers)  {
-                fprintf(stderr,"unexpected iq data from ddc %d\n",ddc);
+                log_info("unexpected iq data from ddc %d\n",ddc);
               } else {
                 if(radio->receiver[ddc]!=NULL) {
                   process_iq_data(radio->receiver[ddc],buffer);
@@ -1232,7 +1233,7 @@ fprintf(stderr,"protocol2_thread: high_priority_addr setup for port %d\n",HIGH_P
               free(buffer);
               break;
             default:
-fprintf(stderr,"protocol2_thread: Unknown port %d free %p\n",sourceport,buffer);
+log_info("protocol2_thread: Unknown port %d free %p\n",sourceport,buffer);
               free(buffer);
               break;
         }
@@ -1412,7 +1413,7 @@ static void process_wideband_data(WIDEBAND *w,unsigned char *buffer) {
 static void process_command_response(unsigned char *buffer) {
     response_sequence=((buffer[0]&0xFF)<<24)+((buffer[1]&0xFF)<<16)+((buffer[2]&0xFF)<<8)+(buffer[3]&0xFF);
     response=buffer[4]&0xFF;
-    fprintf(stderr,"response_sequence=%ld response=%d\n",response_sequence,response);
+    log_info("response_sequence=%ld response=%d\n",response_sequence,response);
 }
 
 static void process_high_priority(unsigned char *buffer) {
@@ -1526,7 +1527,7 @@ void protocol2_audio_samples(RECEIVER *rx,short left_audio_sample,short right_au
 
     rc=sendto(data_socket,audiobuffer,sizeof(audiobuffer),0,(struct sockaddr*)&audio_addr,audio_addr_length);
     if(rc!=sizeof(audiobuffer)) {
-      fprintf(stderr,"sendto socket failed for %ld bytes of audio: %d\n",sizeof(audiobuffer),rc);
+      log_error("sendto socket failed for %ld bytes of audio: %d\n",sizeof(audiobuffer),rc);
     }
     audiosequence++;
     audioindex=4;
@@ -1549,7 +1550,7 @@ void protocol2_iq_samples(int isample,int qsample) {
 
     // send the buffer
     if(sendto(data_socket,iqbuffer,sizeof(iqbuffer),0,(struct sockaddr*)&iq_addr,iq_addr_length)<0) {
-      fprintf(stderr,"sendto socket failed for iq: sequence=%ld\n",tx_iq_sequence);
+      log_error("sendto socket failed for iq: sequence=%ld\n",tx_iq_sequence);
     }
     tx_iq_sequence++;
     iqindex=4;
@@ -1558,7 +1559,7 @@ void protocol2_iq_samples(int isample,int qsample) {
 
 void* protocol2_timer_thread(void* arg) {
   // int specific=0; // UNUSED
-fprintf(stderr,"protocol2_timer_thread\n");
+log_info("protocol2_timer_thread\n");
   while(running) {
     usleep(100000); // 100ms
     protocol2_transmit_specific();

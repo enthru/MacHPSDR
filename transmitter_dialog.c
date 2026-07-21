@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
@@ -53,7 +54,7 @@ static GtkWidget *tx_latency;
 /*
 static gboolean close_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-g_print("tx->dialog: close_cb");
+log_info("tx->dialog: close_cb");
   tx->dialog=NULL;
   return TRUE;
 }
@@ -62,7 +63,7 @@ g_print("tx->dialog: close_cb");
 /*
 static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-g_print("tx->dialog: delete_cb: %p\n",tx->dialog);
+log_info("tx->dialog: delete_cb: %p\n",tx->dialog);
   tx->dialog=NULL;
   return FALSE;
 }
@@ -113,7 +114,7 @@ static void microphone_choice_cb(GtkComboBox *widget,gpointer data) {
   } else {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, TRUE);
   }
-  g_print("Input device changed: %d: %s (%s)\n",i,input_devices[i].name,output_devices[i].description);
+  log_info("Input device changed: %d: %s (%s)\n",i,input_devices[i].name,output_devices[i].description);
 }
 
 /*
@@ -255,7 +256,7 @@ static void tx_compressor_cb(GtkWidget *widget, gpointer data) {
 void update_transmitter_dialog(TRANSMITTER *tx) {
   int i;
 
-g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
+log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   // re-scan audio devices so a mic connected after launch (e.g. a Bluetooth
   // headset) shows up in the list without restarting the app
   audio_refresh_devices();
@@ -264,7 +265,7 @@ g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(radio->transmitter->microphone_choice_b));
   for(i=0;i<n_input_devices;i++) {
-g_print("adding: %s\n",input_devices[i].description);
+log_info("adding: %s\n",input_devices[i].description);
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(radio->transmitter->microphone_choice_b),NULL,input_devices[i].description);
     if(radio->microphone_name!=NULL) {
       if(strcmp(input_devices[i].name,radio->microphone_name)==0) {
@@ -288,7 +289,7 @@ GtkWidget *create_transmitter_dialog(TRANSMITTER *tx) {
   int i;
   char temp[32];
 
-g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
+log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   GtkWidget *grid=gtk_grid_new();
   sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);

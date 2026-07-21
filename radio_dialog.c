@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -95,7 +96,7 @@ static GtkWidget *cwport;
 static GtkWidget *audio_backend_combo_box;
 
 static void radio_dialog_update_controls() {
-	g_print("%s: model=%d\n",__FUNCTION__,radio->model);
+	log_info("%s: model=%d\n",__FUNCTION__,radio->model);
   switch(radio->model) {
     case ANAN_10:
     case ANAN_10E:
@@ -177,7 +178,7 @@ static void radio_dialog_update_controls() {
       break;
 
     default:
-      g_print("%s: defualt set_sensitive\n",__FUNCTION__);
+      log_info("%s: defualt set_sensitive\n",__FUNCTION__);
       gtk_widget_set_sensitive(adc0_antenna_combo_box, FALSE);
       gtk_widget_set_sensitive(adc0_filters_combo_box, FALSE);
       gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
@@ -404,7 +405,7 @@ static void update_audio_backends(RADIO *radio) {
 static void audio_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int selected=gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
-g_print("radio_dialog: audio_cb: selected=%d\n",selected);
+log_info("radio_dialog: audio_cb: selected=%d\n",selected);
   radio_change_audio(radio,selected);
   update_audio_backends(radio);
 }
@@ -412,7 +413,7 @@ g_print("radio_dialog: audio_cb: selected=%d\n",selected);
 static void audio_backend_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int selected=gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
-g_print("radio_dialog: audio_backend_cb: selected=%d\n",selected);
+log_info("radio_dialog: audio_backend_cb: selected=%d\n",selected);
   radio_change_audio_backend(radio,selected);
 }
 
@@ -593,7 +594,7 @@ static void freetune_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx = (RECEIVER *)data;
   gboolean enable = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
   receiver_set_freetune(rx, enable);
-  g_print("radio_dialog: freetune rx=%d enable=%d\n", rx->channel, enable);
+  log_info("radio_dialog: freetune rx=%d enable=%d\n", rx->channel, enable);
 }
 
 #ifdef CWDAEMON
@@ -601,7 +602,7 @@ static void cwdaemon_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->cwdaemon=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
   if(radio->cwdaemon) {
-    printf("Starting CWdaemon\n");
+    log_info("Starting CWdaemon\n");
     radio->cwdaemon = cwdaemon_start();
     gtk_widget_set_sensitive(cw_keyer_speed_b, FALSE);
     gtk_widget_set_sensitive(cw_keyer_sidetone_frequency_b, FALSE);
@@ -628,7 +629,7 @@ static void cwport_value_changed_cb(GtkWidget *widget, gpointer data) {
 #endif
 
 GtkWidget *create_radio_dialog(RADIO *radio) {
-  g_print("%s\n",__FUNCTION__);
+  log_info("%s\n",__FUNCTION__);
   GtkWidget *grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);

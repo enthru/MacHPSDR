@@ -28,6 +28,7 @@
  */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include "discovered.h"
 #include "receiver.h"
 #include "transmitter.h"
@@ -190,7 +191,7 @@ static void ReadMIDIdevice(const MIDIPacketList *pktlist, void *refCon, void *co
 }
 
 void close_midi_device() {
-    fprintf(stderr,"%s\n",__FUNCTION__);
+    log_info("%s\n",__FUNCTION__);
 }
 
 int register_midi_device(char *myname) {
@@ -203,7 +204,7 @@ int register_midi_device(char *myname) {
 
     configure=false;
 
-    g_print("%s: %s\n",__FUNCTION__,myname);
+    log_info("%s: %s\n",__FUNCTION__,myname);
 //
 // Go through the list of MIDI devices and
 // look whether the one we are looking for is there
@@ -211,9 +212,9 @@ int register_midi_device(char *myname) {
     for (i=0; i<n_midi_devices; i++) {
         if(!strncmp(midi_devices[i].name, myname, mylen)) {
 	    FoundMIDIref=i;
-	    fprintf(stderr,"MIDI device found and selected: >>>%s<<<\n", name);
+	    log_info("MIDI device found and selected: >>>%s<<<\n", name);
 	} else {
-	    fprintf(stderr,"MIDI device found BUT NOT SELECTED: >>>%s<<<\n", name);
+	    log_info("MIDI device found BUT NOT SELECTED: >>>%s<<<\n", name);
 	}
     }
 
@@ -249,13 +250,13 @@ void get_midi_devices() {
             MIDIObjectGetStringProperty(dev, kMIDIPropertyName, &pname);
             CFStringGetCString(pname, name, sizeof(name), 0);
             CFRelease(pname);
-            g_print("%s: %s\n",__FUNCTION__,name);
+            log_info("%s: %s\n",__FUNCTION__,name);
             midi_devices[n_midi_devices].name=g_new(gchar,strlen(name)+1);
             strcpy(midi_devices[n_midi_devices].name,name);
             n_midi_devices++;
         }
     }
-    g_print("%s: devices=%d\n",__FUNCTION__,n_midi_devices);
+    log_info("%s: devices=%d\n",__FUNCTION__,n_midi_devices);
 }
 
 void configure_midi_device(gboolean state) {

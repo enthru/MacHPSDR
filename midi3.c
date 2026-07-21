@@ -11,6 +11,7 @@
  * However, changing the volume makes sense both with MIDI_KNOB and MIDI_WHEEL.
  */
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include "band.h"
 #include "channel.h"
@@ -62,7 +63,7 @@ static int midi_action(void *data) {
     int    *ip;
     RECEIVER *rx=radio->receiver[midi_rx];
 
-    if(midi_debug) g_print("%s: action=%d type=%d val=%d\n",__FUNCTION__,action,type,val);
+    if(midi_debug) log_info("%s: action=%d type=%d val=%d\n",__FUNCTION__,action,type,val);
     //
     // Handle cases in alphabetical order of the key words in midi.props
     //
@@ -1031,7 +1032,7 @@ static int midi_action(void *data) {
 	/////////////////////////////////////////////////////////// "VFOB"
 	case VFOA: // only wheel supported
 	    if (type == MIDI_WHEEL && !rx->locked) {
-              g_print("%s: VFOA: val=%d\n",__FUNCTION__,val);
+              log_info("%s: VFOA: val=%d\n",__FUNCTION__,val);
               receiver_move(rx,(long long)(rx->step*val),TRUE);
 	    }
 	    break;
@@ -1185,7 +1186,7 @@ static int midi_action(void *data) {
 	    break;
 	default:
 	    // This means we have forgotten to implement an action, so we inform on stderr.
-	    fprintf(stderr,"Unimplemented MIDI action: A=%d\n", (int) action);
+	    log_info("Unimplemented MIDI action: A=%d\n", (int) action);
     }
     g_free(a);
     return 0;
@@ -1219,7 +1220,7 @@ void DoTheMidi(enum MIDIaction action, enum MIDItype type, int val) {
         default:
           // all other actions are performed using g_idle_add
           {
-    if(midi_debug) g_print("%s: action=%d type=%d val=%d\n",__FUNCTION__,action,type,val);
+    if(midi_debug) log_info("%s: action=%d type=%d val=%d\n",__FUNCTION__,action,type,val);
           ACTION *a=g_new(ACTION,1);
           a->action=action;
           a->type=type;

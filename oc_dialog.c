@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <semaphore.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -53,7 +54,7 @@ static void oc_rx_cb(GtkWidget *widget, gpointer data) {
   DATA *d=(DATA *)data;
   BAND *band=band_get_band(d->band);
   int mask=0x01<<(d->oc-1);
-fprintf(stderr,"oc_rx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
+log_info("oc_rx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
   if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
     band->OCrx|=mask;
   } else {
@@ -70,7 +71,7 @@ static void oc_tx_cb(GtkWidget *widget, gpointer data) {
   BAND *band=band_get_band(d->band);
   int mask=0x01<<(d->oc-1);
 
-fprintf(stderr,"oc_tx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
+log_info("oc_tx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
 
   if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
     band->OCtx|=mask;
@@ -85,7 +86,7 @@ fprintf(stderr,"oc_tx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
 static void oc_tune_cb(GtkWidget *widget, gpointer data) {
   DATA *d=(DATA *)data;
   int mask=0x01<<(d->oc-1);
-fprintf(stderr,"oc_tune_cb: oc=%d mask=%d\n",d->oc,mask);
+log_info("oc_tune_cb: oc=%d mask=%d\n",d->oc,mask);
   if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
     d->radio->oc_tune|=mask;
   } else {
@@ -134,7 +135,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   int i,j;
   DATA *data;
 
-  g_print("create oc dialog\n");
+  log_info("create oc dialog\n");
 
   GtkWidget *grid=gtk_grid_new();
   sui_style_page(grid);

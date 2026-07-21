@@ -182,6 +182,7 @@ PROGRAM=machpsdr
 
 SOURCES=\
 main.c\
+log.c\
 css.c\
 audio.c\
 version.c\
@@ -246,6 +247,7 @@ actions.c
 
 HEADERS=\
 main.h\
+log.h\
 css.h\
 audio.h\
 version.h\
@@ -309,6 +311,7 @@ actions.h
 
 OBJS=\
 main.o\
+log.o\
 css.o\
 settings_ui.o\
 audio.o\

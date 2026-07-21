@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include "log.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -324,7 +325,7 @@ static void log_qso(void) {
   if (f) { fputs(rec, f); fclose(f); }
   ft8_udp_log(rec);   // also push to a network logger (JTDX-style), if enabled
   worked_add(dx_call, band);
-  fprintf(stderr, "ft8-qso: logged %s on %dm\n", dx_call, band);
+  log_info("ft8-qso: logged %s on %dm\n", dx_call, band);
 }
 
 // ---- state control ---------------------------------------------------------
@@ -464,12 +465,12 @@ static gboolean qso_poll(gpointer data) {
     // non-standard call may be unencodable for this step (grid/report), in
     // which case we surface it rather than transmitting a stale waveform.
     if (strcmp(pending_msg, prepared_msg) == 0) {
-      fprintf(stderr, "ft8-qso: arming Tx '%s' (offset=%d even=%d)\n",
+      log_debug("ft8-qso: arming Tx '%s' (offset=%d even=%d)\n",
               pending_msg, radio->ft8_tx_offset, tx_even);
       ft8_tx_arm(tx_even);
       need_arm = FALSE;
     } else {
-      fprintf(stderr, "ft8-qso: cannot encode '%s' — not arming\n", pending_msg);
+      log_error("ft8-qso: cannot encode '%s' — not arming\n", pending_msg);
       snprintf(status, sizeof(status), "Can't encode: %s", pending_msg);
     }
   }
@@ -506,7 +507,7 @@ void ft8_qso_start_cq(void) {
 
 void ft8_qso_answer(const FT8_DECODE *d) {
   if (!radio || radio->station_call[0] == '\0') {
-    fprintf(stderr, "ft8-qso: no callsign set (Configure -> FT8) — cannot Tx\n");
+    log_error("ft8-qso: no callsign set (Configure -> FT8) — cannot Tx\n");
     snprintf(status, sizeof(status), "Set your callsign in Configure -> FT8");
     return;
   }
@@ -514,7 +515,7 @@ void ft8_qso_answer(const FT8_DECODE *d) {
   snprintf(my_call, sizeof(my_call), "%s", radio->station_call);
   snprintf(my_grid, sizeof(my_grid), "%s", radio->station_grid);
   if (my_grid[0] == '\0') {
-    fprintf(stderr, "ft8-qso: no grid set (Configure -> FT8) — cannot answer\n");
+    log_error("ft8-qso: no grid set (Configure -> FT8) — cannot answer\n");
     snprintf(status, sizeof(status), "Set your grid in Configure -> FT8");
     return;
   }

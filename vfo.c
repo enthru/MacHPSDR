@@ -17,6 +17,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <string.h>
 #include <wdsp.h>
 
@@ -234,7 +235,7 @@ static void DisableSplitSubRX(gpointer user_data) {
       rx->subrx_enable=FALSE;
       destroy_subrx(rx);
       rx->subrx=NULL;
-      printf("Destroy subrx subrx\n");
+      log_info("Destroy subrx subrx\n");
     }
   }
 }
@@ -499,29 +500,29 @@ static void subrx_b_cb(GtkToggleButton *widget,gpointer user_data) {
 static void div_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
 
-  g_print("Diversity rx %d\n", rx->diversity);
+  log_info("Diversity rx %d\n", rx->diversity);
   if(rx->diversity) {
     //Delete receiver
     int this_mixer = rx->dmix_id;
     delete_diversity_mixer(radio->divmixer[this_mixer]);
     rx->diversity = FALSE;
   } else {
-    g_print("Add new rx\n");
+    log_info("Add new rx\n");
     int new_hidden_rx = add_receiver(radio, FALSE);
     if (new_hidden_rx > 0) {
-      g_print("-----------Hidden RX added %d\n", new_hidden_rx);
+      log_info("-----------Hidden RX added %d\n", new_hidden_rx);
       int dmix_num = add_diversity_mixer(radio, rx, radio->receiver[new_hidden_rx]);
       if (dmix_num > -1) {
-        g_print("Vis mix chan %d\n", rx->dmix_id);
-        g_print("Hid mix chan %d\n", radio->receiver[new_hidden_rx]->dmix_id);
-        g_print("channel %d\n", radio->divmixer[dmix_num]->rx_hidden->channel);
+        log_info("Vis mix chan %d\n", rx->dmix_id);
+        log_info("Hid mix chan %d\n", radio->receiver[new_hidden_rx]->dmix_id);
+        log_info("channel %d\n", radio->divmixer[dmix_num]->rx_hidden->channel);
         rx->diversity = TRUE;
       }
     } else {
-      g_print("Failed to add new rx\n");
+      log_info("Failed to add new rx\n");
     }
   }
-  g_print("Diversity rx %d\n", rx->diversity);
+  log_info("Diversity rx %d\n", rx->diversity);
 }
 
 
@@ -1515,7 +1516,7 @@ static gboolean frequency_b_motion_notify_event_cb(GtkWidget *widget, GdkEventMo
 GtkWidget *create_vfo(RECEIVER *rx) {
   char temp[32];
 
-  g_print("%s: rx=%d\n",__FUNCTION__,rx->channel);
+  log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
 
   VFO_DATA *v=g_new(VFO_DATA,1);
 

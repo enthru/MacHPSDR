@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include "log.h"
 #include <gtk/gtk.h>
 
 #include <wdsp.h>
@@ -116,7 +117,7 @@ void subrx_set_agc(RECEIVER *rx) {
 }
 
 void create_subrx(RECEIVER *rx) {
-g_print("%s: rx=%d\n",__FUNCTION__,rx->channel);
+log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
   SUBRX *subrx=g_new(SUBRX,1);
   rx->subrx=subrx;
   subrx->channel=rx->channel+SUBRX_BASE_CHANNEL;
@@ -197,7 +198,7 @@ void subrx_change_sample_rate(RECEIVER *rx) {
 }
 
 void destroy_subrx(RECEIVER *rx) {
-g_print("%s\n",__FUNCTION__);
+log_info("%s\n",__FUNCTION__);
   SUBRX *subrx=(SUBRX *)rx->subrx;
   g_free(subrx->audio_output_buffer);
   g_free(subrx);

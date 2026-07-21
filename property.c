@@ -18,6 +18,7 @@
 */
 
 #include <stdlib.h>
+#include "log.h"
 #include <stdio.h>
 #include <string.h>
 #include "property.h"
@@ -84,7 +85,7 @@ void loadProperties(char* filename) {
     properties=NULL;
     PROPERTY* property;
 
-    fprintf(stderr,"loadProperties: %s\n",filename);
+    log_info("loadProperties: %s\n",filename);
     
     if(f) {
         while(fgets(string,sizeof(string),f)) {
@@ -110,7 +111,7 @@ void loadProperties(char* filename) {
 
     if(version!=PROPERTY_VERSION) {
       properties=NULL;
-      fprintf(stderr,"loadProperties: version=%f expected version=%f ignoring\n",version,PROPERTY_VERSION);
+      log_info("loadProperties: version=%f expected version=%f ignoring\n",version,PROPERTY_VERSION);
     }
 }
 
@@ -125,7 +126,7 @@ void saveProperties(char* filename) {
     FILE* f=fopen(filename,"w+");
     char line[512];
     if(!f) {
-        fprintf(stderr,"can't open %s\n",filename);
+        log_error("can't open %s\n",filename);
         return;
     }
 

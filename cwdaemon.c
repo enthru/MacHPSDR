@@ -29,6 +29,7 @@
 #define RETSIGTYPE void
 
 #include <stdlib.h>
+#include "log.h"
 #include <libcw.h>
 #include <libcw_debug.h>
 #include "cwdaemon.h"
@@ -344,7 +345,7 @@ void cwdaemon_udelay(unsigned long us)
 		if (errno == EINTR) {
 			nanosleep(&time_remainder, NULL);
 		} else {
-			printf("Nanosleep");
+			log_info("Nanosleep");
 		}
 	}
 
@@ -453,7 +454,7 @@ bool cwdaemon_open_libcw_output(int audio_system)
 		   output has been closed. In such a situation OSS may fail
 		   to open audio device. Let's give it some time. */
 		for (int i = 0; i < 5; i++) {
-			printf("delaying switching to OSS, please wait few seconds.\n");
+			log_info("delaying switching to OSS, please wait few seconds.\n");
 			sleep(4);
 			rv = cw_generator_new(audio_system, NULL);
 			if (rv == CW_SUCCESS) {
@@ -463,7 +464,7 @@ bool cwdaemon_open_libcw_output(int audio_system)
 	}
 	if (rv != CW_FAILURE) {
 		rv = cw_generator_start();
-		printf("starting generator with sound system \"%s\": %s", cw_get_audio_system_label(audio_system), rv ? "success" : "failure");
+		log_info("starting generator with sound system \"%s\": %s", cw_get_audio_system_label(audio_system), rv ? "success" : "failure");
 
 	} else {
 		/* FIXME:
@@ -474,7 +475,7 @@ bool cwdaemon_open_libcw_output(int audio_system)
 		   It seems that this error has been fixed with
 		   changes in libcw, committed on 31.12.2012.
 		   To be observed. */
-		printf( "failed to create generator with sound system \"%s\"", cw_get_audio_system_label(audio_system));
+		log_info( "failed to create generator with sound system \"%s\"", cw_get_audio_system_label(audio_system));
 	}
 
 	return rv == CW_FAILURE ? false : true;
@@ -510,7 +511,7 @@ void cwdaemon_reset_libcw_output(void)
 	/* Delete old generator (if it exists). */
 	cwdaemon_close_libcw_output();
 
-	printf("setting sound system \"%s\"", cw_get_audio_system_label(default_audio_system));
+	log_info("setting sound system \"%s\"", cw_get_audio_system_label(default_audio_system));
 
 	if (cwdaemon_open_libcw_output(current_audio_system)) {
 		has_audio_output = true;
@@ -603,7 +604,7 @@ void cwdaemon_prepare_reply(char *reply, const char *request, size_t n)
 
 	   It is important to set this flag at the beginning of the function. */
 	ptt_flag |= PTT_ACTIVE_ECHO;
-	printf("PTT flag +PTT_ACTIVE_ECHO (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
+	log_info("PTT flag +PTT_ACTIVE_ECHO (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
 
 	/* We are sending reply to the same host that sent a request. */
 	memcpy(&radio->reply_addr, &radio->request_addr, sizeof(radio->reply_addr));
@@ -612,8 +613,8 @@ void cwdaemon_prepare_reply(char *reply, const char *request, size_t n)
 	strncpy(reply, request, n);
 	reply[n] = '\0'; /* FIXME: where is boundary checking? */
 
-	printf("text of request: \"%s\", text of reply: \"%s\"\n", request, reply);
-	printf("now waiting for end of transmission before echoing back to client\n");
+	log_info("text of request: \"%s\", text of reply: \"%s\"\n", request, reply);
+	log_info("now waiting for end of transmission before echoing back to client\n");
 
 	return;
 }
@@ -639,7 +640,7 @@ ssize_t cwdaemon_sendto(const char *reply)
 			    (struct sockaddr *) &radio->reply_addr, radio->reply_addrlen);
 
 	if (rv == -1) {
-		printf("sendto: \"%s\"", strerror(errno));
+		log_info("sendto: \"%s\"", strerror(errno));
 		return -1;
 	} else {
 		return rv;
@@ -682,7 +683,7 @@ int cwdaemon_recvfrom(char *request, int n)
 			return 0;
 		} else {
 			/* Some other error. May be a serious error. */
-			g_print("Close thread\n");
+			log_info("Close thread\n");
 			return -1;
 		}
 	} else if (recv_rc == 0) {
@@ -741,7 +742,7 @@ int cwdaemon_receive(void)
 
 	request_buffer[recv_rc] = '\0';
 
-	printf("-------------------\n");
+	log_info("-------------------\n");
 	/* TODO: replace the magic number 27 with constant. */
 	if (request_buffer[0] != 27) {
 		/* No ESCAPE. All received data should be treated
@@ -751,7 +752,7 @@ int cwdaemon_receive(void)
 		   caret request (e.g. "some text^"), which does
 		   require sending a reply to client. Such request is
 		   correctly handled by cwdaemon_play_request(). */
-		printf("request: \"%s\"\n", request_buffer);
+		log_info("request: \"%s\"\n", request_buffer);
 		if ((strlen(request_buffer) + strlen(request_queue)) <= CWDAEMON_REQUEST_QUEUE_SIZE_MAX - 1) {
 			strcat(request_queue, request_buffer);
 			cwdaemon_play_request(request_queue);
@@ -767,7 +768,7 @@ int cwdaemon_receive(void)
 		   terminal makes funny things with the lines already
 		   printed to the terminal (tested in xfce4-terminal
 		   and xterm). */
-		printf("escaped request: \"<ESC>%s\"\n", request_buffer + 1);
+		log_info("escaped request: \"<ESC>%s\"\n", request_buffer + 1);
 		cwdaemon_handle_escaped_request(request_buffer);
 		return 0;
 	}
@@ -780,12 +781,12 @@ int cwdaemon_receive(void)
 void cwdaemon_handle_escaped_request(char *request)
 {
 	/* Take action depending on Escape code. */
-  printf("Code %i\n", (int) request[1]);
+  log_info("Code %i\n", (int) request[1]);
 	switch ((int) request[1]) {
 	case '0':
 		/* Reset all values. */
     /*
-		printf("requested resetting of parameters");
+		log_info("requested resetting of parameters");
 		request_queue[0] = '\0';
 		cwdaemon_reset_almost_all();
 		wordmode = 0;
@@ -793,8 +794,8 @@ void cwdaemon_handle_escaped_request(char *request)
 		//global_cwdevice->reset(global_cwdevice);
 
 		ptt_flag = 0;
-		printf("PTT flag = 0 (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
-		printf("resetting completed");
+		log_info("PTT flag = 0 (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
+		log_info("resetting completed");
     */
 		break;
 	case '2':
@@ -812,7 +813,7 @@ void cwdaemon_handle_escaped_request(char *request)
 			if (current_morse_tone > 0) {
 
 				cw_set_frequency(current_morse_tone);
-				printf("tone: %d Hz", current_morse_tone);
+				log_info("tone: %d Hz", current_morse_tone);
 
 				/* TODO: Should we really be adjusting
 				   volume when the command is for
@@ -822,18 +823,18 @@ void cwdaemon_handle_escaped_request(char *request)
 
 			} else { /* current_morse_tone==0, sidetone off */
 				cw_set_volume(0);
-				printf("volume off");
+				log_info("volume off");
 			}
 		}
 		break;
 	case '4':
 		/* Abort currently sent message. */
 		if (wordmode) {
-			printf("requested aborting of message - ignoring (word mode is active)");
+			log_info("requested aborting of message - ignoring (word mode is active)");
 		} else {
-			printf("requested aborting of message - executing (character mode is active)");
+			log_info("requested aborting of message - executing (character mode is active)");
 			if (ptt_flag & PTT_ACTIVE_ECHO) {
-				printf("echo \"break\"");
+				log_info("echo \"break\"");
 				//cwdaemon_sendto("break\r\n");
 			}
 			request_queue[0] = '\0';
@@ -843,13 +844,13 @@ void cwdaemon_handle_escaped_request(char *request)
 				cwdaemon_set_ptt_off(global_cwdevice, "PTT off");
 			}
 			ptt_flag &= 0;
-			printf("PTT flag = 0 (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
+			log_info("PTT flag = 0 (0x%02x/%s)", ptt_flag, cwdaemon_debug_ptt_flags());
 		}
 		break;
 	case '5':
 		/* Exit cwdaemon. */
 		errno = 0;
-		printf("requested exit of daemon");
+		log_info("requested exit of daemon");
 		exit(EXIT_SUCCESS);
 
 	case '6':
@@ -858,7 +859,7 @@ void cwdaemon_handle_escaped_request(char *request)
 		request[0] = '\0';
 		request_queue[0] = '\0';
 		wordmode = 1;
-		printf("wordmode set");
+		log_info("wordmode set");
 		break;
 	case '7':
     break;
@@ -890,7 +891,7 @@ void cwdaemon_handle_escaped_request(char *request)
 		break;
 	case 'c':
 		{
-      printf("Why am I tuning?");
+      log_info("Why am I tuning?");
 			/* FIXME: change this uint32_t to size_t. */
 			uint32_t seconds = 0;
 			/* Tune for a number of seconds. */
@@ -909,7 +910,7 @@ void cwdaemon_handle_escaped_request(char *request)
 
 			if (rv == 0) {
 				/* Value totally invalid. */
-				printf(
+				log_info(
 					       "invalid requested PTT delay [ms]: \"%s\" (should be integer between %d and %d inclusive)",
 					       request + 2,
 					       CWDAEMON_PTT_DELAY_MIN, CWDAEMON_PTT_DELAY_MAX);
@@ -926,7 +927,7 @@ void cwdaemon_handle_escaped_request(char *request)
 				   cwdaemon_params_pttdelay(), but a
 				   warning debug string must be
 				   printed here. */
-				printf("requested PTT delay [ms] out of range: \"%s\", clipping to \"%d\" (should be between %d and %d inclusive)",
+				log_info("requested PTT delay [ms] out of range: \"%s\", clipping to \"%d\" (should be between %d and %d inclusive)",
 					       request + 2,
 					       CWDAEMON_PTT_DELAY_MAX,
 					       CWDAEMON_PTT_DELAY_MIN, CWDAEMON_PTT_DELAY_MAX);
@@ -965,7 +966,7 @@ void cwdaemon_handle_escaped_request(char *request)
 		   be the only content of server's reply. */
 
 		//cwdaemon_prepare_reply(reply_buffer, request + 1, strlen(request + 1));
-		printf("reply is ready, waiting for message from client (reply: \"%s\")", reply_buffer);
+		log_info("reply is ready, waiting for message from client (reply: \"%s\")", reply_buffer);
 		/* cwdaemon will wait for queue-empty callback before
 		   sending the reply. */
 		break;
@@ -1037,7 +1038,7 @@ void cwdaemon_play_request(char *request)
 			/* PTT is now in AUTO. It will be turned off on low
 			   tone queue, in cwdaemon_tone_queue_low_callback(). */
 
-			printf("Morse character \"%c\" to be queued in libcw\n", *x);
+			log_info("Morse character \"%c\" to be queued in libcw\n", *x);
 			cw_send_character(*x);
 			//printf("Morse character \"%c\" has been queued in libcw", *x);
 
@@ -1119,11 +1120,11 @@ void cwdaemon_tone_queue_low_callback(__attribute__((unused)) void *arg)
 {
   return;
 	int len = cw_get_tone_queue_length();
-	printf("low TQ callback: start, TQ len = %d, PTT flag = 0x%02x/%s",
+	log_info("low TQ callback: start, TQ len = %d, PTT flag = 0x%02x/%s",
 		       len, ptt_flag, cwdaemon_debug_ptt_flags());
 
 	if (len > tq_low_watermark) {
-		printf("low TQ callback: TQ len larger than watermark, TQ len = %d", len);
+		log_info("low TQ callback: TQ len larger than watermark, TQ len = %d", len);
 	}
 
 	if (ptt_flag == PTT_ACTIVE_AUTO
@@ -1142,7 +1143,7 @@ void cwdaemon_tone_queue_low_callback(__attribute__((unused)) void *arg)
 		   Feel free to correct me ;) */
 
 
-		printf("low TQ callback: branch 1, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
+		log_info("low TQ callback: branch 1, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
 
 		cwdaemon_set_ptt_off(global_cwdevice, "PTT (auto) off");
 
@@ -1152,17 +1153,17 @@ void cwdaemon_tone_queue_low_callback(__attribute__((unused)) void *arg)
 		   the server (i.e. cwdaemon) after the server plays
 		   all characters. */
 
-		printf("low TQ callback: branch 2, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
+		log_info("low TQ callback: branch 2, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
 
 		/* Since echo is being sent, we can turn the flag off.
 		   For some reason cwdaemon works better when we turn the
 		   flag off before sending the reply, rather than turning
 		   if after sending the reply. */
 		ptt_flag &= ~PTT_ACTIVE_ECHO;
-		printf("low TQ callback: PTT flag -PTT_ACTIVE_ECHO, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
+		log_info("low TQ callback: PTT flag -PTT_ACTIVE_ECHO, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
 
 
-		printf("low TQ callback: echoing \"%s\" back to client             <----------", reply_buffer);
+		log_info("low TQ callback: echoing \"%s\" back to client             <----------", reply_buffer);
 		strcat(reply_buffer, "\r\n"); /* Ensure exactly one CRLF */
 		cwdaemon_sendto(reply_buffer);
 		/* If this line is uncommented, the callback erases a valid
@@ -1192,17 +1193,17 @@ void cwdaemon_tone_queue_low_callback(__attribute__((unused)) void *arg)
 		   maybe it has something to do with avoiding
 		   recursion? */
 		if (ptt_flag == PTT_ACTIVE_AUTO) {
-			printf("low TQ callback: queueing two empty tones");
+			log_info("low TQ callback: queueing two empty tones");
 			cw_queue_tone(1, 0); /* ensure Q-empty condition again */
 			cw_queue_tone(1, 0); /* when trailing gap also 'sent' */
 		}
 	} else {
 		/* TODO: how to correctly handle this case?
 		   Should we do something? */
-		printf("low TQ callback: branch 3, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
+		log_info("low TQ callback: branch 3, PTT flag = 0x%02x/%s", ptt_flag, cwdaemon_debug_ptt_flags());
 	}
 
-	printf("low TQ callback: end, TQ len = %d, PTT flag = 0x%02x/%s",
+	log_info("low TQ callback: end, TQ len = %d, PTT flag = 0x%02x/%s",
 		       cw_get_tone_queue_length(), ptt_flag, cwdaemon_debug_ptt_flags());
 
 	return;
@@ -1213,12 +1214,12 @@ bool cwdaemon_params_wpm(int *wpm, const char *optarg)
 {
 	long lv = 0;
 	if (!cwdaemon_get_long(optarg, &lv) || lv < CW_SPEED_MIN || lv > CW_SPEED_MAX) {
-		printf("invalid requested morse speed [wpm]: \"%s\" (should be integer between %d and %d inclusive)",
+		log_info("invalid requested morse speed [wpm]: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg, CW_SPEED_MIN, CW_SPEED_MAX);
 		return false;
 	} else {
 		*wpm = (int) lv;
-		printf(
+		log_info(
 			       "requested morse speed [wpm]: \"%d\"", *wpm);
 		return true;
 	}
@@ -1230,11 +1231,11 @@ bool cwdaemon_params_tune(uint32_t *seconds, const char *optarg)
 
 	/* TODO: replace cwdaemon_get_long() with cwdaemon_get_uint32() */
 	if (!cwdaemon_get_long(optarg, &lv) || lv < 0 || lv > CWDAEMON_TUNE_SECONDS_MAX) {
-		printf("invalid requested tuning time [s]: \"%s\" (should be integer between %d and %d inclusive)",
+		log_info("invalid requested tuning time [s]: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg, 0, CWDAEMON_TUNE_SECONDS_MAX);
 		return false;
 	} else {
-		printf(
+		log_info(
 			       "requested tuning time [s]: \"%ld\"", lv);
 
 		*seconds = (uint32_t) lv;
@@ -1281,7 +1282,7 @@ int cwdaemon_params_pttdelay(int *delay, const char *optarg)
 {
 	long lv = 0;
 	if (!cwdaemon_get_long(optarg, &lv)) {
-		printf(
+		log_info(
 			       "invalid requested PTT delay [ms]: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg,
 			       CWDAEMON_PTT_DELAY_MIN, CWDAEMON_PTT_DELAY_MAX);
@@ -1328,13 +1329,13 @@ bool cwdaemon_params_volume(int *volume, const char *optarg)
 {
 	long lv = 0;
 	if (!cwdaemon_get_long(optarg, &lv) || lv < CW_VOLUME_MIN || lv > CW_VOLUME_MAX) {
-		printf(
+		log_info(
 			       "invalid requested volume [%%]: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg, CW_VOLUME_MIN, CW_VOLUME_MAX);
 		return false;
 	} else {
 		*volume = (int) lv;
-		printf(
+		log_info(
 			       "requested volume [%%]: \"%d\"", *volume);
 		return true;
 	}
@@ -1344,7 +1345,7 @@ bool cwdaemon_params_weighting(int *weighting, const char *optarg)
 {
 	long lv = 0;
 	if (!cwdaemon_get_long(optarg, &lv) || lv < CWDAEMON_MORSE_WEIGHTING_MIN || lv > CWDAEMON_MORSE_WEIGHTING_MAX) {
-		printf(
+		log_info(
 			       "invalid requested weighting: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg, CWDAEMON_MORSE_WEIGHTING_MIN, CWDAEMON_MORSE_WEIGHTING_MAX);
 		return false;
@@ -1359,7 +1360,7 @@ bool cwdaemon_params_tone(int *tone, const char *optarg)
 {
 	long lv = 0;
 	if (!cwdaemon_get_long(optarg, &lv) || lv < CW_FREQUENCY_MIN || lv > CW_FREQUENCY_MAX) {
-		printf(
+		log_info(
 			       "invalid requested tone [Hz]: \"%s\" (should be integer between %d and %d inclusive)",
 			       optarg, CW_FREQUENCY_MIN, CW_FREQUENCY_MAX);
 		return false;
@@ -1383,11 +1384,11 @@ bool cwdaemon_params_set_verbosity(int *verbosity, const char *optarg)
 	} else if (!strcmp(optarg, "d") || !strcmp(optarg, "D")) {
 		*verbosity = CWDAEMON_VERBOSITY_D;
 	} else {
-		printf("invalid requested verbosity level: \"%s\"", optarg);
+		log_info("invalid requested verbosity level: \"%s\"", optarg);
 		return false;
 	}
 
-	printf("requested verbosity level threshold: \"%s\"", cwdaemon_verbosity_labels[*verbosity]);
+	log_info("requested verbosity level threshold: \"%s\"", cwdaemon_verbosity_labels[*verbosity]);
 	return true;
 }
 
@@ -1397,10 +1398,10 @@ bool cwdaemon_params_ptt_on_off(const char *optarg)
 
 	/* PTT keying on or off */
 	if (!cwdaemon_get_long(optarg, &lv)) {
-		printf("invalid requested PTT state: \"%s\" (should be numeric value \"0\" or \"1\")", optarg);
+		log_info("invalid requested PTT state: \"%s\" (should be numeric value \"0\" or \"1\")", optarg);
 		return false;
 	} else {
-		printf("requested PTT state: \"%s\"", optarg);
+		log_info("requested PTT state: \"%s\"", optarg);
 	}
 
 	if (lv) {
@@ -1408,7 +1409,7 @@ bool cwdaemon_params_ptt_on_off(const char *optarg)
 		if (current_ptt_delay) {
 			cwdaemon_set_ptt_on(global_cwdevice, "PTT (manual, delay) on");
 		} else {
-			printf("PTT (manual, immediate) on\n");
+			log_info("PTT (manual, immediate) on\n");
 		}
 
 		ptt_flag |= PTT_ACTIVE_MANUAL;
@@ -1437,10 +1438,10 @@ bool cwdaemon_params_ptt_on_off(const char *optarg)
    waiting for something to happen on the UDP port */
 extern gpointer cwdaemon_thread(gpointer data)
 {
-  printf("Starting cwdaemon\n");
+  log_info("Starting cwdaemon\n");
   keytx = false;
 	if (!cwdaemon_initialize_socket()) {
-    g_print("Failed to initialise socket\n");
+    log_info("Failed to initialise socket\n");
     radio->cwdaemon_running = FALSE;
     g_thread_exit(NULL);    
 		//exit(EXIT_FAILURE);
@@ -1450,11 +1451,11 @@ extern gpointer cwdaemon_thread(gpointer data)
   RADIO *radio=(RADIO *)data;  
   
   if (radio->cwd_sidetone) {
-    printf("Pulse\n");
+    log_info("Pulse\n");
     current_audio_system = CW_AUDIO_PA;
   }
   else {
-    printf("Null\n");    
+    log_info("Null\n");    
     current_audio_system = CW_AUDIO_NULL;    
   }
     
@@ -1462,15 +1463,15 @@ extern gpointer cwdaemon_thread(gpointer data)
 	// Initialize libcw 
 	cwdaemon_reset_almost_all();
   
-  printf("\n");
+  log_info("\n");
 	current_morse_speed  = radio->cw_keyer_speed;
 	current_morse_tone   = radio->cw_keyer_sidetone_frequency;
 	current_morse_volume = (int)((((float)(radio->cw_keyer_sidetone_volume)/300)) * 100);
 	current_weighting    = (radio->cw_keyer_weight)-50;  
 
-  printf("Speed %d\n", current_morse_speed);
-  printf("Tone %d\n", current_morse_tone);  
-  printf("Vol %d\n", current_morse_volume);  
+  log_info("Speed %d\n", current_morse_speed);
+  log_info("Tone %d\n", current_morse_tone);  
+  log_info("Vol %d\n", current_morse_volume);  
   
 	cw_set_frequency(current_morse_tone);
 	cw_set_send_speed(current_morse_speed);
@@ -1504,7 +1505,7 @@ extern gpointer cwdaemon_thread(gpointer data)
 		int fd_count = select(radio->socket_descriptor + 1, &readfd, NULL, NULL, &udptime);
 		//int fd_count = select(radio->socket_descriptor + 1, &readfd, NULL, NULL, NULL); 
 		if (fd_count == -1 && errno != EINTR) {
-			printf("Select");
+			log_info("Select");
 		} else {
 			int rv = cwdaemon_receive();
       if (rv == -1) {
@@ -1513,7 +1514,7 @@ extern gpointer cwdaemon_thread(gpointer data)
 		}
 
   } 
-  g_print("Close cwdaemon thread\n");
+  log_info("Close cwdaemon thread\n");
   cwdaemon_close_libcw_output();
   cwdaemon_close_socket();
   
@@ -1541,7 +1542,7 @@ bool cwdaemon_initialize_socket(void)
 
 	radio->socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
 	if (radio->socket_descriptor == -1) {
-		printf("Socket open");
+		log_info("Socket open");
 		return NULL;
 	}
   int on = 1;
@@ -1551,19 +1552,19 @@ bool cwdaemon_initialize_socket(void)
 		 (struct sockaddr *) &radio->request_addr,
 		 radio->request_addrlen) == -1) {
 
-		printf("Bind");
+		log_info("Bind");
 		return false;
 	}
 
 	int save_flags = fcntl(radio->socket_descriptor, F_GETFL);
 	if (save_flags == -1) {
-		printf("Trying get flags");
+		log_info("Trying get flags");
 		return false;
 	}
 	save_flags |= O_NONBLOCK;
 
 	if (fcntl(radio->socket_descriptor, F_SETFL, save_flags) == -1) {
-		printf("Trying non-blocking");
+		log_info("Trying non-blocking");
 		return false;
 	}
 
@@ -1575,31 +1576,31 @@ void cwdaemon_stop(void) {
   radio->cwdaemon_running = FALSE;
   g_mutex_unlock(&cwdaemon_mutex);   
   
-  g_print("Stop cwdaemon\n");
-  g_print("cwd run %d\n", radio->cwdaemon_running);
+  log_info("Stop cwdaemon\n");
+  log_info("cwd run %d\n", radio->cwdaemon_running);
   //cwdaemon_close_libcw_output();
   //cwdaemon_close_socket();
-  g_print("cwd run %d\n", radio->cwdaemon_running);  
+  log_info("cwd run %d\n", radio->cwdaemon_running);  
 }
 
 
 int cwdaemon_start(void) {
-  g_print("Starting CWdaemon\n");
+  log_info("Starting CWdaemon\n");
   cwdaemon_thread_id = g_thread_new("cwdaemon thread...", cwdaemon_thread, (gpointer)radio);
   int running = TRUE;
   if(!cwdaemon_thread_id) {
-    fprintf(stderr,"g_thread_new failed on cwdaemon_thread\n");
+    log_error("g_thread_new failed on cwdaemon_thread\n");
     running = FALSE;
   }
-  fprintf(stderr, "cwdaemon_thread: id=%p\n",cwdaemon_thread_id);    
+  log_info("cwdaemon_thread: id=%p\n",cwdaemon_thread_id);    
   return running;
 }
 
 void cwdaemon_close_socket(void) {
-  g_print("Close cwdaemon socket\n");
+  log_info("Close cwdaemon socket\n");
 	if (radio->socket_descriptor) {
 		if (close(radio->socket_descriptor) == -1) {
-			g_print("Close socket\n");
+			log_info("Close socket\n");
 			//exit(EXIT_FAILURE);
 		}
     radio->socket_descriptor = -1;

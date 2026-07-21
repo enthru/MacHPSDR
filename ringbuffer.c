@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include "ringbuffer.h"
 
 //Put sample on the ring buffer
@@ -41,7 +42,7 @@ int queue_get(RINGBUFFERL *rbuf, long *old) {
 }
 
 RINGBUFFERL *create_long_ringbuffer(glong queue_elements, glong init_val) {
-g_print("create_long_ringbuffer: size %ld \n", queue_elements);
+log_info("create_long_ringbuffer: size %ld \n", queue_elements);
   RINGBUFFERL *rbuf = g_new0(RINGBUFFERL, 1);  
   
   //Initialise the ring buffer  

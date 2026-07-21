@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -50,7 +51,7 @@ static GThread *discover_thread_id;
 gpointer protocol2_discover_receive_thread(gpointer data);
 
 void print_device(int i) {
-    g_print("discovery: found protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n", 
+    log_info("discovery: found protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n", 
         discovered[i].protocol,
         discovered[i].device,
         discovered[i].software_version,
@@ -84,7 +85,7 @@ void protocol2_discovery() {
     freeifaddrs(addrs);
 
     
-    g_print( "protocol2_discovery found %d devices\n",devices);
+    log_info( "protocol2_discovery found %d devices\n",devices);
     
     int i;
     for(i=0;i<devices;i++) {
@@ -100,7 +101,7 @@ void protocol2_discover(struct ifaddrs* iface) {
     char net_mask[16];
 
     strcpy(interface_name,iface->ifa_name);
-    g_print("protocol2_discover: looking for HPSDR devices on %s\n",interface_name);
+    log_info("protocol2_discover: looking for HPSDR devices on %s\n",interface_name);
 
     // send a broadcast to locate metis boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
@@ -130,13 +131,13 @@ void protocol2_discover(struct ifaddrs* iface) {
     strcpy(addr,inet_ntoa(sa->sin_addr));
     strcpy(net_mask,inet_ntoa(mask->sin_addr));
 
-    g_print("protocol2_discover: bound to %s %s %s\n",interface_name,addr,net_mask);
+    log_info("protocol2_discover: bound to %s %s %s\n",interface_name,addr,net_mask);
 
     // allow broadcast on the socket
     int on=1;
     rc=setsockopt(discovery_socket, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
     if(rc != 0) {
-        g_print("protocol2_discover: cannot set SO_BROADCAST: rc=%d\n", rc);
+        log_info("protocol2_discover: cannot set SO_BROADCAST: rc=%d\n", rc);
         exit(-1);
     }
 
@@ -150,10 +151,10 @@ void protocol2_discover(struct ifaddrs* iface) {
     discover_thread_id = g_thread_new( "protocol2 discover receive", protocol2_discover_receive_thread, NULL);
     if( ! discover_thread_id )
     {
-        g_print("g_thread_new failed on protocol2_discover_receive_thread\n");
+        log_info("g_thread_new failed on protocol2_discover_receive_thread\n");
         exit( -1 );
     }
-    g_print("protocol2_disovery: thread_id=%p\n",discover_thread_id);
+    log_info("protocol2_disovery: thread_id=%p\n",discover_thread_id);
 
 
     // send discovery packet
@@ -180,7 +181,7 @@ void protocol2_discover(struct ifaddrs* iface) {
 
     close(discovery_socket);
 
-    g_print("protocol2_discover: exiting discover for %s\n",iface->ifa_name);
+    log_info("protocol2_discover: exiting discover for %s\n",iface->ifa_name);
 }
 
 //void* protocol2_discover_receive_thread(void* arg) {
@@ -203,11 +204,11 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
     while(1) {
         bytes_read=recvfrom(discovery_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&len);
         if(bytes_read<0) {
-            g_print("protocol2_discover: bytes read %d\n", bytes_read);
+            log_info("protocol2_discover: bytes read %d\n", bytes_read);
             perror("protocol2_discover: recvfrom socket failed for discover_receive_thread");
             break;
         }
-        g_print("protocol2_discover: received %d bytes\n",bytes_read);
+        log_info("protocol2_discover: received %d bytes\n",bytes_read);
         if(bytes_read==1444) {
             if(devices>0) {
                 break;
@@ -294,7 +295,7 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
                     memcpy((void*)&discovered[devices].info.network.interface_netmask,(void*)&interface_netmask,sizeof(interface_netmask));
                     discovered[devices].info.network.interface_length=sizeof(interface_addr);
                     strcpy(discovered[devices].info.network.interface_name,interface_name);
-                    g_print("protocol2_discover: found %d protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s DDCs=%d\n", 
+                    log_info("protocol2_discover: found %d protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s DDCs=%d\n", 
                             devices,
                             discovered[devices].protocol,
                             discovered[devices].device,
@@ -316,6 +317,6 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
         }
         }
     }
-    g_print("protocol2_discover: exiting protocol2_discover_receive_thread\n");
+    log_info("protocol2_discover: exiting protocol2_discover_receive_thread\n");
     return NULL;
 }

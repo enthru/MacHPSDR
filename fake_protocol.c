@@ -11,6 +11,7 @@
  */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -156,7 +157,7 @@ static int fake_load_iq(const char *path) {
       iq_data[i*2]   = (float)raw[i*2+1] / 32768.0f;
       iq_data[i*2+1] = (float)raw[i*2]   / 32768.0f;
     }
-    g_print("fake: --revert-iq active (I/Q swapped)\n");
+    log_info("fake: --revert-iq active (I/Q swapped)\n");
   } else {
     for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
   }
@@ -182,7 +183,7 @@ static int fake_load_iq(const char *path) {
     }
     iq_offset = (cnt > 0) ? (sum/(double)cnt) * iq_rate / (2.0*M_PI) : 0.0;
   }
-  g_print("fake: iq.wav carrier offset %.0f Hz -> auto-centering to baseband 0\n", iq_offset);
+  log_info("fake: iq.wav carrier offset %.0f Hz -> auto-centering to baseband 0\n", iq_offset);
   return 1;
 }
 
@@ -353,10 +354,10 @@ void fake_protocol_init(RADIO *r) {
     g_free(home_path);
   }
   if(iq_data) {
-    g_print("fake: playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
+    log_info("fake: playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
             iq_file, iq_rate, iq_frames, (double)iq_frames/iq_rate);
   } else {
-    g_print("fake: no '%s' found; using synthetic noise+tones\n", iq_file);
+    log_info("fake: no '%s' found; using synthetic noise+tones\n", iq_file);
   }
   fake_running = 1;
   fake_thread_id = g_thread_new("fake_iq", fake_thread_fn, r);

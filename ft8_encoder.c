@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include "log.h"
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
@@ -204,7 +205,7 @@ static gboolean tx_tick(gpointer data) {
     // margin, even if the TX path stops pulling samples (tx_idx would stall).
     gint64 max_ms = (gint64)wave_len * 1000 / FT8_TX_RATE + FT8_TX_MAX_MARGIN_MS;
     if (we_keyed && key_time_ms && (now_ms - key_time_ms) > max_ms) {
-      fprintf(stderr, "ft8-tx: WATCHDOG — MOX held >%lldms (tx_idx=%ld/%d), forcing key-down\n",
+      log_error("ft8-tx: WATCHDOG — MOX held >%lldms (tx_idx=%ld/%d), forcing key-down\n",
               (long long)max_ms, tx_idx, wave_len);
       tx_active = FALSE;
       armed = FALSE;
@@ -232,7 +233,7 @@ static gboolean tx_tick(gpointer data) {
     last_started_slot = slot;
     tx_idx = 0;
     tx_active = TRUE;
-    fprintf(stderr, "ft8-tx: slot boundary reached, keying up (in_slot=%ldms even=%d mox=%d)\n",
+    log_debug("ft8-tx: slot boundary reached, keying up (in_slot=%ldms even=%d mox=%d)\n",
             in_slot, arm_even, radio->mox);
     key_time_ms = now_ms;               // arm the MOX safety watchdog
     if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
@@ -265,10 +266,10 @@ gboolean ft8_tx_prepare(const char *text, float offset_hz) {
 
 void ft8_tx_arm(gboolean tx_even) {
   if (!have_wave) {                       // nothing valid to send (e.g. encode failed)
-    fprintf(stderr, "ft8-tx: arm ignored — no valid waveform (encode failed?)\n");
+    log_error("ft8-tx: arm ignored — no valid waveform (encode failed?)\n");
     return;
   }
-  fprintf(stderr, "ft8-tx: armed for %s slots, waiting for boundary\n",
+  log_debug("ft8-tx: armed for %s slots, waiting for boundary\n",
           tx_even ? "even" : "odd");
   arm_even = tx_even;
   // Anchor on the current slot so we never start mid-slot: fire only when the

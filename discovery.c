@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <gdk/gdk.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -48,7 +49,7 @@ static gpointer protocol2_discovery_thread(gpointer data) {
 }
 
 void discovery() {
-g_print("discovery\n");
+log_info("discovery\n");
   devices=0;
   // Run the two blocking network discoveries in parallel (each waits on a
   // socket receive timeout) so the total wait is one timeout window, not two.
@@ -60,7 +61,7 @@ g_print("discovery\n");
     g_thread_join(p1);
     g_thread_join(p2);
   } else {
-    g_print("discovery: network (Protocol 1/2) discovery skipped (--usb-only)\n");
+    log_info("discovery: network (Protocol 1/2) discovery skipped (--usb-only)\n");
   }
 #ifdef SOAPYSDR
   soapy_discovery();

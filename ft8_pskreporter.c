@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include "log.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -218,15 +219,15 @@ void ft8_pskreporter_report(const FT8_DECODE *decodes, int n, time_t slot_time) 
   hints.ai_family=AF_UNSPEC;
   hints.ai_socktype=SOCK_DGRAM;
   if(getaddrinfo(PSKR_HOST,PSKR_PORT,&hints,&res)!=0 || res==NULL) {
-    fprintf(stderr,"pskreporter: cannot resolve %s:%s\n",PSKR_HOST,PSKR_PORT);
+    log_error("pskreporter: cannot resolve %s:%s\n",PSKR_HOST,PSKR_PORT);
     return;
   }
   int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol);
   if(fd>=0) {
     if(sendto(fd,buf,off,0,res->ai_addr,res->ai_addrlen)<0)
-      fprintf(stderr,"pskreporter: sendto %s:%s failed\n",PSKR_HOST,PSKR_PORT);
+      log_error("pskreporter: sendto %s:%s failed\n",PSKR_HOST,PSKR_PORT);
     else
-      fprintf(stderr,"pskreporter: reported %d spot(s) to %s:%s\n",reported,PSKR_HOST,PSKR_PORT);
+      log_info("pskreporter: reported %d spot(s) to %s:%s\n",reported,PSKR_HOST,PSKR_PORT);
     close(fd);
   }
   freeaddrinfo(res);

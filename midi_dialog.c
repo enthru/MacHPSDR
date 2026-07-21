@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1135,7 +1136,7 @@ void midi_restore_state() {
     for(int i=0;i<n_midi_devices;i++) {
       if(strcmp(midi_devices[i].name,value)==0) {
         device=i;
-        g_print("%s: found device at %d\n",__FUNCTION__,i);
+        log_info("%s: found device at %d\n",__FUNCTION__,i);
         break;
       }
     }

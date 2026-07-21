@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <epoxy/gl.h>
 #include <math.h>
 #include <stdlib.h>
@@ -267,7 +268,7 @@ GtkWidget *create_rx_panadapter(RECEIVER *rx) {
   }
 
   if(panadapter!=NULL) {
-    g_print("rx_panadapter: using opengl\n");
+    log_info("rx_panadapter: using opengl\n");
     g_signal_connect (panadapter,"render",G_CALLBACK(rx_panadapter_render),rx);
     g_signal_connect (panadapter,"realize",G_CALLBACK(rx_panadapter_realize),rx);
     g_signal_connect (panadapter,"resize",G_CALLBACK(rx_panadapter_resize),rx);
@@ -334,7 +335,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       }
       else {
         gain_cal_error = TRUE;
-        g_print("Dmix gain cal error\n");
+        log_info("Dmix gain cal error\n");
       }
 
     }
@@ -366,7 +367,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       signal_vertices[i*2]=x;
       signal_vertices[(i*2)+1]=y;
       if(first_time) {
-        g_print("i=%d x=%f y=%f\n",i,x,y);
+        log_info("i=%d x=%f y=%f\n",i,x,y);
       }
     }
     first_time=FALSE;

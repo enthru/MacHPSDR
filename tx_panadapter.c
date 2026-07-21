@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -73,7 +74,7 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
   if(tx->panadapter_surface) {
     cairo_surface_destroy(tx->panadapter_surface);
   }
-  g_print("tx_panadapter_configure_event: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
+  log_info("tx_panadapter_configure_event: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
   if(radio->discovered->protocol==PROTOCOL_1) {
     tx->pixels=tx->panadapter_width*3;
   } else {

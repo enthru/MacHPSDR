@@ -19,6 +19,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,7 +128,7 @@ DIVMIXER *create_diversity_mixer(int id, RECEIVER *rxa, RECEIVER *rxb) {
   rxa->samples = 0;
   rxb->samples = 0;
 
-g_print("create_diversity_mixer: id=%d\n", id);
+log_info("create_diversity_mixer: id=%d\n", id);
   dmix->id=id;
   dmix->num_streams = 2;  
   dmix->iq_buffer_size = 1024;

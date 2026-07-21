@@ -411,7 +411,25 @@ Start it from the build directory:
 ./machpsdr                 # normal start (device discovery)
 ./machpsdr --usb-only      # skip network discovery (USB devices only)
 ./machpsdr --faker ft8.wav # no hardware: loop an I/Q WAV through the RX chain
+./machpsdr --debug         # verbose diagnostic logging
 ```
+
+### Logging
+
+Console output is levelled — `ERROR`, `INFO` (default) and `DEBUG` — and each
+line is tagged with its level (e.g. `[INFO] …`). Choose the threshold from the
+command line or the environment; the command line wins:
+
+```bash
+./machpsdr --log-level debug   # or --log-level=debug
+./machpsdr --debug             # shorthand for --log-level debug (also -v / --verbose)
+./machpsdr --quiet             # errors only (also -q, i.e. --log-level error)
+MACHPSDR_LOG=debug ./machpsdr  # via the environment
+```
+
+`INFO` shows the normal start-up / status chatter; `DEBUG` adds hot-path and
+per-slot traces (audio callbacks, FT8 TX slot timing, etc.); `ERROR` shows only
+failures.
 
 ### Passing flags to the `.app` bundle
 

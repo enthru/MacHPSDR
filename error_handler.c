@@ -18,6 +18,7 @@
 */
 
 #include <stdlib.h>
+#include "log.h"
 #include <stdio.h>
 #include <string.h>
 #include <gtk/gtk.h>
@@ -47,7 +48,7 @@ int timeout_cb(gpointer data) {
 void error_handler(char *text,char *err) {
   char message[1024];
   sprintf(message,"ERROR: %s: %s\n",text,err);
-  fprintf(stderr,"%s\n",message);
+  log_info("%s\n",message);
 
   sprintf(message,"ERROR\n\n    %s:\n\n    %s\n\npiHPSDR will terminate in 5 seconds",text,err);
 }

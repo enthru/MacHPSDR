@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include "log.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -172,7 +173,7 @@ static FILE *open_cty(void) {
 static void load_cty(void) {
   FILE *f = open_cty();
   if (!f) {
-    fprintf(stderr, "ft8-dxcc: cty.dat not found — new-DXCC highlight disabled\n");
+    log_error("ft8-dxcc: cty.dat not found — new-DXCC highlight disabled\n");
     return;
   }
 
@@ -188,7 +189,7 @@ static void load_cty(void) {
     }
   }
   fclose(f);
-  fprintf(stderr, "ft8-dxcc: loaded %d DXCC entities from %s\n", n_entities, loaded_path);
+  log_info("ft8-dxcc: loaded %d DXCC entities from %s\n", n_entities, loaded_path);
 }
 
 void ft8_dxcc_init(void) {

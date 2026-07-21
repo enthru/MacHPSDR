@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include "hl2.h"
 
@@ -67,7 +68,7 @@ static gboolean qos_timer_cb(void *data) {
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;
 
   if ((hl2->late_packets > 7) && (radio->cwdaemon)) {
-    g_print("Reset audio\n");    
+    log_info("Reset audio\n");    
     RECEIVER *tx_receiver = radio->transmitter->rx;
     if(tx_receiver!=NULL) {    
       audio_close_output(tx_receiver);
@@ -116,15 +117,15 @@ void HL2mrf101StoreBias(HERMESLITE2 *hl2) {
     // I2C address for the digital pot 
   int addr = MCP4662_BIAS0;
   addr |= ((addr << 4) & 0xff);
-  g_print("Using addr %x", addr);
+  log_info("Using addr %x", addr);
   HL2i2cQueueWrite(hl2, I2C2_WRITE, ADDR_MCP4561, addr, hl2->mrf101_bias_value);
 }
   
 void HL2mrf101ReadBias(HERMESLITE2 *hl2) {
   int addr = MCP4662_BIAS0;
-  g_print("addr %d\n", addr);
+  log_info("addr %d\n", addr);
   addr = ((addr << 4) & 0xff) | 0x0c;
-  g_print("addr %d\n", addr);    
+  log_info("addr %d\n", addr);    
   HL2i2cQueueWrite(hl2, I2C2_READ, ADDR_MCP4561, addr, DUMMY_VALUE);  
 }
 
@@ -170,7 +171,7 @@ int adc2_check_send(HERMESLITE2 *hl2) {
 int HL2i2cWriteQueued(HERMESLITE2 *hl2) {
 /*
   if (hl2->queue_busy == TRUE) {
-    g_print("HL2i2cWriteQueued: queue busy\n");
+    log_info("HL2i2cWriteQueued: queue busy\n");
     return FALSE;
   }
   */
@@ -254,33 +255,33 @@ void HL2i2cStoreValue(HERMESLITE2 *hl2, int raddr, long rdata) {
     case ADDR_MCP4662:
       switch(((hl2->command_waiting_for >> 4) & 0xff)) {
         case MCP4662_BIAS0:
-          g_print("Bias0\n");
+          log_info("Bias0\n");
           bias = (rdata >> 24) & 0xFF;
           break;
         
         case MCP4662_BIAS1:
-          g_print("Bias1\n");        
+          log_info("Bias1\n");        
           bias = (rdata >> 24) & 0xFF;
           break;
           
         default:
-          g_print("i2c command not known %i\n", ((hl2->command_waiting_for >> 4) & 0xff));          
+          log_info("i2c command not known %i\n", ((hl2->command_waiting_for >> 4) & 0xff));          
           break;
       }
-      g_print("HL2 PA Bias %d\n", bias);
+      log_info("HL2 PA Bias %d\n", bias);
       break;
     case ADDR_MCP4561:
       switch(((hl2->command_waiting_for >> 4) & 0xff)) {
         case MCP4662_BIAS0:
-          g_print("Bias0\n");
+          log_info("Bias0\n");
           hl2->mrf101_bias_value = (rdata >> 24) & 0xFF;
           break;
                   
         default:
-          g_print("i2c command not known %i\n", ((hl2->command_waiting_for >> 4) & 0xff));          
+          log_info("i2c command not known %i\n", ((hl2->command_waiting_for >> 4) & 0xff));          
           break;
       }    
-      g_print("HL2-MRF101 Bias %d\n", hl2->mrf101_bias_value );
+      log_info("HL2-MRF101 Bias %d\n", hl2->mrf101_bias_value );
       break;
     case ADDR_MRF101:
       //g_print("ADC return val %x\n", rdata);
@@ -298,7 +299,7 @@ void HL2i2cStoreValue(HERMESLITE2 *hl2, int raddr, long rdata) {
       break;
       
     default:
-      g_print("i2c read error\n");
+      log_info("i2c read error\n");
   }
 }
 
@@ -327,40 +328,40 @@ void HL2i2cProcessReturnValue(HERMESLITE2 *hl2, unsigned char c0,
 
 
 long long HL2cl2CalculateNearest(HERMESLITE2 *hl2, long long lo_freq) {
-  g_print("HL2: Calculate nearest LO %lld \n", lo_freq);
+  log_info("HL2: Calculate nearest LO %lld \n", lo_freq);
   // VCO = 38.4*68 = 2611.2 MHz 
   //unsigned int divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
   int divisor = (2611200000 / (double)lo_freq) / 2;
-  g_print("----- Use divisor CL2 %i \n", divisor);  
+  log_info("----- Use divisor CL2 %i \n", divisor);  
 
   long long new_lo = (2611200000 / divisor) / 2;
   
-  g_print("HL2: New LO %lld\n", new_lo);
+  log_info("HL2: New LO %lld\n", new_lo);
   return new_lo;
 }
 
 // Versaclock CL2 output enable
 void HL2cl2Enable(HERMESLITE2 *hl2) {
-  g_print("HL2: Enable CL2 %ld \n", hl2->clock2_freq);
+  log_info("HL2: Enable CL2 %ld \n", hl2->clock2_freq);
   // VCO = 38.4*68 = 2611.2 MHz 
   
   unsigned int div = 1;
   if (hl2->cl2_integer_mode) {
     unsigned int divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
     div = (unsigned int)(divisor * pow(2, 24) + 0.1);
-    g_print("-----Divisor CL2 %i \n", divisor);  
+    log_info("-----Divisor CL2 %i \n", divisor);  
   } 
   else {
     double divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
     div = (unsigned int)(divisor * pow(2, 24) + 0.1);
-    g_print("-----Divisor CL2 %f \n", divisor);  
+    log_info("-----Divisor CL2 %f \n", divisor);  
   }
   
   unsigned int addr = ADDR_VERSA5 >> 1;
   unsigned int intgr = div >> 24;
   unsigned int frac = (div & 0xFFFFFF) << 2;
   
-  printf("frac %i\n", frac);
+  log_info("frac %i\n", frac);
   // Clock2 CMOS1 output, 3.3V
   HL2i2cQueueWrite(hl2, I2C1_WRITE, addr, 0x62, 0x3b);  
   // Disable aux output on clock 1
@@ -387,7 +388,7 @@ void HL2cl2Enable(HERMESLITE2 *hl2) {
 }
 
 void HL2cl2Disable(HERMESLITE2 *hl2) {
-  g_print("-----HL2: Disable CL2\n"); 
+  log_info("-----HL2: Disable CL2\n"); 
   
   int addr = ADDR_VERSA5 >> 1;
   // Disable divider output for clock2
@@ -410,13 +411,13 @@ void HL2clock2Status(HERMESLITE2 *hl2, gboolean xvtr_on, const long int *clock_f
 }
 
 void hl2_set_tx_attenuation(HERMESLITE2 *hl2, int new_att) {
-  g_print("SET: new_att %i\n", new_att);
+  log_info("SET: new_att %i\n", new_att);
   hl2->lna_gain_tx =  new_att;
-  g_print("SET: lna_tx %i\n", hl2->lna_gain_tx);
+  log_info("SET: lna_tx %i\n", hl2->lna_gain_tx);
 }
 
 int hl2_get_tx_attenuation(HERMESLITE2 *hl2) {
-  g_print("GET: lna_tx %i\n", hl2->lna_gain_tx);
+  log_info("GET: lna_tx %i\n", hl2->lna_gain_tx);
   return MAX_GAIN - hl2->lna_gain_tx;
 }
 

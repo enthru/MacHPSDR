@@ -18,6 +18,7 @@
 */
 
 #include <stdint.h>
+#include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -43,7 +44,7 @@
 int ext_num_pad(void *data) {
   gint val=GPOINTER_TO_INT(data);
   RECEIVER *rx=radio->active_receiver;
-  g_print("%s: %d\n",__FUNCTION__,val);
+  log_info("%s: %d\n",__FUNCTION__,val);
   if(!rx->entering_frequency) {
     rx->entered_frequency=0;
     rx->entering_frequency=true;
@@ -69,7 +70,7 @@ int ext_num_pad(void *data) {
 
 int ext_band_select(void *data) {
   int b=GPOINTER_TO_INT(data);
-  g_print("%s: %d\n",__FUNCTION__,b);
+  log_info("%s: %d\n",__FUNCTION__,b);
   set_band(radio->active_receiver,b,-1);
   update_vfo(radio->active_receiver);
   return 0;
@@ -81,7 +82,7 @@ int ext_vox_changed(void *data) {
 }
 
 int ext_ptt_changed(void *data) {
-g_print("ext_ptt_changed\n");
+log_info("ext_ptt_changed\n");
   ptt_changed((RADIO *)data);
   return 0;
 }

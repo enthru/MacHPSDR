@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include "agc.h"
 #include "adc.h"
@@ -131,7 +132,7 @@ int rotary_action(void *data) {
   TRANSMITTER *tx=radio->transmitter;
   double d_temp;
   gint i_temp;
-  g_print("%s: action=%s val=%d\n",__FUNCTION__,encoder_string[arg->action],arg->val);
+  log_info("%s: action=%s val=%d\n",__FUNCTION__,encoder_string[arg->action],arg->val);
   switch(arg->action) {
     case ENCODER_NO_ACTION:
       break;
@@ -275,7 +276,7 @@ int switch_action(void * data) {
   ACTION *arg=(ACTION *)data;
   RECEIVER *rx=radio->active_receiver;
   gint i_temp;
-  g_print("%s: action=%s\n",__FUNCTION__,sw_string[arg->action]);
+  log_info("%s: action=%s\n",__FUNCTION__,sw_string[arg->action]);
   switch(arg->action) {
     case NO_ACTION:
       break;

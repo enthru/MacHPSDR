@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -52,7 +53,7 @@ static void discover(struct ifaddrs* iface) {
     struct sockaddr_in *mask;
 
     strcpy(interface_name,iface->ifa_name);
-    g_print("discover: looking for HPSDR devices on %s\n", interface_name);
+    log_info("discover: looking for HPSDR devices on %s\n", interface_name);
 
     // send a broadcast to locate hpsdr boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
@@ -79,13 +80,13 @@ static void discover(struct ifaddrs* iface) {
         exit(-1);
     }
 
-    g_print("discover: bound to %s\n",interface_name);
+    log_info("discover: bound to %s\n",interface_name);
 
     // allow broadcast on the socket
     int on=1;
     rc=setsockopt(discovery_socket, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
     if(rc != 0) {
-        g_print("discover: cannot set SO_BROADCAST: rc=%d\n", rc);
+        log_info("discover: cannot set SO_BROADCAST: rc=%d\n", rc);
         exit(-1);
     }
 
@@ -100,7 +101,7 @@ static void discover(struct ifaddrs* iface) {
     discover_thread_id = g_thread_new( "protocol1 discover receive", discover_receive_thread, NULL);
     if( ! discover_thread_id )
     {
-        g_print("g_thread_new failed on discover_receive_thread\n");
+        log_info("g_thread_new failed on discover_receive_thread\n");
         exit( -1 );
     }
 
@@ -128,7 +129,7 @@ static void discover(struct ifaddrs* iface) {
 
     close(discovery_socket);
 
-    g_print("discover: exiting discover for %s\n",iface->ifa_name);
+    log_info("discover: exiting discover for %s\n",iface->ifa_name);
 
 }
 
@@ -142,7 +143,7 @@ static gpointer discover_receive_thread(gpointer data) {
     int i;
     int version;
 
-g_print("discover_receive_thread\n");
+log_info("discover_receive_thread\n");
 
     tv.tv_sec = 1;
     tv.tv_usec = 0;
@@ -154,11 +155,11 @@ g_print("discover_receive_thread\n");
     while(1) {
         bytes_read=recvfrom(discovery_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&len);
         if(bytes_read<0) {
-            g_print("discovery: bytes read %d\n", bytes_read);
+            log_info("discovery: bytes read %d\n", bytes_read);
             perror("discovery: recvfrom socket failed for discover_receive_thread");
             break;
         }
-        g_print("discovered: received %d bytes\n",bytes_read);
+        log_info("discovered: received %d bytes\n",bytes_read);
         if ((buffer[0] & 0xFF) == 0xEF && (buffer[1] & 0xFF) == 0xFE) {
             int status = buffer[2] & 0xFF;
             if (status == 2 || status == 3) {
@@ -220,7 +221,7 @@ g_print("discover_receive_thread\n");
                               // HL2 send max supported receveirs in discovery response.
                               discovered[devices].supported_receivers=buffer[0x13];   
                               int patch = buffer[0x15]&0xFF; 
-                              printf("Patch num = %d\n", patch); 
+                              log_info("Patch num = %d\n", patch); 
                               char gateware_patch[8];
                               snprintf(gateware_patch, sizeof(gateware_patch),"%d", patch);
 
@@ -267,7 +268,7 @@ g_print("discover_receive_thread\n");
                     memcpy((void*)&discovered[devices].info.network.interface_netmask,(void*)&interface_netmask,sizeof(interface_netmask));
                     discovered[devices].info.network.interface_length=sizeof(interface_addr);
                     strcpy(discovered[devices].info.network.interface_name,interface_name);
-                    g_print("discovery: found device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n",
+                    log_info("discovery: found device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n",
                             discovered[devices].device,
                             discovered[devices].software_version,
                             discovered[devices].status,
@@ -286,7 +287,7 @@ g_print("discover_receive_thread\n");
         }
 
     }
-    g_print("discovery: exiting discover_receive_thread\n");
+    log_info("discovery: exiting discover_receive_thread\n");
     //g_thread_exit(NULL);
     return NULL;
 }
@@ -294,7 +295,7 @@ g_print("discover_receive_thread\n");
 void protocol1_discovery() {
     struct ifaddrs *addrs,*ifa;
 
-g_print("protocol1_discovery\n");
+log_info("protocol1_discovery\n");
     getifaddrs(&addrs);
     ifa = addrs;
     while (ifa) {
@@ -311,11 +312,11 @@ g_print("protocol1_discovery\n");
     }
     freeifaddrs(addrs);
 
-    g_print( "discovery found %d devices\n",devices);
+    log_info( "discovery found %d devices\n",devices);
 
     int i;
     for(i=0;i<devices;i++) {
-                    g_print("discovery: found device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n",
+                    log_info("discovery: found device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n",
                             discovered[i].device,
                             discovered[i].software_version,
                             discovered[i].status,

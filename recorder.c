@@ -7,6 +7,7 @@
  * looped straight back through the RX/decoder chain.
  */
 #include <stdio.h>
+#include "log.h"
 #include <string.h>
 #include <time.h>
 #include <gtk/gtk.h>
@@ -85,7 +86,7 @@ gboolean recorder_toggle(RECEIVER *rx) {
     close_wav(rec_iq, iq_bytes);
     close_wav(rec_af, af_bytes);
     rec_iq=NULL; rec_af=NULL; rec_rx=NULL;
-    g_print("recorder: stopped\n");
+    log_info("recorder: stopped\n");
     g_mutex_unlock(&rec_mutex);
     return FALSE;
   }
@@ -94,7 +95,7 @@ gboolean recorder_toggle(RECEIVER *rx) {
   gboolean want_iq = radio->rec_iq;
   gboolean want_af = radio->rec_af;
   if(!want_iq && !want_af) {
-    g_print("recorder: nothing selected (enable I/Q and/or AF in Configure -> Recording)\n");
+    log_info("recorder: nothing selected (enable I/Q and/or AF in Configure -> Recording)\n");
     g_mutex_unlock(&rec_mutex);
     return FALSE;
   }
@@ -116,7 +117,7 @@ gboolean recorder_toggle(RECEIVER *rx) {
   if((want_iq && !rec_iq) || (want_af && !rec_af)) {
     if(rec_iq) { fclose(rec_iq); rec_iq=NULL; }
     if(rec_af) { fclose(rec_af); rec_af=NULL; }
-    g_print("recorder: cannot open output files in %s\n", dir);
+    log_info("recorder: cannot open output files in %s\n", dir);
     g_mutex_unlock(&rec_mutex);
     return FALSE;
   }
@@ -124,8 +125,8 @@ gboolean recorder_toggle(RECEIVER *rx) {
   if(rec_af) write_wav_header(rec_af, 48000);
   iq_bytes=0; af_bytes=0;
   rec_rx=rx;
-  if(rec_iq) g_print("recorder: I/Q -> %s (%d Hz)\n", iqp, rx->sample_rate);
-  if(rec_af) g_print("recorder: AF  -> %s (48000 Hz)\n", afp);
+  if(rec_iq) log_info("recorder: I/Q -> %s (%d Hz)\n", iqp, rx->sample_rate);
+  if(rec_af) log_info("recorder: AF  -> %s (48000 Hz)\n", afp);
   g_mutex_unlock(&rec_mutex);
   return TRUE;
 }

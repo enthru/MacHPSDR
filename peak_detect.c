@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include "peak_detect.h"
 
 //Put sample on the circular buffer
@@ -44,7 +45,7 @@ gdouble get_peak(PEAKDETECTOR *rbuf, gdouble new_val) {
 }
 
 PEAKDETECTOR *create_peak_detector(guint num_samples, gdouble init_val) {  
-g_print("create_peak_detector: size %i \n", num_samples);
+log_info("create_peak_detector: size %i \n", num_samples);
   PEAKDETECTOR *rbuf = g_new0(PEAKDETECTOR, 1);  
   
   //Initialise the ring buffer  

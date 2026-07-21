@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -207,7 +208,7 @@ void protocol1_stop() {
 }
 
 void protocol1_run() {
-  fprintf(stderr,"protocol1_run\n");
+  log_info("protocol1_run\n");
 
   start_protocol1_thread();
 
@@ -222,7 +223,7 @@ void protocol1_run() {
 // the old socket and re-run the full start sequence (new socket + thread +
 // metis start command).  Runs on the GTK main thread.
 void protocol1_reconnect() {
-  fprintf(stderr,"protocol1_reconnect\n");
+  log_info("protocol1_reconnect\n");
   running=FALSE;
   if(receive_thread_id!=NULL) {
     g_thread_join(receive_thread_id);   // returns within one SO_RCVTIMEO period
@@ -240,7 +241,7 @@ void protocol1_set_mic_sample_rate(int rate) {
 }
 
 void protocol1_init(RADIO *r) {
-  fprintf(stderr,"protocol1_init\n");
+  log_info("protocol1_init\n");
 
   protocol1_set_mic_sample_rate(r->sample_rate);
   if(radio->local_microphone) {
@@ -254,7 +255,7 @@ void protocol1_init(RADIO *r) {
 // if we have a USB interfaced Ozy device:
 //
   if (radio->discovered->device == DEVICE_OZY) {
-    fprintf(stderr,"protocol1_init: initialise ozy on USB\n");
+    log_info("protocol1_init: initialise ozy on USB\n");
     ozy_initialise();
     start_usb_receive_threads();
   }
@@ -275,12 +276,12 @@ static void start_usb_receive_threads()
 {
   int rc;
 
-  fprintf(stderr,"protocol1 starting USB receive thread: buffer_size=%d\n",radio->buffer_size);
+  log_info("protocol1 starting USB receive thread: buffer_size=%d\n",radio->buffer_size);
 
   ozy_EP6_rx_thread_id = g_thread_new( "OZY EP6 RX", ozy_ep6_rx_thread, NULL);
   if( ! ozy_EP6_rx_thread_id )
   {
-    fprintf(stderr,"g_thread_new failed for ozy_ep6_rx_thread\n");
+    log_error("g_thread_new failed for ozy_ep6_rx_thread\n");
     exit( -1 );
   }
 }
@@ -301,7 +302,7 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
   int bytes;
   unsigned char buffer[2048];
 
-  fprintf(stderr, "protocol1: USB EP6 receive_thread\n");
+  log_info("protocol1: USB EP6 receive_thread\n");
   running=TRUE;
  
   while (running)
@@ -310,12 +311,12 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
 
     if (bytes == 0)
     {
-      fprintf(stderr,"protocol1_ep6_read: ozy_read returned 0 bytes... retrying\n");
+      log_info("protocol1_ep6_read: ozy_read returned 0 bytes... retrying\n");
       continue;
     }
     else if (bytes != EP6_BUFFER_SIZE)
     {
-      fprintf(stderr,"protocol1_ep6_read: OzyBulkRead failed %d bytes\n",bytes);
+      log_error("protocol1_ep6_read: OzyBulkRead failed %d bytes\n",bytes);
       perror("ozy_read(EP6 read failed");
       //exit(1);
     }
@@ -335,7 +336,7 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
 #endif
 
 static void start_protocol1_thread() {
-  fprintf(stderr,"protocol1 starting receive thread: buffer_size=%d output_buffer_size=%d\n",radio->buffer_size,output_buffer_size);
+  log_info("protocol1 starting receive thread: buffer_size=%d output_buffer_size=%d\n",radio->buffer_size,output_buffer_size);
 
   switch(radio->discovered->device) {
 #ifdef USBOZY
@@ -386,10 +387,10 @@ static void start_protocol1_thread() {
   receive_thread_id = g_thread_new( "protocol1", receive_thread, NULL);
   if( ! receive_thread_id )
   {
-    fprintf(stderr,"g_thread_new failed on receive_thread\n");
+    log_error("g_thread_new failed on receive_thread\n");
     exit( -1 );
   }
-  fprintf(stderr, "receive_thread: id=%p\n",receive_thread_id);
+  log_info("receive_thread: id=%p\n",receive_thread_id);
 
 }
 
@@ -401,7 +402,7 @@ static gpointer receive_thread(gpointer arg) {
   int ep;
   long sequence;
 
-  fprintf(stderr, "protocol1: receive_thread\n");
+  log_info("protocol1: receive_thread\n");
   running=TRUE;
 
   length=sizeof(addr);
@@ -440,7 +441,7 @@ static gpointer receive_thread(gpointer arg) {
                 case 6: // EP6
                   ep6_sequence++;
                   if(sequence!=ep6_sequence) {
-                    g_print("EP6 ERROR packet %ld pc %ld\n", sequence, ep6_sequence);
+                    log_info("EP6 ERROR packet %ld pc %ld\n", sequence, ep6_sequence);
                     ep6_sequence = sequence;                    
                     if (radio->hl2 != NULL) radio->hl2->ep6_error_ctr++;
                   }              
@@ -470,26 +471,26 @@ static gpointer receive_thread(gpointer arg) {
                   }
                   break;
                 default:
-                  fprintf(stderr,"unexpected EP %d length=%d\n",ep,bytes_read);
+                  log_info("unexpected EP %d length=%d\n",ep,bytes_read);
                   break;
               }
               break;
             case 2:  // response to a discovery packet
-              fprintf(stderr,"unexepected discovery response when not in discovery mode\n");
+              log_info("unexepected discovery response when not in discovery mode\n");
               break;
             default:
-              fprintf(stderr,"unexpected packet type: 0x%02X\n",buffer[2]);
+              log_info("unexpected packet type: 0x%02X\n",buffer[2]);
               break;
           }
         } else {
-          fprintf(stderr,"received bad header bytes on data port %02X,%02X\n",buffer[0],buffer[1]);
+          log_info("received bad header bytes on data port %02X,%02X\n",buffer[0],buffer[1]);
         }
         break;
     }
 
   }
 
-  fprintf(stderr,"EXIT: protocol1: receive_thread\n");
+  log_info("EXIT: protocol1: receive_thread\n");
   return NULL;
 }
 
@@ -514,7 +515,7 @@ static void process_control_bytes() {
   }
 
   if(previous_ptt!=radio->local_ptt) {
-g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,radio->dash);
+log_info("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,radio->dash);
     g_idle_add(ext_ptt_changed,(gpointer)radio);
   }
 
@@ -548,19 +549,19 @@ g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,r
         if (isTransmitting(radio)) {
           int recovery = control_in[3];
           
-          if (control_in[3] == 128) g_print("CLICK\n");
+          if (control_in[3] == 128) log_info("CLICK\n");
           
           recovery = ((control_in[3] & 0xC0) >> 6);
           //g_print("recovery %d\n", recovery);
           
           /*
           if ((control_in[3]&0x80) == 0x80) {
-            g_print("Under\n");
-            g_print("bval %d\n", (int)control_in[3]);            
+            log_info("Under\n");
+            log_info("bval %d\n", (int)control_in[3]);            
           }
           if (((control_in[3]&0x80) == 0x80) && ((control_in[3]&0x40) == 0x40)) {
-            g_print("Over\n");            
-            g_print("bval %d\n", (int)control_in[3]);            
+            log_info("Over\n");            
+            log_info("bval %d\n", (int)control_in[3]);            
           }          
           */
           
@@ -574,10 +575,10 @@ g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,r
           
           if (fill_level < 5) {         
             /*
-            g_print("EP6 %ld\n", ep6_sequence);   
-            g_print("Fill LOW %lf %d%d\n", fill_level, radio->hl2->underflow, radio->hl2->overflow );
+            log_info("EP6 %ld\n", ep6_sequence);   
+            log_info("Fill LOW %lf %d%d\n", fill_level, radio->hl2->underflow, radio->hl2->overflow );
             
-            g_print("Resize buffer %d\n", radio->hl2->hl2_tx_buffer_size);
+            log_info("Resize buffer %d\n", radio->hl2->hl2_tx_buffer_size);
             */
             /*
             if (radio->hl2->hl2_tx_buffer_size < 42) {
@@ -591,7 +592,7 @@ g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,r
           
           /*
           if (fill_level > 42) {            
-           g_print("Fill HIGH %lf %d%d\n", fill_level, radio->hl2->underflow, radio->hl2->overflow );
+           log_info("Fill HIGH %lf %d%d\n", fill_level, radio->hl2->underflow, radio->hl2->overflow );
           }
           */           
           
@@ -602,15 +603,15 @@ g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,r
           
           /*
           if (radio->hl2->underflow) {
-            g_print("--U %lf %ld\n", fill_level, ep6_sequence);
-            g_print("bval %d\n", (int)control_in[3]);
-                      g_print("recovery %d\n", recovery);
+            log_info("--U %lf %ld\n", fill_level, ep6_sequence);
+            log_info("bval %d\n", (int)control_in[3]);
+                      log_info("recovery %d\n", recovery);
           }
           
           if (radio->hl2->overflow) {
-            g_print("--O %lf\n", fill_level);   
-                               g_print("bval %d\n", (int)control_in[3]);
-                      g_print("recovery %d\n", recovery);
+            log_info("--O %lf\n", fill_level);   
+                               log_info("bval %d\n", (int)control_in[3]);
+                      log_info("recovery %d\n", recovery);
           }
           */ 
           //if (previous_ptt != radio->ptt) g_print("TX IQ FIFO flag %d%d\n", underflow, overflow );
@@ -620,19 +621,19 @@ g_print("process_control_bytes: ppt=%d dot=%d dash=%d\n",radio->ptt,radio->dot,r
       
       if(radio->mercury_software_version!=control_in[2]) {
         radio->mercury_software_version=control_in[2];
-        fprintf(stderr,"  Mercury Software version: %d (0x%0X)\n",radio->mercury_software_version,radio->mercury_software_version);
+        log_info("  Mercury Software version: %d (0x%0X)\n",radio->mercury_software_version,radio->mercury_software_version);
       }
       if(radio->penelope_software_version!=control_in[3]) {
         radio->penelope_software_version=control_in[3];
 
         
         if(radio->discovered->device!=DEVICE_HERMES_LITE2) {        
-          fprintf(stderr,"  Penelope Software version: %d (0x%0X)\n",radio->penelope_software_version,radio->penelope_software_version);          
+          log_info("  Penelope Software version: %d (0x%0X)\n",radio->penelope_software_version,radio->penelope_software_version);          
         }
       }
       if(radio->ozy_software_version!=control_in[4]) {
         radio->ozy_software_version=control_in[4];
-        fprintf(stderr,"FPGA firmware version: %d.%d\n",radio->ozy_software_version/10,radio->ozy_software_version%10);
+        log_info("FPGA firmware version: %d.%d\n",radio->ozy_software_version/10,radio->ozy_software_version%10);
       }
       break;
     case 1:
@@ -896,7 +897,7 @@ static void protocol1_tx_scheduler_monitor(void) {
   
   if (radio->hl2 != NULL) {
     if (radio->protocol1_timer > 20) {
-      g_print( "tdiff %lf\n", radio->protocol1_timer); 
+      log_info( "tdiff %lf\n", radio->protocol1_timer); 
       radio->hl2->late_packets++;
     }
   }   
@@ -1484,7 +1485,7 @@ void ozy_send_buffer() {
           }
           else if (radio->hl2->adc2_value_to_send) {
             // Coherent rx/diversity, send to the secondary HL2
-            g_print("Send LNA2 gain\n");
+            log_info("Send LNA2 gain\n");
             // Note - this will cause complications is PureSignal is implemented later
             output_buffer[C0]=0x14;
             output_buffer[C1]=0x00;
@@ -1622,7 +1623,7 @@ static int metis_write(unsigned char ep,unsigned char* buffer,int length) {
 }
 
 static void metis_restart() {
-fprintf(stderr,"metis_restart\n");
+log_info("metis_restart\n");
   // reset metis frame
   metis_offset=8;
 

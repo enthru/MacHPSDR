@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include "discovered.h"
 #include "bpsk.h"
@@ -71,7 +72,7 @@ void reconnect_note_data(void) {
 static gboolean do_reconnect(RADIO *r) {
   gboolean ok = FALSE;
 
-  g_print("reconnect: attempting to re-establish the %s link\n",
+  log_info("reconnect: attempting to re-establish the %s link\n",
           r->discovered!=NULL ? r->discovered->name : "device");
 
   switch(r->discovered->protocol) {
@@ -155,7 +156,7 @@ static gboolean watchdog_cb(gpointer data) {
 
   gint gap = monotonic_sec() - g_atomic_int_get(&last_data_sec);
   if(gap >= DISCONNECT_TIMEOUT_SEC) {
-    g_print("reconnect: no data for %d s - assuming the link is down\n", gap);
+    log_info("reconnect: no data for %d s - assuming the link is down\n", gap);
     show_reconnect_dialog(r);
   }
   return TRUE;

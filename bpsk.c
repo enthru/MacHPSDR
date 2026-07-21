@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include "log.h"
 #include <gtk/gtk.h>
 
 #include <wdsp.h>
@@ -59,12 +60,12 @@ void bpsk_init_analyzer(BPSK *bpsk) {
     double span_min_freq = 0.0;
     double span_max_freq = 0.0;
 
-g_print("bpsk_init_analyzer: channel=%d pixels=%d pixel_samples=%p\n",bpsk->channel,bpsk->pixels,bpsk->pixel_samples);
+log_info("bpsk_init_analyzer: channel=%d pixels=%d pixel_samples=%p\n",bpsk->channel,bpsk->pixels,bpsk->pixel_samples);
 
     int max_w = fft_size + (int) fmin(keep_time * (double) bpsk->fps, keep_time * (double) fft_size * (double) bpsk->fps);
 
 
-g_print("SetAnalyzer id=%d buffer_size=%d fft_size=%d overlap=%d\n",bpsk->channel,bpsk->buffer_size,fft_size,overlap);
+log_info("SetAnalyzer id=%d buffer_size=%d fft_size=%d overlap=%d\n",bpsk->channel,bpsk->buffer_size,fft_size,overlap);
 
 
     SetAnalyzer(bpsk->channel,
@@ -183,7 +184,7 @@ void bpsk_add_iq_samples(BPSK *bpsk,double i_sample,double q_sample) {
 BPSK *create_bpsk(int channel,int band) {
   BPSK *bpsk=g_new0(BPSK,1);
 
-g_print("create_bpsk: channel=%d\n",channel);
+log_info("create_bpsk: channel=%d\n",channel);
   bpsk->channel=channel;
   bpsk->band=band;
   bpsk->pixels=15360; // 50Hz per pixel at 768000 sample rate
@@ -200,7 +201,7 @@ g_print("create_bpsk: channel=%d\n",channel);
   int result;
   XCreateAnalyzer(bpsk->channel, &result, 262144, 1, 1, "");
   if(result != 0) {
-    g_print("XCreateAnalyzer channel=%d failed: %d\n", bpsk->channel, result);
+    log_info("XCreateAnalyzer channel=%d failed: %d\n", bpsk->channel, result);
   } else {
     bpsk_init_analyzer(bpsk);
   }
@@ -213,7 +214,7 @@ g_print("create_bpsk: channel=%d\n",channel);
 }
 
 void destroy_bpsk(BPSK *bpsk) {
-g_print("destroy_bpsk\n");
+log_info("destroy_bpsk\n");
   g_source_remove(bpsk->update_timer_id);
   g_free(bpsk->input_buffer);
   g_free(bpsk->pixel_samples);
@@ -221,6 +222,6 @@ g_print("destroy_bpsk\n");
 }
 
 void reset_bpsk(BPSK *bpsk) {
-g_print("reset_bpsk\n");
+log_info("reset_bpsk\n");
 }
 

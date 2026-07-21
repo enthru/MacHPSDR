@@ -20,6 +20,7 @@
  * greatly with hamlib integration!
  */
 #include <gtk/gtk.h>
+#include "log.h"
 #include <gdk/gdk.h>
 #include <errno.h>
 #include <fcntl.h> 
@@ -246,12 +247,12 @@ void disable_rigctl(RECEIVER *rx) {
   linger.l_linger = 0;
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
 
-  g_print("%s: server_socket=%d\n",__FUNCTION__,rigctl->server_socket);
+  log_info("%s: server_socket=%d\n",__FUNCTION__,rigctl->server_socket);
   rigctl->socket_running=FALSE;
   if(setsockopt(rigctl->socket_fd,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
     perror("setsockopt(...,SO_LINGER,...) failed for client");
   }
-  g_print("closing client socket: %d\n",rigctl->socket_fd);
+  log_info("closing client socket: %d\n",rigctl->socket_fd);
   close(rigctl->socket_fd);
   rigctl->socket_fd=-1;
 
@@ -606,7 +607,7 @@ void send_resp(COMMAND *cmd,char * msg) {
   RECEIVER *rx=cmd->rx;
   RIGCTL *rigctl=rx->rigctl;
 
-  if(rigctl->debug) g_print("%s: fd=%d RESP=%s\n",__FUNCTION__,cmd->fd,msg);
+  if(rigctl->debug) log_info("%s: fd=%d RESP=%s\n",__FUNCTION__,cmd->fd,msg);
   int length=strlen(msg);
   int written=0;
   while(written<length) {
@@ -624,7 +625,7 @@ static gpointer rigctl_server(gpointer data) {
   int on=1;
   int i;
 
-  g_print("%s: listening on port %d\n",__FUNCTION__,rigctl->listening_port);
+  log_info("%s: listening on port %d\n",__FUNCTION__,rigctl->listening_port);
 
   rigctl->server_socket=socket(AF_INET,SOCK_STREAM,0);
   if(rigctl->server_socket<0) {
@@ -661,7 +662,7 @@ static gpointer rigctl_server(gpointer data) {
       return NULL;
     }
 
-g_print("%s: accept connection\n",__FUNCTION__);
+log_info("%s: accept connection\n",__FUNCTION__);
     rigctl->socket_fd=accept(rigctl->server_socket,(struct sockaddr*)&rigctl->address,&rigctl->address_length);
     if(rigctl->socket_fd<0) {
       perror("rigctl_server: client accept failed");
@@ -679,7 +680,7 @@ g_print("%s: accept connection\n",__FUNCTION__);
     // no longer a separate thread as only one client per receiver
     rigctl_client(rx);
 
-    g_print("%s: setting SO_LINGER to 0 for client_socket: %d\n",__FUNCTION__,rigctl->socket_fd);
+    log_info("%s: setting SO_LINGER to 0 for client_socket: %d\n",__FUNCTION__,rigctl->socket_fd);
     struct linger linger = { 0 };
     linger.l_onoff = 1;
     linger.l_linger = 0;
@@ -701,7 +702,7 @@ static void rigctl_client(RECEIVER *rx) {
   char *command=g_new(char,MAXDATASIZE);
   int command_index=0;
 
-  g_print("%s: starting rigctl_client: socket=%d\n",__FUNCTION__,rigctl->socket_fd);
+  log_info("%s: starting rigctl_client: socket=%d\n",__FUNCTION__,rigctl->socket_fd);
 
   rx->cat_client_connected = TRUE;
   rigctl->socket_running=TRUE;
@@ -726,7 +727,7 @@ static void rigctl_client(RECEIVER *rx) {
   rx->cat_client_connected = FALSE;
   
 perror("recv");
-g_print("%s: running=%d numbytes=%d\n",__FUNCTION__,rigctl->socket_running,numbytes);
+log_info("%s: running=%d numbytes=%d\n",__FUNCTION__,rigctl->socket_running,numbytes);
 }
 
 static int ts2000_mode(int m) {
@@ -2609,7 +2610,7 @@ int parse_cmd(void *data) {
   gboolean errord=FALSE;
 
   if(rigctl->debug) {
-    g_print("%s: fd=%d %s\n",__FUNCTION__,cmd->fd,command);
+    log_info("%s: fd=%d %s\n",__FUNCTION__,cmd->fd,command);
   }
   switch(command[0]) {
     case 'A':
@@ -3918,7 +3919,7 @@ int parse_cmd(void *data) {
 
   if(!implemented) {
     //if(rigctl->debug)
-      g_print("%s: fd=%d UNIMPLEMENTED COMMAND: %s\n",__FUNCTION__,cmd->fd,cmd->command);
+      log_info("%s: fd=%d UNIMPLEMENTED COMMAND: %s\n",__FUNCTION__,cmd->fd,cmd->command);
     send_resp(cmd,"?;");
   }
 
@@ -3934,7 +3935,7 @@ int set_interface_attribs (int fd, int speed, int parity)
         memset (&tty, 0, sizeof tty);
         if (tcgetattr (fd, &tty) != 0)
         {
-                g_print ("RIGCTL: Error %d from tcgetattr", errno);
+                log_info("RIGCTL: Error %d from tcgetattr", errno);
                 return -1;
         }
 
@@ -3963,7 +3964,7 @@ int set_interface_attribs (int fd, int speed, int parity)
 
         if (tcsetattr (fd, TCSANOW, &tty) != 0)
         {
-                g_print( "RIGCTL: Error %d from tcsetattr", errno);
+                log_info( "RIGCTL: Error %d from tcsetattr", errno);
                 return -1;
         }
         return 0;
@@ -3975,14 +3976,14 @@ void set_blocking (int fd, int should_block)
         memset (&tty, 0, sizeof tty);
         if (tcgetattr (fd, &tty) != 0)
         {
-                g_print ("RIGCTL: Error %d from tggetattr\n", errno);
+                log_info("RIGCTL: Error %d from tggetattr\n", errno);
                 return;
         }
         tty.c_cc[VMIN]  = should_block ? 1 : 0;
         tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
 
         if (tcsetattr (fd, TCSANOW, &tty) != 0)
-                g_print("RIGCTL: error %d setting term attributes\n", errno);
+                log_info("RIGCTL: error %d setting term attributes\n", errno);
 }
 
 static gpointer serial_server(gpointer data) {
@@ -3997,14 +3998,14 @@ static gpointer serial_server(gpointer data) {
      int i;
      cat_control++;
      rigctl->serial_running=TRUE;
-     g_print("%s: starting serial_server: fd=%d\n",__FUNCTION__,rigctl->serial_fd);
+     log_info("%s: starting serial_server: fd=%d\n",__FUNCTION__,rigctl->serial_fd);
      while(rigctl->serial_running && (numbytes=read(rigctl->serial_fd , cmd_input , MAXDATASIZE-2)) > 0 ) {
       for(i=0;i<numbytes;i++) {
         command[command_index]=cmd_input[i];
         command_index++;
         if(cmd_input[i]==';') {
           command[command_index]='\0';
-          if(rigctl->debug) g_print("RIGCTL: command=%s\n",command);
+          if(rigctl->debug) log_info("RIGCTL: command=%s\n",command);
           COMMAND *cmd=g_new(COMMAND,1);
           cmd->rx=rx;
           cmd->command=command;
@@ -4021,7 +4022,7 @@ static gpointer serial_server(gpointer data) {
 }
 
 int launch_serial (RECEIVER *rx) {
-  g_print("%s: serial_port=%s\n",__FUNCTION__,rx->rigctl_serial_port);
+  log_info("%s: serial_port=%s\n",__FUNCTION__,rx->rigctl_serial_port);
 
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
   if(rigctl==NULL) {
@@ -4035,7 +4036,7 @@ int launch_serial (RECEIVER *rx) {
   rigctl->serial_fd=open(rigctl->ser_port, O_RDWR | O_NOCTTY | O_SYNC);   
   if(rigctl->serial_fd < 0) {
     rx->rigctl_serial_enable=FALSE;
-    g_print("%s: Error %d opening %s: %s\n", __FUNCTION__,errno, rigctl->ser_port, strerror (errno));
+    log_info("%s: Error %d opening %s: %s\n", __FUNCTION__,errno, rigctl->ser_port, strerror (errno));
     return 0 ;
   }
 
@@ -4046,7 +4047,7 @@ int launch_serial (RECEIVER *rx) {
   serial_server_thread_id = g_thread_new( "Serial server", serial_server, rx);
   if(!serial_server_thread_id ) {
     g_free(rigctl);
-    g_print("g_thread_new failed on serial_server\n");
+    log_info("g_thread_new failed on serial_server\n");
     return 0;
   }
   return 1;
@@ -4055,7 +4056,7 @@ int launch_serial (RECEIVER *rx) {
 // Serial Port close
 void disable_serial (RECEIVER *rx) {
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
-  g_print("%s: Disable Serial port %s\n",__FUNCTION__,rigctl->ser_port);
+  log_info("%s: Disable Serial port %s\n",__FUNCTION__,rigctl->ser_port);
   rigctl->serial_running=FALSE;
 }
 
@@ -4065,7 +4066,7 @@ void disable_serial (RECEIVER *rx) {
 
 void launch_rigctl (RECEIVER *rx) {
    
-  g_print("%s: port=%d\n",__FUNCTION__,rx->rigctl_port);
+  log_info("%s: port=%d\n",__FUNCTION__,rx->rigctl_port);
 
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
   if(rigctl==NULL) {
@@ -4079,7 +4080,7 @@ void launch_rigctl (RECEIVER *rx) {
   rigctl->listening_port=rx->rigctl_port;
   rigctl->server_thread_id=g_thread_new("rigctl server",rigctl_server,rx);
   if(!rigctl->server_thread_id ) {
-    g_print("%s: g_thread_new failed on rigctl_server\n",__FUNCTION__);
+    log_info("%s: g_thread_new failed on rigctl_server\n",__FUNCTION__);
   }
 }
 
@@ -4088,9 +4089,9 @@ void rigctl_set_debug(RECEIVER *rx) {
   rigctl->debug=rx->rigctl_debug;
 
   if(rigctl->debug) {
-    g_print("---------- CAT DEBUG ON ----------\n");
+    log_info("---------- CAT DEBUG ON ----------\n");
   } else {
-    g_print("---------- CAT DEBUG OFF ----------\n");
+    log_info("---------- CAT DEBUG OFF ----------\n");
   }
 
 }

@@ -19,6 +19,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <gdk/gdkkeysyms.h>
 #include <math.h>
 #include <stdio.h>
@@ -420,7 +421,7 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].active",rx->channel);
   setProperty(name,"1");
 
-fprintf(stderr,"receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
+log_info("receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
 }
 
 void receiver_restore_state(RECEIVER *rx) {
@@ -761,7 +762,7 @@ static void center_pan_on_cursor(RECEIVER *rx) {
 }
 
 void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
-g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
+log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
   g_mutex_lock(&rx->mutex);
   SetChannelState(rx->channel,0,1);
   g_free(rx->audio_output_buffer);
@@ -780,7 +781,7 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
   receiver_init_analyzer(rx);
   SetEXTANBSamplerate (rx->channel, sample_rate);
   SetEXTNOBSamplerate (rx->channel, sample_rate);
-fprintf(stderr,"receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_samples=%d\n",rx->channel, rx->sample_rate, rx->buffer_size, rx->output_samples);
+log_info("receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_samples=%d\n",rx->channel, rx->sample_rate, rx->buffer_size, rx->output_samples);
 
   /* Recentre the freetune span on the current listening frequency (the cursor)
      so it stays in the middle when the bandwidth changes. Moving the span centre
@@ -798,7 +799,7 @@ fprintf(stderr,"receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d o
     soapy_protocol_change_sample_rate(rx,sample_rate);
 /*
     rx->resample_step=radio->sample_rate/rx->sample_rate;
-g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
+log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 */
   }
 #endif
@@ -1159,7 +1160,7 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
 
 void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
   rx->freetune = enable;
-  fprintf(stderr,"receiver_set_freetune: channel=%d enable=%d\n", rx->channel, enable);
+  log_info("receiver_set_freetune: channel=%d enable=%d\n", rx->channel, enable);
 
   if(enable) {
     if(!rx->ctun) {
@@ -1219,9 +1220,7 @@ static gboolean key_is_q(GdkEventKey *event) {
 
 gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  g_print("Pressed: ");
-  g_print(gdk_keyval_name(event->keyval));
-  g_print("\n");
+  log_info("Pressed: %s\n", gdk_keyval_name(event->keyval));
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
   // key_is_q() matches the physical Q key on any keyboard layout (e.g. Cmd-й on
@@ -1241,12 +1240,10 @@ gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointe
 
 gboolean receiver_key_release_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  g_print("Released:");
-  g_print(gdk_keyval_name(event->keyval));
-  g_print("\n");
+  log_info("Released: %s\n", gdk_keyval_name(event->keyval));
   switch(event->keyval) {
     case GDK_KEY_space:
-      g_print("test");
+      log_info("test");
       set_mox(radio,FALSE);
       break;
   }
@@ -1538,7 +1535,7 @@ void set_filter(RECEIVER *rx,int low,int high) {
 }
 
 void set_deviation(RECEIVER *rx) {
-fprintf(stderr,"set_deviation: %d\n",rx->deviation);
+log_info("set_deviation: %d\n",rx->deviation);
   SetRXAFMDeviation(rx->channel, (double)rx->deviation);
   set_squelch(rx);
 }
@@ -1561,7 +1558,7 @@ void set_squelch(RECEIVER *rx) {
     rx->squelch_enable = TRUE;
   }
   SetRXAFMSQRun(rx->channel, rx->squelch_enable);
-  g_print("Set squelch %f %f\n", rx->squelch, fm_sq);
+  log_info("Set squelch %f %f\n", rx->squelch, fm_sq);
 }
 
 void calculate_display_average(RECEIVER *rx) {
@@ -1645,7 +1642,7 @@ void receiver_ft8_waterfall_sync(RECEIVER *rx) {
 
 void receiver_mode_changed(RECEIVER *rx,int mode) {
   set_mode(rx,mode);
-  fprintf(stderr,"mode_changed: %d\n",mode);
+  log_info("mode_changed: %d\n",mode);
   if(mode != 5) {
     rx->squelch_enable = FALSE;
     SetRXAFMSQRun(rx->channel, rx->squelch_enable);
@@ -1859,7 +1856,7 @@ static void full_rx_buffer(RECEIVER *rx) {
   fexchange0(rx->channel, rx->iq_input_buffer, rx->audio_output_buffer, &error);
   //if(error!=0 && error!=-2) {
   if(error!=0) {
-    fprintf(stderr,"full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+    log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
   }
 
   if(rx->subrx_enable) {
@@ -1893,7 +1890,7 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   fexchange0(rx->channel, rx->diviq_input_buffer, rx->audio_output_buffer, &error);
   //if(error!=0 && error!=-2) {
   if(error!=0) {
-    fprintf(stderr,"full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+    log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
   }
 
   if(rx->subrx_enable) {
@@ -1997,7 +1994,7 @@ void set_agc(RECEIVER *rx) {
 void receiver_update_title(RECEIVER *rx) {
   gchar title[128];
   g_snprintf((gchar *)&title,sizeof(title),"MacHPSDR: %s Rx-%d ADC-%d %d",radio->discovered->name,rx->channel,rx->adc,rx->sample_rate);
-g_print("receiver_update_title: %s\n",title);
+log_info("receiver_update_title: %s\n",title);
   if(rx->window!=NULL) {
     gtk_window_set_title(GTK_WINDOW(rx->window),title);
   }
@@ -2158,7 +2155,7 @@ void receiver_init_analyzer(RECEIVER *rx) {
 #define WDSP_MAX_PIXELS 16384
 
 void receiver_change_zoom(RECEIVER *rx,int zoom) {
-g_print("%s: %d\n",__FUNCTION__,zoom);
+log_info("%s: %d\n",__FUNCTION__,zoom);
   if(rx->panadapter_width>0) {
     int max_zoom=WDSP_MAX_PIXELS/rx->panadapter_width;
     if(max_zoom<1) max_zoom=1;
@@ -2201,14 +2198,14 @@ RECEIVER *create_receiver(int channel,int sample_rate, gboolean show_rx) {
   gint width;
   gint height;
 
-g_print("create_receiver: channel=%d sample_rate=%d\n", channel, sample_rate);
+log_info("create_receiver: channel=%d sample_rate=%d\n", channel, sample_rate);
   g_mutex_init(&rx->mutex);
   rx->channel=channel;
   rx->adc=0;
 
   rx->frequency_min=(gint64)radio->discovered->frequency_min;
   rx->frequency_max=(gint64)radio->discovered->frequency_max;
-g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", channel, rx->frequency_min, rx->frequency_max);
+log_info("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", channel, rx->frequency_min, rx->frequency_max);
 
 // DEBUG
   if(channel==0 ) {
@@ -2369,7 +2366,7 @@ g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", cha
   if(radio->discovered->device==DEVICE_SOAPYSDR) wide_buffers=TRUE;
 #endif
   rx->buffer_size = wide_buffers ? 5120 : 1024;
-fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
+log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->iq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
   rx->diviq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
 
@@ -2389,7 +2386,7 @@ fprintf(stderr,"create_receiver: buffer_size=%d\n",rx->buffer_size);
   // WFM chain (see the buffer_size comment above): avoids the WDSP output-ring
   // boundary glitch.
   rx->fft_size = wide_buffers ? 5120 : 2048;
-fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
+log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->low_latency=FALSE;
 
   rx->nb=FALSE;
@@ -2514,7 +2511,7 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
 
-g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d fft_size=%d output_samples=%d\n", rx->channel, rx->buffer_size, rx->sample_rate, rx->fft_size,rx->output_samples);
+log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d fft_size=%d output_samples=%d\n", rx->channel, rx->buffer_size, rx->sample_rate, rx->fft_size,rx->output_samples);
 
   // Size the iobuff ring to this receiver's span (2/4/8/16 by width); captured
   // by create_iobuffs inside OpenChannel below.
@@ -2543,7 +2540,7 @@ g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d 
 #ifdef SOAPYSDR
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
     rx->resample_step=radio->sample_rate/rx->sample_rate;
-g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
+log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   }
 #endif
 
@@ -2591,7 +2588,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   int result;
   XCreateAnalyzer(rx->channel, &result, WDSP_ANALYZER_MAX_SIZE, 1, 1, "");
   if(result != 0) {
-    g_print("XCreateAnalyzer channel=%d failed: %d\n", rx->channel, result);
+    log_info("XCreateAnalyzer channel=%d failed: %d\n", rx->channel, result);
   } else {
     receiver_init_analyzer(rx);
   }

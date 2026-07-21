@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include "log.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -895,7 +896,7 @@ void load_css() {
   GdkDisplay *display;
   GdkScreen *screen;
 
-  g_print("%s\n",__FUNCTION__);
+  log_info("%s\n",__FUNCTION__);
 
   css_provider = gtk_css_provider_new ();
   display = gdk_display_get_default ();

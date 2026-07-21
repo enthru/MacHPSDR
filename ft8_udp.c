@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include "log.h"
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
@@ -87,7 +88,7 @@ void ft8_udp_log(const char *adif_record) {
   hints.ai_family=AF_UNSPEC;
   hints.ai_socktype=SOCK_DGRAM;
   if(getaddrinfo(radio->ft8_log_udp_host,portstr,&hints,&res)!=0 || res==NULL) {
-    fprintf(stderr,"ft8-udp: cannot resolve %s:%s\n",radio->ft8_log_udp_host,portstr);
+    log_error("ft8-udp: cannot resolve %s:%s\n",radio->ft8_log_udp_host,portstr);
     return;
   }
   int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol);
@@ -96,9 +97,9 @@ void ft8_udp_log(const char *adif_record) {
     int on=1;
     setsockopt(fd,SOL_SOCKET,SO_BROADCAST,&on,sizeof(on));
     if(sendto(fd,buf,off,0,res->ai_addr,res->ai_addrlen)<0)
-      fprintf(stderr,"ft8-udp: sendto %s:%s failed\n",radio->ft8_log_udp_host,portstr);
+      log_error("ft8-udp: sendto %s:%s failed\n",radio->ft8_log_udp_host,portstr);
     else
-      fprintf(stderr,"ft8-udp: logged QSO to %s:%s\n",radio->ft8_log_udp_host,portstr);
+      log_info("ft8-udp: logged QSO to %s:%s\n",radio->ft8_log_udp_host,portstr);
     close(fd);
   }
   freeaddrinfo(res);

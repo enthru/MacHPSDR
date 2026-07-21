@@ -19,6 +19,7 @@
 
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdlib.h>
 #include <wdsp.h>
@@ -197,7 +198,7 @@ static gboolean receiver_configure_event_cb(GtkWidget *widget,GdkEventConfigure 
 void wideband_update_title(WIDEBAND *w) {
   gchar title[32];
   g_snprintf((gchar *)&title,sizeof(title),"Linux HPSDR: Wideband ADC-%d",w->adc);
-g_print("create_visual: %s\n",title);
+log_info("create_visual: %s\n",title);
   gtk_window_set_title(GTK_WINDOW(w->window),title);
 }
 
@@ -296,7 +297,7 @@ WIDEBAND *create_wideband(int channel) {
   gint width;
   gint height;
 
-g_print("create_wideband: channel=%d\n",channel);
+log_info("create_wideband: channel=%d\n",channel);
   w->channel=channel;
   w->adc=0;
 
@@ -328,7 +329,7 @@ g_print("create_wideband: channel=%d\n",channel);
   int result;
   XCreateAnalyzer(w->channel, &result, 262144, 1, 1, "");
   if(result != 0) {
-    g_print("XCreateAnalyzer channel=%d failed: %d\n", w->channel, result);
+    log_info("XCreateAnalyzer channel=%d failed: %d\n", w->channel, result);
   } else {
     wideband_init_analyzer(w);
   }
@@ -359,7 +360,7 @@ g_print("create_wideband: channel=%d\n",channel);
     }
   }
 
-g_print("create_widband: update_timer: %d\n",1000/w->fps);
+log_info("create_widband: update_timer: %d\n",1000/w->fps);
   w->update_timer_id=g_timeout_add(1000/w->fps,update_timer_cb,(gpointer)w);
   return w;
 }

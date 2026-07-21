@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
@@ -68,14 +69,14 @@ static void pa_disable_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void hl2mrf_bias_save_cb(GtkWidget *widget,gpointer data) { 
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;  
-  g_print("Saving bias value %d\n", radio->hl2->mrf101_bias_value);
+  log_info("Saving bias value %d\n", radio->hl2->mrf101_bias_value);
   HL2mrf101StoreBias(hl2);
 }
 
 static void hl2mrf_bias_changed_cb(GtkWidget *widget, gpointer data) {
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;
   hl2->mrf101_bias_value = (int)gtk_range_get_value(GTK_RANGE(widget));
-  g_print("Set bias %i\n", hl2->mrf101_bias_value);
+  log_info("Set bias %i\n", hl2->mrf101_bias_value);
   HL2mrf101SetBias(hl2);
 }
 
@@ -84,10 +85,10 @@ static void enable_bias_cb(GtkWidget *widget, gpointer data) {
 
   hl2->mrf101_bias_enable = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
   if (hl2->mrf101_bias_enable == TRUE) {
-    g_print("Bias enabled\n");
+    log_info("Bias enabled\n");
     gtk_widget_set_sensitive(hl2mrf_scale, TRUE);    
     gtk_widget_set_sensitive(hl2mrf_save, TRUE);
-    g_print("Bias enabled_\n");
+    log_info("Bias enabled_\n");
   }
   else {
     gtk_widget_set_sensitive(hl2mrf_scale, FALSE);
@@ -97,7 +98,7 @@ static void enable_bias_cb(GtkWidget *widget, gpointer data) {
 
 GtkWidget *create_pa_dialog(RADIO *r) {
   int i;
-  g_print("%s\n",__FUNCTION__);
+  log_info("%s\n",__FUNCTION__);
   GtkWidget *grid=gtk_grid_new();
   sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);

@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <semaphore.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -331,7 +332,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
       g_signal_connect(pa_calibration[i],"changed",G_CALLBACK(pa_xvtr_value_changed_cb),GINT_TO_POINTER(i));
 
       if (radio->hl2->cl2_integer_mode) {
-        g_print("Set disable pa false\n");
+        log_info("Set disable pa false\n");
         gtk_widget_set_sensitive(disable_pa[i], FALSE);
       }
     }

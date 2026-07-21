@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,7 +92,7 @@ static void rxtx(RADIO *r);
 
 int radio_restart(void *data) {
   RADIO *r=(RADIO *)data;
-fprintf(stderr,"radio_restart\n");
+log_info("radio_restart\n");
   switch(r->discovered->protocol) {
     case PROTOCOL_1:
       protocol1_run();
@@ -110,7 +111,7 @@ fprintf(stderr,"radio_restart\n");
 
 int radio_start(void *data) {
   RADIO *r=(RADIO *)data;
-fprintf(stderr,"radio_start\n");
+log_info("radio_start\n");
   switch(r->discovered->protocol) {
     case PROTOCOL_1:
       protocol1_run();
@@ -170,7 +171,7 @@ void radio_save_state(RADIO *radio) {
       break;
   }
 
-g_print("radio_save_state: %s\n",filename);
+log_info("radio_save_state: %s\n",filename);
   // radio_save_state is a full snapshot: initProperties() wipes everything and
   // only live receivers are re-serialized below. Retain the saved settings of
   // any inactive (user-closed) receiver slot so they are not discarded — they
@@ -625,7 +626,7 @@ void radio_restore_state(RADIO *radio) {
 }
 
 gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-  g_print("%s\n",__FUNCTION__);
+  log_info("%s\n",__FUNCTION__);
   switch(event->button) {
     case 1: // left button
       break;
@@ -657,7 +658,7 @@ void radio_change_region(RADIO *r) {
 
 #ifdef CWDAEMON
 void radio_change_cwgeneration(RADIO *r) {
-  g_print("radio_change_cwgeneration gen mode %d keyer %d\n", r->cw_generation_mode, r->cw_keyer_internal);
+  log_info("radio_change_cwgeneration gen mode %d keyer %d\n", r->cw_generation_mode, r->cw_keyer_internal);
   if (r->cw_generation_mode == CWGEN_RADIO) {
     // Hermes Lite 2 does not have an internal keyer, but does have
     // cwx (key down command sent from PC), HL2 uses protocol 1
@@ -675,7 +676,7 @@ void radio_change_cwgeneration(RADIO *r) {
 
 void radio_change_audio(RADIO *r,int selected) {
   int i;
-  g_print("%s: %dn",__FUNCTION__,selected);
+  log_info("%s: %dn",__FUNCTION__,selected);
   if(r->which_audio!=selected) {
     if(r->local_microphone) {
       radio->local_microphone=FALSE;
@@ -697,7 +698,7 @@ void radio_change_audio(RADIO *r,int selected) {
 
 void radio_change_audio_backend(RADIO *r,int selected) {
   int i;
-  g_print("%s: %d\n",__FUNCTION__,selected);
+  log_info("%s: %d\n",__FUNCTION__,selected);
   if(r->which_audio_backend!=selected) {
     if(r->local_microphone) {
       radio->local_microphone=FALSE;
@@ -870,7 +871,7 @@ void delete_receiver(RECEIVER *rx) {
   // Receiver may have a diveristy mixer connected,
   // this removes the mixer and hidden rx for that mixer
   if (radio->divmixer[rx->dmix_id] != NULL) {
-    g_print("Not null, delete the hidden rx\n");
+    log_info("Not null, delete the hidden rx\n");
     delete_diversity_mixer(radio->divmixer[rx->dmix_id]);
   }
 
@@ -898,7 +899,7 @@ void delete_receiver(RECEIVER *rx) {
         protocol1_stop();
 
       }
-g_print("delete_receiver: receivers now %d\n",radio->receivers);
+log_info("delete_receiver: receivers now %d\n",radio->receivers);
       break;
     }
   }
@@ -937,7 +938,7 @@ void delete_diversity_mixer(DIVMIXER *dmix) {
 
   for (int i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
     if(radio->divmixer[i] == dmix) {
-      g_print("delete div mixer %d\n", i);
+      log_info("delete div mixer %d\n", i);
       radio->divmixer[i]->rx_visual->dmix_id = MAX_DIVERSITY_MIXERS+1;
       radio->divmixer[i]->rx_hidden->dmix_id = MAX_DIVERSITY_MIXERS+1;
       // Store the hidden channel before we delete the
@@ -946,20 +947,20 @@ void delete_diversity_mixer(DIVMIXER *dmix) {
       radio->divmixer[i]=NULL;
       radio->diversity_mixers--;
 
-g_print("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
+log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
       break;
     }
   }
   // Delete the hidden receiver
   if (radio->receiver[hidden_channel] != NULL) {
-    g_print("delete_diversity_mixer: delete the hidden rx\n");
+    log_info("delete_diversity_mixer: delete the hidden rx\n");
     delete_receiver(radio->receiver[hidden_channel]);
   }
 }
 
 static void rxtx(RADIO *r) {
   int i;
-g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
+log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
   if(isTransmitting(r)) {
     for(i=0;i<r->discovered->supported_receivers;i++) {
       if(r->receiver[i]!=NULL) {
@@ -1023,7 +1024,7 @@ g_print("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
 }
 
 void set_mox(RADIO *r,gboolean state) {
-g_print("%s: state=%d\n",__FUNCTION__,state);
+log_info("%s: state=%d\n",__FUNCTION__,state);
   if(r->tune) {
     r->tune=FALSE;
     SetTXAPostGenRun(radio->transmitter->channel,0);
@@ -1040,14 +1041,14 @@ g_print("%s: state=%d\n",__FUNCTION__,state);
 }
 
 void ptt_changed(RADIO *r) {
-g_print("ptt_changed\n");
+log_info("ptt_changed\n");
   set_mox(r,r->local_ptt);
   update_vfo(r->transmitter->rx);
 }
 
 static void mox_cb(GtkToggleButton *widget,gpointer data) {
   RADIO *r=(RADIO *)data;
-g_print("mox_cb: mox=%d\n",r->mox);
+log_info("mox_cb: mox=%d\n",r->mox);
   if(r->mox) {
     set_mox(r,FALSE);
   } else {
@@ -1159,16 +1160,16 @@ int add_receiver(void *data, gboolean show_rx) {
     }
   }
   if(i<r->discovered->supported_receivers) {
-g_print("add_receiver: using receiver %d\n",i);
+log_info("add_receiver: using receiver %d\n",i);
 
     if (!show_rx) {
-      g_print("add_receiver: no visuals %d\n",i);
+      log_info("add_receiver: no visuals %d\n",i);
       r->receiver[i]=create_receiver(i,r->sample_rate, FALSE);
     } else {
       r->receiver[i]=create_receiver(i,r->sample_rate, TRUE);
     }
     r->receivers++;
-g_print("add_receiver: receivers now %d\n",r->receivers);
+log_info("add_receiver: receivers now %d\n",r->receivers);
     switch(r->discovered->protocol) {
       case PROTOCOL_2:
         protocol2_start_receiver(r->receiver[i]);
@@ -1195,7 +1196,7 @@ g_print("add_receiver: receivers now %d\n",r->receivers);
         break;
     }
   } else {
-g_print("add_receiver: no receivers available\n");
+log_info("add_receiver: no receivers available\n");
     i = -1;
   }
 
@@ -1223,14 +1224,14 @@ int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden) {
 
   if (i < MAX_DIVERSITY_MIXERS) {
 
-g_print("add_diversity_mixer: using diversity mixer %d\n",i);
+log_info("add_diversity_mixer: using diversity mixer %d\n",i);
 
     r->divmixer[i] = create_diversity_mixer(i, rx_visual, rx_hidden);
     rx_visual->dmix_id = i;
     rx_hidden->dmix_id = i;
     radio->diversity_mixers++;
   } else {
-g_print("add_diversity_mixer: no diversity mixers available\n");
+log_info("add_diversity_mixer: no diversity mixers available\n");
     i = -1;
   }
 
@@ -2010,7 +2011,7 @@ RADIO *create_radio(DISCOVERED *d) {
   RADIO *r;
   int i;
 
-g_print("create_radio for %s %d\n",d->name,d->device);
+log_info("create_radio for %s %d\n",d->name,d->device);
 
   radio=g_new0(RADIO,1);
   r=radio;

@@ -8,6 +8,7 @@
  */
 
 #include <gtk/gtk.h>
+#include "log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -98,13 +99,13 @@ void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
     }
     if (!desc) {
       // Nothing found. This is nothing to worry about, but log the key to stderr
-        if (event == MIDI_PITCH) g_print("%s: Unassigned PitchBend Value=%d\n",__FUNCTION__, val);
-        if (event == MIDI_NOTE ) g_print("%s: Unassigned Key Note=%d Val=%d\n",__FUNCTION__, note, val);
-        if (event == MIDI_CTRL ) g_print("%s: Unassigned Controller Ctl=%d Val=%d\n",__FUNCTION__, note, val);
+        if (event == MIDI_PITCH) log_info("%s: Unassigned PitchBend Value=%d\n",__FUNCTION__, val);
+        if (event == MIDI_NOTE ) log_info("%s: Unassigned Key Note=%d Val=%d\n",__FUNCTION__, note, val);
+        if (event == MIDI_CTRL ) log_info("%s: Unassigned Controller Ctl=%d Val=%d\n",__FUNCTION__, note, val);
     } else if(midi_debug) {
-        if (event == MIDI_PITCH) g_print("%s: PitchBend Value=%d\n",__FUNCTION__, val);
-        if (event == MIDI_NOTE ) g_print("%s: Key Note=%d Val=%d\n",__FUNCTION__, note, val);
-        if (event == MIDI_CTRL ) g_print("%s: Controller Ctl=%d Val=%d\n",__FUNCTION__, note, val);
+        if (event == MIDI_PITCH) log_info("%s: PitchBend Value=%d\n",__FUNCTION__, val);
+        if (event == MIDI_NOTE ) log_info("%s: Key Note=%d Val=%d\n",__FUNCTION__, note, val);
+        if (event == MIDI_CTRL ) log_info("%s: Controller Ctl=%d Val=%d\n",__FUNCTION__, note, val);
     }
 }
 
@@ -247,7 +248,7 @@ static enum MIDIaction keyword2action(char *s) {
     for (i=0; i< (sizeof(ActionTable) / sizeof(ActionTable[0])); i++) {
 	if (!strcmp(s, ActionTable[i].str)) return ActionTable[i].action;
     }
-    fprintf(stderr,"MIDI: action keyword %s NOT FOUND.\n", s);
+    log_error("MIDI: action keyword %s NOT FOUND.\n", s);
     return ACTION_NONE;
 }
 
@@ -281,12 +282,12 @@ int MIDIstartup(char *filename) {
     for (i=0; i<128; i++) MidiCommandsTable.desc[i]=NULL;
     MidiCommandsTable.pitch=NULL;
 
-    g_print("%s: %s\n",__FUNCTION__,filename);
+    log_info("%s: %s\n",__FUNCTION__,filename);
     fpin=fopen(filename, "r");
 
-    g_print("%s: fpin=%p\n",__FUNCTION__,fpin);
+    log_info("%s: fpin=%p\n",__FUNCTION__,fpin);
     if (!fpin) {
-      g_print("%s: failed to open MIDI device\n",__FUNCTION__);
+      log_info("%s: failed to open MIDI device\n",__FUNCTION__);
       return -1;
     }
 
@@ -313,7 +314,7 @@ int MIDIstartup(char *filename) {
 	cp++;
       }
       
-g_print("\n%s:INP:%s\n",__FUNCTION__,zeile);
+log_info("\n%s:INP:%s\n",__FUNCTION__,zeile);
 
       if ((cp = strstr(zeile, "DEVICE="))) {
         // Delete comments and trailing blanks
@@ -344,18 +345,18 @@ g_print("\n%s:INP:%s\n",__FUNCTION__,zeile);
         sscanf(cp+4, "%d", &key);
         event=MIDI_NOTE;
 	type=MIDI_KEY;
-g_print("%s: MIDI:KEY:%d\n",__FUNCTION__, key);
+log_info("%s: MIDI:KEY:%d\n",__FUNCTION__, key);
       }
       if ((cp = strstr(zeile, "CTRL="))) {
         sscanf(cp+5, "%d", &key);
 	event=MIDI_CTRL;
 	type=MIDI_KNOB;
-g_print("%s: MIDI:CTL:%d\n",__FUNCTION__, key);
+log_info("%s: MIDI:CTL:%d\n",__FUNCTION__, key);
       }
       if ((cp = strstr(zeile, "PITCH "))) {
         event=MIDI_PITCH;
 	type=MIDI_KNOB;
-g_print("%s: MIDI:PITCH\n",__FUNCTION__);
+log_info("%s: MIDI:PITCH\n",__FUNCTION__);
       }
       //
       // If event is still undefined, skip line
@@ -375,20 +376,20 @@ g_print("%s: MIDI:PITCH\n",__FUNCTION__);
         sscanf(cp+5, "%d", &chan);
 	chan--;
         if (chan<0 || chan>15) chan=-1;
-g_print("%s:CHAN:%d\n",__FUNCTION__,chan);
+log_info("%s:CHAN:%d\n",__FUNCTION__,chan);
       }
       if ((cp = strstr(zeile, "WHEEL")) && (type == MIDI_KNOB)) {
 	// change type from MIDI_KNOB to MIDI_WHEEL
         type=MIDI_WHEEL;
-g_print("%s:WHEEL\n",__FUNCTION__);
+log_info("%s:WHEEL\n",__FUNCTION__);
       }
       if ((cp = strstr(zeile, "ONOFF"))) {
         onoff=1;
-g_print("%s:ONOFF\n",__FUNCTION__);
+log_info("%s:ONOFF\n",__FUNCTION__);
       }
       if ((cp = strstr(zeile, "DELAY="))) {
         sscanf(cp+6, "%d", &delay);
-g_print("%s:DELAY:%d\n",__FUNCTION__,delay);
+log_info("%s:DELAY:%d\n",__FUNCTION__,delay);
       }
       if ((cp = strstr(zeile, "THR="))) {
         sscanf(cp+4, "%d %d %d %d %d %d %d %d %d %d %d %d",
@@ -401,7 +402,7 @@ g_print("%s:DELAY:%d\n",__FUNCTION__,delay);
         while (*cq != 0 && *cq != '\n' && *cq != ' ' && *cq != '\t') cq++;
 	*cq=0;
         action=keyword2action(cp+7);
-g_print("%s: MIDI:ACTION:%s (%d)\n",__FUNCTION__,cp+7, action);
+log_info("%s: MIDI:ACTION:%s (%d)\n",__FUNCTION__,cp+7, action);
       }
       //
       // All data for a descriptor has been read. Construct it!
@@ -441,7 +442,7 @@ g_print("%s: MIDI:ACTION:%s (%d)\n",__FUNCTION__,cp+7, action);
 	}
       }
       if (event == MIDI_KEY || event == MIDI_CTRL) {
-g_print("%s:TAB:Insert desc=%p in CMDS[%d] table\n",__FUNCTION__,desc,key);
+log_info("%s:TAB:Insert desc=%p in CMDS[%d] table\n",__FUNCTION__,desc,key);
 	dp = MidiCommandsTable.desc[key];
 	if (dp == NULL) {
 	  MidiCommandsTable.desc[key]=desc;

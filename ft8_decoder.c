@@ -18,6 +18,7 @@
 */
 
 #include <math.h>
+#include "log.h"
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
@@ -363,10 +364,10 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
   }
 
   if (n > 0) {
-    fprintf(stderr, "ft8: %s decoded %d messages (%d candidates)\n",
+    log_info("ft8: %s decoded %d messages (%d candidates)\n",
             result_utc, n, num_candidates);
     for (int i = 0; i < n; i++) {
-      fprintf(stderr, "  %s  %+3.0f dB  %4.0f Hz  %s\n",
+      log_info("  %s  %+3.0f dB  %4.0f Hz  %s\n",
               local[i].utc, local[i].snr, local[i].freq, local[i].text);
     }
     // Feed the decoded spots to the PSK Reporter network (no-op unless enabled

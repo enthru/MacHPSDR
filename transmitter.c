@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -898,7 +899,7 @@ void transmitter_fps_changed(TRANSMITTER *tx) {
 }
 
 static int ps_end_timer_cb(gpointer data) {
-  g_print("**************Restart P1\n");
+  log_info("**************Restart P1\n");
   protocol1_stop();
   g_idle_add(radio_restart,(void *)radio);
   return FALSE;
@@ -925,9 +926,9 @@ void transmitter_set_ps(TRANSMITTER *tx,gboolean state) {
     // Delete hidden rxs
     for (int i = 0; i <= (radio->receivers + 1); i++) {
       if (radio->receiver[i] != NULL) {
-        g_print("RX%i\n", i);
+        log_info("RX%i\n", i);
         if (radio->receiver[i]->show_rx == FALSE) {
-          g_print("Delete RX%i\n", i);
+          log_info("Delete RX%i\n", i);
           delete_receiver(radio->receiver[i]);
         }
       }
@@ -976,7 +977,7 @@ void transmitter_set_eer_mdelay(TRANSMITTER *tx,gdouble delay) {
 }
 
 void transmitter_set_twotone(TRANSMITTER *tx,gboolean state) {
-g_print("transmitter_set_twotone: %d\n",state);
+log_info("transmitter_set_twotone: %d\n",state);
   tx->ps_twotone=state;
   if(state) {
     SetTXAPostGenTTMag(tx->channel, 0.49, 0.49);
@@ -1202,7 +1203,7 @@ void full_tx_buffer(TRANSMITTER *tx, gboolean force_send) {
   // Work out if we are going to send a tx packet or return
   
   if (force_send) {
-    g_print("Force %d\n", radio->hl2->overflow);
+    log_info("Force %d\n", radio->hl2->overflow);
   }
   else {
     if (!send_tx_packet_query(tx)) return;
@@ -1224,7 +1225,7 @@ void full_tx_buffer(TRANSMITTER *tx, gboolean force_send) {
 
   if ((radio->cwdaemon) && (tx_mode==CWL || tx_mode==CWU)) {    
     int rv = queue_get(tx->cw_iq_delay_buf, &this_sample_cw_idx);
-    if (rv != 0) g_print("cw waveform queue error = %d\n", rv);
+    if (rv != 0) log_info("cw waveform queue error = %d\n", rv);
     
     if (this_sample_cw_idx < 0) {
       key_state_delayed = FALSE;
@@ -1330,7 +1331,7 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
   update_vox(radio);
   fexchange0(tx->channel, tx->mic_input_buffer, tx->iq_output_buffer, &error);
   if(error!=0) {
-    fprintf(stderr,"full_tx_buffer_process: channel=%d fexchange0: error=%d\n",tx->channel,error);
+    log_error("full_tx_buffer_process: channel=%d fexchange0: error=%d\n",tx->channel,error);
   }
 
   analyzer_feed(tx->channel, tx->iq_output_buffer, tx->output_samples);
@@ -1589,7 +1590,7 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
     double span_min_freq = 0.0;
     double span_max_freq = 0.0;
 
-    g_print("transmitter_init_analyzer: width=%d pixels=%d\n",tx->panadapter_width,tx->pixels);
+    log_info("transmitter_init_analyzer: width=%d pixels=%d\n",tx->panadapter_width,tx->pixels);
 
     if(tx->pixel_samples!=NULL) {
       g_free(tx->pixel_samples);
@@ -1602,7 +1603,7 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
 
       overlap = (int)max(0.0, ceil(fft_size - (double)tx->mic_sample_rate / (double)tx->fps));
 
-      fprintf(stderr,"SetAnalyzer id=%d buffer_size=%d overlap=%d\n",tx->channel,tx->output_samples,overlap);
+      log_info("SetAnalyzer id=%d buffer_size=%d overlap=%d\n",tx->channel,tx->output_samples,overlap);
 
 
       SetAnalyzer(tx->channel,
@@ -1632,7 +1633,7 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
 
 TRANSMITTER *create_transmitter(int channel) {
   gint rc;
-g_print("create_transmitter: channel=%d\n",channel);
+log_info("create_transmitter: channel=%d\n",channel);
   TRANSMITTER *tx=g_new0(TRANSMITTER,1);
   tx->channel=channel;
   tx->dac=0;
@@ -1890,10 +1891,10 @@ g_print("create_transmitter: channel=%d\n",channel);
 
   XCreateAnalyzer(tx->channel, &rc, WDSP_ANALYZER_MAX_SIZE, 1, 1, "");
   if (rc != 0) {
-    fprintf(stderr, "XCreateAnalyzer channel=%d failed: %d\n",tx->channel,rc);
+    log_error("XCreateAnalyzer channel=%d failed: %d\n",tx->channel,rc);
   } else {
     transmitter_init_analyzer(tx);
-g_print("update_timer: fps=%d\n",tx->fps);
+log_info("update_timer: fps=%d\n",tx->fps);
     tx->update_timer_id=g_timeout_add(1000/tx->fps,update_timer_cb,(gpointer)tx);
   }
 
