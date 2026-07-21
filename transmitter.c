@@ -1333,8 +1333,8 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
     fprintf(stderr,"full_tx_buffer_process: channel=%d fexchange0: error=%d\n",tx->channel,error);
   }
 
-  Spectrum0(1, tx->channel, 0, 0, tx->iq_output_buffer);
-  
+  analyzer_feed(tx->channel, tx->iq_output_buffer, tx->output_samples);
+
   if ((radio->discovered->protocol == PROTOCOL_1) && (!radio->classE)) {
     // not going to send out packets now, put them in the ring buffer
     // then every rx packet, we send a tx packet @48k  
@@ -1611,7 +1611,8 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
             data_type, //0 for real input data (I only); 1 for complex input data (I & Q)
             flp, //vector with one elt for each LO frequency, 1 if high-side LO, 0 otherwise
             fft_size, //size of the fft, i.e., number of input samples
-            tx->output_samples, //number of samples transferred for each OpenBuffer()/CloseBuffer()
+            ANALYZER_FEED_BLOCK, //transfer block: must divide the input ring; fed via analyzer_feed()
+
             window_type, //integer specifying which window function to use
             kaiser_pi, //PiAlpha parameter for Kaiser window
             overlap, //number of samples each fft (other than the first) is to re-use from the previous
@@ -1887,7 +1888,7 @@ g_print("create_transmitter: channel=%d\n",channel);
   
   create_visual(tx);
 
-  XCreateAnalyzer(tx->channel, &rc, 262144, 1, 1, "");
+  XCreateAnalyzer(tx->channel, &rc, WDSP_ANALYZER_MAX_SIZE, 1, 1, "");
   if (rc != 0) {
     fprintf(stderr, "XCreateAnalyzer channel=%d failed: %d\n",tx->channel,rc);
   } else {

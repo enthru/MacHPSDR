@@ -29,6 +29,26 @@
 
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
+// --- WDSP spectrum-analyzer input-ring safety -------------------------------
+// XCreateAnalyzer allocates its I/Q input ring at (max_size * dSAMP_BUFF_MULT).
+// dSAMP_BUFF_MULT is 2 (wdsp/comm.h), so the ring holds WDSP_ANALYZER_MAX_SIZE*2
+// complex samples.  Spectrum0() writes each transfer block with a plain loop and
+// only wraps its write index when it reaches the ring end, so it *requires the
+// transfer block to divide the ring exactly* (see the "REQUIRES buff_size IS A
+// SUB-MULTIPLE OF SIZE OF INPUT SAMPLE BUFFS!" contract in wdsp/analyzer.c).  If
+// it does not, the last block before the wrap runs off the end of the buffer and
+// corrupts the heap (intermittent crash, layout-dependent).
+//
+// The wideband RX I/O block (5120 = 2^10*5) and the widest TX block (40960 =
+// 2^13*5 at the 1920 kHz span) do NOT divide the 2^19 ring, so we feed the
+// analyzer in ANALYZER_FEED_BLOCK-sized sub-blocks instead of one full buffer.
+// 1024 = gcd(5120, 2^19) divides the ring and divides every RX/TX block we feed
+// (all are 1024*N), so it is the largest universally safe transfer size.
+#define WDSP_ANALYZER_MAX_SIZE 262144
+#define ANALYZER_FEED_BLOCK    1024
+_Static_assert((WDSP_ANALYZER_MAX_SIZE * 2) % ANALYZER_FEED_BLOCK == 0,
+               "ANALYZER_FEED_BLOCK must divide the WDSP analyzer input ring");
+
 typedef struct _receiver {
 
   gint channel; // WDSP channel
@@ -321,6 +341,13 @@ extern void receiver_update_title(RECEIVER *rx);
 extern void receiver_init_analyzer(RECEIVER *rx);
 extern void add_iq_samples(RECEIVER *r,double left,double right);
 extern void full_diviqrx_buffer(RECEIVER *rx);
+
+// Feed `nsamples` complex I/Q samples (interleaved doubles, Q at [2i], I at
+// [2i+1] as Spectrum0 expects) into WDSP's analyzer for `channel`, split into
+// ANALYZER_FEED_BLOCK-sized chunks so the write never overruns the input ring.
+// `nsamples` must be a multiple of ANALYZER_FEED_BLOCK; a remainder is dropped
+// (and warned once) rather than risking an overrun.
+extern void analyzer_feed(int channel, double *iq, int nsamples);
 
 extern gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
 extern gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);

@@ -1817,6 +1817,26 @@ static void process_rx_buffer(RECEIVER *rx) {
 #endif
 }
 
+// Feed the spectrum analyzer in ANALYZER_FEED_BLOCK-sized chunks so the write
+// never overruns WDSP's input ring (see the contract documented in receiver.h).
+// SetAnalyzer is configured with bf_sz == ANALYZER_FEED_BLOCK, so each Spectrum0
+// call consumes exactly one block from `iq`.
+void analyzer_feed(int channel, double *iq, int nsamples) {
+  int off = 0;
+  for(; off + ANALYZER_FEED_BLOCK <= nsamples; off += ANALYZER_FEED_BLOCK) {
+    Spectrum0(1, channel, 0, 0, iq + 2 * off);
+  }
+  if(off != nsamples) {
+    static gboolean warned = FALSE;
+    if(!warned) {
+      warned = TRUE;
+      g_warning("analyzer_feed: nsamples=%d not a multiple of %d; %d samples "
+                "dropped from the spectrum feed",
+                nsamples, ANALYZER_FEED_BLOCK, nsamples - off);
+    }
+  }
+}
+
 static void full_rx_buffer(RECEIVER *rx) {
   int error;
 
@@ -1844,7 +1864,7 @@ static void full_rx_buffer(RECEIVER *rx) {
     subrx_iq_buffer(rx);
   }
 
-  Spectrum0(1, rx->channel, 0, 0, rx->iq_input_buffer);
+  analyzer_feed(rx->channel, rx->iq_input_buffer, rx->buffer_size);
 
   process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
@@ -1877,7 +1897,7 @@ void full_diviqrx_buffer(RECEIVER *rx) {
     subrx_iq_buffer(rx);
   }
 
-  Spectrum0(1, rx->channel, 0, 0, rx->diviq_input_buffer);
+  analyzer_feed(rx->channel, rx->diviq_input_buffer, rx->buffer_size);
   process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
 
@@ -2110,7 +2130,7 @@ void receiver_init_analyzer(RECEIVER *rx) {
             data_type,
             flp,
             fft_size,
-            rx->buffer_size,
+            ANALYZER_FEED_BLOCK, // transfer block: must divide the input ring; fed via analyzer_feed()
             window_type,
             kaiser_pi,
             overlap,
@@ -2566,7 +2586,7 @@ g_print("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   rx->freetune_hw_frequency = rx->frequency_a;
 
   int result;
-  XCreateAnalyzer(rx->channel, &result, 262144, 1, 1, "");
+  XCreateAnalyzer(rx->channel, &result, WDSP_ANALYZER_MAX_SIZE, 1, 1, "");
   if(result != 0) {
     g_print("XCreateAnalyzer channel=%d failed: %d\n", rx->channel, result);
   } else {
