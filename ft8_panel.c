@@ -41,9 +41,6 @@ enum { COL_UTC, COL_DB, COL_DT, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_B4,
 
 #define MAX_ROWS 1000   // rolling band-activity cap
 
-#define B4_FG  "#888888"  // text colour for already-worked (B4) callsigns
-#define CQ_FG  "#33aa33"  // text colour for CQ messages
-
 // Single live panel instance (only one FT8 panel ever exists at a time).
 static GtkListStore     *store = NULL;
 static GtkTreeModel     *filter = NULL;   // CQ-only view over `store`
@@ -127,16 +124,6 @@ static void erase_clicked(GtkButton *b, gpointer data) {
   char utc[8] = "";
   ft8_decoder_get_decodes(tmp, 64, utc);
   snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
-}
-
-// Message-column text colour: already-worked calls are greyed, otherwise CQ
-// messages are green.  Grey wins over green (a worked station is the lesser cue).
-static void msg_fg_cell_data(GtkTreeViewColumn *col, GtkCellRenderer *r,
-                             GtkTreeModel *m, GtkTreeIter *it, gpointer data) {
-  gboolean b4 = FALSE, cq = FALSE;
-  gtk_tree_model_get(m, it, COL_B4, &b4, COL_CQ, &cq, -1);
-  const char *fg = b4 ? B4_FG : cq ? CQ_FG : NULL;
-  g_object_set(r, "foreground", fg, "foreground-set", fg != NULL, NULL);
 }
 
 // Hovering a decode row shows the sender's DXCC country (from cty.dat).
@@ -387,22 +374,19 @@ GtkWidget *ft8_panel_create(void) {
     GtkCellRenderer *r = gtk_cell_renderer_text_new();
     GtkTreeViewColumn *c =
       gtk_tree_view_column_new_with_attributes(cols[k].t, r, "text", cols[k].c, NULL);
-    // Bold the rows addressed to our station.
+    // Bold the rows addressed to our station; strike out worked-before calls.
     gtk_tree_view_column_add_attribute(c, r, "weight-set", COL_TOME);
     g_object_set(r, "weight", PANGO_WEIGHT_BOLD, NULL);
+    gtk_tree_view_column_add_attribute(c, r, "strikethrough-set", COL_B4);
+    g_object_set(r, "strikethrough", TRUE, NULL);
     // Highlight new DXCC (gold = new ever, blue = new on this band); the colour
     // and on/off flag come from the model so both levels share one renderer.
     gtk_tree_view_column_add_attribute(c, r, "cell-background", COL_BG);
     gtk_tree_view_column_add_attribute(c, r, "cell-background-set", COL_BGSET);
+    // Colour CQ messages green so they stand out in the band-activity list.
     if (cols[k].c == COL_MSG) {
-      // The Message column carries two possible text colours — CQ = green,
-      // worked-before = grey — so a cell-data function resolves the precedence
-      // (grey wins, since an already-worked station is the less interesting cue).
-      gtk_tree_view_column_set_cell_data_func(c, r, msg_fg_cell_data, NULL, NULL);
-    } else {
-      // Grey out the text of calls we have already worked (instead of a strike).
-      gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_B4);
-      g_object_set(r, "foreground", B4_FG, NULL);
+      gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_CQ);
+      g_object_set(r, "foreground", "#33aa33", NULL);
     }
     gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
   }
