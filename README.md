@@ -151,8 +151,9 @@ de-emphasis / RDS options.
 
 - **SSTV image transmission.** The image panel's **Tx** row sends a picture the
   same way: pick a **mode** (Martin/Scottie/Robot/PD), **Load…** any image file
-  (it is scaled to the mode's geometry and previewed in the panel), and press
-  **Send**. It transmits a standard VIS header plus the FM-encoded scan lines
+  (it is fitted to the mode's geometry **preserving aspect ratio** — the sides
+  that don't fill are letter-/pillar-boxed with black rather than stretched — and
+  previewed in the panel), and press **Send**. It transmits a standard VIS header plus the FM-encoded scan lines
   through the normal phone TX chain, so it works on any protocol (Protocol 1/2,
   SoapySDR/HackRF): **DIGU/DIGL** for HF SSB SSTV (e.g. 14.230 MHz) and **FMN**
   for VHF FM. MOX is keyed automatically for the length of the picture (a

@@ -285,13 +285,32 @@ static void build_pd(const sstv_mode_t *m) {
 
 // ===========================================================================
 // Public API
+// Fit `src` into a w×h black canvas preserving aspect ratio (letterbox /
+// pillarbox) — the sides that would otherwise stretch are filled with black
+// instead of distorting the picture.  Returns a new pixbuf (caller unrefs).
+static GdkPixbuf *letterbox(GdkPixbuf *src, int w, int h) {
+  GdkPixbuf *canvas = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, w, h);
+  if (canvas == NULL) return NULL;
+  gdk_pixbuf_fill(canvas, 0x000000ffu);            // opaque black
+  int iw = gdk_pixbuf_get_width(src), ih = gdk_pixbuf_get_height(src);
+  double s = (double)w / iw;
+  if ((double)h / ih < s) s = (double)h / ih;      // min(sx, sy) — fit inside
+  double dw = iw * s, dh = ih * s;
+  double ox = (w - dw) / 2.0, oy = (h - dh) / 2.0;
+  gdk_pixbuf_scale(src, canvas,
+                   (int)(ox + 0.5), (int)(oy + 0.5),          // clip rect origin
+                   (int)(dw + 0.5), (int)(dh + 0.5),          // clip rect size
+                   ox, oy, s, s, GDK_INTERP_BILINEAR);
+  return canvas;
+}
+
 // ===========================================================================
 gboolean sstv_tx_prepare(int vis, GdkPixbuf *img) {
   if (tx_active) return FALSE;
   const sstv_mode_t *m = mode_by_vis(vis);
   if (m == NULL || img == NULL) return FALSE;
 
-  GdkPixbuf *scaled = gdk_pixbuf_scale_simple(img, m->width, m->height, GDK_INTERP_BILINEAR);
+  GdkPixbuf *scaled = letterbox(img, m->width, m->height);
   if (scaled == NULL) return FALSE;
   pix_base   = gdk_pixbuf_get_pixels(scaled);
   pix_stride = gdk_pixbuf_get_rowstride(scaled);
