@@ -1438,15 +1438,96 @@ static void ft8_expand_cb(GtkButton *b, gpointer data) {
   radio_ft8_panel_sync(r);
 }
 
-// Bottom-bar decoder selector (Off / FT8 / FT4 / SSTV). Sets radio->decode_mode
-// — the single source of truth for which decoder taps the active RX's audio in
-// DIGU/DIGL — and keeps radio->ft8_proto (0/1) in sync so the TX/QSO/reporter
-// path stays consistent. Leaving FT8/FT4 closes the QSO panel (handled by
-// radio_ft8_panel_sync). Combo entry order matches the decode_mode_t enum.
+// Bottom-bar decoder selector (Off / FT8 / FT4 / SSTV / WEFAX). Sets
+// radio->decode_mode — the single source of truth for which decoder taps the
+// active RX's audio — and keeps radio->ft8_proto (0/1) in sync so the
+// TX/QSO/reporter path stays consistent. Leaving FT8/FT4 closes the QSO panel
+// (handled by radio_ft8_panel_sync).
+//
+// The combo is a GtkListStore-backed GtkComboBox (not a plain text combo) whose
+// visible rows depend on the RX mode: only the decoders actually usable in the
+// current mode are offered (see decode_valid_mask) — e.g. narrowband FM (FMN,
+// for VHF/ISS SSTV) exposes only Off + SSTV, so FT8/FT4/WEFAX (SSB/HF-only)
+// are not shown. Each row carries its decode_mode_t value in DSEL_MODE, so the
+// selection is read from the model, not the row index.
+enum { DSEL_LABEL, DSEL_MODE, DSEL_NCOLS };
+
+static const char *decode_mode_label(int m) {
+  switch(m) {
+    case DECODE_OFF:   return "Off";
+    case DECODE_FT8:   return "FT8";
+    case DECODE_FT4:   return "FT4";
+    case DECODE_SSTV:  return "SSTV";
+    case DECODE_WEFAX: return "WEFAX";
+  }
+  return "?";
+}
+
+// Bitmask of decode_mode_t values valid in the active RX's current mode.
+// Practice: never offer a decoder the current mode can't use.
+//   DIGU/DIGL (HF digital SSB): FT8, FT4, SSTV, WEFAX
+//   FMN       (VHF/ISS narrow FM): SSTV only
+//   anything else: nothing
+static int decode_valid_mask(RECEIVER *rx) {
+  if(rx==NULL) return 0;
+  if(rx->mode_a==DIGU || rx->mode_a==DIGL) {
+    int m = (1<<DECODE_OFF)|(1<<DECODE_FT8)|(1<<DECODE_FT4)|(1<<DECODE_SSTV);
+#ifdef SSTV
+    m |= (1<<DECODE_WEFAX);
+#endif
+    return m;
+  }
+  if(rx->mode_a==FMN)
+    return (1<<DECODE_OFF)|(1<<DECODE_SSTV);   // ISS/VHF SSTV over narrow FM only
+  return 0;
+}
+
+static void decode_sel_changed(GtkComboBox *cb, gpointer data);
+
+// Rebuild the selector's rows to the decoders valid for the current RX mode
+// (only when that set changes) and keep the active row synced to
+// radio->decode_mode. If the current decode_mode is no longer valid in the new
+// mode, fall back to DECODE_OFF. GTK thread only (called from rds_update_cb).
+static void decode_sel_sync(RADIO *r) {
+  if(r==NULL || r->decode_sel==NULL) return;
+  GtkComboBox *cb = GTK_COMBO_BOX(r->decode_sel);
+  GtkTreeModel *model = gtk_combo_box_get_model(cb);
+  if(model==NULL) return;
+  int mask = decode_valid_mask(r->active_receiver);
+  static int last_mask = -1;
+  gboolean rebuild = (mask!=last_mask) ||
+                     (gtk_tree_model_iter_n_children(model,NULL)==0);
+  g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
+  if(rebuild) {
+    GtkListStore *store = GTK_LIST_STORE(model);
+    gtk_list_store_clear(store);
+    for(int m=DECODE_OFF;m<=DECODE_WEFAX;m++) if(mask & (1<<m)) {
+      GtkTreeIter it;
+      gtk_list_store_append(store,&it);
+      gtk_list_store_set(store,&it,DSEL_LABEL,decode_mode_label(m),DSEL_MODE,m,-1);
+    }
+    last_mask = mask;
+    if(mask && !(mask & (1<<r->decode_mode)))   // current decoder invalid here
+      r->decode_mode = DECODE_OFF;
+  }
+  // Point the active row at radio->decode_mode (which the FT8 panel's protocol
+  // combo can also change) by matching the row's DSEL_MODE value.
+  GtkTreeIter it;
+  gboolean ok = gtk_tree_model_get_iter_first(model,&it);
+  while(ok) {
+    gint m; gtk_tree_model_get(model,&it,DSEL_MODE,&m,-1);
+    if(m==r->decode_mode) { gtk_combo_box_set_active_iter(cb,&it); break; }
+    ok = gtk_tree_model_iter_next(model,&it);
+  }
+  g_signal_handlers_unblock_by_func(cb,G_CALLBACK(decode_sel_changed),r);
+}
+
 static void decode_sel_changed(GtkComboBox *cb, gpointer data) {
   RADIO *r=(RADIO *)data;
-  int m = gtk_combo_box_get_active(cb);
-  if(m<0) return;
+  GtkTreeIter it;
+  if(!gtk_combo_box_get_active_iter(cb,&it)) return;
+  gint m = DECODE_OFF;
+  gtk_tree_model_get(gtk_combo_box_get_model(cb),&it,DSEL_MODE,&m,-1);
   r->decode_mode = m;
   if(m==DECODE_FT8) r->ft8_proto = 0;
   else if(m==DECODE_FT4) r->ft8_proto = 1;
@@ -2022,11 +2103,7 @@ static gboolean rds_update_cb(gpointer data) {
   // (which the FT8 panel's protocol combo can also change).
   if(r->decode_sel!=NULL) {
     gtk_widget_set_visible(r->decode_sel, sstv_cap);
-    if(gtk_combo_box_get_active(GTK_COMBO_BOX(r->decode_sel)) != r->decode_mode) {
-      g_signal_handlers_block_by_func(r->decode_sel,G_CALLBACK(decode_sel_changed),r);
-      gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel), r->decode_mode);
-      g_signal_handlers_unblock_by_func(r->decode_sel,G_CALLBACK(decode_sel_changed),r);
-    }
+    decode_sel_sync(r);   // repopulate per-mode rows + sync active to decode_mode
   }
   // The "FT8 Panel" toggle only makes sense in DIGU with an FT8/FT4 decoder.
   if(r->ft8_expand_btn!=NULL) {
@@ -2173,21 +2250,22 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_halign(dec_ctl,GTK_ALIGN_END);
 
 #ifdef FT8
-  // Decoder selector (Off / FT8 / FT4 / SSTV): picks which decoder taps the
-  // active RX's audio in DIGU/DIGL. Entry order matches decode_mode_t so the
-  // active index is the mode value. Shown only in DIGU/DIGL (see rds_update_cb).
-  r->decode_sel=gtk_combo_box_text_new();
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"Off");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"FT8");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"FT4");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"SSTV");
-#ifdef SSTV
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->decode_sel),"WEFAX");
-#endif
-  gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel),r->decode_mode);
+  // Decoder selector: picks which decoder taps the active RX's audio. Its rows
+  // are populated per-mode by decode_sel_sync (rds_update_cb) so only decoders
+  // valid in the current mode are offered (e.g. FMN shows just Off + SSTV); each
+  // row carries its decode_mode_t in DSEL_MODE. Shown in DIGU/DIGL/FMN.
+  {
+    GtkListStore *store=gtk_list_store_new(DSEL_NCOLS,G_TYPE_STRING,G_TYPE_INT);
+    r->decode_sel=gtk_combo_box_new_with_model(GTK_TREE_MODEL(store));
+    g_object_unref(store);
+    GtkCellRenderer *rend=gtk_cell_renderer_text_new();
+    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(r->decode_sel),rend,TRUE);
+    gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(r->decode_sel),rend,"text",DSEL_LABEL,NULL);
+  }
   gtk_widget_set_name(r->decode_sel,"decode-combo");   // flat themed combo (css.c)
   g_signal_connect(r->decode_sel,"changed",G_CALLBACK(decode_sel_changed),(gpointer)r);
   gtk_box_pack_start(GTK_BOX(dec_ctl),r->decode_sel,FALSE,FALSE,0);
+  decode_sel_sync(r);   // initial rows for the current mode
 #endif
 
   // "FT8 Panel" toggle: opens/closes the big QSO panel (in place of RX2). Shown

@@ -120,11 +120,14 @@ de-emphasis / RDS options.
   is in WFM; in other modes it carries the neutral **Decode** title and stays
   blank.
 
-- **Decoder selection (DIGU/DIGL).** In the digital modes the Decode block shows
-  a **decoder selector** (right-aligned): **Off / FT8 / FT4 / SSTV / WEFAX**. No
-  decoder runs by default — pick one to start it. FT8/FT4 decode the audio and
-  show the traffic in the Decode block (below); **SSTV** and **WEFAX** decode
-  analogue images (see below). The selection is remembered between sessions.
+- **Decoder selection.** In the digital modes the Decode block shows a
+  **decoder selector** (right-aligned). No decoder runs by default — pick one to
+  start it. FT8/FT4 decode the audio and show the traffic in the Decode block
+  (below); **SSTV** and **WEFAX** decode analogue images (see below). The
+  selector **only lists the decoders usable in the current mode**: **DIGU/DIGL**
+  offers **Off / FT8 / FT4 / SSTV / WEFAX**, while **NFM (FMN)** — where only
+  SSTV applies (ISS/VHF SSTV over narrow FM) — offers just **Off / SSTV**. The
+  selection is remembered between sessions.
 
 - **SSTV image reception.** Choose **SSTV** from the Decode-block selector and
   press **Show SSTV** to open the image panel (it takes the second-receiver slot,
