@@ -91,6 +91,7 @@ typedef enum {
   DECODE_FT8,       // FT8 decoder (ft8_proto = 0)
   DECODE_FT4,       // FT4 decoder (ft8_proto = 1)
   DECODE_SSTV,      // SSTV image decoder (Scottie/Martin)
+  DECODE_WEFAX,     // WEFAX / HF radiofax image decoder
 } decode_mode_t;
 
 typedef struct _radio {
@@ -118,6 +119,11 @@ typedef struct _radio {
   GtkWidget *decode_sel;   // bottom-bar decoder selector combo (Off/FT8/FT4/SSTV)
   GtkWidget *sstv_panel;   // embedded SSTV image panel (NULL unless open in DIGU/DIGL+SSTV)
   gboolean sstv_panel_open;// user toggled the SSTV image panel on (in place of RX2)
+  GtkWidget *wefax_panel;  // embedded WEFAX image panel (NULL unless open in DIGU/DIGL+WEFAX)
+  gboolean wefax_panel_open;// user toggled the WEFAX image panel on (in place of RX2)
+  gint wefax_lpm;          // WEFAX lines per minute (60/90/120/240; default 120)
+  gint wefax_ioc;          // WEFAX Index Of Cooperation (576/288; default 576)
+  gboolean wefax_autostart;// auto-detect the WEFAX start tone (default TRUE)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
@@ -302,6 +308,7 @@ typedef struct _radio {
   GtkWidget *ft8_label;      // bottom-bar FT8 readout (up to 6 decode lines in DIGU)
   GtkWidget *ft8_expand_btn; // bottom-bar toggle: open/close the big FT8 panel (DIGU only)
   GtkWidget *sstv_expand_btn;// bottom-bar toggle: open/close the SSTV image panel (DIGU/DIGL)
+  GtkWidget *wefax_expand_btn;// bottom-bar toggle: open/close the WEFAX image panel (DIGU/DIGL)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
@@ -336,6 +343,7 @@ extern void set_mox(RADIO *r,gboolean state);
 #ifdef FT8
 extern void radio_ft8_panel_sync(RADIO *r);
 extern void radio_sstv_panel_sync(RADIO *r);
+extern void radio_wefax_panel_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

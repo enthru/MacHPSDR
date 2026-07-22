@@ -50,6 +50,7 @@ feature additions.
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
+| **WEFAX** | Receive HF radiofax / weather charts (DWD, Northwood, …) in DIGU/DIGL: continuous scrolling image, auto start-tone detection, auto/manual phasing, LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -120,10 +121,10 @@ de-emphasis / RDS options.
   blank.
 
 - **Decoder selection (DIGU/DIGL).** In the digital modes the Decode block shows
-  a **decoder selector** (right-aligned): **Off / FT8 / FT4 / SSTV**. No decoder
-  runs by default — pick one to start it. FT8/FT4 decode the audio and show the
-  traffic in the Decode block (below); **SSTV** decodes analogue images (see
-  below). The selection is remembered between sessions.
+  a **decoder selector** (right-aligned): **Off / FT8 / FT4 / SSTV / WEFAX**. No
+  decoder runs by default — pick one to start it. FT8/FT4 decode the audio and
+  show the traffic in the Decode block (below); **SSTV** and **WEFAX** decode
+  analogue images (see below). The selection is remembered between sessions.
 
 - **SSTV image reception.** Choose **SSTV** from the Decode-block selector and
   press **Show SSTV** to open the image panel (it takes the second-receiver slot,
@@ -161,6 +162,23 @@ de-emphasis / RDS options.
   that force-unkeys if the TX path stalls. Press **Stop** to abort. The encoder
   is self-contained (no WDSP/FFT) and verified by an encode→decode loop-back
   (Martin M1, Scottie S1, Robot 36/72, PD120 → 8/8 colour bars pixel-correct).
+
+- **WEFAX / HF radiofax reception.** Choose **WEFAX** from the Decode-block
+  selector (in **DIGU/DIGL** — HF fax is USB) and press **Show WEFAX** to open the
+  image panel (it takes the second-receiver slot, like the SSTV/FT8 panels). WEFAX
+  is a *continuous* fax scan (weather charts and satellite images from stations
+  such as DWD Hamburg, Northwood, …), so the picture scrolls as it arrives rather
+  than being a fixed frame. With **Auto-start** on, the transmission's **start
+  tone** (300 Hz for IOC 576 / 675 Hz for IOC 288) begins a fresh page, sets the
+  IOC and seeds the AFC automatically; the **phasing** signal that follows then
+  locks the left margin. If you tune in mid-page, use the **Start** button and
+  **click the image** to set the left margin manually, plus **Slant ±** to
+  deskew. The **LPM** (60/90/**120**/240) and **IOC** (**576**/288) selectors set
+  the line timing (120 lpm / IOC 576 is the weather-fax standard). **Save** writes
+  a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Like SSTV it is
+  self-contained (its own Hilbert-transform FM discriminator, same 1500 Hz =
+  black / 2300 Hz = white tone convention; no WDSP/FFT) and decodes at full audio
+  level regardless of volume/mute.
 
 - **FT8 / FT4 decoding.** Choose **FT8** or **FT4** from the Decode-block selector
   while the active receiver is in **DIGU** (or **DIGL**) — no separate window. The

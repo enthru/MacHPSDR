@@ -69,6 +69,7 @@
 #endif
 #ifdef SSTV
 #include "sstv_decoder.h"
+#include "wefax_decoder.h"
 #endif
 // Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
 // gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
@@ -1727,6 +1728,7 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
   // SSB-only (DIGU/DIGL).
   if(radio->decode_mode==DECODE_SSTV)
     return rx->mode_a==DIGU || rx->mode_a==DIGL || rx->mode_a==FMN;
+  // WEFAX/FT8/FT4 are HF SSB-only (DIGU/DIGL).
   return rx->mode_a==DIGU || rx->mode_a==DIGL;
 }
 #endif
@@ -1863,6 +1865,13 @@ static void process_rx_buffer(RECEIVER *rx) {
                        radio->decode_mode==DECODE_SSTV;
     sstv_decoder_set_enabled(sstv_on);
     if(sstv_on) sstv_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
+
+    // WEFAX / HF radiofax decoder tap (same one-place enable/disable). HF USB
+    // only (DIGU/DIGL).
+    gboolean wefax_on = (rx->mode_a==DIGU || rx->mode_a==DIGL) &&
+                        radio->decode_mode==DECODE_WEFAX;
+    wefax_decoder_set_enabled(wefax_on);
+    if(wefax_on) wefax_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
   }
 #endif
 }

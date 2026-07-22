@@ -93,16 +93,17 @@ ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \
 ft8_lib/common/monitor.o
 endif
 
-# SSTV receive decoder (analogue image, Scottie/Martin).  Self-contained (its own
-# Hilbert-transform FM discriminator; no external DSP dependency).  Comment out
-# SSTV_INCLUDE to build without SSTV support.
+# SSTV receive decoder (analogue image, Scottie/Martin) + WEFAX / HF radiofax
+# receive decoder.  Self-contained (their own Hilbert-transform FM discriminator;
+# no external DSP dependency).  Comment out SSTV_INCLUDE to build without SSTV /
+# WEFAX support.
 SSTV_INCLUDE=SSTV
 
 ifeq ($(SSTV_INCLUDE),SSTV)
 SSTV_OPTIONS=-D SSTV
-SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c
-SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h
-SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o
+SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o
 endif
 
 
