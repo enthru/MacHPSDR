@@ -178,7 +178,11 @@ de-emphasis / RDS options.
   ever want to do it by hand, untick **Auto-phase** and **click the image** to set
   the left margin, use **Start** to begin a page, and **Slant ±** to deskew. The
   **LPM** (60/90/**120**/240) and **IOC** (**576**/288) selectors set the line
-  timing (120 lpm / IOC 576 is the weather-fax standard, and the default). **Save**
+  timing (120 lpm / IOC 576 is the weather-fax standard, and the default). Two
+  more automatic quality helpers run by default: an **auto-exposure AFC** anchors
+  the white background to the correct level (so mistuning or drift can't wash the
+  picture grey), and **Denoise** removes impulse-noise specks while keeping the
+  thin chart lines — untick it for a completely raw image. **Save**
   writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Tune the
   station in **DIGU/USB** ~1.9 kHz below its assigned frequency so black lands on
   1500 Hz / white on 2300 Hz. Like SSTV it is

@@ -61,6 +61,7 @@ static volatile int      p_lpm = 120;
 static volatile int      p_ioc = 576;
 static volatile gboolean p_autostart = TRUE;
 static volatile gboolean p_autophase = TRUE;  // continuous auto-phasing (self-align)
+static volatile gboolean p_denoise   = TRUE;  // conditional-median despeckle
 static volatile gboolean start_req = FALSE;   // manual Start button
 static volatile gboolean reset_req = FALSE;
 static volatile double   slant_ppm = 0.0;     // slant/clock trim (GTK adds)
@@ -103,6 +104,15 @@ static float   col_energy[IMG_W];
 static gboolean phase_locked = FALSE;      // the servo has found a stable reference
 static int     acq_lines = 0;              // lines accumulated during acquisition
 
+// One-time white-anchored AFC (see decode_line): a coarse frequency histogram
+// over the first lines of a page; its dominant bin is the white background.
+#define AFC_FMIN   1200.0
+#define AFC_BINHZ  20.0
+#define AFC_BINS   70                       // 1200..2600 Hz
+static int     freq_hist[AFC_BINS];
+static int     afc_lines = 0;
+static gboolean afc_done = FALSE;
+
 // image buffer (mutex protected)
 static GMutex  lock;
 static guint8  img[IMG_W * BUF_H * 3];
@@ -133,6 +143,7 @@ static void do_reset(void) {
   st_lo_sum = st_hi_sum = 0.0; st_lo_n = st_hi_n = 0;
   st_blk_n = st_black_n = st_white_n = 0; start_cooldown = 0;
   memset(col_energy, 0, sizeof(col_energy)); phase_locked = FALSE; acq_lines = 0;
+  memset(freq_hist, 0, sizeof(freq_hist)); afc_lines = 0; afc_done = FALSE;
   g_mutex_lock(&lock);
   memset(img, 0, sizeof(img));
   cur_row = 0; filled = 0;
@@ -153,6 +164,12 @@ void wefax_decoder_set_lpm(int lpm)  { if (lpm > 0) p_lpm = lpm; }
 void wefax_decoder_set_ioc(int ioc)  { if (ioc > 0) p_ioc = ioc; }
 void wefax_decoder_set_autostart(gboolean on) { p_autostart = on; }
 void wefax_decoder_set_autophase(gboolean on) { p_autophase = on; }
+void wefax_decoder_set_denoise(gboolean on) { p_denoise = on; }
+
+static int cmp_double(const void *a, const void *b) {
+  double x = *(const double *)a, y = *(const double *)b;
+  return (x > y) - (x < y);
+}
 void wefax_decoder_start(void) { start_req = TRUE; }
 void wefax_decoder_reset(void) { reset_req = TRUE; }
 void   wefax_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
@@ -202,6 +219,7 @@ static void begin_page(const char *why) {
   line_start_d = (double)ring_w;
   phasing_until = ring_w + (long)(PHASING_MS * SR / 1000.0);
   memset(col_energy, 0, sizeof(col_energy)); phase_locked = FALSE; acq_lines = 0;
+  memset(freq_hist, 0, sizeof(freq_hist)); afc_lines = 0; afc_done = FALSE;
 }
 
 // Decode one scan line starting at absolute sample L, spanning line_len samples,
@@ -210,9 +228,51 @@ static void decode_line(long L, double line_len) {
   double psmp = line_len / (double)IMG_W;
   int navg = (int)(psmp * 0.6); if (navg < 1) navg = 1;
   static float row[IMG_W];
+  static double rawf[IMG_W];
   for (int x = 0; x < IMG_W; x++) {
     double c = (double)L + (x + 0.5) * psmp;
-    row[x] = (float)freq2val(fr_mean((long)(c) - navg / 2, navg));
+    double fm = fr_mean((long)(c) - navg / 2, navg);
+    rawf[x] = fm;
+    row[x] = (float)freq2val(fm);
+  }
+
+  // One-time white-anchored AFC.  A weather chart is predominantly white
+  // background, so the dominant frequency over the first ~24 lines is the white
+  // level; anchor it to 2300 Hz once, then freeze.  This corrects mistuning /
+  // drift (which would otherwise wash the picture lighter or darker) without a
+  // continuous loop that would chase noise during fades.  Skipped when the AFC
+  // was already seeded by a start tone (afc_done set there).
+  if (!afc_done) {
+    for (int x = 0; x < IMG_W; x++) {
+      int b = (int)((rawf[x] - AFC_FMIN) / AFC_BINHZ);
+      if (b >= 0 && b < AFC_BINS) freq_hist[b]++;
+    }
+    if (++afc_lines >= 24) {
+      int pk = 0; for (int b = 1; b < AFC_BINS; b++) if (freq_hist[b] > freq_hist[pk]) pk = b;
+      double white = AFC_FMIN + (pk + 0.5) * AFC_BINHZ;
+      if (white > 1900.0 && white < 2700.0) {           // a plausible white level
+        double off = white - F_WHITE;
+        if (off >  400.0) off =  400.0;
+        if (off < -400.0) off = -400.0;
+        freq_offset = off;
+      }
+      afc_done = TRUE;
+    }
+  }
+
+  // Conditional-median despeckle: replace only pixels that are an isolated spike
+  // vs BOTH neighbours (FM click / impulse noise) — real edges and thin lines
+  // (which agree with one neighbour) are left untouched.
+  if (p_denoise) {
+    static float sp[IMG_W];
+    memcpy(sp, row, sizeof(float) * IMG_W);
+    for (int x = 1; x < IMG_W - 1; x++) {
+      float a = sp[x - 1], b = sp[x], d = sp[x + 1];
+      if (fabsf(b - a) > 50.0f && fabsf(b - d) > 50.0f && ((b > a) == (b > d))) {
+        float mn = a < d ? a : d, mx = a < d ? d : a;      // median of {a,b,d}
+        row[x] = b < mn ? mn : (b > mx ? mx : b);
+      }
+    }
   }
 
   // Write the greyscale row.
@@ -343,6 +403,7 @@ void wefax_decoder_add_audio(const gdouble *samples, int nframes) {
         p_ioc = st_match_cls;
         log_info("WEFAX: start tone detected (IOC %d, AFC %+.0f Hz)\n", p_ioc, freq_offset);
         begin_page("start tone");
+        afc_done = TRUE;   // trust the start-tone AFC seed; skip the histogram estimate
         // A full page is minutes long, so suppress any re-trigger for a while —
         // this covers the rest of this start tone and its phasing, while still
         // catching the next chart's start tone.

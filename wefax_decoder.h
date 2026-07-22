@@ -60,6 +60,10 @@ void wefax_decoder_set_autostart(gboolean on);
 // click-to-phase.
 void wefax_decoder_set_autophase(gboolean on);
 
+// Conditional-median despeckle (default on): removes isolated impulse-noise
+// pixels while preserving real edges / thin lines.
+void wefax_decoder_set_denoise(gboolean on);
+
 // Manual controls (GTK thread).  Start begins a fresh page now (as if a start
 // tone was seen); reset clears the image.
 void wefax_decoder_start(void);
