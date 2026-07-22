@@ -73,4 +73,9 @@ void sstv_decoder_reset(void);
 void   sstv_decoder_adjust_slant(double dppm);
 double sstv_decoder_get_slant(void);
 
+// Measured audio-frequency offset (AFC), in Hz — how far the received tones sit
+// from nominal (mistuning / Doppler).  ~0 when tuned; a growing value tells the
+// operator to nudge the dial.  Corrected automatically in the decode.
+double sstv_decoder_get_afc(void);
+
 #endif

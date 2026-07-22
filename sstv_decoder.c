@@ -127,6 +127,7 @@ static long    tx_line = 0;                 // transmitted-line index (PD: 2 row
 static long    line_samples = 0;            // samples per transmitted line (auto-slant adapts)
 static long    nominal_line = 0;            // the un-adapted line period (auto-slant reference)
 static double  clock_scale = 1.0;           // measured pixel-clock correction (auto-slant)
+static double  freq_offset = 0.0;           // measured audio-frequency offset (AFC, Hz)
 static int     img_w = 320, img_h = 256;    // current mode geometry
 
 // Robot 36 chroma pairing (a chroma line is shared by two image rows).
@@ -186,6 +187,7 @@ void sstv_decoder_reset(void) { reset_req = TRUE; }
 
 void   sstv_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
 double sstv_decoder_get_slant(void) { return slant_ppm; }
+double sstv_decoder_get_afc(void) { return freq_offset; }
 
 // --- ring access -----------------------------------------------------------
 static inline float fr_at(long abs) {
@@ -205,7 +207,10 @@ static inline double ms2smp(double ms) { return ms * SR / 1000.0; }
 
 // Map a scan frequency to a 0..255 value (1500 Hz→0 .. 2300 Hz→255).
 static inline double freq2val(double f) {
-  double v = (f - F_BLACK) / (F_WHITE - F_BLACK) * 255.0;
+  // Subtract the measured audio-frequency offset (AFC): mistuning / ISS Doppler
+  // shifts every tone equally, so without this the whole picture washes lighter
+  // or darker (1500 Hz black would land off the 0 end of the scale).
+  double v = (f - freq_offset - F_BLACK) / (F_WHITE - F_BLACK) * 255.0;
   if (v < 0.0)   v = 0.0;
   if (v > 255.0) v = 255.0;
   return v;
@@ -244,13 +249,14 @@ static const sstv_mode_t *decode_vis(void) {
 // if no clear sync is found returns `pred` (free-run).
 static long locate_sync(long pred, int win) {
   int syncn = (int)ms2smp(mode->sync_ms);
+  double target = F_SYNC + freq_offset;         // AFC-corrected sync frequency
   double best = 1e9; long bestpos = pred; gboolean found = FALSE;
   int step = 4;
   for (int d = -win; d <= win; d += step) {
     long p = pred + d;
     if (p < 0 || p + syncn >= ring_w) continue;
     double m = 0.0;
-    for (int i = 0; i < syncn; i += 2) m += fabs(fr_at(p + i) - F_SYNC);
+    for (int i = 0; i < syncn; i += 2) m += fabs(fr_at(p + i) - target);
     m /= (syncn / 2);
     if (m < best) { best = m; bestpos = p; found = TRUE; }
   }
@@ -421,6 +427,7 @@ static void start_decode(const sstv_mode_t *m, long sync0) {
   img_w = m->width; img_h = m->height;
   line_samples = (long)ms2smp(line_period_ms());
   nominal_line = line_samples; clock_scale = 1.0;   // reset auto-slant servo
+  freq_offset = 0.0;                                // reset AFC
   sync0_abs = sync0;
   cur_line = 0; tx_line = 0;
   r36_have_cr = FALSE; r36_row_prev = -1;
@@ -514,11 +521,16 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
     if (forced_vis && state == ST_HUNT) {
       const sstv_mode_t *m = mode_by_vis(forced_vis);
       if (m != NULL) {
-        if (fabs(f - F_SYNC) < 120.0) sync_run++; else sync_run = 0;
+        // Wide (±250 Hz) sync gate so a mistuned / Doppler-shifted carrier is
+        // still caught — the sync is the only tone below the 1500 Hz black
+        // level, so the band can't be tripped by image content or the porch.
+        if (fabs(f - F_SYNC) < 250.0) sync_run++; else sync_run = 0;
         if (sync_run >= (int)ms2smp(m->sync_ms * 0.7)) {
           long s0 = n - sync_run + 1;   // start of this sync pulse = line-0 ref
+          double sf = fr_mean(s0, sync_run);
           sync_run = 0;
           start_decode(m, s0);
+          freq_offset = sf - F_SYNC;    // seed AFC from the anchoring sync
         }
       }
     }
@@ -544,6 +556,15 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
           if (line_samples < (long)(nominal_line * 0.95)) line_samples = (long)(nominal_line * 0.95);
           if (line_samples > (long)(nominal_line * 1.05)) line_samples = (long)(nominal_line * 1.05);
           clock_scale = (double)line_samples / (double)nominal_line;
+        }
+        // AFC: the located sync pulse is a known 1200 Hz reference, so its mean
+        // frequency measures the audio offset (mistuning / Doppler).  Track it
+        // slowly and only when the reading is a plausible sync, so a free-run
+        // line can't poison the brightness correction.
+        if (tx_line > 0) {
+          double sf = fr_mean(sync, (int)ms2smp(mode->sync_ms));
+          if (fabs(sf - (F_SYNC + freq_offset)) < 200.0)
+            freq_offset += 0.10 * (sf - F_SYNC - freq_offset);
         }
         sync0_abs = sync - (long)((double)tx_line * line_samples);  // re-lock
         tx_line++;

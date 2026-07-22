@@ -142,8 +142,10 @@ de-emphasis / RDS options.
   override (Auto + every mode) also helps with weak
   or missing VIS headers, an automatic
   slant corrector (the picture de-slants itself from the sync timing) with a
-  manual **Slant ±** trim on top, and **Save** (writes a PNG to
-  `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
+  manual **Slant ±** trim on top, **automatic frequency correction** (AFC — the
+  picture stays correctly exposed and in sync as the ISS Doppler drifts, and the
+  status shows the measured offset so you know when to nudge the dial), and
+  **Save** (writes a PNG to `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
   FT8, runs at full audio level regardless of the volume/mute so you can decode
   silently.

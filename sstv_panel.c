@@ -19,6 +19,7 @@
 
 #include <gtk/gtk.h>
 #include <time.h>
+#include <math.h>
 
 #include "sstv_panel.h"
 #include "sstv_decoder.h"
@@ -75,8 +76,12 @@ static gboolean tick(gpointer data) {
   sstv_decoder_get_status(&st);
 
   if (strcmp(st.status, p->last_status) != 0 || st.line != p->last_line) {
-    char buf[128];
-    g_snprintf(buf, sizeof(buf), "%s   %d%%", st.status, st.progress);
+    char buf[160];
+    double afc = sstv_decoder_get_afc();
+    if (st.receiving && fabs(afc) >= 30.0)   // hint the operator to nudge the dial
+      g_snprintf(buf, sizeof(buf), "%s   %d%%   (AFC %+.0f Hz)", st.status, st.progress, afc);
+    else
+      g_snprintf(buf, sizeof(buf), "%s   %d%%", st.status, st.progress);
     gtk_label_set_text(GTK_LABEL(p->status), buf);
     g_strlcpy(p->last_status, st.status, sizeof(p->last_status));
     p->last_line = st.line;
@@ -104,11 +109,12 @@ static void update_slant(SstvPanel *p) {
   gtk_label_set_text(GTK_LABEL(p->slant_lbl), b);
 }
 
+// Fine manual trim on top of the decoder's automatic slant correction.
 static void slant_minus(GtkButton *b, gpointer data) {
-  SstvPanel *p = data; sstv_decoder_adjust_slant(-100.0); update_slant(p);
+  SstvPanel *p = data; sstv_decoder_adjust_slant(-20.0); update_slant(p);
 }
 static void slant_plus(GtkButton *b, gpointer data) {
-  SstvPanel *p = data; sstv_decoder_adjust_slant(+100.0); update_slant(p);
+  SstvPanel *p = data; sstv_decoder_adjust_slant(+20.0); update_slant(p);
 }
 
 static void clear_clicked(GtkButton *b, gpointer data) {
