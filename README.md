@@ -49,7 +49,7 @@ feature additions.
 | **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
-| **SSTV** | Receive analogue SSTV images (Martin M1/M2, Scottie S1/S2/DX) with VIS auto-detect, an embedded image panel and PNG save. |
+| **SSTV** | Receive analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel and PNG save. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -124,9 +124,11 @@ de-emphasis / RDS options.
   **DIGU** (or **DIGL**) and press **Show SSTV** to open the image panel (it takes
   the second-receiver slot, like the FT8 panel). The decoder auto-detects the
   transmission mode from its VIS header and paints the picture line-by-line as it
-  arrives. Supported modes: **Martin M1/M2** and **Scottie S1/S2/DX** — the
-  GBR-sequential family that dominates HF SSTV (e.g. the 14.230 MHz calling
-  frequency). The panel has a **Mode** override (Auto + the five modes) for weak
+  arrives. Supported modes: **Martin M1/M2**, **Scottie S1/S2/DX** (GBR — the HF
+  workhorses, e.g. the 14.230 MHz calling frequency), **Robot 36/72** and
+  **PD50/90/120/160/180/240** (YUV colour). This covers **ISS SSTV** — **Robot 36**
+  (MAI-75) and **PD120** (ARISS commemorative events). The panel has a **Mode**
+  override (Auto + every mode) for weak
   or missing VIS headers, a **Slant ±** trim, and **Save** (writes a PNG to
   `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like

@@ -27,8 +27,15 @@
 #define REFRESH_MS 200          // ~5 fps
 
 // Mode combo entries → VIS codes (index-aligned with the combo appends below).
-static const int MODE_VIS[] = { 0, 44, 40, 60, 56, 76 };
-#define N_MODE_ENTRIES (int)(sizeof(MODE_VIS) / sizeof(MODE_VIS[0]))
+static const struct { const char *name; int vis; } MODE_ENTRIES[] = {
+  { "Auto",       0 },
+  { "Martin M1",  44 }, { "Martin M2",  40 },
+  { "Scottie S1", 60 }, { "Scottie S2", 56 }, { "Scottie DX", 76 },
+  { "Robot 36",    8 }, { "Robot 72",   12 },
+  { "PD50",       93 }, { "PD90",       99 }, { "PD120",      95 },
+  { "PD160",      98 }, { "PD180",      96 }, { "PD240",      97 },
+};
+#define N_MODE_ENTRIES (int)(sizeof(MODE_ENTRIES) / sizeof(MODE_ENTRIES[0]))
 
 typedef struct {
   GtkWidget *area;          // image drawing area
@@ -88,7 +95,7 @@ static gboolean tick(gpointer data) {
 static void mode_changed(GtkComboBox *combo, gpointer data) {
   int idx = gtk_combo_box_get_active(combo);
   if (idx < 0 || idx >= N_MODE_ENTRIES) idx = 0;
-  sstv_decoder_set_mode(MODE_VIS[idx]);
+  sstv_decoder_set_mode(MODE_ENTRIES[idx].vis);
 }
 
 static void update_slant(SstvPanel *p) {
@@ -142,12 +149,8 @@ GtkWidget *sstv_panel_create(void) {
   // Toolbar row.
   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
   GtkWidget *mode = gtk_combo_box_text_new();
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Auto");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Martin M1");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Martin M2");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Scottie S1");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Scottie S2");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "Scottie DX");
+  for (int i = 0; i < N_MODE_ENTRIES; i++)
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), MODE_ENTRIES[i].name);
   gtk_combo_box_set_active(GTK_COMBO_BOX(mode), 0);
   g_signal_connect(mode, "changed", G_CALLBACK(mode_changed), p);
   gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("Mode:"), FALSE, FALSE, 0);

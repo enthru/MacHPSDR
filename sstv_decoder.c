@@ -26,8 +26,8 @@
 #include "log.h"
 
 #define SR              48000.0    // demod audio sample rate (Hz)
-#define F_BLACK         1500.0     // black level
-#define F_WHITE         2300.0     // white level
+#define F_BLACK         1500.0     // black / colour-0 level
+#define F_WHITE         2300.0     // white / colour-255 level
 #define F_SYNC          1200.0     // sync / VIS start-stop tone
 
 // ---- Hilbert-transform FM discriminator -----------------------------------
@@ -37,38 +37,59 @@
 #define HIL_C           ((HIL - 1) / 2)
 
 // ---- instantaneous-frequency ring ------------------------------------------
-// Holds a little over one line of Scottie DX (~1050 ms ≈ 50k samples); sized as
-// a power of two so the modulo is a mask.  All decoding indexes absolute sample
-// positions into this ring.
+// Holds a little over one line of the slowest mode (Scottie DX ~1050 ms, PD240
+// ~1000 ms).  Power of two so the modulo is a mask.
 #define FR_BITS         17
 #define FR_CAP          (1 << FR_BITS)     // 131072 samples ≈ 2.7 s
 #define FR_MASK         (FR_CAP - 1)
 
+// ---- image geometry --------------------------------------------------------
+#define MAX_W           640        // widest supported mode (PD120/180/240)
+#define MAX_H           496        // tallest supported mode (PD120/180/240)
+
 // ---- mode table ------------------------------------------------------------
-typedef enum { FAM_MARTIN, FAM_SCOTTIE } sstv_family_t;
+// Families differ in line structure / colourspace:
+//   MARTIN/SCOTTIE : GBR sequential (three direct R/G/B scans per line)
+//   ROBOT36        : Y each line + alternating R-Y / B-Y (4:2:0, chroma shared)
+//   ROBOT72        : Y + R-Y + B-Y each line (4:2:2)
+//   PD             : two image rows per line — Y0, R-Y, B-Y, Y1 (4:2:0)
+typedef enum { FAM_MARTIN, FAM_SCOTTIE, FAM_ROBOT36, FAM_ROBOT72, FAM_PD } sstv_family_t;
 
 typedef struct {
   int           vis;
   const char   *name;
   sstv_family_t family;
-  double        pixel_ms;   // per-pixel scan time
-  double        sync_ms;    // horizontal sync pulse length
-  double        sep_ms;     // separator / porch length
   int           width, height;
+  double        sync_ms;    // horizontal sync pulse
+  double        porch_ms;   // porch after sync
+  double        y_ms;       // luminance / colour scan duration per line
+  double        c_ms;       // chroma scan duration (0 for GBR — uses y_ms)
+  double        sep_ms;     // separator length (GBR sep / Robot Y-chroma sep)
 } sstv_mode_t;
 
-// GBR-sequential modes.  pixel/sync/sep times are the standard N7CXI values.
 static const sstv_mode_t MODES[] = {
-  { 44, "Martin M1",  FAM_MARTIN,  0.457600, 4.862, 0.572, 320, 256 },
-  { 40, "Martin M2",  FAM_MARTIN,  0.228800, 4.862, 0.572, 320, 256 },
-  { 60, "Scottie S1", FAM_SCOTTIE, 0.432000, 9.000, 1.500, 320, 256 },
-  { 56, "Scottie S2", FAM_SCOTTIE, 0.275200, 9.000, 1.500, 320, 256 },
-  { 76, "Scottie DX", FAM_SCOTTIE, 1.080000, 9.000, 1.500, 320, 256 },
+  // GBR sequential (N7CXI timings)
+  { 44, "Martin M1",  FAM_MARTIN,  320, 256, 4.862, 0.572, 146.432,   0.0, 0.572 },
+  { 40, "Martin M2",  FAM_MARTIN,  320, 256, 4.862, 0.572,  73.216,   0.0, 0.572 },
+  { 60, "Scottie S1", FAM_SCOTTIE, 320, 256, 9.000, 1.500, 138.240,   0.0, 1.500 },
+  { 56, "Scottie S2", FAM_SCOTTIE, 320, 256, 9.000, 1.500,  88.064,   0.0, 1.500 },
+  { 76, "Scottie DX", FAM_SCOTTIE, 320, 256, 9.000, 1.500, 345.600,   0.0, 1.500 },
+  // Robot colour (YUV)
+  {  8, "Robot 36",   FAM_ROBOT36, 320, 240, 9.000, 3.000,  88.000,  44.0, 4.500 },
+  { 12, "Robot 72",   FAM_ROBOT72, 320, 240, 9.000, 3.000, 138.000,  69.0, 4.500 },
+  // PD (YUV, two rows per line)
+  { 93, "PD50",       FAM_PD,      320, 256, 20.00, 2.080,  91.520,   0.0, 0.0 },
+  { 99, "PD90",       FAM_PD,      320, 256, 20.00, 2.080, 170.240,   0.0, 0.0 },
+  { 95, "PD120",      FAM_PD,      640, 496, 20.00, 2.080, 121.7536,  0.0, 0.0 },
+  { 98, "PD160",      FAM_PD,      512, 400, 20.00, 2.080, 195.584,   0.0, 0.0 },
+  { 96, "PD180",      FAM_PD,      640, 496, 20.00, 2.080, 183.040,   0.0, 0.0 },
+  { 97, "PD240",      FAM_PD,      640, 496, 20.00, 2.080, 244.480,   0.0, 0.0 },
 };
 #define N_MODES (int)(sizeof(MODES) / sizeof(MODES[0]))
 
-#define IMG_W 320
-#define IMG_H 256
+// PD chroma porch (1900 Hz) sits between Robot's Y separator and the chroma; the
+// Robot chroma porch is a fixed 1.5 ms.
+#define ROBOT_CPORCH_MS 1.5
 
 // ---- state (audio-thread owned, unless noted) ------------------------------
 static gboolean enabled = FALSE;
@@ -99,13 +120,20 @@ static sstv_state_t state = ST_HUNT;
 static const sstv_mode_t *mode = NULL;
 static double  slant_ppm = 0.0;             // clock/slant trim (GTK thread sets)
 static long    sync0_abs = 0;               // located sync of line 0
-static long    prev_sync_abs = 0;           // last located sync (for snapping)
-static int     cur_line = 0;
-static long    line_samples = 0;            // nominal samples per line period
+static int     cur_line = 0;                // next image ROW to write
+static long    tx_line = 0;                 // transmitted-line index (PD: 2 rows each)
+static long    line_samples = 0;            // nominal samples per transmitted line
+static int     img_w = 320, img_h = 256;    // current mode geometry
+
+// Robot 36 chroma pairing (a chroma line is shared by two image rows).
+static float   r36_cr[MAX_W];
+static float   r36_y_prev[MAX_W];
+static int     r36_row_prev = -1;
+static gboolean r36_have_cr = FALSE;
 
 // shared image + status (mutex protected)
 static GMutex  lock;
-static guint8  img[IMG_W * IMG_H * 3];
+static guint8  img[MAX_W * MAX_H * 3];
 static sstv_status_t ui;                    // published status
 
 // --------------------------------------------------------------------------
@@ -131,10 +159,12 @@ static void do_reset(void) {
   ring_w = 0;
   run1900 = run1200 = 0; leader_ok = FALSE; vis_pending = FALSE;
   state = ST_HUNT; mode = NULL; cur_line = 0;
+  r36_have_cr = FALSE; r36_row_prev = -1;
+  img_w = 320; img_h = 256;
   g_mutex_lock(&lock);
   memset(img, 0, sizeof(img));
   ui.receiving = FALSE; ui.vis = 0; ui.mode_name[0] = '\0';
-  ui.width = IMG_W; ui.height = IMG_H; ui.line = 0; ui.progress = 0;
+  ui.width = img_w; ui.height = img_h; ui.line = 0; ui.progress = 0;
   set_status("Waiting for SSTV…");
   g_mutex_unlock(&lock);
 }
@@ -169,9 +199,14 @@ static double fr_mean(long a, int n) {
 
 static inline double ms2smp(double ms) { return ms * SR / 1000.0; }
 
-// Map a scan frequency to an 8-bit intensity (1500 Hz→0 .. 2300 Hz→255).
-static inline guint8 freq2lum(double f) {
+// Map a scan frequency to a 0..255 value (1500 Hz→0 .. 2300 Hz→255).
+static inline double freq2val(double f) {
   double v = (f - F_BLACK) / (F_WHITE - F_BLACK) * 255.0;
+  if (v < 0.0)   v = 0.0;
+  if (v > 255.0) v = 255.0;
+  return v;
+}
+static inline guint8 clamp8(double v) {
   if (v < 0.0)   v = 0.0;
   if (v > 255.0) v = 255.0;
   return (guint8)(v + 0.5);
@@ -201,13 +236,12 @@ static const sstv_mode_t *decode_vis(void) {
 }
 
 // --- per-line sync locating ------------------------------------------------
-// Find the sync pulse near predicted position `pred` (abs).  Returns the abs
-// sample of the sync leading edge, snapped within ±win; if no clear sync is
-// found returns `pred` (free-run).
+// Find the sync pulse near predicted position `pred` (abs), snapped within ±win;
+// if no clear sync is found returns `pred` (free-run).
 static long locate_sync(long pred, int win) {
   int syncn = (int)ms2smp(mode->sync_ms);
   double best = 1e9; long bestpos = pred; gboolean found = FALSE;
-  int step = 4;                                    // coarse search step
+  int step = 4;
   for (int d = -win; d <= win; d += step) {
     long p = pred + d;
     if (p < 0 || p + syncn >= ring_w) continue;
@@ -216,46 +250,163 @@ static long locate_sync(long pred, int win) {
     m /= (syncn / 2);
     if (m < best) { best = m; bestpos = p; found = TRUE; }
   }
-  // Accept only a genuinely sync-like match; otherwise trust the prediction.
   if (found && best < 120.0) return bestpos;
   return pred;
 }
 
-// Sample one color channel of the current line into a row buffer.
-static void scan_channel(long sync, double off_ms, double pixel_smp,
-                         guint8 *dst, int stride) {
+// Pixel clock for this mode (with the slant trim applied).
+static double pixel_smp(double scan_ms, int n) {
+  return ms2smp(scan_ms) * (1.0 + slant_ppm / 1e6) / n;
+}
+
+// Sample one scan (from `sync` + off_ms, `n` pixels of `psmp` samples each) into
+// a 0..255 float row.
+static void scan_row(long sync, double off_ms, double psmp, int n, float *out) {
   double start = sync + ms2smp(off_ms);
-  int navg = (int)(pixel_smp * 0.5);
-  if (navg < 1) navg = 1;
-  for (int x = 0; x < IMG_W; x++) {
-    long c = (long)(start + (x + 0.5) * pixel_smp);
-    double f = fr_mean(c - navg / 2, navg);
-    dst[x * stride] = freq2lum(f);
+  int navg = (int)(psmp * 0.5); if (navg < 1) navg = 1;
+  for (int x = 0; x < n; x++) {
+    long c = (long)(start + (x + 0.5) * psmp);
+    out[x] = (float)freq2val(fr_mean(c - navg / 2, navg));
   }
 }
 
-// Decode line `cur_line` given its located sync, write it into img.
-static void decode_line(long sync) {
-  double pixel_smp = ms2smp(mode->pixel_ms) * (1.0 + slant_ppm / 1e6);
-  double channel_ms = mode->pixel_ms * IMG_W;
+// Write an RGB row directly (caller holds the lock).
+static void put_rgb_row(int row, const float *R, const float *G, const float *B) {
+  if (row < 0 || row >= img_h) return;
+  guint8 *p = &img[row * img_w * 3];
+  for (int x = 0; x < img_w; x++) {
+    p[x*3+0] = clamp8(R[x]); p[x*3+1] = clamp8(G[x]); p[x*3+2] = clamp8(B[x]);
+  }
+}
+
+// Write a YUV row (Y, R-Y=Cr, B-Y=Cb, full-range BT.601).  Caller holds lock.
+static void put_yuv_row(int row, const float *Y, const float *Cr, const float *Cb) {
+  if (row < 0 || row >= img_h) return;
+  guint8 *p = &img[row * img_w * 3];
+  for (int x = 0; x < img_w; x++) {
+    double y = Y[x], v = Cr[x] - 128.0, u = Cb[x] - 128.0;
+    p[x*3+0] = clamp8(y + 1.402 * v);
+    p[x*3+1] = clamp8(y - 0.344 * u - 0.714 * v);
+    p[x*3+2] = clamp8(y + 1.772 * u);
+  }
+}
+
+// --- per-family line decoders ----------------------------------------------
+static void decode_gbr(long sync) {
+  int w = img_w;
+  double ch = mode->y_ms, sep = mode->sep_ms, porch = mode->porch_ms;
+  double psmp = pixel_smp(ch, w);
   double g_off, b_off, r_off;
   if (mode->family == FAM_MARTIN) {
-    g_off = mode->sync_ms + mode->sep_ms;
-    b_off = g_off + channel_ms + mode->sep_ms;
-    r_off = b_off + channel_ms + mode->sep_ms;
+    g_off = mode->sync_ms + porch;
+    b_off = g_off + ch + sep;
+    r_off = b_off + ch + sep;
   } else { // Scottie: green/blue precede the sync, red follows it
-    g_off = -(2.0 * channel_ms + mode->sep_ms);
-    b_off = -channel_ms;
-    r_off = mode->sync_ms + mode->sep_ms;
+    g_off = -(2.0 * ch + sep);
+    b_off = -ch;
+    r_off = mode->sync_ms + porch;
   }
-  guint8 *row = &img[cur_line * IMG_W * 3];
+  float R[MAX_W], G[MAX_W], B[MAX_W];
+  scan_row(sync, g_off, psmp, w, G);
+  scan_row(sync, b_off, psmp, w, B);
+  scan_row(sync, r_off, psmp, w, R);
   g_mutex_lock(&lock);
-  scan_channel(sync, g_off, pixel_smp, row + 1, 3);  // G
-  scan_channel(sync, b_off, pixel_smp, row + 2, 3);  // B
-  scan_channel(sync, r_off, pixel_smp, row + 0, 3);  // R
-  ui.line = cur_line;
-  ui.progress = (cur_line + 1) * 100 / IMG_H;
+  put_rgb_row(cur_line, R, G, B);
+  ui.line = cur_line; ui.progress = (cur_line + 1) * 100 / img_h;
   g_mutex_unlock(&lock);
+  cur_line++;
+}
+
+static void decode_robot72(long sync) {
+  int w = img_w;
+  double base = mode->sync_ms + mode->porch_ms;
+  double yp = pixel_smp(mode->y_ms, w), cp = pixel_smp(mode->c_ms, w);
+  double ry_off = base + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS;
+  double by_off = ry_off + mode->c_ms + mode->sep_ms + ROBOT_CPORCH_MS;
+  float Y[MAX_W], Cr[MAX_W], Cb[MAX_W];
+  scan_row(sync, base,   yp, w, Y);
+  scan_row(sync, ry_off, cp, w, Cr);
+  scan_row(sync, by_off, cp, w, Cb);
+  g_mutex_lock(&lock);
+  put_yuv_row(cur_line, Y, Cr, Cb);
+  ui.line = cur_line; ui.progress = (cur_line + 1) * 100 / img_h;
+  g_mutex_unlock(&lock);
+  cur_line++;
+}
+
+static void decode_robot36(long sync) {
+  int w = img_w;
+  double base = mode->sync_ms + mode->porch_ms;
+  double yp = pixel_smp(mode->y_ms, w), cp = pixel_smp(mode->c_ms, w);
+  double c_off = base + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS;
+  // The Y/chroma separator frequency encodes which chroma this line carries:
+  // ~1500 Hz → R-Y (Cr), ~2300 Hz → B-Y (Cb).
+  double sepf = fr_mean(sync + (long)ms2smp(base + mode->y_ms + mode->sep_ms * 0.5),
+                        (int)ms2smp(mode->sep_ms * 0.5));
+  float Y[MAX_W], C[MAX_W];
+  scan_row(sync, base,  yp, w, Y);
+  scan_row(sync, c_off, cp, w, C);
+  gboolean is_cr = (sepf < 1900.0);
+  g_mutex_lock(&lock);
+  if (is_cr) {
+    memcpy(r36_cr, C, sizeof(float) * w);
+    memcpy(r36_y_prev, Y, sizeof(float) * w);
+    r36_row_prev = cur_line;
+    r36_have_cr = TRUE;
+  } else {
+    const float *cr = r36_have_cr ? r36_cr : C;   // fallback: reuse this chroma
+    if (r36_have_cr) put_yuv_row(r36_row_prev, r36_y_prev, cr, C);
+    put_yuv_row(cur_line, Y, cr, C);
+    r36_have_cr = FALSE;
+  }
+  ui.line = cur_line; ui.progress = (cur_line + 1) * 100 / img_h;
+  g_mutex_unlock(&lock);
+  cur_line++;
+}
+
+static void decode_pd(long sync) {
+  int w = img_w;
+  double base = mode->sync_ms + mode->porch_ms;
+  double sc = mode->y_ms;
+  double psmp = pixel_smp(sc, w);
+  double y0_off = base;
+  double ry_off = base + sc;
+  double by_off = base + 2.0 * sc;
+  double y1_off = base + 3.0 * sc;
+  float Y0[MAX_W], Y1[MAX_W], Cr[MAX_W], Cb[MAX_W];
+  scan_row(sync, y0_off, psmp, w, Y0);
+  scan_row(sync, ry_off, psmp, w, Cr);
+  scan_row(sync, by_off, psmp, w, Cb);
+  scan_row(sync, y1_off, psmp, w, Y1);
+  g_mutex_lock(&lock);
+  put_yuv_row(cur_line,     Y0, Cr, Cb);
+  put_yuv_row(cur_line + 1, Y1, Cr, Cb);
+  ui.line = cur_line + 1; ui.progress = (cur_line + 2) * 100 / img_h;
+  g_mutex_unlock(&lock);
+  cur_line += 2;
+}
+
+// Samples from the located sync to the end of the last scan of the line.
+static double line_r_end_ms(void) {
+  switch (mode->family) {
+    case FAM_MARTIN:  return mode->sync_ms + mode->porch_ms + 3.0 * mode->y_ms + 3.0 * mode->sep_ms;
+    case FAM_SCOTTIE: return mode->sync_ms + mode->porch_ms + mode->y_ms;  // red is last, after sync
+    case FAM_ROBOT36: return mode->sync_ms + mode->porch_ms + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms;
+    case FAM_ROBOT72: return mode->sync_ms + mode->porch_ms + mode->y_ms + 2.0 * (mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms);
+    case FAM_PD:      return mode->sync_ms + mode->porch_ms + 4.0 * mode->y_ms;
+  }
+  return 0.0;
+}
+
+static double line_period_ms(void) {
+  switch (mode->family) {
+    case FAM_MARTIN:  return mode->sync_ms + mode->porch_ms + 3.0 * mode->y_ms + 3.0 * mode->sep_ms;
+    case FAM_SCOTTIE: return mode->sync_ms + 3.0 * mode->y_ms + 3.0 * mode->sep_ms;
+    case FAM_ROBOT36: return mode->sync_ms + mode->porch_ms + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms;
+    case FAM_ROBOT72: return mode->sync_ms + mode->porch_ms + mode->y_ms + 2.0 * (mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms);
+    case FAM_PD:      return mode->sync_ms + mode->porch_ms + 4.0 * mode->y_ms;
+  }
+  return 0.0;
 }
 
 // --- main audio entry ------------------------------------------------------
@@ -304,59 +455,57 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
       vis_pending = FALSE; leader_ok = FALSE;
       const sstv_mode_t *m = forced_vis ? mode_by_vis(forced_vis) : decode_vis();
       if (m == NULL && forced_vis == 0) {
-        // parity/unknown: retry hunting
+        // parity / unknown VIS: keep hunting
       } else {
         if (m == NULL) m = mode_by_vis(forced_vis);
         mode = m;
-        line_samples = (long)ms2smp(mode->sync_ms + 3.0 * (mode->pixel_ms * IMG_W) +
-                                    (mode->family == FAM_MARTIN ? 4.0 : 3.0) * mode->sep_ms);
-        // Image starts after the 30 ms stop bit that follows the 8 data bits.
-        long img_start = cand_start + (long)ms2smp(30.0 * 10);
-        double ch_ms = mode->pixel_ms * IMG_W;
-        // Position of line 0's reference sync.  Martin's sync is at the line
-        // start (≈ img_start); Scottie's reference is the sync between blue and
-        // red, so line 0's sits after the starting sync + green + blue.  Both are
-        // refined per line by locate_sync().
-        if (mode->family == FAM_MARTIN)
-          sync0_abs = img_start;
-        else
+        img_w = mode->width; img_h = mode->height;
+        line_samples = (long)ms2smp(line_period_ms());
+        long img_start = cand_start + (long)ms2smp(30.0 * 10);  // after stop bit
+        // Line 0's reference sync.  All families put the sync at the line start
+        // (≈ img_start) EXCEPT Scottie, whose reference sits between blue and red
+        // (after the starting sync + green + blue).
+        if (mode->family == FAM_SCOTTIE)
           sync0_abs = img_start + (long)ms2smp(mode->sync_ms + 2.0 * mode->sep_ms +
-                                               2.0 * ch_ms);
-        prev_sync_abs = 0;
-        cur_line = 0;
+                                               2.0 * mode->y_ms);
+        else
+          sync0_abs = img_start;
+        cur_line = 0; tx_line = 0;
+        r36_have_cr = FALSE; r36_row_prev = -1;
         state = ST_DECODE;
         g_mutex_lock(&lock);
         memset(img, 0, sizeof(img));
         ui.receiving = TRUE; ui.vis = mode->vis;
         g_strlcpy(ui.mode_name, mode->name, sizeof(ui.mode_name));
-        ui.line = 0; ui.progress = 0;
+        ui.width = img_w; ui.height = img_h; ui.line = 0; ui.progress = 0;
         g_snprintf(ui.status, sizeof(ui.status), "Receiving %s", mode->name);
         g_mutex_unlock(&lock);
-        log_info("SSTV: start %s (VIS %d)\n", mode->name, mode->vis);
+        log_info("SSTV: start %s (VIS %d, %dx%d)\n", mode->name, mode->vis, img_w, img_h);
       }
     }
 
-    // 4) line decoding: decode line `cur_line` once its red channel is buffered.
+    // 4) line decoding: decode the current line once its last scan is buffered.
     if (state == ST_DECODE) {
-      double channel_ms = mode->pixel_ms * IMG_W;
-      double r_end_ms = (mode->family == FAM_MARTIN)
-                          ? (mode->sync_ms + 3.0 * mode->sep_ms + 3.0 * channel_ms)
-                          : (mode->sync_ms + mode->sep_ms + channel_ms);
-      long pred = sync0_abs + (long)((double)cur_line * line_samples);
-      long need = pred + (long)ms2smp(r_end_ms) + (long)ms2smp(20.0);
+      long pred = sync0_abs + (long)((double)tx_line * line_samples);
+      long need = pred + (long)ms2smp(line_r_end_ms()) + (long)ms2smp(20.0);
       if (ring_w >= need) {
-        // Line 0 is anchored purely on the timing derived from the VIS (cand_start),
-        // NOT by searching: Martin's first sync pulse abuts the VIS stop bit (both
-        // 1200 Hz), so a sync search would lock onto the stop bit.  From line 1 on,
-        // every sync is cleanly flanked by a 1500 Hz porch/separator, so searching
-        // is safe and cancels clock drift / slant.
-        long sync = (cur_line == 0) ? pred : locate_sync(pred, (int)ms2smp(12.0));
-        // Re-lock the timeline to the detected sync to cancel drift/slant.
-        sync0_abs = sync - (long)((double)cur_line * line_samples);
-        decode_line(sync);
-        prev_sync_abs = sync;
-        cur_line++;
-        if (cur_line >= IMG_H) {
+        // Line 0 is anchored on the VIS-derived timing, NOT searched: the first
+        // sync abuts the 1200 Hz VIS stop bit (Martin/Robot/PD) so a search would
+        // lock onto the stop bit.  From line 1 on every sync is cleanly flanked
+        // by a 1500 Hz porch/separator, so searching cancels clock drift/slant.
+        long sync = (tx_line == 0) ? pred : locate_sync(pred, (int)ms2smp(12.0));
+        sync0_abs = sync - (long)((double)tx_line * line_samples);  // re-lock
+        tx_line++;
+
+        switch (mode->family) {
+          case FAM_MARTIN:
+          case FAM_SCOTTIE: decode_gbr(sync);     break;
+          case FAM_ROBOT36: decode_robot36(sync); break;
+          case FAM_ROBOT72: decode_robot72(sync); break;
+          case FAM_PD:      decode_pd(sync);      break;
+        }
+
+        if (cur_line >= img_h) {
           state = ST_HUNT;
           g_mutex_lock(&lock);
           ui.receiving = FALSE; ui.progress = 100;
@@ -377,13 +526,15 @@ void sstv_decoder_get_status(sstv_status_t *st) {
 }
 
 GdkPixbuf *sstv_decoder_get_image(void) {
-  GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, IMG_W, IMG_H);
-  if (pb == NULL) return NULL;
-  guint8 *dst = gdk_pixbuf_get_pixels(pb);
-  int stride = gdk_pixbuf_get_rowstride(pb);
   g_mutex_lock(&lock);
-  for (int y = 0; y < IMG_H; y++)
-    memcpy(dst + y * stride, &img[y * IMG_W * 3], IMG_W * 3);
+  int w = img_w, h = img_h;
+  GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, w, h);
+  if (pb != NULL) {
+    guint8 *dst = gdk_pixbuf_get_pixels(pb);
+    int stride = gdk_pixbuf_get_rowstride(pb);
+    for (int y = 0; y < h; y++)
+      memcpy(dst + y * stride, &img[y * w * 3], w * 3);
+  }
   g_mutex_unlock(&lock);
   return pb;
 }
