@@ -62,6 +62,7 @@ static volatile int      p_ioc = 576;
 static volatile gboolean p_autostart = TRUE;
 static volatile gboolean p_autophase = TRUE;  // continuous auto-phasing (self-align)
 static volatile gboolean p_denoise   = TRUE;  // conditional-median despeckle
+static volatile gboolean p_invert    = FALSE; // negative image (white<->black)
 static volatile gboolean start_req = FALSE;   // manual Start button
 static volatile gboolean reset_req = FALSE;
 static volatile double   slant_ppm = 0.0;     // slant/clock trim (GTK adds)
@@ -165,6 +166,7 @@ void wefax_decoder_set_ioc(int ioc)  { if (ioc > 0) p_ioc = ioc; }
 void wefax_decoder_set_autostart(gboolean on) { p_autostart = on; }
 void wefax_decoder_set_autophase(gboolean on) { p_autophase = on; }
 void wefax_decoder_set_denoise(gboolean on) { p_denoise = on; }
+void wefax_decoder_set_invert(gboolean on) { p_invert = on; }
 
 static int cmp_double(const void *a, const void *b) {
   double x = *(const double *)a, y = *(const double *)b;
@@ -451,8 +453,12 @@ GdkPixbuf *wefax_decoder_get_image(void) {
   GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, IMG_W, h);
   guint8 *pix = gdk_pixbuf_get_pixels(pb);
   int stride = gdk_pixbuf_get_rowstride(pb);
-  for (int y = 0; y < h; y++)
-    memcpy(pix + y * stride, img + y * IMG_W * 3, IMG_W * 3);
+  for (int y = 0; y < h; y++) {
+    if (p_invert)                                // negative image: white<->black
+      for (int b = 0; b < IMG_W * 3; b++) pix[y * stride + b] = 255 - img[y * IMG_W * 3 + b];
+    else
+      memcpy(pix + y * stride, img + y * IMG_W * 3, IMG_W * 3);
+  }
   g_mutex_unlock(&lock);
   return pb;
 }

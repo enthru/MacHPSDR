@@ -64,6 +64,10 @@ void wefax_decoder_set_autophase(gboolean on);
 // pixels while preserving real edges / thin lines.
 void wefax_decoder_set_denoise(gboolean on);
 
+// Negative image: swap white<->black.  Standard weather fax is black-on-white
+// (off); turn on if the signal comes in inverted (e.g. wrong sideband).
+void wefax_decoder_set_invert(gboolean on);
+
 // Manual controls (GTK thread).  Start begins a fresh page now (as if a start
 // tone was seen); reset clears the image.
 void wefax_decoder_start(void);

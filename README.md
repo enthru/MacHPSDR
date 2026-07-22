@@ -182,7 +182,10 @@ de-emphasis / RDS options.
   more automatic quality helpers run by default: an **auto-exposure AFC** anchors
   the white background to the correct level (so mistuning or drift can't wash the
   picture grey), and **Denoise** removes impulse-noise specks while keeping the
-  thin chart lines — untick it for a completely raw image. **Save**
+  thin chart lines — untick it for a completely raw image. Weather fax is
+  **black-on-white** by convention; if a signal comes in reversed (wrong
+  sideband, or a station with opposite polarity) tick **Invert** to flip it to a
+  positive image. **Save**
   writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Tune the
   station in **DIGU/USB** ~1.9 kHz below its assigned frequency so black lands on
   1500 Hz / white on 2300 Hz. Like SSTV it is

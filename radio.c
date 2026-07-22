@@ -217,6 +217,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.wefax_autophase",value);
   sprintf(value,"%d",radio->wefax_denoise);
   setProperty("radio.wefax_denoise",value);
+  sprintf(value,"%d",radio->wefax_invert);
+  setProperty("radio.wefax_invert",value);
   sprintf(value,"%d",radio->ft8_tx_offset);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);
@@ -1574,6 +1576,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->wefax_autophase=atoi(value);
   value=getProperty("radio.wefax_denoise");
   if(value!=NULL) r->wefax_denoise=atoi(value);
+  value=getProperty("radio.wefax_invert");
+  if(value!=NULL) r->wefax_invert=atoi(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -2547,6 +2551,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->wefax_autostart = TRUE;   // auto-detect the start tone
   r->wefax_autophase = TRUE;   // continuous auto-phasing (self-align)
   r->wefax_denoise = TRUE;     // impulse-noise despeckle
+  r->wefax_invert = FALSE;     // positive image (black-on-white) by default
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port

@@ -144,6 +144,11 @@ static void denoise_toggled(GtkToggleButton *b, gpointer data) {
   wefax_decoder_set_denoise(on);
   if (radio) radio->wefax_denoise = on;
 }
+static void invert_toggled(GtkToggleButton *b, gpointer data) {
+  gboolean on = gtk_toggle_button_get_active(b);
+  wefax_decoder_set_invert(on);
+  if (radio) radio->wefax_invert = on;
+}
 
 static void update_slant(WefaxPanel *p) {
   char b[32];
@@ -204,11 +209,13 @@ GtkWidget *wefax_panel_create(void) {
   gboolean auto0 = radio ? radio->wefax_autostart : TRUE;
   gboolean phase0 = radio ? radio->wefax_autophase : TRUE;
   gboolean den0 = radio ? radio->wefax_denoise : TRUE;
+  gboolean inv0 = radio ? radio->wefax_invert : FALSE;
   wefax_decoder_set_lpm(lpm0);
   wefax_decoder_set_ioc(ioc0);
   wefax_decoder_set_autostart(auto0);
   wefax_decoder_set_autophase(phase0);
   wefax_decoder_set_denoise(den0);
+  wefax_decoder_set_invert(inv0);
 
   gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("LPM:"), FALSE, FALSE, 0);
   GtkWidget *lpm = gtk_combo_box_text_new();
@@ -248,6 +255,11 @@ GtkWidget *wefax_panel_create(void) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(denb), den0);
   g_signal_connect(denb, "toggled", G_CALLBACK(denoise_toggled), p);
   gtk_box_pack_start(GTK_BOX(bar), denb, FALSE, FALSE, 0);
+
+  GtkWidget *invb = gtk_check_button_new_with_label("Invert");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(invb), inv0);
+  g_signal_connect(invb, "toggled", G_CALLBACK(invert_toggled), p);
+  gtk_box_pack_start(GTK_BOX(bar), invb, FALSE, FALSE, 0);
 
   GtkWidget *startb = gtk_button_new_with_label("Start");
   g_signal_connect(startb, "clicked", G_CALLBACK(start_clicked), p);
