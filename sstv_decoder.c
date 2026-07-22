@@ -115,6 +115,9 @@ static long    cand_start = 0;              // candidate start-bit start (abs)
 static gboolean vis_pending = FALSE;
 static long    vis_bit_ready = 0;           // decode VIS once ring_w passes this
 static int     sync_run = 0;                // consecutive ~1200 Hz samples (forced-mode sync hunt)
+static long    gsync_hist[5];               // recent sync-pulse start positions (auto period detect)
+static int     gsync_n = 0;                 // valid entries in gsync_hist
+static int     gsync_run = 0;               // generic sync-pulse run counter (auto)
 
 // decode state
 typedef enum { ST_HUNT, ST_DECODE } sstv_state_t;
@@ -163,6 +166,7 @@ static void do_reset(void) {
   hpos = 0; prevI = prevQ = 0.0;
   ring_w = 0;
   run1900 = run1200 = 0; leader_ok = FALSE; vis_pending = FALSE;
+  sync_run = 0; gsync_run = 0; gsync_n = 0;
   state = ST_HUNT; mode = NULL; cur_line = 0;
   r36_have_cr = FALSE; r36_row_prev = -1;
   img_w = 320; img_h = 256;
@@ -408,16 +412,17 @@ static double line_r_end_ms(void) {
   return 0.0;
 }
 
-static double line_period_ms(void) {
-  switch (mode->family) {
-    case FAM_MARTIN:  return mode->sync_ms + mode->porch_ms + 3.0 * mode->y_ms + 3.0 * mode->sep_ms;
-    case FAM_SCOTTIE: return mode->sync_ms + 3.0 * mode->y_ms + 3.0 * mode->sep_ms;
-    case FAM_ROBOT36: return mode->sync_ms + mode->porch_ms + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms;
-    case FAM_ROBOT72: return mode->sync_ms + mode->porch_ms + mode->y_ms + 2.0 * (mode->sep_ms + ROBOT_CPORCH_MS + mode->c_ms);
-    case FAM_PD:      return mode->sync_ms + mode->porch_ms + 4.0 * mode->y_ms;
+static double line_period_of(const sstv_mode_t *m) {
+  switch (m->family) {
+    case FAM_MARTIN:  return m->sync_ms + m->porch_ms + 3.0 * m->y_ms + 3.0 * m->sep_ms;
+    case FAM_SCOTTIE: return m->sync_ms + 3.0 * m->y_ms + 3.0 * m->sep_ms;
+    case FAM_ROBOT36: return m->sync_ms + m->porch_ms + m->y_ms + m->sep_ms + ROBOT_CPORCH_MS + m->c_ms;
+    case FAM_ROBOT72: return m->sync_ms + m->porch_ms + m->y_ms + 2.0 * (m->sep_ms + ROBOT_CPORCH_MS + m->c_ms);
+    case FAM_PD:      return m->sync_ms + m->porch_ms + 4.0 * m->y_ms;
   }
   return 0.0;
 }
+static double line_period_ms(void) { return line_period_of(mode); }
 
 // Begin decoding mode `m` with line 0's reference sync at absolute sample
 // `sync0` (the sync between blue and red for Scottie; the line-start sync for
@@ -522,16 +527,65 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
       const sstv_mode_t *m = mode_by_vis(forced_vis);
       if (m != NULL) {
         // Wide (±250 Hz) sync gate so a mistuned / Doppler-shifted carrier is
-        // still caught — the sync is the only tone below the 1500 Hz black
-        // level, so the band can't be tripped by image content or the porch.
-        if (fabs(f - F_SYNC) < 250.0) sync_run++; else sync_run = 0;
-        if (sync_run >= (int)ms2smp(m->sync_ms * 0.7)) {
-          long s0 = n - sync_run + 1;   // start of this sync pulse = line-0 ref
-          double sf = fr_mean(s0, sync_run);
+        // still caught.  Detect on the FALLING edge and accept only a run whose
+        // length is close to the mode's sync pulse: this rejects the VIS data
+        // field (1100/1300 Hz bits are all inside ±250 Hz, so the whole header
+        // reads as one long ~300 ms "sync" that would otherwise false-anchor and
+        // poison the AFC seed) while a real image sync (a short pulse) locks in.
+        if (fabs(f - F_SYNC) < 250.0) {
+          sync_run++;
+        } else {
+          int lo = (int)ms2smp(m->sync_ms * 0.5);
+          int hi = (int)ms2smp(m->sync_ms * 2.5);
+          if (sync_run >= lo && sync_run <= hi) {
+            long s0 = n - sync_run;               // start of the sync pulse
+            double sf = fr_mean(s0, sync_run);
+            start_decode(m, s0);                  // resets freq_offset to 0…
+            freq_offset = sf - F_SYNC;            // …then seed AFC from this sync
+          }
           sync_run = 0;
-          start_decode(m, s0);
-          freq_offset = sf - F_SYNC;    // seed AFC from the anchoring sync
         }
+      }
+    }
+
+    // 3c) Auto-detect by LINE PERIOD (auto mode, as a fallback / complement to
+    // the VIS header — which FM de-emphasis smears into an unreadable mess).  The
+    // image's sync pulses recur at exactly the mode's line period, so once five
+    // pulses with a consistent spacing have been seen, match that period to the
+    // closest mode and start.  Sync pulses are detected on the falling edge with
+    // a plausible-length gate (as in 3b), so the VIS field is ignored.
+    if (forced_vis == 0 && state == ST_HUNT) {
+      if (fabs(f - F_SYNC) < 250.0) {   // wide, so a mistuned carrier still locks
+        gsync_run++;
+      } else {
+        if (gsync_run >= (int)ms2smp(4.0) && gsync_run <= (int)ms2smp(30.0)) {
+          long pos = n - gsync_run;                 // sync-pulse start
+          if (gsync_n < 5) gsync_hist[gsync_n++] = pos;
+          else { memmove(gsync_hist, gsync_hist + 1, 4 * sizeof(long)); gsync_hist[4] = pos; }
+          if (gsync_n >= 5) {
+            double mn = 1e18, mx = 0.0, sum = 0.0;
+            for (int k = 0; k < 4; k++) {
+              double iv = (double)(gsync_hist[k + 1] - gsync_hist[k]);
+              sum += iv; if (iv < mn) mn = iv; if (iv > mx) mx = iv;
+            }
+            double avg = sum / 4.0;
+            // Four consistent intervals of a sane line length (>=100 ms).
+            if (avg > ms2smp(100.0) && (mx - mn) < 0.03 * avg) {
+              double per_ms = avg / (SR / 1000.0);
+              const sstv_mode_t *best = NULL; double bd = 1e18;
+              for (int mi = 0; mi < N_MODES; mi++) {
+                double d = fabs(line_period_of(&MODES[mi]) - per_ms);
+                if (d < bd) { bd = d; best = &MODES[mi]; }
+              }
+              if (best != NULL && bd < 0.02 * per_ms) {   // within 2 %
+                start_decode(best, gsync_hist[4]);        // anchor on the last sync
+                double sf = fr_mean(gsync_hist[4], (int)ms2smp(best->sync_ms * 0.6));
+                freq_offset = sf - F_SYNC;
+              }
+            }
+          }
+        }
+        gsync_run = 0;
       }
     }
 

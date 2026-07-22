@@ -71,9 +71,8 @@ the dedicated FT8 band waterfall on the right.
 
 ![FT8 panel](./ft8.jpg)
 
-**SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: pick the mode in
-the panel's Mode combo, and the picture is painted line-by-line beside the
-receiver.
+**SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: the mode is
+auto-detected and the picture is painted line-by-line beside the receiver.
 
 ![SSTV image panel](./sstv.jpg)
 
@@ -135,11 +134,11 @@ de-emphasis / RDS options.
   arrives. Supported modes: **Martin M1/M2**, **Scottie S1/S2/DX** (GBR — the HF
   workhorses, e.g. the 14.230 MHz calling frequency), **Robot 36/72** and
   **PD50/90/120/160/180/240** (YUV colour). This covers **ISS SSTV** — **Robot 36**
-  (MAI-75) and **PD120** (ARISS commemorative events). **For FM/ISS, pick the mode
-  explicitly** in the panel's **Mode** combo rather than Auto — FM de-emphasis
-  smears the fast VIS header, so auto-detect is unreliable, but forcing the mode
-  anchors on the sync pulses and decodes reliably. The **Mode**
-  override (Auto + every mode) also helps with weak
+  (MAI-75) and **PD120** (ARISS commemorative events). **Auto** works even on FM,
+  where the fast VIS header is smeared by de-emphasis: the decoder falls back to
+  recognising the mode from its **sync-pulse line period**, so you normally don't
+  need to pick anything. The **Mode** override (Auto + every mode) is still there
+  for weak
   or missing VIS headers, an automatic
   slant corrector (the picture de-slants itself from the sync timing) with a
   manual **Slant ±** trim on top, **automatic frequency correction** (AFC — the
