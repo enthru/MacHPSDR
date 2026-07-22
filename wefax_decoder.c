@@ -86,9 +86,12 @@ static double  freq_offset = 0.0;          // AFC (Hz)
 static long    st_block_start = 0;
 static int     st_state = 0;               // hysteresis state for crossing counter
 static int     st_trans = 0;               // low->high transitions in the block
-static int     st_prev_class = 0;          // previous block's IOC classification
+static int     st_match_run = 0;           // consecutive qualifying start-tone blocks
+static int     st_match_cls = 0;           // IOC of the current run
 static double  st_lo_sum = 0.0, st_hi_sum = 0.0;
 static int     st_lo_n = 0, st_hi_n = 0;
+static int     st_blk_n = 0;               // samples in the current block
+static int     st_black_n = 0, st_white_n = 0; // samples near black / near white
 static long    start_cooldown = 0;         // suppress re-triggering the start tone until here
 
 // image buffer (mutex protected)
@@ -117,8 +120,9 @@ static void do_reset(void) {
   ring_w = 0;
   started = FALSE; line_start_d = 0.0; phasing_until = 0;
   freq_offset = 0.0;
-  st_block_start = 0; st_state = 0; st_trans = 0; st_prev_class = 0;
-  st_lo_sum = st_hi_sum = 0.0; st_lo_n = st_hi_n = 0; start_cooldown = 0;
+  st_block_start = 0; st_state = 0; st_trans = 0; st_match_run = 0; st_match_cls = 0;
+  st_lo_sum = st_hi_sum = 0.0; st_lo_n = st_hi_n = 0;
+  st_blk_n = st_black_n = st_white_n = 0; start_cooldown = 0;
   g_mutex_lock(&lock);
   memset(img, 0, sizeof(img));
   cur_row = 0; filled = 0;
@@ -219,8 +223,15 @@ static void decode_line(long L, double line_len) {
   cur_row++;
   if (filled < BUF_H) filled++;
   ui.line = filled;
-  if (ring_w >= phasing_until && ui.receiving)
-    g_snprintf(ui.status, sizeof(ui.status), "Receiving  %d lpm / IOC %d", p_lpm, p_ioc);
+  if (ui.receiving) {
+    if (ring_w >= phasing_until)
+      g_snprintf(ui.status, sizeof(ui.status), "Receiving  %d lpm / IOC %d", p_lpm, p_ioc);
+  } else {
+    // Free-running with no start tone: still painting, but the operator must set
+    // the left margin (click the image) since there was no phasing to lock to.
+    g_snprintf(ui.status, sizeof(ui.status),
+               "Free-run  %d lpm  (click image to set left margin)", p_lpm);
+  }
   g_mutex_unlock(&lock);
 
   // Phasing servo: during the phasing window the transmission is a mostly-flat
@@ -267,31 +278,50 @@ void wefax_decoder_add_audio(const gdouble *samples, int nframes) {
     if (val > 170.0 && st_state == 0) { st_state = 1; st_trans++; }
     else if (val < 86.0 && st_state == 1) { st_state = 0; }
     if (f < F_CENTER) { st_lo_sum += f; st_lo_n++; } else { st_hi_sum += f; st_hi_n++; }
+    st_blk_n++;
+    if (val < 64.0)  st_black_n++;
+    else if (val > 191.0) st_white_n++;
 
     if (ring_w - st_block_start >= (long)SR) {
+      // Classify the block by its low->high crossing rate (= the start-tone
+      // frequency): 300 Hz for IOC576, 675 Hz for IOC288.
       int rate = st_trans;
       int cls = 0;
-      if (rate >= 240 && rate <= 360) cls = 576;
-      else if (rate >= 560 && rate <= 790) cls = 288;
-      if (p_autostart && cls != 0 && cls == st_prev_class && ring_w >= start_cooldown) {
-        // Seed the AFC from this block's bimodal black/white levels.
+      if (rate >= 260 && rate <= 340) cls = 576;
+      else if (rate >= 600 && rate <= 750) cls = 288;
+      // Bimodality gate: a real start tone is a balanced black<->white square
+      // wave, so both levels are present in roughly equal measure and there is
+      // almost nothing in between.  Image content (a weather chart is mostly
+      // white with sparse black lines) is heavily unbalanced and fails this — the
+      // key discriminator against false starts on picture content.
+      int blk = st_blk_n > 0 ? st_blk_n : 1;
+      gboolean bimodal = st_black_n > blk / 4 && st_white_n > blk / 4 &&
+                         (st_black_n + st_white_n) > (blk * 3) / 4;
+      if (cls != 0 && bimodal && cls == st_match_cls) st_match_run++;
+      else if (cls != 0 && bimodal)                  { st_match_cls = cls; st_match_run = 1; }
+      else if (st_match_run > 0)                        st_match_run--;   // decay, don't hard-reset
+      else                                             st_match_cls = 0;  // (tolerates a noisy second mid-tone)
+
+      // Trigger only after 3 consecutive clean start-tone seconds — a real start
+      // signal lasts ~5 s, so this is easily met while transient look-alikes are
+      // rejected.
+      if (p_autostart && st_match_run >= 3 && ring_w >= start_cooldown) {
         if (st_lo_n > 0 && st_hi_n > 0) {
           double lo = st_lo_sum / st_lo_n, hi = st_hi_sum / st_hi_n;
           freq_offset = (lo + hi) / 2.0 - F_CENTER;
         }
-        p_ioc = cls;
-        log_info("WEFAX: start tone detected (IOC %d, AFC %+.0f Hz)\n", cls, freq_offset);
+        p_ioc = st_match_cls;
+        log_info("WEFAX: start tone detected (IOC %d, AFC %+.0f Hz)\n", p_ioc, freq_offset);
         begin_page("start tone");
-        // Don't re-trigger for the rest of this start tone (it lasts several
-        // seconds); the phasing signal that follows is not classified as a start
-        // tone, so a genuinely new page's tone is still caught.
-        start_cooldown = ring_w + (long)(SR * 10);
-        st_prev_class = 0;
-      } else {
-        st_prev_class = cls;
+        // A full page is minutes long, so suppress any re-trigger for a while —
+        // this covers the rest of this start tone and its phasing, while still
+        // catching the next chart's start tone.
+        start_cooldown = ring_w + (long)(SR * 60);
+        st_match_run = 0; st_match_cls = 0;
       }
       st_block_start = ring_w; st_trans = 0;
       st_lo_sum = st_hi_sum = 0.0; st_lo_n = st_hi_n = 0;
+      st_blk_n = st_black_n = st_white_n = 0;
     }
 
     // 3) manual Start.
