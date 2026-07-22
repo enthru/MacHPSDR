@@ -71,6 +71,12 @@ the dedicated FT8 band waterfall on the right.
 
 ![FT8 panel](./ft8.jpg)
 
+**SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: pick the mode in
+the panel's Mode combo, and the picture is painted line-by-line beside the
+receiver.
+
+![SSTV image panel](./sstv.jpg)
+
 **Settings** — Configure → Misc: colour-skin selection (applied immediately and
 remembered per radio), custom attenuator-button labels, and Broadcast FM
 de-emphasis / RDS options.
@@ -134,7 +140,9 @@ de-emphasis / RDS options.
   smears the fast VIS header, so auto-detect is unreliable, but forcing the mode
   anchors on the sync pulses and decodes reliably. The **Mode**
   override (Auto + every mode) also helps with weak
-  or missing VIS headers, a **Slant ±** trim, and **Save** (writes a PNG to
+  or missing VIS headers, an automatic
+  slant corrector (the picture de-slants itself from the sync timing) with a
+  manual **Slant ±** trim on top, and **Save** (writes a PNG to
   `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
   FT8, runs at full audio level regardless of the volume/mute so you can decode

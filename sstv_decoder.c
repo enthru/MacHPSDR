@@ -124,7 +124,9 @@ static double  slant_ppm = 0.0;             // clock/slant trim (GTK thread sets
 static long    sync0_abs = 0;               // located sync of line 0
 static int     cur_line = 0;                // next image ROW to write
 static long    tx_line = 0;                 // transmitted-line index (PD: 2 rows each)
-static long    line_samples = 0;            // nominal samples per transmitted line
+static long    line_samples = 0;            // samples per transmitted line (auto-slant adapts)
+static long    nominal_line = 0;            // the un-adapted line period (auto-slant reference)
+static double  clock_scale = 1.0;           // measured pixel-clock correction (auto-slant)
 static int     img_w = 320, img_h = 256;    // current mode geometry
 
 // Robot 36 chroma pairing (a chroma line is shared by two image rows).
@@ -258,7 +260,7 @@ static long locate_sync(long pred, int win) {
 
 // Pixel clock for this mode (with the slant trim applied).
 static double pixel_smp(double scan_ms, int n) {
-  return ms2smp(scan_ms) * (1.0 + slant_ppm / 1e6) / n;
+  return ms2smp(scan_ms) * clock_scale * (1.0 + slant_ppm / 1e6) / n;
 }
 
 // Sample one scan (from `sync` + off_ms, `n` pixels of `psmp` samples each) into
@@ -418,6 +420,7 @@ static void start_decode(const sstv_mode_t *m, long sync0) {
   mode = m;
   img_w = m->width; img_h = m->height;
   line_samples = (long)ms2smp(line_period_ms());
+  nominal_line = line_samples; clock_scale = 1.0;   // reset auto-slant servo
   sync0_abs = sync0;
   cur_line = 0; tx_line = 0;
   r36_have_cr = FALSE; r36_row_prev = -1;
@@ -530,6 +533,18 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
         // lock onto the stop bit.  From line 1 on every sync is cleanly flanked
         // by a 1500 Hz porch/separator, so searching cancels clock drift/slant.
         long sync = (tx_line == 0) ? pred : locate_sync(pred, (int)ms2smp(12.0));
+        // Auto-slant: the residual (sync − pred) is the per-line clock error
+        // (true line period − assumed).  Servo the assumed line period toward the
+        // truth and scale the pixel clock by the same factor (clock_scale), so a
+        // sound-card / sample-rate offset that would slant the picture is removed
+        // automatically.  Skip the first few lines (forced-mode anchor settling)
+        // and clamp to ±5 % to stay stable.
+        if (tx_line > 2) {
+          line_samples += (long)llround(0.25 * (double)(sync - pred));
+          if (line_samples < (long)(nominal_line * 0.95)) line_samples = (long)(nominal_line * 0.95);
+          if (line_samples > (long)(nominal_line * 1.05)) line_samples = (long)(nominal_line * 1.05);
+          clock_scale = (double)line_samples / (double)nominal_line;
+        }
         sync0_abs = sync - (long)((double)tx_line * line_samples);  // re-lock
         tx_line++;
 
