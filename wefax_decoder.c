@@ -42,10 +42,12 @@
 #define FR_MASK         (FR_CAP - 1)
 
 // ---- image geometry --------------------------------------------------------
-// A fixed display width (each line is resampled to this regardless of IOC) and a
+// A fixed image width (each line is resampled to this regardless of IOC) and a
 // scrolling buffer height: when full, the top third scrolls off so reception is
-// continuous.
-#define IMG_W           800
+// continuous.  IMG_W is ~the native IOC576 element count (576·π ≈ 1809) so the
+// fine chart lines are resolved at ~1 element per pixel instead of being blurred
+// to faint grey by undersampling; the panel scales the wide image to fit.
+#define IMG_W           1810
 #define BUF_H           1200
 #define SCROLL          (BUF_H / 3)
 

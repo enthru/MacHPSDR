@@ -73,7 +73,10 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   cairo_translate(cr, 0, oy);
   cairo_scale(cr, s, s);
   gdk_cairo_set_source_pixbuf(cr, p->pb, 0, 0);
-  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
+  // The image is wide (~1810 px, native IOC576) and usually shrunk to fit the
+  // panel; smooth downscaling keeps the thin chart lines instead of dropping
+  // them as nearest-neighbour would.
+  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
   cairo_paint(cr);
   cairo_restore(cr);
   return FALSE;

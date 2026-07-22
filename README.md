@@ -186,9 +186,13 @@ de-emphasis / RDS options.
   **black-on-white** by convention; if a signal comes in reversed (wrong
   sideband, or a station with opposite polarity) tick **Invert** to flip it to a
   positive image. **Save**
-  writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Tune the
+  writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. The
+  image is decoded at the fax's native resolution (~1810 px/line for IOC 576) so
+  the fine chart lines stay sharp rather than blurring to faint grey. Tune the
   station in **DIGU/USB** ~1.9 kHz below its assigned frequency so black lands on
-  1500 Hz / white on 2300 Hz. Like SSTV it is
+  1500 Hz / white on 2300 Hz, and give it a **reasonably wide receive filter
+  (~1.9 kHz, e.g. 1000–2900 Hz)** — a too-narrow filter smears the fast
+  black↔white transitions and softens the picture. Like SSTV it is
   self-contained (its own Hilbert-transform FM discriminator, same 1500 Hz =
   black / 2300 Hz = white tone convention; no WDSP/FFT) and decodes at full audio
   level regardless of volume/mute.
