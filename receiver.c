@@ -67,6 +67,15 @@
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
 #endif
+#ifdef SSTV
+#include "sstv_decoder.h"
+#endif
+// Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
+// gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
+// decoders, so it is compiled whenever either is enabled.
+#if defined(FT8) || defined(SSTV)
+#define DECODERS 1
+#endif
 
 void receiver_save_state(RECEIVER *rx) {
   if (rx->show_rx == FALSE) return;
@@ -1648,17 +1657,24 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     SetRXAFMSQRun(rx->channel, rx->squelch_enable);
   }
   receiver_filter_changed(rx,rx->filter_a);
-#ifdef FT8
-  // Re-apply the WDSP panel gain: entering DIGU switches the channel to unity
-  // (so FT8 decodes regardless of volume/mute), leaving it restores the listen
-  // gain. rx_panel_gain() depends on the just-set mode. Guard against early
-  // calls before the WDSP channel exists (create_receiver sets the gain itself).
+#ifdef DECODERS
+  // Re-apply the WDSP panel gain: entering DIGU/DIGL switches the channel to
+  // unity (so the decoder taps full level regardless of volume/mute), leaving it
+  // restores the listen gain. rx_panel_gain() depends on the just-set mode.
+  // Guard against early calls before the WDSP channel exists (create_receiver
+  // sets the gain itself).
   if(rx->channel>=0) receiver_set_volume(rx);
+#endif
+#ifdef FT8
   // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
   // audio-thread decoder tap in process_rx_buffer().
   if(radio!=NULL && rx==radio->active_receiver) radio_ft8_panel_sync(radio);
   receiver_ft8_waterfall_sync(rx);
+#endif
+#ifdef SSTV
+  // Same for the SSTV image panel (meaningful in DIGU/DIGL + SSTV).
+  if(radio!=NULL && rx==radio->active_receiver) radio_sstv_panel_sync(radio);
 #endif
 }
 
@@ -1697,7 +1713,7 @@ void receiver_band_changed(RECEIVER *rx,int band) {
   frequency_changed(rx);
 }
 
-#ifdef FT8
+#ifdef DECODERS
 // TRUE when a decoder (FT8/FT4/SSTV) is selected and this receiver is in a
 // digital mode (DIGU/DIGL) — i.e. its demodulated audio is being tapped by a
 // decoder rather than (only) listened to. The decoder is off by default, so
@@ -1719,7 +1735,7 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
 // volume/mute is applied to the audible output in software in
 // process_rx_buffer() for that case. See receiver_set_volume().
 static gdouble rx_panel_gain(RECEIVER *rx) {
-#ifdef FT8
+#ifdef DECODERS
   if(decoder_taps_audio(rx)) return 1.0;
 #endif
   return rx->mute ? 0.0 : rx->volume;
@@ -1755,7 +1771,7 @@ static void process_rx_buffer(RECEIVER *rx) {
         }
       }
     }
-#ifdef FT8
+#ifdef DECODERS
     // When a decoder is tapping this RX the WDSP channel runs at unity (see
     // rx_panel_gain) so the decoder always sees a full-level signal; apply the
     // listen volume/mute to the audible output here instead, keeping the speaker
@@ -1832,7 +1848,17 @@ static void process_rx_buffer(RECEIVER *rx) {
       ft8_decoder_set_protocol(radio->decode_mode==DECODE_FT4 ? 1 : 0);  // FT8 vs FT4
       ft8_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
     }
-    // DECODE_SSTV: image decoder not yet implemented (stub) — no audio consumer.
+  }
+#endif
+#ifdef SSTV
+  // SSTV image decoder tap: same one-place enable/disable as FT8, but its own
+  // mode selector (DECODE_SSTV).  Feeds the demodulated audio to the Hilbert
+  // discriminator + line decoder in sstv_decoder.c.
+  if(radio->active_receiver==rx) {
+    gboolean sstv_on = (rx->mode_a==DIGU || rx->mode_a==DIGL) &&
+                       radio->decode_mode==DECODE_SSTV;
+    sstv_decoder_set_enabled(sstv_on);
+    if(sstv_on) sstv_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
   }
 #endif
 }

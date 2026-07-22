@@ -73,6 +73,10 @@
 #include "ft8_panel.h"
 #include "ft8_qso.h"
 #endif
+#ifdef SSTV
+#include "sstv_decoder.h"
+#include "sstv_panel.h"
+#endif
 
 #include "cwdaemon.h"
 
@@ -754,7 +758,7 @@ void frequency_changed(RECEIVER *rx) {
         HL2clock2Status(radio->hl2, TRUE, &rx->lo_a);
       }
       else {
-        gtk_widget_set_sensitive(add_receiver_b, radio->ft8_panel==NULL);
+        gtk_widget_set_sensitive(add_receiver_b, radio->ft8_panel==NULL && radio->sstv_panel==NULL);
         radio->hl2->xvtr = FALSE;
         HL2clock2Status(radio->hl2, FALSE, &rx->lo_a);
       }
@@ -920,7 +924,7 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
     }
   }
 
-  gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
+  gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->sstv_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
   if(radio->dialog) {
     gtk_widget_destroy(radio->dialog);
     radio->dialog=NULL;
@@ -1203,7 +1207,7 @@ log_info("add_receiver: no receivers available\n");
   }
 
   if (radio->hl2 == NULL || radio->hl2->xvtr == FALSE) {
-    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->receivers<r->discovered->supported_receivers);
   }
 
   if(radio->dialog) {
@@ -1316,6 +1320,14 @@ void radio_rebuild_rx_stack(RADIO *r) {
     if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->ft8_panel);
     tables[n++]=r->ft8_panel;
   }
+  // The SSTV image panel is mutually exclusive with the FT8 panel (different
+  // decode_mode) and likewise occupies the second-receiver slot.
+  if(r->sstv_panel!=NULL) {
+    g_object_ref(r->sstv_panel);
+    GtkWidget *parent=gtk_widget_get_parent(r->sstv_panel);
+    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->sstv_panel);
+    tables[n++]=r->sstv_panel;
+  }
 
   // Destroy whatever remains in the container: the old paned skeleton plus any
   // orphaned panel (e.g. a receiver that was just closed). Live panels were
@@ -1390,7 +1402,7 @@ void radio_ft8_panel_sync(RADIO *r) {
 
   if(add_receiver_b!=NULL)
     gtk_widget_set_sensitive(add_receiver_b,
-      r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+      r->ft8_panel==NULL && r->sstv_panel==NULL && r->receivers<r->discovered->supported_receivers);
 
   // Add/remove the FT8 band waterfall (right of the RF spectrum) to match.
   if(r->active_receiver!=NULL) receiver_ft8_waterfall_sync(r->active_receiver);
@@ -1426,6 +1438,51 @@ static void decode_sel_changed(GtkComboBox *cb, gpointer data) {
   if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
     receiver_set_volume(r->active_receiver);
   radio_ft8_panel_sync(r);   // close the QSO panel if we left FT8/FT4
+#ifdef SSTV
+  radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV
+#endif
+}
+#endif
+
+#ifdef SSTV
+// Show or hide the embedded SSTV image panel.  Like the FT8 QSO panel it takes
+// the second-receiver slot, but it is meaningful in either digital mode
+// (DIGU/DIGL) whenever the SSTV decoder is selected.  Leaving SSTV or the
+// digital modes closes it.  GTK thread only.
+void radio_sstv_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean sstvmode = (r->active_receiver!=NULL &&
+                       (r->active_receiver->mode_a==DIGU || r->active_receiver->mode_a==DIGL)) &&
+                      r->decode_mode==DECODE_SSTV;
+  if(!sstvmode) r->sstv_panel_open=FALSE;
+  gboolean want = sstvmode && r->sstv_panel_open;
+  gboolean have = (r->sstv_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->sstv_panel=sstv_panel_create();
+    g_object_ref_sink(r->sstv_panel);
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->sstv_panel;
+    r->sstv_panel=NULL;                        // hide from the rebuild below
+    GtkWidget *parent=gtk_widget_get_parent(p);
+    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),p);
+    g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      r->ft8_panel==NULL && r->sstv_panel==NULL &&
+      r->receivers<r->discovered->supported_receivers);
+}
+
+// Bottom-bar "Show SSTV" toggle: open/close the SSTV image panel (in place of RX2).
+static void sstv_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->sstv_panel_open = !r->sstv_panel_open;
+  radio_sstv_panel_sync(r);
 }
 #endif
 
@@ -1839,11 +1896,22 @@ static gboolean rds_update_cb(gpointer data) {
     }
   }
   else if(sstv_active) {
-    // SSTV image decoder is not yet implemented — show a placeholder in the same
-    // bottom block so the selection is acknowledged. Decoded images will surface
-    // here (or a dedicated view) once the decoder lands.
+    // SSTV: the decoded image lives in the big panel; the bottom block carries a
+    // compact status/progress readout (and, when the panel is closed, a hint to
+    // open it).
     show_ft8 = TRUE;
-    snprintf(ft8buf,sizeof(ft8buf),"SSTV decoding — not yet implemented");
+#ifdef SSTV
+    sstv_status_t sst; sstv_decoder_get_status(&sst);
+    if(r->rds_title!=NULL)
+      gtk_label_set_text(GTK_LABEL(r->rds_title), sst.mode_name[0]?sst.mode_name:"SSTV");
+    if(r->sstv_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d%%", sst.status, sst.progress);
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d%%\n(Show SSTV to view the image)",
+               sst.status, sst.progress);
+#else
+    snprintf(ft8buf,sizeof(ft8buf),"SSTV support not built in");
+#endif
   }
 #endif
 #ifdef FT8
@@ -1868,6 +1936,12 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_widget_set_visible(r->ft8_expand_btn, digu && ft8_active);
     gtk_button_set_label(GTK_BUTTON(r->ft8_expand_btn),
                          r->ft8_panel_open?"Hide FT8 Panel":"Show FT8 Panel");
+  }
+  // The "Show SSTV" toggle: shown in DIGU/DIGL with the SSTV decoder selected.
+  if(r->sstv_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->sstv_expand_btn, digi && sstv_active);
+    gtk_button_set_label(GTK_BUTTON(r->sstv_expand_btn),
+                         r->sstv_panel_open?"Hide SSTV":"Show SSTV");
   }
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
     gtk_widget_set_visible(r->rds_label[i], !show_ft8);
@@ -2019,6 +2093,16 @@ static void create_visual(RADIO *r) {
   g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
   gtk_box_pack_start(GTK_BOX(dec_ctl),r->ft8_expand_btn,FALSE,FALSE,0);
 
+#ifdef SSTV
+  // "Show SSTV" toggle: opens/closes the SSTV image panel (in place of RX2).
+  // Shown only in DIGU/DIGL with the SSTV decoder selected (see rds_update_cb).
+  r->sstv_expand_btn=gtk_button_new_with_label("Show SSTV");
+  gtk_widget_set_name(r->sstv_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->sstv_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->sstv_expand_btn,"clicked",G_CALLBACK(sstv_expand_cb),(gpointer)r);
+  gtk_box_pack_start(GTK_BOX(dec_ctl),r->sstv_expand_btn,FALSE,FALSE,0);
+#endif
+
   // Decode block content: the text column (expands) with the controls on the right.
   GtkWidget *decode_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
   gtk_box_pack_start(GTK_BOX(decode_row),rds_col,TRUE,TRUE,0);
@@ -2054,7 +2138,7 @@ static void create_visual(RADIO *r) {
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
-        gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+        gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->receivers<r->discovered->supported_receivers);
       }
       else {
         gtk_widget_set_sensitive(add_receiver_b, FALSE);
@@ -2428,7 +2512,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // saved properties), so set the Add Receiver button sensitivity to match.
   // The button only exists when supported_receivers>1; leave HL2-with-xvtr as-is.
   if(r->discovered->supported_receivers>1 && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
-    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->receivers<r->discovered->supported_receivers);
   }
 
   radio_rebuild_rx_stack(r);

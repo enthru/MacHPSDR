@@ -49,6 +49,7 @@ feature additions.
 | **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
+| **SSTV** | Receive analogue SSTV images (Martin M1/M2, Scottie S1/S2/DX) with VIS auto-detect, an embedded image panel and PNG save. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -116,8 +117,21 @@ de-emphasis / RDS options.
 - **Decoder selection (DIGU/DIGL).** In the digital modes the Decode block shows
   a **decoder selector** (right-aligned): **Off / FT8 / FT4 / SSTV**. No decoder
   runs by default — pick one to start it. FT8/FT4 decode the audio and show the
-  traffic in the Decode block (below); **SSTV** is a placeholder for now (image
-  decoding is planned). The selection is remembered between sessions.
+  traffic in the Decode block (below); **SSTV** decodes analogue images (see
+  below). The selection is remembered between sessions.
+
+- **SSTV image reception.** Choose **SSTV** from the Decode-block selector in
+  **DIGU** (or **DIGL**) and press **Show SSTV** to open the image panel (it takes
+  the second-receiver slot, like the FT8 panel). The decoder auto-detects the
+  transmission mode from its VIS header and paints the picture line-by-line as it
+  arrives. Supported modes: **Martin M1/M2** and **Scottie S1/S2/DX** — the
+  GBR-sequential family that dominates HF SSTV (e.g. the 14.230 MHz calling
+  frequency). The panel has a **Mode** override (Auto + the five modes) for weak
+  or missing VIS headers, a **Slant ±** trim, and **Save** (writes a PNG to
+  `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
+  (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
+  FT8, runs at full audio level regardless of the volume/mute so you can decode
+  silently.
 
 - **FT8 / FT4 decoding.** Choose **FT8** or **FT4** from the Decode-block selector
   while the active receiver is in **DIGU** (or **DIGL**) — no separate window. The

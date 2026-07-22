@@ -90,7 +90,7 @@ typedef enum {
   DECODE_OFF = 0,   // no decoder (plain DIGU/DIGL listening)
   DECODE_FT8,       // FT8 decoder (ft8_proto = 0)
   DECODE_FT4,       // FT4 decoder (ft8_proto = 1)
-  DECODE_SSTV,      // SSTV image decoder (stub for now)
+  DECODE_SSTV,      // SSTV image decoder (Scottie/Martin)
 } decode_mode_t;
 
 typedef struct _radio {
@@ -116,6 +116,8 @@ typedef struct _radio {
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   gint decode_mode;        // decode_mode_t: which decoder taps DIGU/DIGL audio (OFF by default)
   GtkWidget *decode_sel;   // bottom-bar decoder selector combo (Off/FT8/FT4/SSTV)
+  GtkWidget *sstv_panel;   // embedded SSTV image panel (NULL unless open in DIGU/DIGL+SSTV)
+  gboolean sstv_panel_open;// user toggled the SSTV image panel on (in place of RX2)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
@@ -299,6 +301,7 @@ typedef struct _radio {
   GtkWidget *rds_title;      // bottom-bar decoder module title ("RDS" in WFM, else "Decode")
   GtkWidget *ft8_label;      // bottom-bar FT8 readout (up to 6 decode lines in DIGU)
   GtkWidget *ft8_expand_btn; // bottom-bar toggle: open/close the big FT8 panel (DIGU only)
+  GtkWidget *sstv_expand_btn;// bottom-bar toggle: open/close the SSTV image panel (DIGU/DIGL)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
@@ -332,6 +335,7 @@ extern gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *e
 extern void set_mox(RADIO *r,gboolean state);
 #ifdef FT8
 extern void radio_ft8_panel_sync(RADIO *r);
+extern void radio_sstv_panel_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

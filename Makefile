@@ -93,6 +93,18 @@ ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \
 ft8_lib/common/monitor.o
 endif
 
+# SSTV receive decoder (analogue image, Scottie/Martin).  Self-contained (its own
+# Hilbert-transform FM discriminator; no external DSP dependency).  Comment out
+# SSTV_INCLUDE to build without SSTV support.
+SSTV_INCLUDE=SSTV
+
+ifeq ($(SSTV_INCLUDE),SSTV)
+SSTV_OPTIONS=-D SSTV
+SSTV_SOURCES= sstv_decoder.c sstv_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_panel.o
+endif
+
 
 ifeq ($(UNAME_S), Linux)
 # cwdaemon support. Allows linux based logging software to key an Hermes/HermesLite2
@@ -141,7 +153,7 @@ endif
 # and warning-clean on both compilers, rather than error-per-callsite on Linux.
 CFLAGS= -g -Wno-deprecated-declarations -O3 -std=gnu11
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
@@ -378,14 +390,14 @@ recorder.o \
 waterfall_theme.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(LIBS) $(RPATH_FLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)
+	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(LIBS) $(RPATH_FLAGS)
 
 # Header dependencies: the .c.o rule emits a .d per object (-MMD -MP). Pulling
 # them in here makes a plain `make` recompile every object that includes a
 # changed header (e.g. a struct field added to radio.h) — without this, stale
 # objects keep the old struct layout and corrupt memory at run time.
-ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS)
+ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
 # Build the in-tree WDSP (patched: WFM demod + tweaks) on BOTH platforms, so the
