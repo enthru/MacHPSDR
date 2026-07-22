@@ -1452,7 +1452,8 @@ static void decode_sel_changed(GtkComboBox *cb, gpointer data) {
 void radio_sstv_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean sstvmode = (r->active_receiver!=NULL &&
-                       (r->active_receiver->mode_a==DIGU || r->active_receiver->mode_a==DIGL)) &&
+                       (r->active_receiver->mode_a==DIGU || r->active_receiver->mode_a==DIGL ||
+                        r->active_receiver->mode_a==FMN)) &&
                       r->decode_mode==DECODE_SSTV;
   if(!sstvmode) r->sstv_panel_open=FALSE;
   gboolean want = sstvmode && r->sstv_panel_open;
@@ -1754,6 +1755,9 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean wfm = rx!=NULL && rx->mode_a==WFM;
   gboolean digu = rx!=NULL && rx->mode_a==DIGU;
   gboolean digi = rx!=NULL && (rx->mode_a==DIGU || rx->mode_a==DIGL);  // digital modes
+  // SSTV is valid in the digital SSB modes (HF, e.g. 14.230) AND in narrowband
+  // FM (VHF, e.g. the ISS on 145.800) — Robot 36 / PD120 are FM-mode modes.
+  gboolean sstv_cap = digi || (rx!=NULL && rx->mode_a==FMN);
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
@@ -1761,7 +1765,7 @@ static gboolean rds_update_cb(gpointer data) {
   // Which decoder is selected for the digital modes (radio->decode_mode is the
   // single source of truth; off by default). The FT8/FT4 name follows it.
   gboolean ft8_active  = digi && (r->decode_mode==DECODE_FT8 || r->decode_mode==DECODE_FT4);
-  gboolean sstv_active = digi &&  r->decode_mode==DECODE_SSTV;
+  gboolean sstv_active = sstv_cap && r->decode_mode==DECODE_SSTV;
   const char *ftname = r->decode_mode==DECODE_FT4 ? "FT4" : "FT8";
 #endif
   // The decoder block is the RDS readout in WFM and the selected-decoder readout
@@ -1921,10 +1925,11 @@ static gboolean rds_update_cb(gpointer data) {
     else           gtk_label_set_text  (GTK_LABEL(r->ft8_label), ft8buf);
     gtk_widget_set_visible(r->ft8_label, show_ft8);
   }
-  // Decoder selector: shown in the digital modes (DIGU/DIGL), kept in sync with
-  // radio->decode_mode (which the FT8 panel's protocol combo can also change).
+  // Decoder selector: shown in the digital modes (DIGU/DIGL) and in narrowband FM
+  // (FMN — for VHF SSTV like the ISS), kept in sync with radio->decode_mode
+  // (which the FT8 panel's protocol combo can also change).
   if(r->decode_sel!=NULL) {
-    gtk_widget_set_visible(r->decode_sel, digi);
+    gtk_widget_set_visible(r->decode_sel, sstv_cap);
     if(gtk_combo_box_get_active(GTK_COMBO_BOX(r->decode_sel)) != r->decode_mode) {
       g_signal_handlers_block_by_func(r->decode_sel,G_CALLBACK(decode_sel_changed),r);
       gtk_combo_box_set_active(GTK_COMBO_BOX(r->decode_sel), r->decode_mode);
@@ -1937,9 +1942,9 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_button_set_label(GTK_BUTTON(r->ft8_expand_btn),
                          r->ft8_panel_open?"Hide FT8 Panel":"Show FT8 Panel");
   }
-  // The "Show SSTV" toggle: shown in DIGU/DIGL with the SSTV decoder selected.
+  // The "Show SSTV" toggle: shown in DIGU/DIGL/FMN with the SSTV decoder selected.
   if(r->sstv_expand_btn!=NULL) {
-    gtk_widget_set_visible(r->sstv_expand_btn, digi && sstv_active);
+    gtk_widget_set_visible(r->sstv_expand_btn, sstv_active);
     gtk_button_set_label(GTK_BUTTON(r->sstv_expand_btn),
                          r->sstv_panel_open?"Hide SSTV":"Show SSTV");
   }

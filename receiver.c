@@ -1723,6 +1723,10 @@ void receiver_band_changed(RECEIVER *rx,int band) {
 // volume/mute in software instead — see rx_panel_gain / process_rx_buffer.
 static gboolean decoder_taps_audio(RECEIVER *rx) {
   if(radio==NULL || radio->decode_mode==DECODE_OFF) return FALSE;
+  // SSTV also decodes narrowband FM (VHF, e.g. the ISS on 145.800); FT8/FT4 are
+  // SSB-only (DIGU/DIGL).
+  if(radio->decode_mode==DECODE_SSTV)
+    return rx->mode_a==DIGU || rx->mode_a==DIGL || rx->mode_a==FMN;
   return rx->mode_a==DIGU || rx->mode_a==DIGL;
 }
 #endif
@@ -1855,7 +1859,7 @@ static void process_rx_buffer(RECEIVER *rx) {
   // mode selector (DECODE_SSTV).  Feeds the demodulated audio to the Hilbert
   // discriminator + line decoder in sstv_decoder.c.
   if(radio->active_receiver==rx) {
-    gboolean sstv_on = (rx->mode_a==DIGU || rx->mode_a==DIGL) &&
+    gboolean sstv_on = (rx->mode_a==DIGU || rx->mode_a==DIGL || rx->mode_a==FMN) &&
                        radio->decode_mode==DECODE_SSTV;
     sstv_decoder_set_enabled(sstv_on);
     if(sstv_on) sstv_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);

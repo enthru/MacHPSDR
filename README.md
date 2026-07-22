@@ -120,9 +120,11 @@ de-emphasis / RDS options.
   traffic in the Decode block (below); **SSTV** decodes analogue images (see
   below). The selection is remembered between sessions.
 
-- **SSTV image reception.** Choose **SSTV** from the Decode-block selector in
-  **DIGU** (or **DIGL**) and press **Show SSTV** to open the image panel (it takes
-  the second-receiver slot, like the FT8 panel). The decoder auto-detects the
+- **SSTV image reception.** Choose **SSTV** from the Decode-block selector and
+  press **Show SSTV** to open the image panel (it takes the second-receiver slot,
+  like the FT8 panel). SSTV is available in **DIGU/DIGL** for **HF** SSTV (SSB,
+  e.g. 14.230 MHz) *and* in **FMN** for **VHF/ISS** SSTV (narrowband FM — the ISS
+  transmits on **145.800 MHz FM**, so tune it in **FMN** for Robot 36 / PD120). The decoder auto-detects the
   transmission mode from its VIS header and paints the picture line-by-line as it
   arrives. Supported modes: **Martin M1/M2**, **Scottie S1/S2/DX** (GBR — the HF
   workhorses, e.g. the 14.230 MHz calling frequency), **Robot 36/72** and
