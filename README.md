@@ -50,7 +50,7 @@ feature additions.
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
-| **WEFAX** | Receive HF radiofax / weather charts (DWD, Northwood, …) in DIGU/DIGL: continuous scrolling image, auto start-tone detection, auto/manual phasing, LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. |
+| **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -167,15 +167,21 @@ de-emphasis / RDS options.
   selector (in **DIGU/DIGL** — HF fax is USB) and press **Show WEFAX** to open the
   image panel (it takes the second-receiver slot, like the SSTV/FT8 panels). WEFAX
   is a *continuous* fax scan (weather charts and satellite images from stations
-  such as DWD Hamburg, Northwood, …), so the picture scrolls as it arrives rather
-  than being a fixed frame. With **Auto-start** on, the transmission's **start
-  tone** (300 Hz for IOC 576 / 675 Hz for IOC 288) begins a fresh page, sets the
-  IOC and seeds the AFC automatically; the **phasing** signal that follows then
-  locks the left margin. If you tune in mid-page, use the **Start** button and
-  **click the image** to set the left margin manually, plus **Slant ±** to
-  deskew. The **LPM** (60/90/**120**/240) and **IOC** (**576**/288) selectors set
-  the line timing (120 lpm / IOC 576 is the weather-fax standard). **Save** writes
-  a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Like SSTV it is
+  such as DWD Hamburg, NMG New Orleans / NHC Miami, Northwood, …), so the picture
+  scrolls as it arrives rather than being a fixed frame. It is designed to **just
+  work**: with **Auto-phase** on (default) the decoder finds the fax's recurring
+  vertical reference (its black margin / border) and pulls it to the left edge by
+  itself, so the picture self-aligns with no clicking — it acquires the phase over
+  the first ~20 lines and then holds it (no injected slant). **Auto-start** (also
+  on by default) additionally spots a transmission's **start tone** (300 Hz for
+  IOC 576 / 675 Hz for IOC 288) to begin a fresh page and seed the AFC. If you
+  ever want to do it by hand, untick **Auto-phase** and **click the image** to set
+  the left margin, use **Start** to begin a page, and **Slant ±** to deskew. The
+  **LPM** (60/90/**120**/240) and **IOC** (**576**/288) selectors set the line
+  timing (120 lpm / IOC 576 is the weather-fax standard, and the default). **Save**
+  writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. Tune the
+  station in **DIGU/USB** ~1.9 kHz below its assigned frequency so black lands on
+  1500 Hz / white on 2300 Hz. Like SSTV it is
   self-contained (its own Hilbert-transform FM discriminator, same 1500 Hz =
   black / 2300 Hz = white tone convention; no WDSP/FFT) and decodes at full audio
   level regardless of volume/mute.

@@ -54,6 +54,12 @@ void wefax_decoder_set_ioc(int ioc);
 // it off only the manual Start button begins a page.
 void wefax_decoder_set_autostart(gboolean on);
 
+// Continuous auto-phasing: when on (default), the decoder finds the recurring
+// vertical reference (the fax margin/border) and keeps it at the left margin, so
+// the image self-aligns without the operator clicking.  Turn off for manual
+// click-to-phase.
+void wefax_decoder_set_autophase(gboolean on);
+
 // Manual controls (GTK thread).  Start begins a fresh page now (as if a start
 // tone was seen); reset clears the image.
 void wefax_decoder_start(void);

@@ -124,6 +124,7 @@ typedef struct _radio {
   gint wefax_lpm;          // WEFAX lines per minute (60/90/120/240; default 120)
   gint wefax_ioc;          // WEFAX Index Of Cooperation (576/288; default 576)
   gboolean wefax_autostart;// auto-detect the WEFAX start tone (default TRUE)
+  gboolean wefax_autophase;// continuous auto-phasing / self-align (default TRUE)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)

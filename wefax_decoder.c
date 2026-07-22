@@ -60,6 +60,7 @@ static gboolean enabled = FALSE;
 static volatile int      p_lpm = 120;
 static volatile int      p_ioc = 576;
 static volatile gboolean p_autostart = TRUE;
+static volatile gboolean p_autophase = TRUE;  // continuous auto-phasing (self-align)
 static volatile gboolean start_req = FALSE;   // manual Start button
 static volatile gboolean reset_req = FALSE;
 static volatile double   slant_ppm = 0.0;     // slant/clock trim (GTK adds)
@@ -94,6 +95,14 @@ static int     st_blk_n = 0;               // samples in the current block
 static int     st_black_n = 0, st_white_n = 0; // samples near black / near white
 static long    start_cooldown = 0;         // suppress re-triggering the start tone until here
 
+// continuous auto-phase: per-column EMA of the edge energy.  A vertical feature
+// that recurs at the same column every line (the fax margin / border) builds a
+// sharp peak; random image content spreads out and averages away.  The servo
+// steers the line start so that peak sits at the left margin.
+static float   col_energy[IMG_W];
+static gboolean phase_locked = FALSE;      // the servo has found a stable reference
+static int     acq_lines = 0;              // lines accumulated during acquisition
+
 // image buffer (mutex protected)
 static GMutex  lock;
 static guint8  img[IMG_W * BUF_H * 3];
@@ -123,6 +132,7 @@ static void do_reset(void) {
   st_block_start = 0; st_state = 0; st_trans = 0; st_match_run = 0; st_match_cls = 0;
   st_lo_sum = st_hi_sum = 0.0; st_lo_n = st_hi_n = 0;
   st_blk_n = st_black_n = st_white_n = 0; start_cooldown = 0;
+  memset(col_energy, 0, sizeof(col_energy)); phase_locked = FALSE; acq_lines = 0;
   g_mutex_lock(&lock);
   memset(img, 0, sizeof(img));
   cur_row = 0; filled = 0;
@@ -142,6 +152,7 @@ void wefax_decoder_set_enabled(gboolean on) {
 void wefax_decoder_set_lpm(int lpm)  { if (lpm > 0) p_lpm = lpm; }
 void wefax_decoder_set_ioc(int ioc)  { if (ioc > 0) p_ioc = ioc; }
 void wefax_decoder_set_autostart(gboolean on) { p_autostart = on; }
+void wefax_decoder_set_autophase(gboolean on) { p_autophase = on; }
 void wefax_decoder_start(void) { start_req = TRUE; }
 void wefax_decoder_reset(void) { reset_req = TRUE; }
 void   wefax_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
@@ -190,6 +201,7 @@ static void begin_page(const char *why) {
   started = TRUE;
   line_start_d = (double)ring_w;
   phasing_until = ring_w + (long)(PHASING_MS * SR / 1000.0);
+  memset(col_energy, 0, sizeof(col_energy)); phase_locked = FALSE; acq_lines = 0;
 }
 
 // Decode one scan line starting at absolute sample L, spanning line_len samples,
@@ -198,14 +210,9 @@ static void decode_line(long L, double line_len) {
   double psmp = line_len / (double)IMG_W;
   int navg = (int)(psmp * 0.6); if (navg < 1) navg = 1;
   static float row[IMG_W];
-  double emax = 0.0; int epos = 0;
   for (int x = 0; x < IMG_W; x++) {
     double c = (double)L + (x + 0.5) * psmp;
     row[x] = (float)freq2val(fr_mean((long)(c) - navg / 2, navg));
-    if (x > 0) {
-      double d = fabs(row[x] - row[x - 1]);
-      if (d > emax) { emax = d; epos = x; }
-    }
   }
 
   // Write the greyscale row.
@@ -223,27 +230,50 @@ static void decode_line(long L, double line_len) {
   cur_row++;
   if (filled < BUF_H) filled++;
   ui.line = filled;
-  if (ui.receiving) {
-    if (ring_w >= phasing_until)
-      g_snprintf(ui.status, sizeof(ui.status), "Receiving  %d lpm / IOC %d", p_lpm, p_ioc);
-  } else {
-    // Free-running with no start tone: still painting, but the operator must set
-    // the left margin (click the image) since there was no phasing to lock to.
+  if (p_autophase) {
+    // Auto-phase does the alignment; phase_locked (from the previous line) says
+    // whether it has settled on a recurring reference yet.
+    if (phase_locked)
+      g_snprintf(ui.status, sizeof(ui.status), "Receiving  %d lpm / IOC %d  (auto-phased)", p_lpm, p_ioc);
+    else
+      g_snprintf(ui.status, sizeof(ui.status), "Auto-phasing…  %d lpm / IOC %d", p_lpm, p_ioc);
+  } else if (ui.receiving && ring_w >= phasing_until) {
+    g_snprintf(ui.status, sizeof(ui.status), "Receiving  %d lpm / IOC %d", p_lpm, p_ioc);
+  } else if (!ui.receiving) {
+    // Free-running with auto-phase off: the operator sets the left margin by
+    // clicking the image.
     g_snprintf(ui.status, sizeof(ui.status),
                "Free-run  %d lpm  (click image to set left margin)", p_lpm);
   }
   g_mutex_unlock(&lock);
 
-  // Phasing servo: during the phasing window the transmission is a mostly-flat
-  // line with one strong recurring edge (the phasing pulse).  Steer the line
-  // start so that edge lands at the left margin.  After the window the phase
-  // locks, so image content (coastlines, text) cannot drag the alignment.
-  // Only a genuine phasing pulse (a near-full black<->white swing) steers the
-  // phase; a gradual image edge (coastline, gradient) does not reach this, so
-  // image content cannot drag the alignment even inside the phasing window.
-  if (ring_w < phasing_until && emax > 200.0) {
-    int e = epos; if (e > IMG_W / 2) e -= IMG_W;   // shortest way round
-    line_start_d += 0.35 * (double)e * psmp;
+  // Auto-phase: acquire the left margin ONCE, then freeze.  A per-line phase
+  // servo would itself be a slant (a row-dependent horizontal shift), so instead
+  // we accumulate a per-column EMA of the edge energy over the first ~24 lines —
+  // a vertical feature that recurs at the same column every line (the fax
+  // margin / border, or a chart grid line) builds a sharp peak, while random
+  // picture content (coastlines, text) spreads across all columns and averages
+  // to a flat floor.  Once a clear peak has formed we apply a single shift to
+  // bring it to the left edge and lock; the picture then stays put (no injected
+  // slant), exactly like a good free-run but with the seam removed automatically.
+  // A start tone (begin_page) or Clear resets this so a new page re-acquires.
+  if (p_autophase && !phase_locked) {
+    const double A = 1.0 / 12.0;
+    double sum = 0.0, peakv = 0.0; int peak = 0;
+    for (int x = 1; x < IMG_W; x++) {
+      double e = fabs(row[x] - row[x - 1]);
+      col_energy[x] = (float)(col_energy[x] * (1.0 - A) + e * A);
+      sum += col_energy[x];
+      if (col_energy[x] > peakv) { peakv = col_energy[x]; peak = x; }
+    }
+    double mean = sum / (IMG_W - 1);
+    acq_lines++;
+    // Wait for the EMA to build (~24 lines) and require a clear recurring edge.
+    if (acq_lines >= 24 && peakv > 40.0 && peakv > 3.0 * mean) {
+      int P = peak; if (P > IMG_W / 2) P -= IMG_W;   // shortest way to column 0
+      line_start_d += (double)P * psmp;              // one-time alignment
+      phase_locked = TRUE;
+    }
   }
 }
 
