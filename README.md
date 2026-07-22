@@ -49,7 +49,7 @@ feature additions.
 | **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
-| **SSTV** | Receive analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel and PNG save. |
+| **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -148,6 +148,18 @@ de-emphasis / RDS options.
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
   FT8, runs at full audio level regardless of the volume/mute so you can decode
   silently.
+
+- **SSTV image transmission.** The image panel's **Tx** row sends a picture the
+  same way: pick a **mode** (Martin/Scottie/Robot/PD), **Load…** any image file
+  (it is scaled to the mode's geometry and previewed in the panel), and press
+  **Send**. It transmits a standard VIS header plus the FM-encoded scan lines
+  through the normal phone TX chain, so it works on any protocol (Protocol 1/2,
+  SoapySDR/HackRF): **DIGU/DIGL** for HF SSB SSTV (e.g. 14.230 MHz) and **FMN**
+  for VHF FM. MOX is keyed automatically for the length of the picture (a
+  progress bar tracks it) and dropped when it finishes, with a safety watchdog
+  that force-unkeys if the TX path stalls. Press **Stop** to abort. The encoder
+  is self-contained (no WDSP/FFT) and verified by an encode→decode loop-back
+  (Martin M1, Scottie S1, Robot 36/72, PD120 → 8/8 colour bars pixel-correct).
 
 - **FT8 / FT4 decoding.** Choose **FT8** or **FT4** from the Decode-block selector
   while the active receiver is in **DIGU** (or **DIGL**) — no separate window. The

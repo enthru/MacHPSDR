@@ -23,6 +23,7 @@
 
 #include "sstv_panel.h"
 #include "sstv_decoder.h"
+#include "sstv_encoder.h"
 #include "log.h"
 
 #define REFRESH_MS 200          // ~5 fps
@@ -46,6 +47,13 @@ typedef struct {
   guint      timer;
   char       last_status[64];
   int        last_line;
+  // --- transmit ---
+  GtkWidget *tx_mode;       // TX mode combo (concrete modes, no Auto)
+  GtkWidget *tx_send;       // Send / Stop toggle button
+  GtkWidget *tx_progress;   // TX progress bar
+  GtkWidget *tx_file_lbl;   // loaded-file name
+  GdkPixbuf *tx_img;        // image to transmit (owned), NULL until loaded
+  gboolean   was_txing;     // to detect the TX→idle edge in tick()
 } SstvPanel;
 
 // Draw the image scaled to fit the drawing area, preserving 4:3, letterboxed.
@@ -55,16 +63,20 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   int ah = gtk_widget_get_allocated_height(w);
   cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
   cairo_paint(cr);
-  if (p->pb == NULL) return FALSE;
-  int iw = gdk_pixbuf_get_width(p->pb);
-  int ih = gdk_pixbuf_get_height(p->pb);
+  // Show the decoded image normally, but preview the loaded TX image while
+  // transmitting (or when nothing has been received yet).
+  GdkPixbuf *src = p->pb;
+  if ((sstv_tx_active() || src == NULL) && p->tx_img != NULL) src = p->tx_img;
+  if (src == NULL) return FALSE;
+  int iw = gdk_pixbuf_get_width(src);
+  int ih = gdk_pixbuf_get_height(src);
   double sx = (double)aw / iw, sy = (double)ah / ih;
   double s = sx < sy ? sx : sy;
   double dw = iw * s, dh = ih * s;
   double ox = (aw - dw) / 2.0, oy = (ah - dh) / 2.0;
   cairo_translate(cr, ox, oy);
   cairo_scale(cr, s, s);
-  gdk_cairo_set_source_pixbuf(cr, p->pb, 0, 0);
+  gdk_cairo_set_source_pixbuf(cr, src, 0, 0);
   cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
   cairo_paint(cr);
   return FALSE;
@@ -93,6 +105,19 @@ static gboolean tick(gpointer data) {
     if (p->pb != NULL) g_object_unref(p->pb);
     p->pb = np;
     gtk_widget_queue_draw(p->area);
+  }
+
+  // Transmit progress + Send/Stop button state.
+  gboolean txing = sstv_tx_active();
+  if (txing) {
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(p->tx_progress), sstv_tx_progress());
+    gtk_widget_queue_draw(p->area);   // keep the TX preview live
+  }
+  if (txing != p->was_txing) {        // TX just started or finished
+    gtk_button_set_label(GTK_BUTTON(p->tx_send), txing ? "Stop" : "Send");
+    gtk_widget_set_sensitive(p->tx_mode, !txing);
+    if (!txing) gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(p->tx_progress), 0.0);
+    p->was_txing = txing;
   }
   return G_SOURCE_CONTINUE;
 }
@@ -140,10 +165,63 @@ static void save_clicked(GtkButton *b, gpointer data) {
   }
 }
 
+// --- transmit ---------------------------------------------------------------
+// Load an image to transmit (any format GdkPixbuf reads; scaled to the mode at
+// encode time).
+static void load_clicked(GtkButton *b, gpointer data) {
+  SstvPanel *p = data;
+  GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(b));
+  GtkWidget *dlg = gtk_file_chooser_dialog_new(
+      "Load image to transmit", GTK_WINDOW(top), GTK_FILE_CHOOSER_ACTION_OPEN,
+      "_Cancel", GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, NULL);
+  GtkFileFilter *filt = gtk_file_filter_new();
+  gtk_file_filter_set_name(filt, "Images");
+  gtk_file_filter_add_pixbuf_formats(filt);
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), filt);
+  if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+    char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
+    GError *err = NULL;
+    GdkPixbuf *pb = gdk_pixbuf_new_from_file(path, &err);
+    if (pb != NULL) {
+      if (p->tx_img != NULL) g_object_unref(p->tx_img);
+      p->tx_img = pb;
+      char *base = g_path_get_basename(path);
+      gtk_label_set_text(GTK_LABEL(p->tx_file_lbl), base);
+      g_free(base);
+      gtk_widget_set_sensitive(p->tx_send, TRUE);
+      gtk_widget_queue_draw(p->area);
+      log_info("SSTV TX: loaded %s (%dx%d)\n", path,
+               gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
+    } else {
+      log_error("SSTV TX: load failed: %s\n", err ? err->message : "?");
+      if (err) g_error_free(err);
+    }
+    g_free(path);
+  }
+  gtk_widget_destroy(dlg);
+}
+
+static void send_clicked(GtkButton *b, gpointer data) {
+  SstvPanel *p = data;
+  if (sstv_tx_active()) { sstv_tx_stop(); return; }
+  if (p->tx_img == NULL) return;
+  int idx = gtk_combo_box_get_active(GTK_COMBO_BOX(p->tx_mode));
+  // The TX combo lists the concrete modes only (MODE_ENTRIES[1..]).
+  if (idx < 0) idx = 0;
+  int vis = MODE_ENTRIES[idx + 1].vis;
+  if (!sstv_tx_prepare(vis, p->tx_img)) {
+    log_error("SSTV TX: prepare failed\n");
+    return;
+  }
+  sstv_tx_start();
+}
+
 static void on_destroy(GtkWidget *w, gpointer data) {
   SstvPanel *p = data;
+  if (sstv_tx_active()) sstv_tx_stop();
   if (p->timer) g_source_remove(p->timer);
   if (p->pb) g_object_unref(p->pb);
+  if (p->tx_img) g_object_unref(p->tx_img);
   g_free(p);
 }
 
@@ -178,6 +256,34 @@ GtkWidget *sstv_panel_create(void) {
   gtk_box_pack_end(GTK_BOX(bar), clr,  FALSE, FALSE, 0);
   gtk_box_pack_end(GTK_BOX(bar), save, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(box), bar, FALSE, FALSE, 0);
+
+  // Transmit row: mode picker (concrete modes only), image loader, Send/Stop,
+  // and a progress bar.
+  GtkWidget *txbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_box_pack_start(GTK_BOX(txbar), gtk_label_new("Tx:"), FALSE, FALSE, 0);
+  p->tx_mode = gtk_combo_box_text_new();
+  for (int i = 1; i < N_MODE_ENTRIES; i++)   // skip "Auto" — TX needs a real mode
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->tx_mode), MODE_ENTRIES[i].name);
+  gtk_combo_box_set_active(GTK_COMBO_BOX(p->tx_mode), 0);
+  gtk_box_pack_start(GTK_BOX(txbar), p->tx_mode, FALSE, FALSE, 0);
+
+  GtkWidget *load = gtk_button_new_with_label("Load…");
+  g_signal_connect(load, "clicked", G_CALLBACK(load_clicked), p);
+  gtk_box_pack_start(GTK_BOX(txbar), load, FALSE, FALSE, 0);
+
+  p->tx_file_lbl = gtk_label_new("(no image)");
+  gtk_label_set_ellipsize(GTK_LABEL(p->tx_file_lbl), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_box_pack_start(GTK_BOX(txbar), p->tx_file_lbl, FALSE, FALSE, 0);
+
+  p->tx_send = gtk_button_new_with_label("Send");
+  gtk_widget_set_sensitive(p->tx_send, FALSE);   // enabled once an image loads
+  g_signal_connect(p->tx_send, "clicked", G_CALLBACK(send_clicked), p);
+  gtk_box_pack_end(GTK_BOX(txbar), p->tx_send, FALSE, FALSE, 0);
+
+  p->tx_progress = gtk_progress_bar_new();
+  gtk_widget_set_valign(p->tx_progress, GTK_ALIGN_CENTER);
+  gtk_box_pack_end(GTK_BOX(txbar), p->tx_progress, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), txbar, FALSE, FALSE, 0);
 
   // Image area.
   p->area = gtk_drawing_area_new();

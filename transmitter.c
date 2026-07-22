@@ -60,6 +60,9 @@
 #ifdef FT8
 #include "ft8_encoder.h"
 #endif
+#ifdef SSTV
+#include "sstv_encoder.h"
+#endif
 
 double ctcss_frequencies[CTCSS_FREQUENCIES]= {
   67.0,71.9,74.4,77.0,79.7,82.5,85.4,88.5,91.5,94.8,
@@ -1425,6 +1428,13 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
       // FT8 TX: substitute the synthesized FT8 waveform for the mic input so
       // the normal DIGU (USB) TX chain modulates it up to dial+offset.
       mic_sample_double=(double)ft8_tx_next_sample();
+#endif
+#ifdef SSTV
+    } else if(sstv_tx_active()) {
+      // SSTV TX: substitute the synthesized SSTV tone for the mic input so the
+      // normal phone TX chain modulates it up to the dial frequency (DIGU/DIGL =
+      // SSB, FMN = FM).  The panel only keys TX in one of those modes.
+      mic_sample_double=(double)sstv_tx_next_sample();
 #endif
     } else {
       mic_sample_double=(double)mic_sample;

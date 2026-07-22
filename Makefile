@@ -100,9 +100,9 @@ SSTV_INCLUDE=SSTV
 
 ifeq ($(SSTV_INCLUDE),SSTV)
 SSTV_OPTIONS=-D SSTV
-SSTV_SOURCES= sstv_decoder.c sstv_panel.c
-SSTV_HEADERS= sstv_decoder.h sstv_panel.h
-SSTV_OBJS= sstv_decoder.o sstv_panel.o
+SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o
 endif
 
 
