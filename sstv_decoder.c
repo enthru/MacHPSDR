@@ -110,9 +110,11 @@ static long    ring_w = 0;                  // total samples written (absolute)
 // VIS leader detector
 static int     run1900 = 0, run1200 = 0;
 static gboolean leader_ok = FALSE;
+static long    leader_deadline = 0;        // latch timeout for leader_ok (abs)
 static long    cand_start = 0;              // candidate start-bit start (abs)
 static gboolean vis_pending = FALSE;
 static long    vis_bit_ready = 0;           // decode VIS once ring_w passes this
+static int     sync_run = 0;                // consecutive ~1200 Hz samples (forced-mode sync hunt)
 
 // decode state
 typedef enum { ST_HUNT, ST_DECODE } sstv_state_t;
@@ -409,6 +411,27 @@ static double line_period_ms(void) {
   return 0.0;
 }
 
+// Begin decoding mode `m` with line 0's reference sync at absolute sample
+// `sync0` (the sync between blue and red for Scottie; the line-start sync for
+// every other family).  Shared by the VIS path and the forced-mode sync anchor.
+static void start_decode(const sstv_mode_t *m, long sync0) {
+  mode = m;
+  img_w = m->width; img_h = m->height;
+  line_samples = (long)ms2smp(line_period_ms());
+  sync0_abs = sync0;
+  cur_line = 0; tx_line = 0;
+  r36_have_cr = FALSE; r36_row_prev = -1;
+  state = ST_DECODE;
+  g_mutex_lock(&lock);
+  memset(img, 0, sizeof(img));
+  ui.receiving = TRUE; ui.vis = m->vis;
+  g_strlcpy(ui.mode_name, m->name, sizeof(ui.mode_name));
+  ui.width = img_w; ui.height = img_h; ui.line = 0; ui.progress = 0;
+  g_snprintf(ui.status, sizeof(ui.status), "Receiving %s", m->name);
+  g_mutex_unlock(&lock);
+  log_info("SSTV: start %s (VIS %d, %dx%d)\n", m->name, m->vis, img_w, img_h);
+}
+
 // --- main audio entry ------------------------------------------------------
 void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
   if (!enabled) return;
@@ -436,51 +459,64 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
     long n = ring_w;
     ring_w++;
 
-    // 2) VIS leader detector (always running, so a new transmission restarts).
-    if (fabs(f - 1900.0) < 130.0) { run1900++; run1200 = 0; }
-    else if (fabs(f - F_SYNC) < 130.0) {
-      run1200++;
-      if (run1900 >= (int)ms2smp(200.0) && run1200 == 1) {
-        cand_start = n; leader_ok = TRUE;          // leading edge of start bit
+    // 2) VIS leader detector.  The header is 1900 Hz leader → 1200 Hz start bit →
+    // 8×30 ms data bits.  Real transmissions (and the discriminator's finite
+    // response) glide through the intermediate frequencies between the 1900 Hz
+    // leader and the 1200 Hz start bit, which would reset a raw consecutive-run
+    // counter before f reaches 1200.  So once ≥180 ms of ~1900 Hz has been seen
+    // we LATCH the leader for a short window (leader_deadline), and the start bit
+    // is detected against that latch — not the instantaneous run counter.
+    if (fabs(f - 1900.0) < 150.0) {
+      run1900++; run1200 = 0;
+      if (run1900 >= (int)ms2smp(180.0)) {
+        leader_ok = TRUE;
+        leader_deadline = n + (long)ms2smp(600.0);   // refreshed by each 1900 segment
       }
-      if (leader_ok && run1200 == (int)ms2smp(20.0)) {
+    } else if (fabs(f - F_SYNC) < 150.0) {
+      run1200++;
+      // start-bit leading edge — but do not disturb a VIS already buffering its
+      // bits (image content re-latches the leader and would move cand_start).
+      if (leader_ok && run1200 == 1 && !vis_pending) cand_start = n;
+      // Don't overwrite a VIS that is already buffering its bits: the real
+      // header comes first, and image content can otherwise re-trigger the
+      // (deliberately permissive) leader latch during the ~320 ms bit window and
+      // clobber the correct cand_start before it is decoded.
+      if (leader_ok && run1200 == (int)ms2smp(20.0) && !vis_pending) {
         vis_pending = TRUE;
         vis_bit_ready = cand_start + (long)ms2smp(30.0 * 10 + 20.0);
       }
       run1900 = 0;
-    } else { run1900 = 0; run1200 = 0; }
+    } else { run1900 = 0; run1200 = 0; }   // dead-zone glide keeps the latch
+    if (leader_ok && n > leader_deadline) leader_ok = FALSE;
 
-    // 3) VIS decode once the whole header has been buffered.
+    // 3) VIS decode once the whole header has been buffered (auto mode only —
+    // a forced mode anchors on the sync pulse below instead, which is far more
+    // robust to a noisy / Doppler-shifted header).
     if (vis_pending && ring_w >= vis_bit_ready) {
       vis_pending = FALSE; leader_ok = FALSE;
-      const sstv_mode_t *m = forced_vis ? mode_by_vis(forced_vis) : decode_vis();
-      if (m == NULL && forced_vis == 0) {
-        // parity / unknown VIS: keep hunting
-      } else {
-        if (m == NULL) m = mode_by_vis(forced_vis);
-        mode = m;
-        img_w = mode->width; img_h = mode->height;
-        line_samples = (long)ms2smp(line_period_ms());
+      const sstv_mode_t *m = forced_vis ? NULL : decode_vis();
+      if (m != NULL && state == ST_HUNT) {
+        mode = m;   // needed by line_*_ms() used inside start_decode
         long img_start = cand_start + (long)ms2smp(30.0 * 10);  // after stop bit
-        // Line 0's reference sync.  All families put the sync at the line start
-        // (≈ img_start) EXCEPT Scottie, whose reference sits between blue and red
-        // (after the starting sync + green + blue).
-        if (mode->family == FAM_SCOTTIE)
-          sync0_abs = img_start + (long)ms2smp(mode->sync_ms + 2.0 * mode->sep_ms +
-                                               2.0 * mode->y_ms);
-        else
-          sync0_abs = img_start;
-        cur_line = 0; tx_line = 0;
-        r36_have_cr = FALSE; r36_row_prev = -1;
-        state = ST_DECODE;
-        g_mutex_lock(&lock);
-        memset(img, 0, sizeof(img));
-        ui.receiving = TRUE; ui.vis = mode->vis;
-        g_strlcpy(ui.mode_name, mode->name, sizeof(ui.mode_name));
-        ui.width = img_w; ui.height = img_h; ui.line = 0; ui.progress = 0;
-        g_snprintf(ui.status, sizeof(ui.status), "Receiving %s", mode->name);
-        g_mutex_unlock(&lock);
-        log_info("SSTV: start %s (VIS %d, %dx%d)\n", mode->name, mode->vis, img_w, img_h);
+        long s0 = (m->family == FAM_SCOTTIE)
+                    ? img_start + (long)ms2smp(m->sync_ms + 2.0*m->sep_ms + 2.0*m->y_ms)
+                    : img_start;
+        start_decode(m, s0);
+      }
+    }
+
+    // 3b) Forced-mode sync anchor: skip the VIS entirely and start on the first
+    // clean sync pulse (a run of ~sync_ms at ~1200 Hz).  Works even when the VIS
+    // header is unreadable; the per-line sync lock keeps it aligned thereafter.
+    if (forced_vis && state == ST_HUNT) {
+      const sstv_mode_t *m = mode_by_vis(forced_vis);
+      if (m != NULL) {
+        if (fabs(f - F_SYNC) < 120.0) sync_run++; else sync_run = 0;
+        if (sync_run >= (int)ms2smp(m->sync_ms * 0.7)) {
+          long s0 = n - sync_run + 1;   // start of this sync pulse = line-0 ref
+          sync_run = 0;
+          start_decode(m, s0);
+        }
       }
     }
 

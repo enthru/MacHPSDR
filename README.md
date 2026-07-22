@@ -129,8 +129,11 @@ de-emphasis / RDS options.
   arrives. Supported modes: **Martin M1/M2**, **Scottie S1/S2/DX** (GBR — the HF
   workhorses, e.g. the 14.230 MHz calling frequency), **Robot 36/72** and
   **PD50/90/120/160/180/240** (YUV colour). This covers **ISS SSTV** — **Robot 36**
-  (MAI-75) and **PD120** (ARISS commemorative events). The panel has a **Mode**
-  override (Auto + every mode) for weak
+  (MAI-75) and **PD120** (ARISS commemorative events). **For FM/ISS, pick the mode
+  explicitly** in the panel's **Mode** combo rather than Auto — FM de-emphasis
+  smears the fast VIS header, so auto-detect is unreliable, but forcing the mode
+  anchors on the sync pulses and decodes reliably. The **Mode**
+  override (Auto + every mode) also helps with weak
   or missing VIS headers, a **Slant ±** trim, and **Save** (writes a PNG to
   `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
