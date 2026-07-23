@@ -299,9 +299,10 @@ GtkWidget *sstv_panel_create(void) {
   gtk_box_append(GTK_BOX(txbar),p->tx_progress); gtk_widget_set_hexpand(p->tx_progress,TRUE); gtk_widget_set_vexpand(p->tx_progress,TRUE);
   gtk_box_append(GTK_BOX(box),txbar);
 
-  // Image area.
+  // Image area. Small min height (was 256) so the GTK4 paned can shrink the
+  // panel and leave the RF spectrum a usable height; vexpand still fills it.
   p->area = gtk_drawing_area_new();
-  gtk_widget_set_size_request(p->area, 320, 256);
+  gtk_widget_set_size_request(p->area, 320, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
   g_signal_connect(p->area, "draw", G_CALLBACK(on_draw), p);

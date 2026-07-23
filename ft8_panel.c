@@ -398,6 +398,10 @@ GtkWidget *ft8_panel_create(void) {
   GtkWidget *scroll = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+  // Keep the list's minimum small so the GTK4 paned can shrink the panel and
+  // leave the RF spectrum above it a usable height (it still expands via
+  // vexpand when the pane is tall).
+  gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 80);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), view);
 
   // --- Tx1..Tx6 message buttons (double-click a decode fills the DX call) ---

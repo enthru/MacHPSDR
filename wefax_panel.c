@@ -291,7 +291,10 @@ GtkWidget *wefax_panel_create(void) {
 
   // Image area (click sets the phase / left margin).
   p->area = gtk_drawing_area_new();
-  gtk_widget_set_size_request(p->area, 400, 300);
+  // Small min height: vexpand makes it fill the pane when there's room, but a
+  // large min (was 300) forced the whole panel's minimum so high that the GTK4
+  // paned could not shrink it, squeezing the RF spectrum above it to a sliver.
+  gtk_widget_set_size_request(p->area, 400, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
   gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(p->area), on_draw, p, NULL);
