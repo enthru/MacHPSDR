@@ -2171,6 +2171,13 @@ static void create_visual(RADIO *r) {
 
   r->bottom_bar=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   gtk_widget_set_name(r->bottom_bar,"bottom-bar");
+  // The module contents use vexpand=TRUE (to fill each module vertically). In a
+  // GtkBox that vexpand PROPAGATES up, so in the main grid the bottom bar would
+  // compute vexpand=TRUE and fight rx_container for vertical space — ballooning
+  // to a third of the window and squeezing the spectrum/waterfall. Pin the bar
+  // to its natural height so all the slack goes to the RX stack above it.
+  gtk_widget_set_vexpand(r->bottom_bar,FALSE);
+  gtk_widget_set_valign(r->bottom_bar,GTK_ALIGN_START);
 
   if(r->can_transmit) {
     // Module: TX MONITOR - the small transmit panadapter.
