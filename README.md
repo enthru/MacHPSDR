@@ -246,6 +246,11 @@ you've dialled in.
   without this HackRF crashed on key-up. Keys up on real hardware without
   crashing; on-air signal quality still needs more testing.
 
+- **Window comes to the front on launch.** The main window is raised and given
+  focus at startup (on macOS the app is also made the active application), so it
+  no longer opens hidden behind the terminal you launched it from — most
+  noticeable with `--faker`, which skips the device-selection dialog.
+
 - **Test device.** A built-in *Fake Noise SDR* runs the app with no hardware
   connected (receive, transmit, spectrum, demodulation) and can play back a
   recorded I/Q file. Hidden by default; enable it with `--faker`.

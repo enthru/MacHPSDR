@@ -32,6 +32,12 @@
 #include <arpa/inet.h>
 #include <wdsp.h>
 
+#ifdef __APPLE__
+#include <objc/objc.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
+#endif
+
 #include "log.h"
 #include "css.h"
 #include "discovery.h"
@@ -295,6 +301,29 @@ log_info("adding %s\n",d->name);
   }
 
   gtk_widget_set_visible(main_window, TRUE);
+
+  // Raise the window to the front and give it focus, so it does not open
+  // hidden behind the launching terminal (e.g. under --faker, where the
+  // device-selection dialog that would normally grab focus is skipped).
+  gtk_window_present(GTK_WINDOW(main_window));
+
+#ifdef __APPLE__
+  // On macOS, a GTK app launched from a terminal is not made the active
+  // application, so gtk_window_present() raises the window within our own
+  // (background) app but it still sits behind the terminal.  Dynamically ask
+  // AppKit (already loaded in-process by GTK's quartz backend) to activate us.
+  // Done via the Obj-C runtime so we need not link AppKit or compile any .m.
+  {
+    Class app_class = objc_getClass("NSApplication");
+    if(app_class) {
+      id (*msg_id)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+      void (*msg_bool)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))objc_msgSend;
+      id app = msg_id((id)app_class, sel_registerName("sharedApplication"));
+      if(app)
+        msg_bool(app, sel_registerName("activateIgnoringOtherApps:"), YES);
+    }
+  }
+#endif
 
   gtk_widget_set_cursor_from_name(main_window, "default");
 
