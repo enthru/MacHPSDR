@@ -63,13 +63,36 @@ check-button related:
   programmatic `set_active`).
 Faker run is now **0 GTK criticals**.
 
-**TODO, in priority order:**
-1. Sanity-drive the GUI by hand (VFO menus/popovers, sliders, right-click config,
-   bookmark menu, file choosers, dialog checkboxes) — faker launch is clean but the
-   fixes aren't all exercised interactively. `open MacHPSDR.app` or run the binary.
-2. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184)
-   — deprecated-but-working today.
-3. Optional: GtkSnapshot/GdkTexture GPU path for the waterfalls.
+**✅ PHASE 2 COMPLETE (commits 15–24/N): all deprecated GTK widget APIs removed.**
+A build without `-Wno-deprecated-declarations` reports **0 deprecations from app
+sources**. Full, idiomatic rewrites (no compat shim):
+- **Tier-1 mechanical:** `gtk_widget_show/hide`→`set_visible`; `get_allocated_*`
+  →`get_*`; `style_context add/remove_class`+`get_style_context`→
+  `gtk_widget_add/remove_css_class`; `button_text.c` rewritten (per-widget CSS
+  providers gone → one display-wide provider + a class per colour).
+- **ComboBoxText/ComboBox → GtkDropDown** (all 9 dialogs/panels). Static list =
+  `gtk_drop_down_new_from_strings`; dynamic = GtkStringList; `get_active`→
+  `(int)gtk_drop_down_get_selected` (INVALID_LIST_POSITION casts to −1);
+  `"changed"`→`"notify::selected"` (3-arg handler). Editable CQ-dir combo →
+  plain GtkEntry (no non-deprecated editable combo). Model-backed `decode_sel` →
+  GtkDropDown + a "dsel-modes" object-data int array for the per-row enum.
+- **Dialog family:** GtkDialog(configure/bookmark/tx_info)→GtkWindow+content box;
+  file pickers→async **GtkFileDialog**; GtkMessageDialog(reconnect)→**GtkAlertDialog**;
+  dropped the `gtk4_dialog_run` nested-loop shim.
+- **TreeView/ListStore/CellRenderer → GtkColumnView** (device picker, MIDI table,
+  bookmark list w/ per-column GtkCustomSorter, FT8 band list w/ GtkFilterListModel
+  + per-row bind styling). Custom item GObject per table carrying the domain
+  pointer; double-click via the `"activate"` signal.
+
+**Remaining / next:**
+1. Sanity-drive the GUI by hand — the ColumnView tables (device select needs live
+   discovery; MIDI/bookmark/FT8 need interaction) and the async file dialogs aren't
+   exercised by `--faker`. `open MacHPSDR.app` or run the binary.
+2. **Optional GtkSnapshot/GdkTexture GPU path for the waterfalls** — this is also
+   the fix for the **one remaining deprecation**, `gdk_cairo_set_source_pixbuf`
+   (waterfall/ft8_waterfall/sstv_panel/wefax_panel/wideband_waterfall draw funcs).
+   `-Wno-deprecated-declarations` is kept in CFLAGS *only* for this; remove it when
+   the snapshot rework lands.
 
 **Also revisit (deliberate Phase-1 simplifications):** vfo band right-click menu
 flattened to headers (no submenus); ft8 waterfall not re-split live on resize;
