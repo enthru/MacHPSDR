@@ -1415,6 +1415,14 @@ void radio_rebuild_rx_stack(RADIO *r) {
   gtk_widget_set_visible(r->rx_container, TRUE);
 
   if(n>1) g_timeout_add(100,rx_stack_balance,r);
+
+  // The RX areas were just re-apportioned (a decode panel opened/closed, or a
+  // receiver was added/removed), so each receiver's panadapter/waterfall split
+  // must re-fit its new height — otherwise the absolute inner divider position
+  // leaves the panadapter collapsed.
+  for(int i=0;i<r->discovered->supported_receivers;i++)
+    if(r->receiver[i]!=NULL && r->receiver[i]->table!=NULL)
+      receiver_refit_vpaned(r->receiver[i]);
 }
 
 #ifdef FT8
@@ -2766,6 +2774,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
 
   create_visual(r);
+
 
   // Receivers are now loaded (possibly already at the max, e.g. restored from
   // saved properties), so set the Add Receiver button sensitivity to match.

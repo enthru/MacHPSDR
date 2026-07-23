@@ -2236,6 +2236,21 @@ log_info("%s: %d\n",__FUNCTION__,zoom);
 // a sized window (it gets re-parented into the RX stack and the window resized
 // afterwards), so gtk_widget_get_allocated_height() would return ~1 and the
 // saved proportion would be lost. Poll on a timeout until allocated, then apply.
+static gboolean restore_paned_position_cb(gpointer data);
+
+// Re-fit the panadapter/waterfall split to the vpaned's CURRENT height. The
+// position is absolute pixels, so when the RX area is resized (e.g. a decode
+// panel opens/closes and the outer paned re-apportions the height) the old
+// position no longer matches — leaving the panadapter collapsed. Re-run the
+// restore (retries until allocated) so the split re-fits the new height.
+void receiver_refit_vpaned(RECEIVER *rx) {
+  if(rx==NULL || rx->vpaned==NULL) return;
+  // 150 ms so this lands AFTER the outer rx_stack_balance (100 ms) has set the
+  // RX area height; restore_paned_position_cb then retries until the vpaned is
+  // allocated at its final size.
+  g_timeout_add(150, restore_paned_position_cb, (gpointer)rx);
+}
+
 static gboolean restore_paned_position_cb(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(rx->vpaned==NULL) return FALSE;

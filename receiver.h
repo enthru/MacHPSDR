@@ -381,6 +381,7 @@ extern void receiver_change_sample_rate(RECEIVER *rx,int sample_rate);
 extern void set_agc(RECEIVER *rx);
 extern void calculate_display_average(RECEIVER *rx);
 extern void receiver_fps_changed(RECEIVER *rx);
+extern void receiver_refit_vpaned(RECEIVER *rx);
 extern void receiver_change_zoom(RECEIVER *rx,int zoom);
 extern void update_frequency(RECEIVER *rx);
 extern void receiver_move(RECEIVER *rx,long long hz,gboolean round);
