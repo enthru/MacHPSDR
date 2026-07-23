@@ -6,16 +6,18 @@ signature, removed menus/EventBox, drawing model) are too pervasive to `#ifdef`.
 `master` stays on GTK3.
 
 ---
-## ▶ RESUME HERE (state as of the check-button-fix commit)
+## ▶ RESUME HERE (state as of the Phase-3 .app-bundle commit)
 
-**Where we are:** Phase 1 done + runtime check-button/signal fixups done — the
-tree builds, links, and launches clean on GTK 4.22 (no GTK criticals on faker
-launch). Branch `gtk4-migration`. Requires `brew install gtk4` (4.22 installed).
-Build/run to confirm:
+**Where we are:** Phase 1 + runtime check-button/signal fixups + **Phase 3 (.app
+bundle)** all done — the tree builds, links, launches clean on GTK 4.22 (0 GTK
+criticals under `G_DEBUG=fatal-warnings`), and `make app` produces a working
+self-contained `MacHPSDR.app`. Branch `gtk4-migration`. Requires `brew install
+gtk4` (4.22 installed). Build/run to confirm:
 
 ```bash
 make                                   # clean arm64 machpsdr against gtk4
 ./machpsdr --faker ft4.wav --usb-only  # launches end-to-end (no hardware)
+make app && open MacHPSDR.app          # self-contained GTK4 bundle
 ```
 
 **DONE this pass:**
@@ -39,14 +41,35 @@ make                                   # clean arm64 machpsdr against gtk4
    `"clicked"`: midi_dialog add/update/delete; vfo.c a2b/b2a/aswapb/zoom_b/step_b.
    (vfo.c:93 `"pressed"` is on a GtkGestureClick — left as-is.)
 
+**DONE — Phase 3 (.app bundle):** the Makefile `app` target now builds a working
+self-contained GTK4 `MacHPSDR.app` (62 MB, 47 bundled frameworks, `libgtk-4.1.dylib`,
+no gtk-3 leak). Changes: `lib/gtk-3.0` module copy → `lib/gtk-4.0` (GTK4 statically
+links its backends, so it's normally a no-op — kept for future dlopen'd modules);
+dropped the obsolete `GTK_IM_MODULE_FILE`/immodules.cache export (GTK4 has none);
+`etc/gtk-3.0/settings.ini` → `etc/gtk-4.0`. gdk-pixbuf loaders + `org.gtk.gtk4.*`
+schemas already handled. Verified: bundle launches self-contained via faker, no
+dyld/schema/gtk errors.
+
+**Also fixed two runtime bugs surfaced by the real (fatal-warnings) run** — not
+check-button related:
+- **vfo.c split_b**: the SPLIT/SAT/RSAT right-click menu callback was wired to the
+  removed `"button_press_event"` (criticaled + menu never appeared). Now a
+  GtkGestureClick on the **secondary** button (left-click stays with `"toggled"`).
+- **radio.c create_radio**: `set_sensitive(add_receiver_b,…)` ran *before*
+  `create_visual` created that button → `GTK_IS_WIDGET` assert on NULL. Moved the
+  sensitivity update to after `create_visual`, with a NULL guard.
+- **radio_info.c midi_b**: status-lamp toggle button opening Configure→MIDI was on
+  `"button_press_event"` → now `"clicked"` (fires on user click, not the frequent
+  programmatic `set_active`).
+Faker run is now **0 GTK criticals**.
+
 **TODO, in priority order:**
-1. Sanity-drive the GUI (VFO menus/popovers, sliders, right-click config,
-   bookmark menu, file choosers, dialog checkboxes) — only faker *launch* is
-   verified so far; the check-button/signal fixes are correct by construction but
-   not yet exercised by hand.
-2. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184).
-3. **Phase 3**: Makefile `app` target (gtk-3.0→gtk-4.0 bundle paths, drop im
-   modules) + optional GtkSnapshot/GdkTexture GPU waterfalls.
+1. Sanity-drive the GUI by hand (VFO menus/popovers, sliders, right-click config,
+   bookmark menu, file choosers, dialog checkboxes) — faker launch is clean but the
+   fixes aren't all exercised interactively. `open MacHPSDR.app` or run the binary.
+2. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184)
+   — deprecated-but-working today.
+3. Optional: GtkSnapshot/GdkTexture GPU path for the waterfalls.
 
 **Also revisit (deliberate Phase-1 simplifications):** vfo band right-click menu
 flattened to headers (no submenus); ft8 waterfall not re-split live on resize;

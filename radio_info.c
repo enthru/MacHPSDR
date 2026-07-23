@@ -36,12 +36,13 @@
 #include "configure_dialog.h"
 
 #ifdef MIDI
-static gboolean midi_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer data) {
+// GtkButton "clicked" (fires on user click, not the frequent programmatic
+// set_active of this status lamp): open the Configure dialog on the MIDI page.
+static void midi_b_press_cb(GtkButton *widget,gpointer data) {
   if(radio->dialog==NULL) {
     radio->dialog=create_configure_dialog(radio,-1);
   }
   configure_dialog_set_page("MIDI");
-  return TRUE;
 }
 #endif
 
@@ -101,7 +102,7 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
   // MIDI
   info->midi_b=gtk_toggle_button_new_with_label("MIDI");
   gtk_widget_set_name(info->midi_b,"info-button");
-  g_signal_connect(info->midi_b, "button_press_event", G_CALLBACK(midi_b_press_cb),rx);
+  g_signal_connect(info->midi_b, "clicked", G_CALLBACK(midi_b_press_cb),rx);
   gtk_box_append(GTK_BOX(row_bot),info->midi_b);
 #endif
 

@@ -536,11 +536,14 @@ app: $(PROGRAM)
 		fi; \
 	fi
 
-	@# Copy GTK im modules (input methods)
+	@# Copy GTK loadable modules.  GTK4 statically links its input-method and
+	@# print backends, so lib/gtk-4.0 normally ships NO loadable modules (unlike
+	@# GTK3's lib/gtk-3.0 immodules) and this step is a harmless no-op — kept so
+	@# any future dlopen'd module under lib/gtk-4.0/4.0.0 is bundled + relinked.
 	@echo "Copying GTK modules..."
-	@if [ -d "$(BREW_PREFIX)/lib/gtk-3.0" ]; then \
-		cp -r $(BREW_PREFIX)/lib/gtk-3.0 $(APP_BUNDLE)/Contents/Resources/lib/ 2>/dev/null || true; \
-		find $(APP_BUNDLE)/Contents/Resources/lib/gtk-3.0 -name "*.so" -o -name "*.dylib" | while read lib; do \
+	@if [ -d "$(BREW_PREFIX)/lib/gtk-4.0" ]; then \
+		cp -r $(BREW_PREFIX)/lib/gtk-4.0 $(APP_BUNDLE)/Contents/Resources/lib/ 2>/dev/null || true; \
+		find $(APP_BUNDLE)/Contents/Resources/lib/gtk-4.0 \( -name "*.so" -o -name "*.dylib" \) 2>/dev/null | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
 				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
 		done; \
@@ -565,10 +568,11 @@ app: $(PROGRAM)
 		fi; \
 	done
 
-	@# Copy GTK settings
-	@if [ -f "$(BREW_PREFIX)/etc/gtk-3.0/settings.ini" ]; then \
-		mkdir -p $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0; \
-		cp $(BREW_PREFIX)/etc/gtk-3.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-3.0/ 2>/dev/null || true; \
+	@# Copy GTK settings (GTK4 reads etc/gtk-4.0/settings.ini; Homebrew's gtk4
+	@# ships none, so this is normally a no-op — kept for a user-provided file).
+	@if [ -f "$(BREW_PREFIX)/etc/gtk-4.0/settings.ini" ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/etc/gtk-4.0; \
+		cp $(BREW_PREFIX)/etc/gtk-4.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-4.0/ 2>/dev/null || true; \
 	fi
 
 	@# Copy application PNG resources
@@ -623,9 +627,8 @@ app: $(PROGRAM)
 	@echo 'export GTK_EXE_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GTK_PATH="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@echo '# GTK theme and modules' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# GTK theme (Adwaita is built into GTK4; no immodules.cache in GTK4)' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GTK_THEME="Adwaita"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@echo 'export GTK_IM_MODULE_FILE="$$RES/lib/gtk-3.0/3.0.0/immodules.cache"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GTK_EXE_PREFIX="$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '# GDK Pixbuf' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)

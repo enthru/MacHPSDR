@@ -1624,7 +1624,11 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->split_b,"vfo-toggle");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->split_b),rx->split!=SPLIT_OFF);
   g_signal_connect(v->split_b, "toggled", G_CALLBACK(split_b_cb),rx);
-  g_signal_connect(v->split_b, "button_press_event", G_CALLBACK(split_b_press_cb),rx);
+  // Right-click opens the SPLIT/SAT/RSAT menu (left-click is the "toggled"
+  // handler above). GtkButton has no "button_press_event" in GTK4, so use a
+  // secondary-button gesture — restricting to button 3 avoids double-handling
+  // the primary click that already drives "toggled".
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),GDK_BUTTON_SECONDARY); g_signal_connect(_g,"pressed",G_CALLBACK(split_b_press_cb),rx); gtk_widget_add_controller(v->split_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_top),v->split_b);
 
   v->vfo_b_text=gtk_label_new("VFO B");

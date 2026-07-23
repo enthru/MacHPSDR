@@ -2732,13 +2732,6 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   add_receivers(r);
 
-  // Receivers are now loaded (possibly already at the max, e.g. restored from
-  // saved properties), so set the Add Receiver button sensitivity to match.
-  // The button only exists when supported_receivers>1; leave HL2-with-xvtr as-is.
-  if(r->discovered->supported_receivers>1 && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
-    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
-  }
-
   radio_rebuild_rx_stack(r);
 
   switch(r->discovered->protocol) {
@@ -2758,6 +2751,14 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
 
   create_visual(r);
+
+  // Receivers are now loaded (possibly already at the max, e.g. restored from
+  // saved properties), so set the Add Receiver button sensitivity to match.
+  // Must be AFTER create_visual, which is what creates add_receiver_b (only
+  // when supported_receivers>1); leave HL2-with-xvtr as-is.
+  if(add_receiver_b!=NULL && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
+    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
+  }
 
   switch(r->discovered->protocol) {
     case PROTOCOL_1:
