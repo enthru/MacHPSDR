@@ -1893,7 +1893,6 @@ log_info("create_transmitter: channel=%d\n",channel);
   for (int i = 0; i <= NUM_TX_METERS; i++) {
     tx->tx_info_meter[i] = NULL;
   }
-  tx->tx_info_meter[NUM_TX_METERS+1] = NULL;  
   
   tx->fwd_peak_buf = create_peak_detector(PEAK_DETECT_BUF_SIZE, 0);
   

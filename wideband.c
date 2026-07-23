@@ -294,8 +294,8 @@ WIDEBAND *create_wideband(int channel) {
   char *value;
   gint x=-1;
   gint y=-1;
-  gint width;
-  gint height;
+  gint width=512;
+  gint height=180;
 
 log_info("create_wideband: channel=%d\n",channel);
   w->channel=channel;

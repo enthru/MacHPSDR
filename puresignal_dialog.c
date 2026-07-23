@@ -226,6 +226,8 @@ static gboolean info_timeout(gpointer arg) {
   update_ps(tx, pk);
 
   return running;
+#else
+  return FALSE;
 #endif
 }
 

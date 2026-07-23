@@ -211,10 +211,11 @@ int rotary_action(void *data) {
     case ENCODER_MIC_GAIN:
       if(tx) {
         d_temp = radio->transmitter->mic_gain + (double)arg->val;
-        if (d_temp < -10.0) d_temp=-10.0; if (d_temp > 50.0) d_temp=50.0;
+        if (d_temp < -10.0) d_temp=-10.0;
+        if (d_temp > 50.0) d_temp=50.0;
+        radio->transmitter->mic_gain=d_temp;
+        update_radio(radio);
       }
-      radio->transmitter->mic_gain=d_temp;
-      update_radio(radio);
       break;
     case ENCODER_PAN:
       i_temp=rx->pan+(rx->zoom*arg->val);
@@ -223,7 +224,7 @@ int rotary_action(void *data) {
       } else if(i_temp>(rx->pixels-rx->panadapter_width)) {
         i_temp=rx->pixels-rx->panadapter_width;
       }
-      rx->pan=d_temp;
+      rx->pan=i_temp;
       break;
     case ENCODER_PANADAPTER_HIGH:
       break;

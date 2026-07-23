@@ -954,7 +954,7 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
 }
 
 void delete_diversity_mixer(DIVMIXER *dmix) {
-  int hidden_channel;
+  int hidden_channel = -1;
 
   for (int i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
     if(radio->divmixer[i] == dmix) {
@@ -972,7 +972,7 @@ log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
     }
   }
   // Delete the hidden receiver
-  if (radio->receiver[hidden_channel] != NULL) {
+  if (hidden_channel >= 0 && radio->receiver[hidden_channel] != NULL) {
     log_info("delete_diversity_mixer: delete the hidden rx\n");
     delete_receiver(radio->receiver[hidden_channel]);
   }
@@ -2458,10 +2458,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->transmitter=NULL;
 
   r->diversity_mixers = 0;
-  for(i=0;i< r->diversity_mixers; i++) {
+  for(i=0;i<=MAX_DIVERSITY_MIXERS; i++) {
     r->divmixer[i] = NULL;
   }
-  r->divmixer[MAX_DIVERSITY_MIXERS+1] = NULL;
 
   r->can_transmit=TRUE;
 #ifdef SOAPYSDR

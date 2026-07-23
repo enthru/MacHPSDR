@@ -233,6 +233,7 @@ int register_midi_device(char *myname) {
     } else {
         ret=-1;
     }
+    return ret;
 }
 
 void get_midi_devices() {
