@@ -68,26 +68,26 @@ static void offset_changed(GtkSpinButton *sb, gpointer data) {
 // read radio->ft8_proto directly.  Also mirror the choice into radio->decode_mode
 // so the bottom-bar decoder selector (the source of truth for which decoder runs)
 // stays consistent — the panel is only shown while an FT8/FT4 decoder is active.
-static void proto_changed(GtkComboBox *cb, gpointer data) {
-  int p = gtk_combo_box_get_active(cb);
+static void proto_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
+  int p = (int)gtk_drop_down_get_selected(cb);
   if (p < 0) p = 0;
   radio->ft8_proto = p;
   radio->decode_mode = p ? DECODE_FT4 : DECODE_FT8;
 }
-static void slot_changed(GtkComboBox *cb, gpointer data) {
-  radio->ft8_tx_even = (gtk_combo_box_get_active(cb) == 0);
+static void slot_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
+  radio->ft8_tx_even = (gtk_drop_down_get_selected(cb) == 0);
 }
 // Directed-CQ modifier: blank = plain CQ, else a region ("DX"/"EU"/…) or 3
 // digits.  Keep only alnum, uppercased (the FT8 codec accepts 1-4 letters or
 // exactly 3 digits after "CQ "); an unencodable value is surfaced at Tx time.
-static void cq_dir_changed(GtkComboBoxText *cb, gpointer data) {
-  gchar *t = gtk_combo_box_text_get_active_text(cb);
+// GTK4 has no non-deprecated editable combo, so this is a plain GtkEntry.
+static void cq_dir_changed(GtkEditable *cb, gpointer data) {
+  const char *t = gtk_editable_get_text(cb);
   char clean[8]; int j = 0;
   if (t) for (const char *p = t; *p && j < 7; p++)
     if (g_ascii_isalnum(*p)) clean[j++] = g_ascii_toupper(*p);
   clean[j] = '\0';
   g_strlcpy(radio->ft8_cq_dir, clean, sizeof(radio->ft8_cq_dir));
-  g_free(t);
 }
 
 // ---- TX buttons ------------------------------------------------------------
@@ -309,12 +309,11 @@ GtkWidget *ft8_panel_create(void) {
   GtkWidget *cfg = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
 
   // Protocol selector (FT8 / FT4) — leftmost, beside the TX frequency controls.
-  GtkWidget *mode = gtk_combo_box_text_new();
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "FT8");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), "FT4");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(mode), radio->ft8_proto ? 1 : 0);
+  const char *proto_opts[] = {"FT8","FT4",NULL};
+  GtkWidget *mode = gtk_drop_down_new_from_strings(proto_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(mode), radio->ft8_proto ? 1 : 0);
   gtk_widget_set_tooltip_text(mode, "Digital protocol: FT8 (15 s) or FT4 (7.5 s)");
-  g_signal_connect(mode, "changed", G_CALLBACK(proto_changed), NULL);
+  g_signal_connect(mode, "notify::selected", G_CALLBACK(proto_changed), NULL);
   gtk_box_append(GTK_BOX(cfg),mode);
 
   gtk_box_append(GTK_BOX(cfg),gtk_label_new("Tx Hz"));
@@ -323,23 +322,19 @@ GtkWidget *ft8_panel_create(void) {
   g_signal_connect(offset_spin, "value-changed", G_CALLBACK(offset_changed), NULL);
   gtk_box_append(GTK_BOX(cfg),offset_spin);
 
-  GtkWidget *slot = gtk_combo_box_text_new();
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(slot), "Even");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(slot), "Odd");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(slot), radio->ft8_tx_even ? 0 : 1);
-  g_signal_connect(slot, "changed", G_CALLBACK(slot_changed), NULL);
+  const char *slot_opts[] = {"Even","Odd",NULL};
+  GtkWidget *slot = gtk_drop_down_new_from_strings(slot_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(slot), radio->ft8_tx_even ? 0 : 1);
+  g_signal_connect(slot, "notify::selected", G_CALLBACK(slot_changed), NULL);
   gtk_box_append(GTK_BOX(cfg),slot);
 
   // Directed CQ: blank = plain CQ, or pick/type a region (DX/EU/NA/…) or 3 digits.
   gtk_box_append(GTK_BOX(cfg),gtk_label_new("CQ"));
-  GtkWidget *cqdir = gtk_combo_box_text_new_with_entry();
-  const char *dirs[] = { "", "DX", "EU", "NA", "SA", "AS", "AF", "OC" };
-  for (unsigned i = 0; i < G_N_ELEMENTS(dirs); i++)
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(cqdir), dirs[i]);
-  GtkWidget *cqentry = gtk_combo_box_get_child(GTK_COMBO_BOX(cqdir));
-  gtk_editable_set_width_chars(GTK_EDITABLE(cqentry), 4);
-  gtk_entry_set_max_length(GTK_ENTRY(cqentry), sizeof(radio->ft8_cq_dir) - 1);
-  gtk_editable_set_text(GTK_EDITABLE(cqentry), radio->ft8_cq_dir);
+  GtkWidget *cqdir = gtk_entry_new();
+  gtk_editable_set_width_chars(GTK_EDITABLE(cqdir), 4);
+  gtk_entry_set_max_length(GTK_ENTRY(cqdir), sizeof(radio->ft8_cq_dir) - 1);
+  gtk_entry_set_placeholder_text(GTK_ENTRY(cqdir), "CQ");
+  gtk_editable_set_text(GTK_EDITABLE(cqdir), radio->ft8_cq_dir);
   gtk_widget_set_tooltip_text(cqdir,
       "Directed CQ: blank = CQ; a region (DX/EU/NA/SA/AS/AF/OC) or 3 digits");
   g_signal_connect(cqdir, "changed", G_CALLBACK(cq_dir_changed), NULL);

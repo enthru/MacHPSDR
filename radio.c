@@ -1481,13 +1481,12 @@ static void ft8_expand_cb(GtkButton *b, gpointer data) {
 // TX/QSO/reporter path stays consistent. Leaving FT8/FT4 closes the QSO panel
 // (handled by radio_ft8_panel_sync).
 //
-// The combo is a GtkListStore-backed GtkComboBox (not a plain text combo) whose
-// visible rows depend on the RX mode: only the decoders actually usable in the
-// current mode are offered (see decode_valid_mask) — e.g. narrowband FM (FMN,
-// for VHF/ISS SSTV) exposes only Off + SSTV, so FT8/FT4/WEFAX (SSB/HF-only)
-// are not shown. Each row carries its decode_mode_t value in DSEL_MODE, so the
-// selection is read from the model, not the row index.
-enum { DSEL_LABEL, DSEL_MODE, DSEL_NCOLS };
+// The selector is a GtkStringList-backed GtkDropDown whose visible rows depend
+// on the RX mode: only the decoders actually usable in the current mode are
+// offered (see decode_valid_mask) — e.g. narrowband FM (FMN, for VHF/ISS SSTV)
+// exposes only Off + SSTV, so FT8/FT4/WEFAX (SSB/HF-only) are not shown. Each
+// row's decode_mode_t value is kept in the widget's "dsel-modes" object-data
+// array (indexed by row), so the selection maps to a mode, not a row index.
 
 static const char *decode_mode_label(int m) {
   switch(m) {
@@ -1519,52 +1518,55 @@ static int decode_valid_mask(RECEIVER *rx) {
   return 0;
 }
 
-static void decode_sel_changed(GtkComboBox *cb, gpointer data);
+static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data);
 
 // Rebuild the selector's rows to the decoders valid for the current RX mode
 // (only when that set changes) and keep the active row synced to
 // radio->decode_mode. If the current decode_mode is no longer valid in the new
 // mode, fall back to DECODE_OFF. GTK thread only (called from rds_update_cb).
+//
+// GTK4: a GtkDropDown backed by a GtkStringList of labels. The per-row
+// decode_mode_t value (the old DSEL_MODE column) is kept in a parallel int
+// array attached to the widget as "dsel-modes" object data, indexed by row.
 static void decode_sel_sync(RADIO *r) {
   if(r==NULL || r->decode_sel==NULL) return;
-  GtkComboBox *cb = GTK_COMBO_BOX(r->decode_sel);
-  GtkTreeModel *model = gtk_combo_box_get_model(cb);
-  if(model==NULL) return;
+  GtkDropDown *cb = GTK_DROP_DOWN(r->decode_sel);
+  GtkStringList *sl = GTK_STRING_LIST(gtk_drop_down_get_model(cb));
+  if(sl==NULL) return;
   int mask = decode_valid_mask(r->active_receiver);
   static int last_mask = -1;
   gboolean rebuild = (mask!=last_mask) ||
-                     (gtk_tree_model_iter_n_children(model,NULL)==0);
+                     (g_list_model_get_n_items(G_LIST_MODEL(sl))==0);
   g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
   if(rebuild) {
-    GtkListStore *store = GTK_LIST_STORE(model);
-    gtk_list_store_clear(store);
+    gtk_string_list_splice(sl,0,g_list_model_get_n_items(G_LIST_MODEL(sl)),NULL);
+    int *modes = g_new0(int, DECODE_WEFAX+1);
+    int n = 0;
     for(int m=DECODE_OFF;m<=DECODE_WEFAX;m++) if(mask & (1<<m)) {
-      GtkTreeIter it;
-      gtk_list_store_append(store,&it);
-      gtk_list_store_set(store,&it,DSEL_LABEL,decode_mode_label(m),DSEL_MODE,m,-1);
+      gtk_string_list_append(sl,decode_mode_label(m));
+      modes[n++] = m;
     }
+    g_object_set_data_full(G_OBJECT(cb),"dsel-modes",modes,g_free);
     last_mask = mask;
     if(mask && !(mask & (1<<r->decode_mode)))   // current decoder invalid here
       r->decode_mode = DECODE_OFF;
   }
   // Point the active row at radio->decode_mode (which the FT8 panel's protocol
-  // combo can also change) by matching the row's DSEL_MODE value.
-  GtkTreeIter it;
-  gboolean ok = gtk_tree_model_get_iter_first(model,&it);
-  while(ok) {
-    gint m; gtk_tree_model_get(model,&it,DSEL_MODE,&m,-1);
-    if(m==r->decode_mode) { gtk_combo_box_set_active_iter(cb,&it); break; }
-    ok = gtk_tree_model_iter_next(model,&it);
+  // combo can also change) by matching the row's stored decode_mode value.
+  int *modes = g_object_get_data(G_OBJECT(cb),"dsel-modes");
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(sl));
+  for(guint i=0;i<n && modes;i++) {
+    if(modes[i]==r->decode_mode) { gtk_drop_down_set_selected(cb,i); break; }
   }
   g_signal_handlers_unblock_by_func(cb,G_CALLBACK(decode_sel_changed),r);
 }
 
-static void decode_sel_changed(GtkComboBox *cb, gpointer data) {
+static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   RADIO *r=(RADIO *)data;
-  GtkTreeIter it;
-  if(!gtk_combo_box_get_active_iter(cb,&it)) return;
-  gint m = DECODE_OFF;
-  gtk_tree_model_get(gtk_combo_box_get_model(cb),&it,DSEL_MODE,&m,-1);
+  guint idx = gtk_drop_down_get_selected(cb);
+  if(idx==GTK_INVALID_LIST_POSITION) return;
+  int *modes = g_object_get_data(G_OBJECT(cb),"dsel-modes");
+  gint m = modes ? modes[idx] : DECODE_OFF;
   r->decode_mode = m;
   if(m==DECODE_FT8) r->ft8_proto = 0;
   else if(m==DECODE_FT4) r->ft8_proto = 1;
@@ -2297,17 +2299,11 @@ static void create_visual(RADIO *r) {
   // Decoder selector: picks which decoder taps the active RX's audio. Its rows
   // are populated per-mode by decode_sel_sync (rds_update_cb) so only decoders
   // valid in the current mode are offered (e.g. FMN shows just Off + SSTV); each
-  // row carries its decode_mode_t in DSEL_MODE. Shown in DIGU/DIGL/FMN.
-  {
-    GtkListStore *store=gtk_list_store_new(DSEL_NCOLS,G_TYPE_STRING,G_TYPE_INT);
-    r->decode_sel=gtk_combo_box_new_with_model(GTK_TREE_MODEL(store));
-    g_object_unref(store);
-    GtkCellRenderer *rend=gtk_cell_renderer_text_new();
-    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(r->decode_sel),rend,TRUE);
-    gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(r->decode_sel),rend,"text",DSEL_LABEL,NULL);
-  }
+  // row's decode_mode_t is kept in the "dsel-modes" object-data array. Shown in
+  // DIGU/DIGL/FMN.
+  r->decode_sel=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   gtk_widget_set_name(r->decode_sel,"decode-combo");   // flat themed combo (css.c)
-  g_signal_connect(r->decode_sel,"changed",G_CALLBACK(decode_sel_changed),(gpointer)r);
+  g_signal_connect(r->decode_sel,"notify::selected",G_CALLBACK(decode_sel_changed),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->decode_sel);
   decode_sel_sync(r);   // initial rows for the current mode
 #endif

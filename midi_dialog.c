@@ -120,9 +120,15 @@ static void configure_cb(GtkWidget *widget, gpointer data) {
   configure_midi_device(conf);
 }
 
-static void device_changed_cb(GtkWidget *widget, gpointer data) {
+// Read the selected row's text from a GtkStringList-backed GtkDropDown.
+static const char *md_selected_text(GtkWidget *dd) {
+  GtkStringObject *o=GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(dd)));
+  return o ? gtk_string_object_get_string(o) : NULL;
+}
+
+static void device_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *r=(RADIO *)data;
-  device = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  device = (int)gtk_drop_down_get_selected(widget);
   if(midi_device_name!=NULL) {
     g_free(midi_device_name);
   }
@@ -137,26 +143,26 @@ static void device_changed_cb(GtkWidget *widget, gpointer data) {
   }
 }
 
-static void type_changed_cb(GtkWidget *widget, gpointer data) {
+static void type_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   int i=1;
   int j=1;
 
   // update actions available for the type
-  gchar *type=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(widget));
+  const char *type=md_selected_text(GTK_WIDGET(widget));
 
   //g_print("%s: type=%s\n",__FUNCTION__,type);
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(newAction));
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newAction),NULL,ActionTable[0].str);
+  gtk_string_list_splice(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),0,g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),NULL);
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),ActionTable[0].str);
   if(type==NULL || strcmp(type,"NONE")==0) {
     // leave empty
-    gtk_combo_box_set_active (GTK_COMBO_BOX(newAction),0);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(newAction),0);
   } else if(strcmp(type,"KEY")==0) {
     // add all the Key actions
     while(ActionTable[i].action!=ACTION_NONE) {
       if(ActionTable[i].type&MIDI_KEY) {
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newAction),NULL,ActionTable[i].str);
+        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),ActionTable[i].str);
 	if(ActionTable[i].action==thisAction) {
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newAction),j);
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newAction),j);
 	}
 	j++;
       }
@@ -166,9 +172,9 @@ static void type_changed_cb(GtkWidget *widget, gpointer data) {
     // add all the Knob actions
     while(ActionTable[i].action!=ACTION_NONE) {
       if(ActionTable[i].type&MIDI_KNOB) {
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newAction),NULL,ActionTable[i].str);
+        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),ActionTable[i].str);
 	if(ActionTable[i].action==thisAction) {
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newAction),j);
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newAction),j);
 	}
 	j++;
       }
@@ -178,9 +184,9 @@ static void type_changed_cb(GtkWidget *widget, gpointer data) {
     // add all the Wheel actions
     while(ActionTable[i].action!=ACTION_NONE) {
       if(ActionTable[i].type&MIDI_WHEEL || ActionTable[i].type&MIDI_KNOB) {
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newAction),NULL,ActionTable[i].str);
+        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),ActionTable[i].str);
 	if(ActionTable[i].action==thisAction) {
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newAction),j);
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newAction),j);
 	}
 	j++;
       }
@@ -471,8 +477,8 @@ static void load_store() {
 
 static void add_cb(GtkButton *widget,gpointer user_data) {
 
-  gchar *str_type=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(newType));
-  gchar *str_action=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(newAction));
+  const gchar *str_type=md_selected_text(newType);
+  const gchar *str_action=md_selected_text(newAction);
 ;
 
   gint i;
@@ -551,8 +557,8 @@ static void update_cb(GtkButton *widget,gpointer user_data) {
   int i;
 
 
-  gchar *str_type=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(newType));
-  gchar *str_action=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(newAction));
+  const gchar *str_type=md_selected_text(newType);
+  const gchar *str_action=md_selected_text(newAction);
 ;
   //g_print("%s: type=%s action=%s\n",__FUNCTION__,str_type,str_action);
 
@@ -663,9 +669,9 @@ GtkWidget *create_midi_dialog(RADIO *r) {
     gtk_widget_set_halign(devices_label,GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(dev_grid),devices_label,0,0,1,1);
 
-    GtkWidget *devices=gtk_combo_box_text_new();
+    GtkWidget *devices=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
     for(int i=0;i<n_midi_devices;i++) {
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(devices),NULL,midi_devices[i].name);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(devices))),midi_devices[i].name);
       if(midi_device_name!=NULL) {
         if(strcmp(midi_device_name,midi_devices[i].name)==0) {
           device=i;
@@ -674,8 +680,8 @@ GtkWidget *create_midi_dialog(RADIO *r) {
     }
     gtk_widget_set_hexpand(devices,TRUE);
     gtk_grid_attach(GTK_GRID(dev_grid),devices,1,0,1,1);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(devices),device);
-    g_signal_connect(devices,"changed",G_CALLBACK(device_changed_cb),r);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(devices),device);
+    g_signal_connect(devices,"notify::selected",G_CALLBACK(device_changed_cb),r);
   } else {
     GtkWidget *message=gtk_label_new("No MIDI devices found!");
     gtk_widget_set_halign(message,GTK_ALIGN_START);
@@ -715,16 +721,16 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(map_grid),newChannel,1,1,1,1);
   newNote=gtk_label_new("");
   gtk_grid_attach(GTK_GRID(map_grid),newNote,2,1,1,1);
-  newType=gtk_combo_box_text_new();
+  newType=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   gtk_grid_attach(GTK_GRID(map_grid),newType,3,1,1,1);
-  g_signal_connect(newType,"changed",G_CALLBACK(type_changed_cb),NULL);
+  g_signal_connect(newType,"notify::selected",G_CALLBACK(type_changed_cb),NULL);
   newVal=gtk_label_new("");
   gtk_grid_attach(GTK_GRID(map_grid),newVal,4,1,1,1);
   newMin=gtk_label_new("");
   gtk_grid_attach(GTK_GRID(map_grid),newMin,5,1,1,1);
   newMax=gtk_label_new("");
   gtk_grid_attach(GTK_GRID(map_grid),newMax,6,1,1,1);
-  newAction=gtk_combo_box_text_new();
+  newAction=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   gtk_grid_attach(GTK_GRID(map_grid),newAction,7,1,1,1);
 
   add_b=gtk_button_new_with_label("Add");
@@ -832,26 +838,26 @@ static int update(void *data) {
       gtk_label_set_text(GTK_LABEL(newChannel),text);
       sprintf(text,"%d",thisNote);
       gtk_label_set_text(GTK_LABEL(newNote),text);
-      gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(newType));
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"NONE");
+      gtk_string_list_splice(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),0,g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"NONE");
       switch(thisEvent) {
         case EVENT_NONE:
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
           break;
         case MIDI_NOTE:
         case MIDI_PITCH:
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"KEY");
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"KEY");
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
           break;
         case MIDI_CTRL:
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"KNOB/SLIDER");
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"WHEEL");
-          gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"KNOB/SLIDER");
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"WHEEL");
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
           break;
       }
-      gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(newAction));
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newAction),NULL,"NONE");
-      gtk_combo_box_set_active (GTK_COMBO_BOX(newAction),0);
+      gtk_string_list_splice(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),0,g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newAction))),"NONE");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(newAction),0);
       sprintf(text,"%d",thisVal);
       gtk_label_set_text(GTK_LABEL(newVal),text);
       sprintf(text,"%d",thisMin);
@@ -892,30 +898,30 @@ static int update(void *data) {
       gtk_label_set_text(GTK_LABEL(newChannel),text);
       sprintf(text,"%d",thisNote);
       gtk_label_set_text(GTK_LABEL(newNote),text);
-      gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(newType));
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"NONE");
+      gtk_string_list_splice(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),0,g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"NONE");
       switch(thisEvent) {
         case EVENT_NONE:
-	  gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+	  gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
           break;
         case MIDI_NOTE:
         case MIDI_PITCH:
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"KEY");
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"KEY");
 	  if(thisType==TYPE_NONE) {
-	    gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+	    gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
 	  } else if(thisType==MIDI_KEY) {
-	    gtk_combo_box_set_active (GTK_COMBO_BOX(newType),1);
+	    gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),1);
 	  }
           break;
         case MIDI_CTRL:
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"KNOB/SLIDER");
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(newType),NULL,"WHEEL");
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"KNOB/SLIDER");
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(newType))),"WHEEL");
 	  if(thisType==TYPE_NONE) {
-	    gtk_combo_box_set_active (GTK_COMBO_BOX(newType),0);
+	    gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),0);
 	  } else if(thisType==MIDI_KNOB) {
-	    gtk_combo_box_set_active (GTK_COMBO_BOX(newType),1);
+	    gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),1);
 	  } else if(thisType==MIDI_WHEEL) {
-            gtk_combo_box_set_active (GTK_COMBO_BOX(newType),2);
+            gtk_drop_down_set_selected(GTK_DROP_DOWN(newType),2);
           }
           break;
       }
