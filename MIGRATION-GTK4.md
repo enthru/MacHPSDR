@@ -84,15 +84,37 @@ sources**. Full, idiomatic rewrites (no compat shim):
   + per-row bind styling). Custom item GObject per table carrying the domain
   pointer; double-click via the `"activate"` signal.
 
+**✅ GPU RENDER PHASE COMPLETE: `gdk_cairo_set_source_pixbuf` retired — build is
+now fully deprecation-clean and `-Wno-deprecated-declarations` is REMOVED from
+CFLAGS.** All five image draw funcs (waterfall / ft8_waterfall / wideband_waterfall
+/ sstv_panel / wefax_panel) now composite through the GTK4 render-node pipeline via
+a new reusable widget **`GpuImage`** (`gpu_image.c/.h`):
+- Subclasses `GtkWidget`, overrides `snapshot()`. Pulls the current pixbuf from a
+  caller `GpuImageSource` callback (matches the old "draw reads the live pixbuf"
+  flow — existing `gtk_widget_queue_draw()` sites drive repaints unchanged), wraps
+  it in a **`GdkMemoryTexture`** (copied bytes → immutable, safe for the in-place-
+  mutated waterfall pixbufs) and appends it with `gtk_snapshot_append_scaled_texture`
+  (per-widget fit: STRETCH / LETTERBOX / WIDTH_BOTTOM, and GskScalingFilter).
+- Vector overlays (waterfall passband+cursor, ft8 grid/TX-marker) reuse their cairo
+  code verbatim via **`gtk_snapshot_append_cairo()`** (not deprecated) in an optional
+  `GpuImageOverlay`. A `"resize"` signal (from `size_allocate`) re-implements
+  GtkDrawingArea's, so the pixbuf-reallocating resize callbacks are untouched.
+- **Note — `gdk_texture_new_for_pixbuf()` is itself deprecated (GTK 4.20)**, hence
+  the direct `gdk_memory_texture_new()` path.
+- **Fixed a latent bug in passing:** `sstv_panel.c` was connecting to a nonexistent
+  GtkDrawingArea `"draw"` signal (a GTK4-migration miss) — the SSTV image never
+  rendered. The GpuImage conversion restores it.
+- **Also fixed** `audio.c`: the `kAudioObjectPropertyElementMain` compat `#ifndef`
+  guard was always true (it's an enum, not a macro) and wrongly mapped Main back
+  onto the deprecated `Master` on modern SDKs; now gated on the SDK version. This
+  CoreAudio deprecation had been hidden by the same `-Wno-deprecated-declarations`.
+
 **Remaining / next:**
 1. Sanity-drive the GUI by hand — the ColumnView tables (device select needs live
    discovery; MIDI/bookmark/FT8 need interaction) and the async file dialogs aren't
-   exercised by `--faker`. `open MacHPSDR.app` or run the binary.
-2. **Optional GtkSnapshot/GdkTexture GPU path for the waterfalls** — this is also
-   the fix for the **one remaining deprecation**, `gdk_cairo_set_source_pixbuf`
-   (waterfall/ft8_waterfall/sstv_panel/wefax_panel/wideband_waterfall draw funcs).
-   `-Wno-deprecated-declarations` is kept in CFLAGS *only* for this; remove it when
-   the snapshot rework lands.
+   exercised by `--faker`. `open MacHPSDR.app` or run the binary. The GpuImage
+   waterfalls render clean under `--faker` (0 GTK/GSK criticals); the SSTV/WEFAX
+   image panels still want a hand-check with a real decode.
 
 **Also revisit (deliberate Phase-1 simplifications):** vfo band right-click menu
 flattened to headers (no submenus); ft8 waterfall not re-split live on resize;
@@ -233,9 +255,11 @@ vfo.c 256 · radio.c 46 · receiver_dialog.c 32 · bookmark_dialog.c 27 · xvtr_
 - `gtk_event_box_new` (9) → drop, controller on child
 
 ### Phase 2 (deprecated → new)
-- ⬜ ComboBox → GtkDropDown (~318 sites)
-- ⬜ TreeView/ListStore → GtkColumnView (~184 sites)
+- ✅ ComboBox → GtkDropDown (~318 sites)
+- ✅ TreeView/ListStore → GtkColumnView (~184 sites)
 
 ### Phase 3
-- ⬜ `app` target in Makefile (gtk-4.0 bundle paths)
-- ⬜ optional GtkSnapshot GPU path for waterfalls
+- ✅ `app` target in Makefile (gtk-4.0 bundle paths)
+- ✅ GtkSnapshot/GdkTexture GPU path for waterfalls + image panels (GpuImage,
+     gpu_image.c) — retired the last `gdk_cairo_set_source_pixbuf`; build is now
+     deprecation-clean and `-Wno-deprecated-declarations` removed from CFLAGS

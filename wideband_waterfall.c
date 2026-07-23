@@ -22,6 +22,7 @@
 
 #include "wideband.h"
 #include "wideband_waterfall.h"
+#include "gpu_image.h"
 
 static int colorLowR=0; // black
 static int colorLowG=0;
@@ -67,13 +68,10 @@ static void waterfall_resize_cb(GtkDrawingArea *area,int width,int height,gpoint
 }
 
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void waterfall_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
+// GPU path: GpuImage pulls the current pixbuf here at snapshot time.
+static GdkPixbuf *waterfall_source(gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
-  if(w->waterfall_pixbuf) {
-    gdk_cairo_set_source_pixbuf (cr, w->waterfall_pixbuf, 0, 0);
-    cairo_paint (cr);
-  }
+  return w->waterfall_pixbuf;
 }
 
 GtkWidget *create_wideband_waterfall(WIDEBAND *w) {
@@ -84,10 +82,8 @@ GtkWidget *create_wideband_waterfall(WIDEBAND *w) {
   w->waterfall_resize_timer=-1;
   w->waterfall_pixbuf=NULL;
 
-  waterfall = gtk_drawing_area_new ();
+  waterfall = gpu_image_new(waterfall_source,(gpointer)w);
   //gtk_widget_set_size_request (waterfall, w->width, w->height/3);
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(waterfall),waterfall_draw_cb,(gpointer)w,NULL);
   g_signal_connect(waterfall,"resize",G_CALLBACK (waterfall_resize_cb),(gpointer)w);
 
   return waterfall;

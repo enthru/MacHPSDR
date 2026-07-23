@@ -24,6 +24,7 @@
 #include "sstv_panel.h"
 #include "sstv_decoder.h"
 #include "sstv_encoder.h"
+#include "gpu_image.h"
 #include "log.h"
 
 #define REFRESH_MS 200          // ~5 fps
@@ -56,30 +57,14 @@ typedef struct {
   gboolean   was_txing;     // to detect the TX→idle edge in tick()
 } SstvPanel;
 
-// Draw the image scaled to fit the drawing area, preserving 4:3, letterboxed.
-static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
+// GPU path (GpuImage, letterboxed nearest-neighbour): pull the pixbuf to show.
+// Show the decoded image normally, but preview the loaded TX image while
+// transmitting (or when nothing has been received yet).
+static GdkPixbuf *on_source(gpointer data) {
   SstvPanel *p = data;
-  int aw = gtk_widget_get_width(w);
-  int ah = gtk_widget_get_height(w);
-  cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-  cairo_paint(cr);
-  // Show the decoded image normally, but preview the loaded TX image while
-  // transmitting (or when nothing has been received yet).
   GdkPixbuf *src = p->pb;
   if ((sstv_tx_active() || src == NULL) && p->tx_img != NULL) src = p->tx_img;
-  if (src == NULL) return FALSE;
-  int iw = gdk_pixbuf_get_width(src);
-  int ih = gdk_pixbuf_get_height(src);
-  double sx = (double)aw / iw, sy = (double)ah / ih;
-  double s = sx < sy ? sx : sy;
-  double dw = iw * s, dh = ih * s;
-  double ox = (aw - dw) / 2.0, oy = (ah - dh) / 2.0;
-  cairo_translate(cr, ox, oy);
-  cairo_scale(cr, s, s);
-  gdk_cairo_set_source_pixbuf(cr, src, 0, 0);
-  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
-  cairo_paint(cr);
-  return FALSE;
+  return src;
 }
 
 static gboolean tick(gpointer data) {
@@ -306,11 +291,12 @@ GtkWidget *sstv_panel_create(void) {
 
   // Image area. Small min height (was 256) so the GTK4 paned can shrink the
   // panel and leave the RF spectrum a usable height; vexpand still fills it.
-  p->area = gtk_drawing_area_new();
+  p->area = gpu_image_new(on_source, p);
+  gpu_image_set_fit(GPU_IMAGE(p->area), GPU_FIT_LETTERBOX);
+  gpu_image_set_filter(GPU_IMAGE(p->area), GSK_SCALING_FILTER_NEAREST);
   gtk_widget_set_size_request(p->area, 320, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
-  g_signal_connect(p->area, "draw", G_CALLBACK(on_draw), p);
   gtk_box_append(GTK_BOX(box),p->area); gtk_widget_set_hexpand(p->area,TRUE); gtk_widget_set_vexpand(p->area,TRUE);
 
   // Status line.

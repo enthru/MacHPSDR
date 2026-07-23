@@ -34,6 +34,7 @@
 
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
+#include "gpu_image.h"
 
 #define WF_MAX_HZ    5000.0   // hard cap on the displayed audio span
 #define WF_ROWS      160      // spectrogram history depth (pixbuf rows)
@@ -122,22 +123,13 @@ static gboolean tick(gpointer data) {
   return G_SOURCE_CONTINUE;
 }
 
-static void on_draw(GtkDrawingArea *da, cairo_t *cr, int W, int H, gpointer data) {
-  // Background.
-  cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-  cairo_rectangle(cr, 0, 0, W, H);
-  cairo_fill(cr);
+// GPU path: GpuImage composites this spectrogram pixbuf (stretched to the
+// widget) as a texture; the grid / TX marker are drawn on top by the overlay.
+static GdkPixbuf *on_source(gpointer data) {
+  return (pb != NULL && nbins > 0) ? pb : NULL;
+}
 
-  // Spectrogram, stretched to the widget.
-  if (pb != NULL && nbins > 0) {
-    cairo_save(cr);
-    cairo_scale(cr, (double)W / nbins, (double)H / WF_ROWS);
-    gdk_cairo_set_source_pixbuf(cr, pb, 0, 0);
-    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
-    cairo_paint(cr);
-    cairo_restore(cr);
-  }
-
+static void on_overlay(cairo_t *cr, int W, int H, gpointer data) {
   // Frequency grid + labels every 500 Hz across the displayed span.
   cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
   cairo_set_font_size(cr, 10);
@@ -207,12 +199,12 @@ static void on_destroy(GtkWidget *w, gpointer data) {
 }
 
 GtkWidget *ft8_waterfall_create(void) {
-  area = gtk_drawing_area_new();
+  area = gpu_image_new(on_source, NULL);
+  gpu_image_set_overlay(GPU_IMAGE(area), on_overlay);
   gtk_widget_set_name(area, "ft8-waterfall");
   // A non-zero minimum width so the pane is visible immediately, before the
   // 2/3 : 1/3 split position is applied (see receiver_ft8_waterfall_sync).
   gtk_widget_set_size_request(area, 140, WF_HEIGHT);
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area), on_draw, NULL, NULL);
 
   // GTK4: left-click via a gesture controller (button masks are gone).
   GtkGesture *click = gtk_gesture_click_new();

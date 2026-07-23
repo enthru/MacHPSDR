@@ -31,6 +31,7 @@
 #include "radio.h"
 #include "waterfall.h"
 #include "waterfall_theme.h"
+#include "gpu_image.h"
 #include "main.h"
 
 static int colorLowR=0; // black
@@ -90,22 +91,21 @@ static void waterfall_resize_cb(GtkDrawingArea *area,int width,int height,gpoint
   }
 }
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void waterfall_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
+// GPU path: GpuImage pulls the current waterfall pixbuf here at snapshot time.
+// The theme-grey background (~@BACKGROUND, not pure black) is painted by the
+// widget itself (gpu_image_set_background below).
+static GdkPixbuf *waterfall_source(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  // Fill the ground first so any area the pixbuf doesn't cover matches the
-  // theme (@BACKGROUND) instead of showing pure black.
-  cairo_set_source_rgb(cr, 0.09, 0.09, 0.10);
-  cairo_paint(cr);
-  if(rx->waterfall_pixbuf) {
-    gdk_cairo_set_source_pixbuf (cr, rx->waterfall_pixbuf, 0, 0);
-    cairo_paint (cr);
-  }
+  return rx->waterfall_pixbuf;
+}
 
-  // Overlay the receive passband and centre-frequency cursor, using the same
-  // x-mapping as the panadapter so the marker lines up column-for-column.
+// Vector overlay drawn on top of the texture: the receive passband and
+// centre-frequency cursor, using the same x-mapping as the panadapter so the
+// marker lines up column-for-column.
+static void waterfall_overlay_cb(cairo_t *cr,int cwidth,int cheight,gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
   if(rx->hz_per_pixel!=0.0) {
-    double height=(double)rx->waterfall_height;
+    double height=(double)cheight;
 
     // CW sidetone offset (cursor sits on the tone, matching the panadapter)
     double cw_offset=0.0;
@@ -153,9 +153,9 @@ GtkWidget *create_waterfall(RECEIVER *rx) {
   rx->waterfall_resize_timer=-1;
   rx->waterfall_pixbuf=NULL;
 
-  waterfall = gtk_drawing_area_new ();
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(waterfall),waterfall_draw_cb,(gpointer)rx,NULL);
+  waterfall = gpu_image_new(waterfall_source,(gpointer)rx);
+  gpu_image_set_overlay(GPU_IMAGE(waterfall),waterfall_overlay_cb);
+  gpu_image_set_background(GPU_IMAGE(waterfall),0.09f,0.09f,0.10f);
   g_signal_connect(waterfall,"resize",G_CALLBACK (waterfall_resize_cb),(gpointer)rx);
 
   // GTK4: pointer input via event controllers (button masks are gone).

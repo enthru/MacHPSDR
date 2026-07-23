@@ -1,0 +1,72 @@
+/* Copyright (C)
+* 2026 - MacHPSDR fork
+*
+* This program is free software; you can redistribute it and/or
+* modify it under the terms of the GNU General Public License
+* as published by the Free Software Foundation; either version 2
+* of the License, or (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*
+*/
+
+/*
+ * GpuImage — a small reusable GtkWidget that composites a GdkPixbuf as a
+ * GdkTexture through the GTK4 render-node (GtkSnapshot) pipeline, i.e. on the
+ * GPU, instead of the deprecated cairo gdk_cairo_set_source_pixbuf() blit.
+ *
+ * It follows the same "pull" model the old GtkDrawingArea draw callbacks used:
+ * the widget asks a caller-supplied source function for the current pixbuf at
+ * snapshot time, so the existing gtk_widget_queue_draw() call sites keep
+ * driving repaints unchanged.  Optional vector overlays (grids, cursors,
+ * markers) are drawn on top through gtk_snapshot_append_cairo() — the
+ * non-deprecated cairo interop — so existing cairo overlay code is reused
+ * verbatim.
+ *
+ * Backs the waterfalls (waterfall.c, wideband_waterfall.c, ft8_waterfall.c) and
+ * the SSTV / WEFAX image panels.
+ */
+
+#ifndef GPU_IMAGE_H
+#define GPU_IMAGE_H
+
+#include <gtk/gtk.h>
+
+G_BEGIN_DECLS
+
+#define GPU_TYPE_IMAGE (gpu_image_get_type())
+G_DECLARE_FINAL_TYPE(GpuImage, gpu_image, GPU, IMAGE, GtkWidget)
+
+// How the texture is fitted into the widget allocation.
+typedef enum {
+  GPU_FIT_STRETCH,       // fill the whole allocation, ignoring aspect (waterfalls)
+  GPU_FIT_LETTERBOX,     // preserve aspect, centre, letterbox (SSTV)
+  GPU_FIT_WIDTH_BOTTOM,  // scale to width, bottom-anchor a tall image (WEFAX)
+} GpuFit;
+
+// Return the pixbuf to display right now, or NULL for nothing.  The widget
+// borrows the returned pixbuf (does not take a ref) and rebuilds a texture from
+// it each snapshot, so an in-place-mutated pixbuf (the waterfalls) shows its
+// latest contents.
+typedef GdkPixbuf *(*GpuImageSource)(gpointer user_data);
+
+// Vector overlay drawn on top of the texture, in widget coordinates.  May be
+// NULL.  The cairo_t is clipped to the widget bounds and destroyed by the widget.
+typedef void (*GpuImageOverlay)(cairo_t *cr, int width, int height, gpointer user_data);
+
+GtkWidget *gpu_image_new(GpuImageSource source, gpointer user_data);
+void gpu_image_set_fit(GpuImage *self, GpuFit fit);
+void gpu_image_set_filter(GpuImage *self, GskScalingFilter filter);
+void gpu_image_set_background(GpuImage *self, float r, float g, float b);
+void gpu_image_set_overlay(GpuImage *self, GpuImageOverlay overlay);
+
+G_END_DECLS
+
+#endif

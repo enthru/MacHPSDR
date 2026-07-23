@@ -155,11 +155,11 @@ endif
 # gnu11 restores the "unspecified args" meaning of `()` so the build is identical
 # and warning-clean on both compilers, rather than error-per-callsite on Linux.
 # All deprecated GTK widget APIs (ComboBox/TreeView/Dialog families, etc.) have
-# been migrated off. The only deprecation left is gdk_cairo_set_source_pixbuf in
-# the cairo-based waterfall/image draw funcs, whose fix is the GtkSnapshot/
-# GdkTexture GPU rendering rework (a separate, optional phase) — so keep the
-# suppression until that lands rather than living with per-build warnings.
-CFLAGS= -g -Wno-deprecated-declarations -O3 -std=gnu11
+# been migrated off, including the last holdout gdk_cairo_set_source_pixbuf: the
+# waterfall / SSTV / WEFAX images now composite through the GtkSnapshot/GdkTexture
+# GPU pipeline via the GpuImage widget (gpu_image.c). The build is therefore
+# deprecation-clean and -Wno-deprecated-declarations is no longer needed.
+CFLAGS= -g -O3 -std=gnu11
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
@@ -225,6 +225,7 @@ mic_level.c\
 mic_gain.c\
 drive_level.c\
 waterfall.c\
+gpu_image.c\
 wideband_panadapter.c\
 wideband_waterfall.c\
 protocol1.c\
@@ -357,6 +358,7 @@ drive_level.o\
 wideband_panadapter.o\
 wideband_waterfall.o\
 waterfall.o\
+gpu_image.o\
 protocol1.o\
 fake_protocol.o\
 protocol2.o\

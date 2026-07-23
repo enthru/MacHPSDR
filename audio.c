@@ -34,9 +34,13 @@
 #include <soundio/soundio.h>
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
+#include <Availability.h>
 // macOS 12 renamed kAudioObjectPropertyElementMaster -> …ElementMain (same
-// value); fall back on older SDKs that only have the deprecated spelling.
-#ifndef kAudioObjectPropertyElementMain
+// value).  It is an *enum* constant, not a macro, so #ifndef can't detect it —
+// gate the fallback on the SDK version instead: only pre-12.0 SDKs lack the new
+// spelling.  (The old #ifndef guard was always true and wrongly mapped Main back
+// onto the deprecated Master on modern SDKs.)
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED < 120000
 #define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
 #endif
 #endif

@@ -31,6 +31,7 @@
 
 #include "wefax_panel.h"
 #include "wefax_decoder.h"
+#include "gpu_image.h"
 #include "log.h"
 
 extern RADIO *radio;   // global application state (persisted WEFAX settings)
@@ -50,41 +51,25 @@ typedef struct {
   guint      timer;
   char       last_status[64];
   int        last_line;
-  // geometry of the last-drawn image, for click→phase mapping
-  int        draw_ox, draw_w;
 } WefaxPanel;
 
-// Draw the (tall, scrolling) image scaled to fit the drawing area width,
-// bottom-anchored so the newest lines are always visible.
-static void on_draw(GtkDrawingArea *da, cairo_t *cr, int aw, int ah, gpointer data) {
+// GPU path (GpuImage): the (tall, scrolling) image is fit to the widget width
+// and bottom-anchored (newest lines visible) by GPU_FIT_WIDTH_BOTTOM.  The
+// image is wide (~1810 px, native IOC576) and usually shrunk to fit the panel;
+// TRILINEAR (mip-mapped) downscaling keeps the thin chart lines instead of
+// dropping them as nearest-neighbour would.
+static GdkPixbuf *on_source(gpointer data) {
   WefaxPanel *p = data;
-  cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-  cairo_paint(cr);
-  p->draw_ox = 0; p->draw_w = aw;
-  if (p->pb == NULL) return;
-  int iw = gdk_pixbuf_get_width(p->pb);
-  int ih = gdk_pixbuf_get_height(p->pb);
-  double s = (double)aw / iw;            // fit to width
-  double dh = ih * s;
-  double oy = dh > ah ? (ah - dh) : 0.0; // bottom-anchor when taller than the view
-  cairo_save(cr);
-  cairo_translate(cr, 0, oy);
-  cairo_scale(cr, s, s);
-  gdk_cairo_set_source_pixbuf(cr, p->pb, 0, 0);
-  // The image is wide (~1810 px, native IOC576) and usually shrunk to fit the
-  // panel; smooth downscaling keeps the thin chart lines instead of dropping
-  // them as nearest-neighbour would.
-  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
-  cairo_paint(cr);
-  cairo_restore(cr);
+  return p->pb;
 }
 
 // Click on the image → set that column as the left margin (manual phasing).
 // GTK4: GtkGestureClick "pressed" (x,y in widget coords).
 static void on_click(GtkGestureClick *gesture, int n_press, double px, double py, gpointer data) {
   WefaxPanel *p = data;
-  if (p->draw_w <= 0) return;
-  double frac = (px - p->draw_ox) / (double)p->draw_w;
+  int aw = gtk_widget_get_width(p->area);   // image is fit-to-width, so ox=0, w=aw
+  if (aw <= 0) return;
+  double frac = px / (double)aw;
   if (frac < 0.0) frac = 0.0; if (frac > 1.0) frac = 1.0;
   wefax_decoder_nudge_phase(frac);
 }
@@ -292,14 +277,15 @@ GtkWidget *wefax_panel_create(void) {
   gtk_box_append(GTK_BOX(box),sbar);
 
   // Image area (click sets the phase / left margin).
-  p->area = gtk_drawing_area_new();
+  p->area = gpu_image_new(on_source, p);
+  gpu_image_set_fit(GPU_IMAGE(p->area), GPU_FIT_WIDTH_BOTTOM);
+  gpu_image_set_filter(GPU_IMAGE(p->area), GSK_SCALING_FILTER_TRILINEAR);
   // Small min height: vexpand makes it fill the pane when there's room, but a
   // large min (was 300) forced the whole panel's minimum so high that the GTK4
   // paned could not shrink it, squeezing the RF spectrum above it to a sliver.
   gtk_widget_set_size_request(p->area, 400, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(p->area), on_draw, p, NULL);
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
   g_signal_connect(click, "pressed", G_CALLBACK(on_click), p);
