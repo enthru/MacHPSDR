@@ -102,9 +102,9 @@ GtkWidget *create_tx_info(TRANSMITTER *tx) {
     configure_meter(tx->tx_info_meter[3], "MRF101 current", 0, 6.0);  
   } 
 
-  gtk_container_add(GTK_CONTAINER(content),grid);
+  gtk_box_append(GTK_BOX(content),grid);
   
-  gtk_widget_show_all(dialog);
+  gtk_widget_set_visible(dialog, TRUE);
     
   return dialog;
 }

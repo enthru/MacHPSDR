@@ -99,8 +99,10 @@ static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer dat
   RADIO *radio=(RADIO *)data;
   GtkWidget *child=gtk_stack_get_visible_child(GTK_STACK(stack));
   if(child==NULL) return;
-  gchar *text=NULL;
-  gtk_container_child_get(GTK_CONTAINER(stack),child,"title",&text,NULL);
+  // GTK4: child properties are gone — query the GtkStackPage for its title.
+  const gchar *text=NULL;
+  GtkStackPage *page=gtk_stack_get_page(GTK_STACK(stack),child);
+  if(page!=NULL) text=gtk_stack_page_get_title(page);
   if(text==NULL) return;
   if(strncmp("RX",text,2)==0) {
     int rx=atoi(&text[3]);
@@ -187,14 +189,14 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 
   GtkWidget *hbox=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   gtk_widget_set_name(hbox,"config-body");
-  gtk_box_pack_start(GTK_BOX(hbox),sidebar,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(hbox),stack,TRUE,TRUE,0);
+  gtk_box_append(GTK_BOX(hbox),sidebar);
+  gtk_box_append(GTK_BOX(hbox),stack); gtk_widget_set_hexpand(stack,TRUE); gtk_widget_set_vexpand(stack,TRUE);
 
-  gtk_container_add(GTK_CONTAINER(content),hbox);
+  gtk_box_append(GTK_BOX(content),hbox);
   if(tab>=0 && tab<n_pages) {
     gtk_stack_set_visible_child(GTK_STACK(stack),pages[tab]);
   }
-  gtk_widget_show_all(dialog);
+  gtk_widget_set_visible(dialog, TRUE);
 
   g_signal_connect(stack,"notify::visible-child",G_CALLBACK(visible_child_changed),(gpointer)radio);
 

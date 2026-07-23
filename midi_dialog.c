@@ -316,7 +316,7 @@ static void save_cb(GtkWidget *widget,gpointer user_data) {
     saveProperties(savefilename);
     g_free(savefilename);
   }
-  gtk_widget_destroy(dialog);
+  gtk_window_destroy(GTK_WINDOW(dialog));
   g_free(filename);
 }
 
@@ -356,7 +356,7 @@ static void load_cb(GtkWidget *widget,gpointer user_data) {
     load_store();
     g_free(loadfilename);
   }
-  gtk_widget_destroy(dialog);
+  gtk_window_destroy(GTK_WINDOW(dialog));
   g_free(filename);
 }
 
@@ -389,7 +389,7 @@ static void load_original_cb(GtkWidget *widget,gpointer user_data) {
     load_store();
     g_free(loadfilename);
   }
-  gtk_widget_destroy(dialog);
+  gtk_window_destroy(GTK_WINDOW(dialog));
   g_free(filename);
 }
 
@@ -646,7 +646,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   GtkWidget *dev_frame=gtk_frame_new("MIDI Device");
   GtkWidget *dev_grid=gtk_grid_new();
   sui_style_group(dev_grid);
-  gtk_container_add(GTK_CONTAINER(dev_frame),dev_grid);
+  gtk_frame_set_child(GTK_FRAME(dev_frame),dev_grid);
   gtk_grid_attach(GTK_GRID(page),dev_frame,0,prow++,1,1);
 
   get_midi_devices();
@@ -691,7 +691,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   GtkWidget *map_frame=gtk_frame_new("New Mapping");
   GtkWidget *map_grid=gtk_grid_new();
   sui_style_group(map_grid);
-  gtk_container_add(GTK_CONTAINER(map_frame),map_grid);
+  gtk_frame_set_child(GTK_FRAME(map_frame),map_grid);
   gtk_grid_attach(GTK_GRID(page),map_frame,0,prow++,1,1);
 
   const char *hdr[8]={"Event","Channel","Note","Type","Value","Min","Max","Action"};
@@ -739,7 +739,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   GtkWidget *table_frame=gtk_frame_new("Mappings");
   GtkWidget *table_grid=gtk_grid_new();
   sui_style_group(table_grid);
-  gtk_container_add(GTK_CONTAINER(table_frame),table_grid);
+  gtk_frame_set_child(GTK_FRAME(table_frame),table_grid);
   gtk_grid_attach(GTK_GRID(page),table_frame,0,prow++,1,1);
 
   GtkWidget *clear_b=gtk_button_new_with_label("Clear");

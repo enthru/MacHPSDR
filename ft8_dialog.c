@@ -43,21 +43,21 @@ static void upper_copy(char *dst, size_t dstsz, const char *src) {
 // upper case as the user types.  Blocks `cb` around the set to avoid recursion
 // and preserves the caret position.
 static void reflect_upper(GtkWidget *w, const char *up, GCallback cb, gpointer data) {
-  if (strcmp(gtk_entry_get_text(GTK_ENTRY(w)), up) == 0) return;
+  if (strcmp(gtk_editable_get_text(GTK_EDITABLE(w)), up) == 0) return;
   gint pos = gtk_editable_get_position(GTK_EDITABLE(w));
   g_signal_handlers_block_by_func(w, (gpointer)cb, data);
-  gtk_entry_set_text(GTK_ENTRY(w), up);
+  gtk_editable_set_text(GTK_EDITABLE(w), up);
   gtk_editable_set_position(GTK_EDITABLE(w), pos);
   g_signal_handlers_unblock_by_func(w, (gpointer)cb, data);
 }
 static void call_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  upper_copy(r->station_call,sizeof(r->station_call),gtk_entry_get_text(GTK_ENTRY(w)));
+  upper_copy(r->station_call,sizeof(r->station_call),gtk_editable_get_text(GTK_EDITABLE(w)));
   reflect_upper(w, r->station_call, G_CALLBACK(call_cb), data);
 }
 static void grid_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  upper_copy(r->station_grid,sizeof(r->station_grid),gtk_entry_get_text(GTK_ENTRY(w)));
+  upper_copy(r->station_grid,sizeof(r->station_grid),gtk_editable_get_text(GTK_EDITABLE(w)));
   reflect_upper(w, r->station_grid, G_CALLBACK(grid_cb), data);
 }
 static void udp_enable_cb(GtkWidget *w, gpointer data) {
@@ -66,7 +66,7 @@ static void udp_enable_cb(GtkWidget *w, gpointer data) {
 }
 static void udp_host_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  g_strlcpy(r->ft8_log_udp_host,gtk_entry_get_text(GTK_ENTRY(w)),sizeof(r->ft8_log_udp_host));
+  g_strlcpy(r->ft8_log_udp_host,gtk_editable_get_text(GTK_EDITABLE(w)),sizeof(r->ft8_log_udp_host));
 }
 static void udp_port_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
@@ -102,7 +102,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(grid),5);
   sui_style_group(grid);
-  gtk_container_add(GTK_CONTAINER(frame),grid);
+  gtk_frame_set_child(GTK_FRAME(frame),grid);
 
   GtkWidget *info=gtk_label_new("Your callsign and Maidenhead grid, used for FT8 TX and\n"
                                 "auto-QSO. Set these before transmitting.");
@@ -115,8 +115,8 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),call_lbl,0,1,1,1);
   GtkWidget *call=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(call),sizeof(r->station_call)-1);
-  gtk_entry_set_width_chars(GTK_ENTRY(call),12);
-  gtk_entry_set_text(GTK_ENTRY(call),r->station_call);
+  gtk_editable_set_width_chars(GTK_EDITABLE(call),12);
+  gtk_editable_set_text(GTK_EDITABLE(call),r->station_call);
   gtk_grid_attach(GTK_GRID(grid),call,1,1,1,1);
   g_signal_connect(call,"changed",G_CALLBACK(call_cb),r);
 
@@ -125,8 +125,8 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),grid_lbl,0,2,1,1);
   GtkWidget *loc=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(loc),sizeof(r->station_grid)-1);
-  gtk_entry_set_width_chars(GTK_ENTRY(loc),8);
-  gtk_entry_set_text(GTK_ENTRY(loc),r->station_grid);
+  gtk_editable_set_width_chars(GTK_EDITABLE(loc),8);
+  gtk_editable_set_text(GTK_EDITABLE(loc),r->station_grid);
   gtk_grid_attach(GTK_GRID(grid),loc,1,2,1,1);
   g_signal_connect(loc,"changed",G_CALLBACK(grid_cb),r);
 
@@ -136,7 +136,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(dgrid),5);
   gtk_grid_set_row_spacing(GTK_GRID(dgrid),5);
   sui_style_group(dgrid);
-  gtk_container_add(GTK_CONTAINER(dframe),dgrid);
+  gtk_frame_set_child(GTK_FRAME(dframe),dgrid);
 
   GtkWidget *dinfo=gtk_label_new("Highlights decoded stations whose DXCC entity you have not\n"
                                  "worked before, resolved from AD1C's cty.dat country file.");
@@ -162,7 +162,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(lgrid),5);
   gtk_grid_set_row_spacing(GTK_GRID(lgrid),5);
   sui_style_group(lgrid);
-  gtk_container_add(GTK_CONTAINER(lframe),lgrid);
+  gtk_frame_set_child(GTK_FRAME(lframe),lgrid);
 
   GtkWidget *linfo=gtk_label_new("Send completed QSOs to a logger over the network, using the\n"
                                  "WSJT-X UDP protocol (as JTDX does). Point a logger such as\n"
@@ -181,8 +181,8 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(lgrid),host_lbl,0,2,1,1);
   GtkWidget *host=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(host),sizeof(r->ft8_log_udp_host)-1);
-  gtk_entry_set_width_chars(GTK_ENTRY(host),18);
-  gtk_entry_set_text(GTK_ENTRY(host),r->ft8_log_udp_host);
+  gtk_editable_set_width_chars(GTK_EDITABLE(host),18);
+  gtk_editable_set_text(GTK_EDITABLE(host),r->ft8_log_udp_host);
   gtk_grid_attach(GTK_GRID(lgrid),host,1,2,1,1);
   g_signal_connect(host,"changed",G_CALLBACK(udp_host_cb),r);
 
@@ -200,7 +200,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(pgrid),5);
   gtk_grid_set_row_spacing(GTK_GRID(pgrid),5);
   sui_style_group(pgrid);
-  gtk_container_add(GTK_CONTAINER(pframe),pgrid);
+  gtk_frame_set_child(GTK_FRAME(pframe),pgrid);
 
   GtkWidget *pinfo=gtk_label_new("Report every decoded FT8 station to the PSK Reporter network\n"
                                  "(report.pskreporter.info), as WSJT-X/JTDX do, so your spots\n"
@@ -216,9 +216,9 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   g_signal_connect(pen,"toggled",G_CALLBACK(pskr_enable_cb),r);
 
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
-  gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),dframe,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),lframe,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),pframe,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(vbox),frame);
+  gtk_box_append(GTK_BOX(vbox),dframe);
+  gtk_box_append(GTK_BOX(vbox),lframe);
+  gtk_box_append(GTK_BOX(vbox),pframe);
   return vbox;
 }

@@ -96,7 +96,7 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(eer_grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(eer_grid),5);
   sui_style_group(eer_grid);
-  gtk_container_add(GTK_CONTAINER(eer_frame),eer_grid);
+  gtk_frame_set_child(GTK_FRAME(eer_frame),eer_grid);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Transmit in EER mode");
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->eer);
@@ -154,7 +154,7 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   gtk_grid_set_row_homogeneous(GTK_GRID(eer_pwm_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(eer_pwm_grid),FALSE);
   sui_style_group(eer_pwm_grid);
-  gtk_container_add(GTK_CONTAINER(eer_pwm_frame),eer_pwm_grid);
+  gtk_frame_set_child(GTK_FRAME(eer_pwm_frame),eer_pwm_grid);
 
   GtkWidget *eer_pwm_max_label=gtk_label_new("Maximum (0 - 1023)");
   gtk_widget_show(eer_pwm_max_label);

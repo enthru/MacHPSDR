@@ -99,7 +99,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_grid_set_row_homogeneous(GTK_GRID(panadapter_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   sui_style_group(panadapter_grid);
-  gtk_container_add(GTK_CONTAINER(panadapter_frame),panadapter_grid);
+  gtk_frame_set_child(GTK_FRAME(panadapter_frame),panadapter_grid);
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row++,1,1);
 
   GtkWidget *high_label=gtk_label_new("High:");
@@ -127,7 +127,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
   sui_style_group(waterfall_grid);
-  gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
+  gtk_frame_set_child(GTK_FRAME(waterfall_frame),waterfall_grid);
   gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row++,1,1);
 
   GtkWidget *waterfall_high_label=gtk_label_new("High:");

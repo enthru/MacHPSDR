@@ -44,14 +44,14 @@ static void apply_label(const gchar *text, char *store, gsize store_size,
 
 static void att10_label_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  apply_label(gtk_entry_get_text(GTK_ENTRY(widget)),
+  apply_label(gtk_editable_get_text(GTK_EDITABLE(widget)),
               radio->att10_label,sizeof(radio->att10_label),"Att10",
               radio->att10_button,radio->att10_check);
 }
 
 static void att20_label_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  apply_label(gtk_entry_get_text(GTK_ENTRY(widget)),
+  apply_label(gtk_editable_get_text(GTK_EDITABLE(widget)),
               radio->att20_label,sizeof(radio->att20_label),"Att20",
               radio->att20_button,radio->att20_check);
 }
@@ -183,7 +183,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(grid),5);
   sui_style_group(grid);
-  gtk_container_add(GTK_CONTAINER(frame),grid);
+  gtk_frame_set_child(GTK_FRAME(frame),grid);
 
   GtkWidget *info=gtk_label_new("Custom labels for the RX front-end attenuator buttons.\n"
                                 "Leave a field empty to restore the default.");
@@ -196,7 +196,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),att10_lbl,0,1,1,1);
   GtkWidget *att10_entry=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(att10_entry),sizeof(r->att10_label)-1);
-  gtk_entry_set_text(GTK_ENTRY(att10_entry),r->att10_label);
+  gtk_editable_set_text(GTK_EDITABLE(att10_entry),r->att10_label);
   gtk_grid_attach(GTK_GRID(grid),att10_entry,1,1,1,1);
   g_signal_connect(att10_entry,"changed",G_CALLBACK(att10_label_cb),r);
 
@@ -205,7 +205,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),att20_lbl,0,2,1,1);
   GtkWidget *att20_entry=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(att20_entry),sizeof(r->att20_label)-1);
-  gtk_entry_set_text(GTK_ENTRY(att20_entry),r->att20_label);
+  gtk_editable_set_text(GTK_EDITABLE(att20_entry),r->att20_label);
   gtk_grid_attach(GTK_GRID(grid),att20_entry,1,2,1,1);
   g_signal_connect(att20_entry,"changed",G_CALLBACK(att20_label_cb),r);
 
@@ -217,7 +217,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(fm_grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(fm_grid),5);
   sui_style_group(fm_grid);
-  gtk_container_add(GTK_CONTAINER(fm_frame),fm_grid);
+  gtk_frame_set_child(GTK_FRAME(fm_frame),fm_grid);
 
   GtkWidget *fm_info=gtk_label_new("Audio de-emphasis time constant. Use 50 µs in Europe and\n"
                                    "most of the world, 75 µs in the Americas and South Korea.");
@@ -253,7 +253,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(skin_grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(skin_grid),5);
   sui_style_group(skin_grid);
-  gtk_container_add(GTK_CONTAINER(skin_frame),skin_grid);
+  gtk_frame_set_child(GTK_FRAME(skin_frame),skin_grid);
 
   GtkWidget *skin_info=gtk_label_new("Color skin for the main window and this dialog.\n"
                                      "Applied immediately and remembered per radio.");
@@ -280,7 +280,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_set_column_spacing(GTK_GRID(ppm_grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(ppm_grid),5);
   sui_style_group(ppm_grid);
-  gtk_container_add(GTK_CONTAINER(ppm_frame),ppm_grid);
+  gtk_frame_set_child(GTK_FRAME(ppm_frame),ppm_grid);
 
   GtkWidget *ppm_info=gtk_label_new(
       "Correct the radio's reference-oscillator error in parts-per-million.\n"
@@ -312,10 +312,10 @@ GtkWidget *create_labels_dialog(RADIO *r) {
 
   GtkWidget *btn_box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
   ppm_calib_btn=gtk_button_new_with_label("Calibrate");
-  gtk_box_pack_start(GTK_BOX(btn_box),ppm_calib_btn,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(btn_box),ppm_calib_btn);
   g_signal_connect(ppm_calib_btn,"clicked",G_CALLBACK(ppm_calib_cb),r);
   GtkWidget *tune_b=gtk_button_new_with_label("Tune");
-  gtk_box_pack_start(GTK_BOX(btn_box),tune_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(btn_box),tune_b);
   g_signal_connect(tune_b,"clicked",G_CALLBACK(ppm_tune_cb),r);
   gtk_grid_attach(GTK_GRID(ppm_grid),btn_box,2,1,1,2);
 
@@ -330,10 +330,10 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_result_label,0,4,3,1);
 
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
-  gtk_box_pack_start(GTK_BOX(vbox),skin_frame,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),ppm_frame,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(vbox),fm_frame,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(vbox),skin_frame);
+  gtk_box_append(GTK_BOX(vbox),ppm_frame);
+  gtk_box_append(GTK_BOX(vbox),frame);
+  gtk_box_append(GTK_BOX(vbox),fm_frame);
   g_signal_connect(vbox,"destroy",G_CALLBACK(ppm_dialog_destroy),NULL);
   return vbox;
 }

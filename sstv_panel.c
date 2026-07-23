@@ -198,7 +198,7 @@ static void load_clicked(GtkButton *b, gpointer data) {
     }
     g_free(path);
   }
-  gtk_widget_destroy(dlg);
+  gtk_window_destroy(GTK_WINDOW(dlg));
 }
 
 static void send_clicked(GtkButton *b, gpointer data) {

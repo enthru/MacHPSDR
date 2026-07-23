@@ -161,7 +161,7 @@ void recorder_audio(RECEIVER *rx, double *audio, int nstereo) {
 
 static void rec_dir_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  g_strlcpy(r->rec_dir, gtk_entry_get_text(GTK_ENTRY(w)), sizeof(r->rec_dir));
+  g_strlcpy(r->rec_dir, gtk_editable_get_text(GTK_EDITABLE(w)), sizeof(r->rec_dir));
 }
 
 static void rec_browse_cb(GtkWidget *w, gpointer data) {
@@ -172,11 +172,11 @@ static void rec_browse_cb(GtkWidget *w, gpointer data) {
       GTK_IS_WINDOW(top)?GTK_WINDOW(top):NULL,
       GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
       "Cancel", GTK_RESPONSE_CANCEL, "Select", GTK_RESPONSE_ACCEPT, NULL);
-  const char *cur=gtk_entry_get_text(GTK_ENTRY(entry));
+  const char *cur=gtk_editable_get_text(GTK_EDITABLE(entry));
   if(cur && cur[0]) gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(d), cur);
   if(gtk_dialog_run(GTK_DIALOG(d))==GTK_RESPONSE_ACCEPT) {
     char *dir=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d));
-    if(dir) { gtk_entry_set_text(GTK_ENTRY(entry), dir); g_free(dir); }
+    if(dir) { gtk_editable_set_text(GTK_EDITABLE(entry), dir); g_free(dir); }
   }
   gtk_widget_destroy(d);
 }
@@ -212,9 +212,9 @@ GtkWidget *create_recording_dialog(struct _radio *rp) {
   gtk_grid_attach(GTK_GRID(grid),dir_lbl,0,1,1,1);
   GtkWidget *dir=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(dir),sizeof(r->rec_dir)-1);
-  gtk_entry_set_width_chars(GTK_ENTRY(dir),32);
+  gtk_editable_set_width_chars(GTK_EDITABLE(dir),32);
   gtk_entry_set_placeholder_text(GTK_ENTRY(dir),"(default ~/.local/share/machpsdr)");
-  gtk_entry_set_text(GTK_ENTRY(dir),r->rec_dir);
+  gtk_editable_set_text(GTK_EDITABLE(dir),r->rec_dir);
   gtk_widget_set_hexpand(dir,TRUE);
   gtk_grid_attach(GTK_GRID(grid),dir,1,1,1,1);
   g_signal_connect(dir,"changed",G_CALLBACK(rec_dir_cb),r);
@@ -237,6 +237,6 @@ GtkWidget *create_recording_dialog(struct _radio *rp) {
   g_signal_connect(af,"toggled",G_CALLBACK(rec_af_cb),r);
 
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
-  gtk_box_pack_start(GTK_BOX(vbox),frame,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(vbox),frame);
   return vbox;
 }

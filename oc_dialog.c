@@ -257,7 +257,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(tune_grid),oc_memory_tune_time_b,0,11,2,1);
   g_signal_connect(oc_memory_tune_time_b,"value_changed",G_CALLBACK(oc_memory_tune_time_cb),radio);
 
-  gtk_widget_show_all(grid);
+  gtk_widget_set_visible(grid, TRUE);
 
   return grid;
 }

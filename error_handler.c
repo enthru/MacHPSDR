@@ -41,7 +41,7 @@
 static GtkWidget *dialog;
 
 int timeout_cb(gpointer data) {
-  gtk_widget_destroy(dialog);
+  gtk_window_destroy(GTK_WINDOW(dialog));
   exit(1);
 }
 

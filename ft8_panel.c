@@ -103,7 +103,7 @@ static void auto_toggled(GtkToggleButton *t, gpointer data) {
   ft8_qso_set_auto(gtk_toggle_button_get_active(t));
 }
 static void free_send(GtkWidget *w, gpointer data) {
-  if (free_entry) ft8_qso_send_free(gtk_entry_get_text(GTK_ENTRY(free_entry)));
+  if (free_entry) ft8_qso_send_free(gtk_editable_get_text(GTK_EDITABLE(free_entry)));
 }
 static gboolean filter_visible(GtkTreeModel *m, GtkTreeIter *it, gpointer data) {
   if (!cq_only) return TRUE;
@@ -338,9 +338,9 @@ GtkWidget *ft8_panel_create(void) {
   for (unsigned i = 0; i < G_N_ELEMENTS(dirs); i++)
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(cqdir), dirs[i]);
   GtkWidget *cqentry = gtk_bin_get_child(GTK_BIN(cqdir));
-  gtk_entry_set_width_chars(GTK_ENTRY(cqentry), 4);
+  gtk_editable_set_width_chars(GTK_EDITABLE(cqentry), 4);
   gtk_entry_set_max_length(GTK_ENTRY(cqentry), sizeof(radio->ft8_cq_dir) - 1);
-  gtk_entry_set_text(GTK_ENTRY(cqentry), radio->ft8_cq_dir);
+  gtk_editable_set_text(GTK_EDITABLE(cqentry), radio->ft8_cq_dir);
   gtk_widget_set_tooltip_text(cqdir,
       "Directed CQ: blank = CQ; a region (DX/EU/NA/SA/AS/AF/OC) or 3 digits");
   g_signal_connect(cqdir, "changed", G_CALLBACK(cq_dir_changed), NULL);
@@ -457,6 +457,6 @@ GtkWidget *ft8_panel_create(void) {
   g_signal_connect(box, "destroy", G_CALLBACK(on_destroy), NULL);
   refresh_id = g_timeout_add(500, refresh, NULL);
 
-  gtk_widget_show_all(box);
+  gtk_widget_set_visible(box, TRUE);
   return box;
 }

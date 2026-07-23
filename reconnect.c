@@ -101,7 +101,7 @@ static gboolean do_reconnect(RADIO *r) {
 }
 
 static void on_dialog_response(GtkDialog *dialog, gint response, gpointer data) {
-  gtk_widget_destroy(GTK_WIDGET(dialog));
+  gtk_window_destroy(GTK_WINDOW(dialog));
   reconnect_dialog = NULL;
 
   if(response == GTK_RESPONSE_ACCEPT) {
@@ -133,7 +133,7 @@ static void show_reconnect_dialog(RADIO *r) {
   gtk_dialog_set_default_response(GTK_DIALOG(reconnect_dialog), GTK_RESPONSE_ACCEPT);
 
   g_signal_connect(reconnect_dialog, "response", G_CALLBACK(on_dialog_response), NULL);
-  gtk_widget_show_all(reconnect_dialog);
+  gtk_widget_set_visible(reconnect_dialog, TRUE);
 }
 
 static gboolean watchdog_cb(gpointer data) {

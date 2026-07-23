@@ -621,7 +621,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   g_signal_connect(start,"clicked",G_CALLBACK(start_cb),NULL);
   gtk_grid_attach(GTK_GRID(grid), start, 4, 1, 1, 1);
 
-  //gtk_widget_show_all(main_window);
+  //gtk_widget_set_visible(main_window, TRUE);
 
   g_idle_add(check_wisdom,NULL);
 

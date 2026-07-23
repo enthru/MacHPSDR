@@ -306,7 +306,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_row_homogeneous(GTK_GRID(microphone_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(microphone_grid),FALSE);
   sui_style_group(microphone_grid);
-  gtk_container_add(GTK_CONTAINER(microphone_frame),microphone_grid);
+  gtk_frame_set_child(GTK_FRAME(microphone_frame),microphone_grid);
   gtk_grid_attach(GTK_GRID(grid),microphone_frame,col,row++,1,1);
 
   if(n_input_devices>=0) {
@@ -345,7 +345,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(tune_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(tune_grid),10);
   sui_style_group(tune_grid);
-  gtk_container_add(GTK_CONTAINER(tune_frame),tune_grid);
+  gtk_frame_set_child(GTK_FRAME(tune_frame),tune_grid);
   gtk_grid_attach(GTK_GRID(grid),tune_frame,col,row++,1,1);
 
   GtkWidget *tune_label=gtk_label_new("Tune Percent:");
@@ -370,7 +370,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(filter_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(filter_grid),10);
   sui_style_group(filter_grid);
-  gtk_container_add(GTK_CONTAINER(filter_frame),filter_grid);
+  gtk_frame_set_child(GTK_FRAME(filter_frame),filter_grid);
   gtk_grid_attach(GTK_GRID(grid),filter_frame,col,row++,1,1);
 
   GtkWidget *use_rx_filter=gtk_check_button_new_with_label("Use Rx Filter");
@@ -405,7 +405,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(fm_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(fm_grid),10);
   sui_style_group(fm_grid);
-  gtk_container_add(GTK_CONTAINER(fm_frame),fm_grid);
+  gtk_frame_set_child(GTK_FRAME(fm_frame),fm_grid);
   gtk_grid_attach(GTK_GRID(grid),fm_frame,col,row++,1,1);
 
   GtkWidget *emp_b=gtk_check_button_new_with_label("FM TX Pre-emphasize before limiting");
@@ -420,7 +420,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(am_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(am_grid),10);
   sui_style_group(am_grid);
-  gtk_container_add(GTK_CONTAINER(am_frame),am_grid);
+  gtk_frame_set_child(GTK_FRAME(am_frame),am_grid);
   gtk_grid_attach(GTK_GRID(grid),am_frame,col,row++,1,1);
 
   GtkWidget *am_carrier_level_label=gtk_label_new("AM Carrier Level: ");
@@ -441,7 +441,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(ctcss_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(ctcss_grid),10);
   sui_style_group(ctcss_grid);
-  gtk_container_add(GTK_CONTAINER(ctcss_frame),ctcss_grid);
+  gtk_frame_set_child(GTK_FRAME(ctcss_frame),ctcss_grid);
   gtk_grid_attach(GTK_GRID(grid),ctcss_frame,col,row++,1,1);
 
   GtkWidget *ctcss_enable=gtk_check_button_new_with_label("Enable CTCSS");
@@ -463,7 +463,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_row_homogeneous(GTK_GRID(panadapter_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   sui_style_group(panadapter_grid);
-  gtk_container_add(GTK_CONTAINER(panadapter_frame),panadapter_grid);
+  gtk_frame_set_child(GTK_FRAME(panadapter_frame),panadapter_grid);
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row++,1,1);
 
   GtkWidget *fps_label=gtk_label_new("FPS:");
@@ -506,7 +506,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_row_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(equalizer_grid),TRUE);
   sui_style_group(equalizer_grid);
-  gtk_container_add(GTK_CONTAINER(equalizer_frame),equalizer_grid);
+  gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row++,1,4);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
@@ -609,7 +609,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(latency_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(latency_grid),10);
   sui_style_group(latency_grid);
-  gtk_container_add(GTK_CONTAINER(latency_frame),latency_grid);
+  gtk_frame_set_child(GTK_FRAME(latency_frame),latency_grid);
   gtk_grid_attach(GTK_GRID(grid),latency_frame,col,row++,1,1);
 
   GtkWidget *fifo_label=gtk_label_new("Size (ms):");
@@ -632,7 +632,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(compressor_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(compressor_grid),10);
   sui_style_group(compressor_grid);
-  gtk_container_add(GTK_CONTAINER(compressor_frame),compressor_grid);
+  gtk_frame_set_child(GTK_FRAME(compressor_frame),compressor_grid);
   gtk_grid_attach(GTK_GRID(grid),compressor_frame,col,row++,1,1);
 
   GtkWidget *enable_comp = gtk_check_button_new_with_label("Enable compressor");

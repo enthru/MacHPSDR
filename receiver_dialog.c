@@ -288,7 +288,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
         gtk_grid_attach(GTK_GRID(rx->filter_grid),var2_spin_high,3,row,2,1);
         g_signal_connect(var2_spin_high,"value-changed",G_CALLBACK(var_spin_high_cb),(gpointer)select);
       }
-    gtk_widget_show_all(rx->filter_frame);
+    gtk_widget_set_visible(rx->filter_frame, TRUE);
   }
 }
 
@@ -539,7 +539,7 @@ static void rigctl_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void cat_serial_enable_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  strcpy(rx->rigctl_serial_port,gtk_entry_get_text(GTK_ENTRY(rx->serial_port_entry)));
+  strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(rx->serial_port_entry)));
   rx->rigctl_serial_enable=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
   if(rx->rigctl_serial_enable) {
     launch_serial(rx);
@@ -550,7 +550,7 @@ static void cat_serial_enable_cb(GtkWidget *widget, gpointer data) {
 
 static void cat_serial_port_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  strcpy(rx->rigctl_serial_port,gtk_entry_get_text(GTK_ENTRY(widget)));
+  strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(widget)));
 }
 
 static void cat_baudrate_cb(GtkWidget *widget,gpointer data) {
@@ -632,7 +632,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_row_homogeneous(GTK_GRID(adc_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(adc_grid),FALSE);
     sui_style_group(adc_grid);
-    gtk_container_add(GTK_CONTAINER(adc_frame),adc_grid);
+    gtk_frame_set_child(GTK_FRAME(adc_frame),adc_grid);
     gtk_grid_attach(GTK_GRID(grid),adc_frame,col,row++,1,1);
 
     GtkWidget *adc0_b=gtk_radio_button_new_with_label(NULL,"ADC-0");
@@ -667,7 +667,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       gtk_grid_set_row_homogeneous(GTK_GRID(sample_rate_grid),FALSE);
       gtk_grid_set_column_homogeneous(GTK_GRID(sample_rate_grid),FALSE);
       sui_style_group(sample_rate_grid);
-      gtk_container_add(GTK_CONTAINER(sample_rate_frame),sample_rate_grid);
+      gtk_frame_set_child(GTK_FRAME(sample_rate_frame),sample_rate_grid);
       gtk_grid_attach(GTK_GRID(grid),sample_rate_frame,col,row,1,2);
       row+=2;
 
@@ -746,7 +746,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
     sui_style_group(audio_grid);
-    gtk_container_add(GTK_CONTAINER(audio_frame),audio_grid);
+    gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
     gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row,1,1);
     row++;
 
@@ -792,7 +792,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_row_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   sui_style_group(equalizer_grid);
-  gtk_container_add(GTK_CONTAINER(equalizer_frame),equalizer_grid);
+  gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row,1,4);
   row+=4;
 
@@ -883,7 +883,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_row_homogeneous(GTK_GRID(tx_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(tx_grid),FALSE);
     sui_style_group(tx_grid);
-    gtk_container_add(GTK_CONTAINER(tx_frame),tx_grid);
+    gtk_frame_set_child(GTK_FRAME(tx_frame),tx_grid);
     gtk_grid_attach(GTK_GRID(grid),tx_frame,col,row,1,1);
     row++;
 
@@ -898,7 +898,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_row_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   sui_style_group(panadapter_grid);
-  gtk_container_add(GTK_CONTAINER(panadapter_frame),panadapter_grid);
+  gtk_frame_set_child(GTK_FRAME(panadapter_frame),panadapter_grid);
   gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row,1,3);
   row+=3;
 
@@ -981,7 +981,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_row_homogeneous(GTK_GRID(waterfall_grid),FALSE);
     gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
     sui_style_group(waterfall_grid);
-    gtk_container_add(GTK_CONTAINER(waterfall_frame),waterfall_grid);
+    gtk_frame_set_child(GTK_FRAME(waterfall_frame),waterfall_grid);
     gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row,1,2);
     row+=2;
 
@@ -1032,7 +1032,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_row_homogeneous(GTK_GRID(cat_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(cat_grid),FALSE);
   sui_style_group(cat_grid);
-  gtk_container_add(GTK_CONTAINER(cat_frame),cat_grid);
+  gtk_frame_set_child(GTK_FRAME(cat_frame),cat_grid);
   gtk_grid_attach(GTK_GRID(grid),cat_frame,col,row,1,3);
   row++;
 
@@ -1065,7 +1065,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(cat_grid),serial_text_label,0,5,1,1);
 
   rx->serial_port_entry=gtk_entry_new();
-  gtk_entry_set_text(GTK_ENTRY(rx->serial_port_entry),rx->rigctl_serial_port);
+  gtk_editable_set_text(GTK_EDITABLE(rx->serial_port_entry),rx->rigctl_serial_port);
   gtk_widget_show(rx->serial_port_entry);
   gtk_grid_attach(GTK_GRID(cat_grid),rx->serial_port_entry,1,5,2,1);
   g_signal_connect(rx->serial_port_entry,"activate",G_CALLBACK(cat_serial_port_cb),rx);

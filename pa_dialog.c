@@ -114,7 +114,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   gtk_grid_set_column_homogeneous(GTK_GRID(pa_grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(pa_grid),15);
   sui_style_group(pa_grid);
-  gtk_container_add(GTK_CONTAINER(pa_frame),pa_grid);
+  gtk_frame_set_child(GTK_FRAME(pa_frame),pa_grid);
   gtk_grid_attach(GTK_GRID(grid),pa_frame,col,row++,1,1);
 
   int stop_at = bandGen;
@@ -158,7 +158,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     gtk_grid_set_column_homogeneous(GTK_GRID(hl2mrf_grid), FALSE);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 20);
     sui_style_group(hl2mrf_grid);
-    gtk_container_add(GTK_CONTAINER(hl2mrf_frame), hl2mrf_grid);
+    gtk_frame_set_child(GTK_FRAME(hl2mrf_frame), hl2mrf_grid);
     gtk_grid_attach(GTK_GRID(grid), hl2mrf_frame, col, row++, 1, 1);
 
     int x = 0;
@@ -175,14 +175,14 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     x++;
     
     GtkWidget *enable_bias_label = gtk_label_new("Enable bias adjustment");
-    gtk_misc_set_alignment(GTK_MISC(enable_bias_label), 0, 0);    
+    gtk_label_set_xalign(GTK_LABEL(enable_bias_label), 0.0);    
     gtk_widget_show(enable_bias_label);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), enable_bias_label, x, y++, 1, 1);
     x = 0;
     
     // Bias slider
     bias_label = gtk_label_new("Bias:");
-    gtk_misc_set_alignment(GTK_MISC(bias_label), 0, 0);
+    gtk_label_set_xalign(GTK_LABEL(bias_label), 0.0);
     gtk_widget_show(bias_label);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), bias_label, x, y, 1, 1);
 

@@ -59,42 +59,42 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
 
   GtkWidget *row_top=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);
   GtkWidget *row_bot=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);
-  gtk_box_pack_start(GTK_BOX(info->radio_info),row_top,FALSE,FALSE,0);
-  gtk_box_pack_start(GTK_BOX(info->radio_info),row_bot,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(info->radio_info),row_top);
+  gtk_box_append(GTK_BOX(info->radio_info),row_bot);
 
   // ********** WARNINGS ****************************
   // HL2 Buffer over/underflow
   if(radio->discovered->protocol==PROTOCOL_1) {
     info->qos_b = gtk_toggle_button_new_with_label("QOS");
     gtk_widget_set_name(info->qos_b, "info-warning");
-    gtk_box_pack_start(GTK_BOX(row_top),info->qos_b,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(row_top),info->qos_b);
   }
 
   // HERMES/HL2 ADC Clipping
   info->adc_overload_b=gtk_toggle_button_new_with_label("ADC");
   gtk_widget_set_name(info->adc_overload_b,"info-warning");
-  gtk_box_pack_start(GTK_BOX(row_top),info->adc_overload_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(row_top),info->adc_overload_b);
 
   // SWR is above a threshold
   info->swr_b=gtk_toggle_button_new_with_label("SWR");
   gtk_widget_set_name(info->swr_b,"info-warning");
-  gtk_box_pack_start(GTK_BOX(row_top),info->swr_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(row_top),info->swr_b);
 
   if (radio->discovered->device == DEVICE_HERMES_LITE2) {
     info->temp_b=gtk_toggle_button_new_with_label("TEMP");
     gtk_widget_set_name(info->temp_b,"info-warning");
-    gtk_box_pack_start(GTK_BOX(row_top),info->temp_b,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(row_top),info->temp_b);
   }
 
   // CAT
   info->cat_b=gtk_toggle_button_new_with_label("CAT");
   gtk_widget_set_name(info->cat_b,"info-button");
-  gtk_box_pack_start(GTK_BOX(row_bot),info->cat_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(row_bot),info->cat_b);
 
 #ifdef CWDAEMON
   info->cwdaemon_b=gtk_toggle_button_new_with_label("CWD");
   gtk_widget_set_name(info->cwdaemon_b,"info-button");
-  gtk_box_pack_start(GTK_BOX(row_bot),info->cwdaemon_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(row_bot),info->cwdaemon_b);
 #endif
 
 #ifdef MIDI
@@ -102,7 +102,7 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
   info->midi_b=gtk_toggle_button_new_with_label("MIDI");
   gtk_widget_set_name(info->midi_b,"info-button");
   g_signal_connect(info->midi_b, "button_press_event", G_CALLBACK(midi_b_press_cb),rx);
-  gtk_box_pack_start(GTK_BOX(row_bot),info->midi_b,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(row_bot),info->midi_b);
 #endif
 
   g_object_set_data ((GObject *)info->radio_info,"info_data",info);

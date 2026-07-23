@@ -183,8 +183,8 @@ static gboolean add_cb(GtkWidget *widget,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
 
   BOOKMARK *bookmark=g_new0(BOOKMARK,1);
-  bookmark->name=g_new0(gchar,strlen(gtk_entry_get_text(GTK_ENTRY(name_text)))+1);
-  strcpy(bookmark->name,gtk_entry_get_text(GTK_ENTRY(name_text)));
+  bookmark->name=g_new0(gchar,strlen(gtk_editable_get_text(GTK_EDITABLE(name_text)))+1);
+  strcpy(bookmark->name,gtk_editable_get_text(GTK_EDITABLE(name_text)));
   bookmark->frequency_a=rx->frequency_a;
   bookmark->frequency_b=rx->frequency_b;
   bookmark->ctun_frequency=rx->ctun_frequency;
@@ -203,7 +203,7 @@ static gboolean add_cb(GtkWidget *widget,gpointer data) {
     bookmark_tail=bookmark;
   }
 
-  gtk_widget_destroy(rx->bookmark_dialog);
+  gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
   rx->bookmark_dialog=NULL;
   save_bookmarks();
   return TRUE;
@@ -213,10 +213,10 @@ static gboolean update_cb(GtkWidget *widget,gpointer data) {
   BOOKMARK_INFO *info=(BOOKMARK_INFO *)data;
 
   g_free(info->bookmark->name);
-  info->bookmark->name=g_new0(gchar,strlen(gtk_entry_get_text(GTK_ENTRY(name_text)))+1);
-  strcpy(info->bookmark->name,gtk_entry_get_text(GTK_ENTRY(name_text)));
+  info->bookmark->name=g_new0(gchar,strlen(gtk_editable_get_text(GTK_EDITABLE(name_text)))+1);
+  strcpy(info->bookmark->name,gtk_editable_get_text(GTK_EDITABLE(name_text)));
 
-  gtk_widget_destroy(info->rx->bookmark_dialog);
+  gtk_window_destroy(GTK_WINDOW(info->rx->bookmark_dialog));
   info->rx->bookmark_dialog=NULL;
   g_free(info);
   save_bookmarks();
@@ -290,7 +290,7 @@ void edit_cb(GtkWidget *menuitem,gpointer data) {
     //g_free (name);
     if(bookmark!=NULL) {
       // edit this one
-      gtk_widget_destroy(rx->bookmark_dialog);
+      gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
       rx->bookmark_dialog=create_bookmark_dialog(rx,EDIT_BOOKMARK,bookmark);
     }
   }
@@ -506,9 +506,9 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       x++;
       name_text=gtk_entry_new();
       if(rx->ctun) {
-        gtk_entry_set_text(GTK_ENTRY(name_text),temp_ctun_frequency);
+        gtk_editable_set_text(GTK_EDITABLE(name_text),temp_ctun_frequency);
       } else {
-        gtk_entry_set_text(GTK_ENTRY(name_text),temp_a);
+        gtk_editable_set_text(GTK_EDITABLE(name_text),temp_a);
       }
       gtk_grid_attach(GTK_GRID(grid),name_text,x,y,1,1);
       y++;
@@ -647,7 +647,7 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       gtk_grid_attach(GTK_GRID(grid),name_title,x,y,1,1);
       x++;
       name_text=gtk_entry_new();
-      gtk_entry_set_text(GTK_ENTRY(name_text),bookmark->name);
+      gtk_editable_set_text(GTK_EDITABLE(name_text),bookmark->name);
       gtk_grid_attach(GTK_GRID(grid),name_text,x,y,1,1);
       y++;
       x=0;
@@ -721,6 +721,6 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       break;
   }
 
-  gtk_widget_show_all(dialog);
+  gtk_widget_set_visible(dialog, TRUE);
   return dialog;
 }

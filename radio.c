@@ -877,7 +877,7 @@ void delete_wideband(WIDEBAND *w) {
     protocol2_stop_wideband();
   }
   if(radio->dialog) {
-    gtk_widget_destroy(radio->dialog);
+    gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
   protocol1_stop();
@@ -940,7 +940,7 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
 
   gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->sstv_panel==NULL && radio->wefax_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
   if(radio->dialog) {
-    gtk_widget_destroy(radio->dialog);
+    gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
   // For PureSignal, need to reopen the receiver just deleted
@@ -1225,7 +1225,7 @@ log_info("add_receiver: no receivers available\n");
   }
 
   if(radio->dialog) {
-    gtk_widget_destroy(radio->dialog);
+    gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
   if(i>=0) radio_rebuild_rx_stack(r);
@@ -1383,7 +1383,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
   // Panels are now owned by their new parents; drop the temporary refs.
   for(int k=0;k<n;k++) g_object_unref(tables[k]);
 
-  gtk_widget_show_all(r->rx_container);
+  gtk_widget_set_visible(r->rx_container, TRUE);
 
   if(n>1) g_timeout_add(100,rx_stack_balance,r);
 }
@@ -1761,7 +1761,7 @@ int add_wideband(void *data) {
     protocol2_start_wideband(r->wideband);
   }
   if(radio->dialog) {
-    gtk_widget_destroy(radio->dialog);
+    gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
   return 0;
@@ -1826,7 +1826,7 @@ static GtkWidget *bar_module_ex(const char *title, GtkWidget *content, GtkWidget
   gtk_widget_set_name(lbl,"section-label");
   gtk_widget_set_halign(lbl,GTK_ALIGN_START);
   gtk_widget_set_valign(lbl,GTK_ALIGN_START);
-  gtk_box_pack_start(GTK_BOX(box),lbl,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(box),lbl);
   // content takes the remaining height and is vertically centred within it,
   // so short columns (e.g. the transmit buttons) don't hug the top.
   gtk_widget_set_valign(content,GTK_ALIGN_CENTER);
@@ -2147,40 +2147,40 @@ static void create_visual(RADIO *r) {
     // Module: TX MONITOR - the small transmit panadapter.
     gtk_box_pack_start(GTK_BOX(r->bottom_bar),
                        bar_module("TX MONITOR",r->transmitter->panadapter),FALSE,FALSE,0);
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
 
     // Module: MIC & DRIVE - three stacked meters.
     GtkWidget *slider_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
     r->mic_level=create_mic_level(radio->transmitter);
-    gtk_box_pack_start(GTK_BOX(slider_col),r->mic_level,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(slider_col),r->mic_level);
     r->mic_gain=create_mic_gain(radio->transmitter);
-    gtk_box_pack_start(GTK_BOX(slider_col),r->mic_gain,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(slider_col),r->mic_gain);
     r->drive_level=create_drive_level(radio->transmitter);
-    gtk_box_pack_start(GTK_BOX(slider_col),r->drive_level,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(slider_col),r->drive_level);
     gtk_box_pack_start(GTK_BOX(r->bottom_bar),
                        bar_module("MIC & DRIVE",slider_col),FALSE,FALSE,0);
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
 
     // Module: TRANSMIT - MOX / VOX / Tune.
     GtkWidget *tx_btn_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
     r->mox_button=gtk_toggle_button_new_with_label("MOX");
     gtk_widget_set_name(r->mox_button,"transmit-warning");
     g_signal_connect(r->mox_button,"toggled",G_CALLBACK(mox_cb),(gpointer)r);
-    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->mox_button,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(tx_btn_col),r->mox_button);
 
     r->vox_button=gtk_toggle_button_new_with_label("VOX");
     gtk_widget_set_name(r->vox_button,"transmit-warning");
     g_signal_connect(r->vox_button,"toggled",G_CALLBACK(vox_cb),(gpointer)r);
-    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->vox_button,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(tx_btn_col),r->vox_button);
 
     r->tune_button=gtk_toggle_button_new_with_label("Tune");
     gtk_widget_set_name(r->tune_button,"transmit-warning");
     g_signal_connect(r->tune_button,"toggled",G_CALLBACK(tune_cb),(gpointer)r);
-    gtk_box_pack_start(GTK_BOX(tx_btn_col),r->tune_button,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(tx_btn_col),r->tune_button);
 
     gtk_box_pack_start(GTK_BOX(r->bottom_bar),
                        bar_module("TRANSMIT",tx_btn_col),FALSE,FALSE,0);
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
   }
 
   // Module: RX FRONT-END - Preamp / Att10 / Att20 (ADC 0).
@@ -2190,20 +2190,20 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_name(preamp_button,"toolbar-button");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(preamp_button),radio->adc[0].preamp);
   g_signal_connect(preamp_button,"toggled",G_CALLBACK(adc_preamp_cb),&radio->adc[0]);
-  gtk_box_pack_start(GTK_BOX(adc_col),preamp_button,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(adc_col),preamp_button);
 
   GtkWidget *att10_button=gtk_toggle_button_new_with_label(r->att10_label);
   gtk_widget_set_name(att10_button,"toolbar-button");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att10_button),radio->adc[0].att10);
   g_signal_connect(att10_button,"toggled",G_CALLBACK(adc_att10_cb),&radio->adc[0]);
-  gtk_box_pack_start(GTK_BOX(adc_col),att10_button,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(adc_col),att10_button);
   r->att10_button=att10_button;
 
   GtkWidget *att20_button=gtk_toggle_button_new_with_label(r->att20_label);
   gtk_widget_set_name(att20_button,"toolbar-button");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att20_button),radio->adc[0].att20);
   g_signal_connect(att20_button,"toggled",G_CALLBACK(adc_att20_cb),&radio->adc[0]);
-  gtk_box_pack_start(GTK_BOX(adc_col),att20_button,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(adc_col),att20_button);
   r->att20_button=att20_button;
 
   gtk_box_pack_start(GTK_BOX(r->bottom_bar),
@@ -2212,7 +2212,7 @@ static void create_visual(RADIO *r) {
   // Module: RDS - a 3-line decoder readout (identity / RadioText / now-playing +
   // clock + AF). Its own block, attached to the left cluster and separated by a
   // rail; the free bottom-bar space sits to its right and each line ellipsizes.
-  gtk_box_pack_start(GTK_BOX(r->bottom_bar),bar_rail(FALSE),FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
   GtkWidget *rds_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,1);
   gtk_widget_set_hexpand(rds_col,TRUE);
   gtk_widget_set_valign(rds_col,GTK_ALIGN_START);   // rows grow from the top
@@ -2226,7 +2226,7 @@ static void create_visual(RADIO *r) {
     gtk_label_set_xalign(GTK_LABEL(r->rds_label[i]),0.0);
     if(i==0) gtk_label_set_width_chars(GTK_LABEL(r->rds_label[i]),12); // modest min
     gtk_label_set_ellipsize(GTK_LABEL(r->rds_label[i]),PANGO_ELLIPSIZE_END);
-    gtk_box_pack_start(GTK_BOX(rds_col),r->rds_label[i],FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(rds_col),r->rds_label[i]);
   }
   // FT8 readout: a single multi-line label (up to 6 decodes) that replaces the
   // 3 RDS rows while the active receiver is in DIGU. Kept separate so it can be
@@ -2264,7 +2264,7 @@ static void create_visual(RADIO *r) {
   }
   gtk_widget_set_name(r->decode_sel,"decode-combo");   // flat themed combo (css.c)
   g_signal_connect(r->decode_sel,"changed",G_CALLBACK(decode_sel_changed),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(dec_ctl),r->decode_sel,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(dec_ctl),r->decode_sel);
   decode_sel_sync(r);   // initial rows for the current mode
 #endif
 
@@ -2275,7 +2275,7 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
   gtk_widget_set_valign(r->ft8_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(dec_ctl),r->ft8_expand_btn,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(dec_ctl),r->ft8_expand_btn);
 
 #ifdef SSTV
   // "Show SSTV" toggle: opens/closes the SSTV image panel (in place of RX2).
@@ -2284,7 +2284,7 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_name(r->sstv_expand_btn,"toolbar-button");
   gtk_widget_set_valign(r->sstv_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->sstv_expand_btn,"clicked",G_CALLBACK(sstv_expand_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(dec_ctl),r->sstv_expand_btn,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(dec_ctl),r->sstv_expand_btn);
 
   // "Show WEFAX" toggle: opens/closes the WEFAX image panel (in place of RX2).
   // Shown only in DIGU/DIGL with the WEFAX decoder selected (see rds_update_cb).
@@ -2292,7 +2292,7 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_name(r->wefax_expand_btn,"toolbar-button");
   gtk_widget_set_valign(r->wefax_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->wefax_expand_btn,"clicked",G_CALLBACK(wefax_expand_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(dec_ctl),r->wefax_expand_btn,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(dec_ctl),r->wefax_expand_btn);
 #endif
 
   // Decode block content: the text column (expands) with the controls on the right.
@@ -2315,18 +2315,18 @@ static void create_visual(RADIO *r) {
   GtkWidget *configure=gtk_button_new_with_label("Configure");
   gtk_widget_set_name(configure,"toolbar-button");
   g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(tool_col),configure,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(tool_col),configure);
 
   GtkWidget *record=gtk_button_new_with_label(recorder_active()?"Stop":"Record");
   gtk_widget_set_name(record,"toolbar-button");
   g_signal_connect(record,"clicked",G_CALLBACK(record_cb),(gpointer)r);
-  gtk_box_pack_start(GTK_BOX(tool_col),record,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(tool_col),record);
 
   if(r->discovered->supported_receivers>1) {
     add_receiver_b=gtk_button_new_with_label("Add Receiver");
     gtk_widget_set_name(add_receiver_b,"toolbar-button");
     g_signal_connect(add_receiver_b,"clicked",G_CALLBACK(add_receiver_cb),(gpointer)r);
-    gtk_box_pack_start(GTK_BOX(tool_col),add_receiver_b,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(tool_col),add_receiver_b);
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
@@ -2344,7 +2344,7 @@ static void create_visual(RADIO *r) {
     add_wideband_b=gtk_button_new_with_label("Add Wideband");
     gtk_widget_set_name(add_wideband_b,"toolbar-button");
     g_signal_connect(add_wideband_b,"clicked",G_CALLBACK(add_wideband_cb),(gpointer)r);
-    gtk_box_pack_start(GTK_BOX(tool_col),add_wideband_b,FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(tool_col),add_wideband_b);
 #ifdef SOAPYSDR
   }
 #endif
@@ -2354,7 +2354,7 @@ static void create_visual(RADIO *r) {
   gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col),FALSE,FALSE,0);
   gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_rail(TRUE),FALSE,FALSE,0);
 
-  gtk_widget_show_all(r->visual);
+  gtk_widget_set_visible(r->visual, TRUE);
 
 }
 

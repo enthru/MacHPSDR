@@ -68,16 +68,16 @@ void save_xvtr () {
   for(i=BANDS;i<BANDS+XVTRS;i++) {
     BAND *xvtr=band_get_band(i);
     BANDSTACK *bandstack=xvtr->bandstack;
-    t=gtk_entry_get_text(GTK_ENTRY(title[i]));
+    t=gtk_editable_get_text(GTK_EDITABLE(title[i]));
     strcpy(xvtr->title,t);
     if(strlen(t)!=0) {
-      minf=gtk_entry_get_text(GTK_ENTRY(min_frequency[i]));
+      minf=gtk_editable_get_text(GTK_EDITABLE(min_frequency[i]));
       xvtr->frequencyMin=(long long)(atof(minf)*1000000.0);
-      maxf=gtk_entry_get_text(GTK_ENTRY(max_frequency[i]));
+      maxf=gtk_editable_get_text(GTK_EDITABLE(max_frequency[i]));
       xvtr->frequencyMax=(long long)(atof(maxf)*1000000.0);
-      lof=gtk_entry_get_text(GTK_ENTRY(lo_frequency[i]));
+      lof=gtk_editable_get_text(GTK_EDITABLE(lo_frequency[i]));
       xvtr->frequencyLO=(long long)(atof(lof)*1000000.0);
-      loerr=gtk_entry_get_text(GTK_ENTRY(lo_error[i]));
+      loerr=gtk_editable_get_text(GTK_EDITABLE(lo_error[i]));
       xvtr->errorLO=atoll(loerr);
       xvtr->disablePA=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(disable_pa[i]));
       for(b=0;b<bandstack->entries;b++) {
@@ -149,7 +149,7 @@ void update_receiver(int band) {
 void min_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
-  const char* minf=gtk_entry_get_text(GTK_ENTRY(min_frequency[band]));
+  const char* minf=gtk_editable_get_text(GTK_EDITABLE(min_frequency[band]));
   xvtr->frequencyMin=(long long)(atof(minf)*1000000.0);
   update_receiver(band);
 }
@@ -157,7 +157,7 @@ void min_frequency_cb(GtkEditable *editable,gpointer user_data) {
 void max_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
-  const char* maxf=gtk_entry_get_text(GTK_ENTRY(max_frequency[band]));
+  const char* maxf=gtk_editable_get_text(GTK_EDITABLE(max_frequency[band]));
   xvtr->frequencyMin=(long long)(atof(maxf)*1000000.0);
   update_receiver(band);
 }
@@ -165,7 +165,7 @@ void max_frequency_cb(GtkEditable *editable,gpointer user_data) {
 void lo_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
-  const char* lof=gtk_entry_get_text(GTK_ENTRY(lo_frequency[band]));
+  const char* lof=gtk_editable_get_text(GTK_EDITABLE(lo_frequency[band]));
   xvtr->frequencyLO=(long long)(atof(lof)*1000000.0);
   update_receiver(band);
 }
@@ -176,14 +176,14 @@ void update_lo_frequency(int band, long long new_lo) {
   if(radio->dialog!=NULL) {
     char temp[32];
     sprintf(temp,"%.6f", (double)(new_lo / 1000000.0));
-    gtk_entry_set_text(GTK_ENTRY(lo_frequency[band]), temp);
+    gtk_editable_set_text(GTK_EDITABLE(lo_frequency[band]), temp);
   }
 }
 
 void lo_error_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
-  const char* errorf=gtk_entry_get_text(GTK_ENTRY(lo_error[band]));
+  const char* errorf=gtk_editable_get_text(GTK_EDITABLE(lo_error[band]));
   xvtr->errorLO=atoll(errorf);
   update_receiver(band);
 }
@@ -195,7 +195,7 @@ void lo_error_update(int band,long long offset) {
   if(radio->dialog!=NULL) {
     char temp[32];
     sprintf(temp,"%lld",xvtr->errorLO);
-    gtk_entry_set_text(GTK_ENTRY(lo_error[band]),temp);
+    gtk_editable_set_text(GTK_EDITABLE(lo_error[band]),temp);
   }
 }
 
@@ -287,35 +287,35 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
     BAND *xvtr=band_get_band(i);
 
     title[i]=gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(title[i]),7);
-    gtk_entry_set_text(GTK_ENTRY(title[i]),xvtr->title);
+    gtk_editable_set_width_chars(GTK_EDITABLE(title[i]),7);
+    gtk_editable_set_text(GTK_EDITABLE(title[i]),xvtr->title);
     gtk_grid_attach(GTK_GRID(grid),title[i],col++,row,1,1);
 
     min_frequency[i]=gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(min_frequency[i]),7);
+    gtk_editable_set_width_chars(GTK_EDITABLE(min_frequency[i]),7);
     sprintf(temp,"%f",(double)xvtr->frequencyMin/1000000.0);
-    gtk_entry_set_text(GTK_ENTRY(min_frequency[i]),temp);
+    gtk_editable_set_text(GTK_EDITABLE(min_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),min_frequency[i],col++,row,1,1);
     g_signal_connect(min_frequency[i],"changed",G_CALLBACK(min_frequency_cb),GINT_TO_POINTER(i));
 
     max_frequency[i]=gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(max_frequency[i]),7);
+    gtk_editable_set_width_chars(GTK_EDITABLE(max_frequency[i]),7);
     sprintf(temp,"%f",(double)xvtr->frequencyMax/1000000.0);
-    gtk_entry_set_text(GTK_ENTRY(max_frequency[i]),temp);
+    gtk_editable_set_text(GTK_EDITABLE(max_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),max_frequency[i],col++,row,1,1);
     g_signal_connect(max_frequency[i],"changed",G_CALLBACK(max_frequency_cb),GINT_TO_POINTER(i));
 
     lo_frequency[i]=gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(lo_frequency[i]),7);
+    gtk_editable_set_width_chars(GTK_EDITABLE(lo_frequency[i]),7);
     sprintf(temp,"%f",(double)xvtr->frequencyLO/1000000.0);
-    gtk_entry_set_text(GTK_ENTRY(lo_frequency[i]),temp);
+    gtk_editable_set_text(GTK_EDITABLE(lo_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),lo_frequency[i],col++,row,1,1);
     g_signal_connect(lo_frequency[i],"changed",G_CALLBACK(lo_frequency_cb),GINT_TO_POINTER(i));
 
     lo_error[i]=gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(lo_error[i]),9);
+    gtk_editable_set_width_chars(GTK_EDITABLE(lo_error[i]),9);
     sprintf(temp,"%lld",xvtr->errorLO);
-    gtk_entry_set_text(GTK_ENTRY(lo_error[i]),temp);
+    gtk_editable_set_text(GTK_EDITABLE(lo_error[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),lo_error[i],col++,row,1,1);
     g_signal_connect(lo_error[i],"changed",G_CALLBACK(lo_error_cb),GINT_TO_POINTER(i));
 
@@ -342,7 +342,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
 
   }
   
-  gtk_widget_show_all(grid);
+  gtk_widget_set_visible(grid, TRUE);
 
   return grid;
 
