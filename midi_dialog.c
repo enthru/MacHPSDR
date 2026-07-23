@@ -1182,7 +1182,7 @@ void midi_restore_state() {
 	  action=ACTION_NONE;
           if(value) {
 	    int j=1;
-	    while(ActionTable[j].type!=ACTION_NONE) {
+	    while(ActionTable[j].action!=ACTION_NONE) {
               if(strcmp(value,ActionTable[j].str)==0) {
                 action=ActionTable[j].action;
 		break;

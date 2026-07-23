@@ -342,7 +342,7 @@ long long HL2cl2CalculateNearest(HERMESLITE2 *hl2, long long lo_freq) {
 
 // Versaclock CL2 output enable
 void HL2cl2Enable(HERMESLITE2 *hl2) {
-  log_info("HL2: Enable CL2 %ld \n", hl2->clock2_freq);
+  log_info("HL2: Enable CL2 %lld \n", hl2->clock2_freq);
   // VCO = 38.4*68 = 2611.2 MHz 
   
   unsigned int div = 1;
@@ -397,7 +397,7 @@ void HL2cl2Disable(HERMESLITE2 *hl2) {
   HL2i2cQueueWrite(hl2, I2C1_WRITE, addr, 0x63, 0x00);     
 }
 
-void HL2clock2Status(HERMESLITE2 *hl2, gboolean xvtr_on, const long int *clock_freq) {
+void HL2clock2Status(HERMESLITE2 *hl2, gboolean xvtr_on, const gint64 *clock_freq) {
 
   if ((xvtr_on) && (hl2->cl2_enabled == FALSE)) { 
     hl2->clock2_freq = *clock_freq;

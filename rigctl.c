@@ -1172,12 +1172,12 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
 	      "%03d" //P25
 	      "%04d" //P26
 	      "%04d" //P27
-	      "%05ld" //P28
+	      "%05lld" //P28
 	      "%05d" //P29
-	      "%05ld" //P30
+	      "%05lld" //P30
 	      "%03.2f" //P31
-	      "%011ld" //P32
-	      "%011ld" //P33
+	      "%011lld" //P32
+	      "%011lld" //P33
 	      ";",
               rx->split!=SPLIT_OFF, //P1
               rx->split!=SPLIT_OFF, // P2
@@ -1319,9 +1319,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
           // set/read VFO-A frequency
           if(command[4]==';') {
             if(rx->ctun) {
-              sprintf(reply,"ZZFA%011ld;",rx->ctun_frequency);
+              sprintf(reply,"ZZFA%011lld;",rx->ctun_frequency);
             } else {
-              sprintf(reply,"ZZFA%011ld;",rx->frequency_a);
+              sprintf(reply,"ZZFA%011lld;",rx->frequency_a);
             }
             send_resp(cmd,reply) ;
           } else if(command[15]==';') {
@@ -1334,7 +1334,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
         case 'B': //ZZFB
           // set/read VFO-B frequency
           if(command[4]==';') {
-            sprintf(reply,"ZZFB%011ld;",rx->frequency_b);
+            sprintf(reply,"ZZFB%011lld;",rx->frequency_b);
             send_resp(cmd,reply) ;
           } else if(command[15]==';') {
             long long f=atoll(&command[4]);
@@ -1987,7 +1987,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
         case 'F': //ZZRF
           // set/read RIT frequency
           if(command[4]==';') {
-            sprintf(reply,"ZZRF%+5ld;",rx->rit);
+            sprintf(reply,"ZZRF%+5lld;",rx->rit);
             send_resp(cmd,reply);
           } else if(command[9]==';') {
             rx->rit=atoi(&command[4]);
@@ -2414,7 +2414,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
           // set/read XIT
 	  if(radio->transmitter) {
             if(command[4]==';') {
-              sprintf(reply,"ZZXT%+05ld;",radio->transmitter->xit);
+              sprintf(reply,"ZZXT%+05lld;",radio->transmitter->xit);
               send_resp(cmd,reply) ;
             } else if(command[9]==';') {
               radio->transmitter->xit=(long long)atoi(&command[4]);
@@ -2778,9 +2778,9 @@ int parse_cmd(void *data) {
           // set/read VFO-A frequency
           if(command[2]==';') {
             if(rx->ctun) {
-              sprintf(reply,"FA%011ld;",rx->ctun_frequency);
+              sprintf(reply,"FA%011lld;",rx->ctun_frequency);
             } else {
-              sprintf(reply,"FA%011ld;",rx->frequency_a);
+              sprintf(reply,"FA%011lld;",rx->frequency_a);
             }
             send_resp(cmd,reply) ;
           } else if(command[13]==';') {
@@ -2793,7 +2793,7 @@ int parse_cmd(void *data) {
         case 'B': //FB
           // set/read VFO-B frequency
           if(command[2]==';') {
-            sprintf(reply,"FB%011ld;",rx->frequency_b);
+            sprintf(reply,"FB%011lld;",rx->frequency_b);
             send_resp(cmd,reply) ;
           } else if(command[13]==';') {
             long long f=atoll(&command[2]);
@@ -2949,7 +2949,7 @@ int parse_cmd(void *data) {
         case 'F': //IF
           {
           int mode=ts2000_mode(rx->mode_a);
-          sprintf(reply,"IF%011ld%04ld%+06ld%d%d%d%02d%d%d%d%d%d%d%02d%d;",
+          sprintf(reply,"IF%011lld%04lld%+06lld%d%d%d%02d%d%d%d%d%d%d%02d%d;",
                   rx->ctun?rx->ctun_frequency:rx->frequency_a,
                   rx->step,rx->rit,rx->rit_enabled,
                   radio->transmitter?radio->transmitter->xit_enabled:0,
@@ -4019,6 +4019,7 @@ static gpointer serial_server(gpointer data) {
       }
     }
   close(rigctl->serial_fd);
+  return NULL;
 }
 
 int launch_serial (RECEIVER *rx) {

@@ -836,7 +836,7 @@ static gboolean rit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gp
     rx->rit=rx->rit-rx->rit_step;
     if(rx->rit<-10000) rx->rit=-10000;
   }
-  sprintf(text,"%+05ld",rx->rit);
+  sprintf(text,"%+05lld",rx->rit);
   gtk_label_set_text(GTK_LABEL(v->rit_value),text);
   frequency_changed(rx);
   update_frequency(rx);
@@ -980,7 +980,7 @@ static gboolean xit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gp
       radio->transmitter->xit=radio->transmitter->xit-radio->transmitter->xit_step;
       if(radio->transmitter->xit<-10000) radio->transmitter->xit=-10000;
     }
-    sprintf(text,"%+05ld",radio->transmitter->xit);
+    sprintf(text,"%+05lld",radio->transmitter->xit);
     gtk_label_set_text(GTK_LABEL(v->xit_value),text);
   }
   return TRUE;
@@ -1802,7 +1802,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(v->rit_b, "button-press-event", G_CALLBACK(rit_b_press_cb),rx);
   gtk_box_pack_start(GTK_BOX(vfo_row_ctl),v->rit_b,FALSE,FALSE,0);
 
-  sprintf(temp,"%+05ld",rx->rit);
+  sprintf(temp,"%+05lld",rx->rit);
   v->rit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->rit_value,"rit-value");
 
@@ -1824,7 +1824,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
 
   if(radio->transmitter!=NULL) {
-    sprintf(temp,"%+05ld",radio->transmitter->xit);
+    sprintf(temp,"%+05lld",radio->transmitter->xit);
   } else {
     sprintf(temp,"%+05ld",0L);
   }

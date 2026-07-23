@@ -628,10 +628,10 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%d",tx->xit_enabled);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].xit",tx->channel);
-  sprintf(value,"%ld",tx->xit);
+  sprintf(value,"%lld",tx->xit);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].xit_step",tx->channel);
-  sprintf(value,"%ld",tx->xit_step);
+  sprintf(value,"%lld",tx->xit_step);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].compressor",tx->channel);
   sprintf(value,"%i",tx->compressor);

@@ -1174,7 +1174,7 @@ void ozy_send_buffer() {
         int level=0;
         // Always send TX drive level for CW mode
         if(isTransmitting(radio) || (tx_mode==CWL) || (tx_mode==CWU)) {
-          BAND *band;
+          BAND *band=NULL;
           if(radio->transmitter!=NULL) {
             if(radio->transmitter->rx!=NULL) {
 #ifdef USE_VFO_B_MODE_AND_FILTER
@@ -1199,7 +1199,7 @@ void ozy_send_buffer() {
           }
 
           double target_dbm = 10.0 * log10(power * 1000.0);
-          double gbb=band->pa_calibration;
+          double gbb=(band!=NULL)?band->pa_calibration:0.0;
           target_dbm-=gbb;
           double target_volts = sqrt(pow(10, target_dbm * 0.1) * 0.05);
           double volts=min((target_volts / 0.8), 1.0);

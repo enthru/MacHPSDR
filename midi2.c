@@ -441,7 +441,7 @@ log_info("%s: MIDI:ACTION:%s (%d)\n",__FUNCTION__,cp+7, action);
 	  dp->next=desc;
 	}
       }
-      if (event == MIDI_KEY || event == MIDI_CTRL) {
+      if (event == MIDI_NOTE || event == MIDI_CTRL) {
 log_info("%s:TAB:Insert desc=%p in CMDS[%d] table\n",__FUNCTION__,desc,key);
 	dp = MidiCommandsTable.desc[key];
 	if (dp == NULL) {

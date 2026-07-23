@@ -229,16 +229,16 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->ctun);
   setProperty(name,value);
   sprintf(name,"receiver[%d].ctun_offset",rx->channel);
-  sprintf(value,"%ld",rx->ctun_offset);
+  sprintf(value,"%lld",rx->ctun_offset);
   setProperty(name,value);
   sprintf(name,"receiver[%d].ctun_frequency",rx->channel);
-  sprintf(value,"%ld",rx->ctun_frequency);
+  sprintf(value,"%lld",rx->ctun_frequency);
   setProperty(name,value);
   sprintf(name,"receiver[%d].ctun_min",rx->channel);
-  sprintf(value,"%ld",rx->ctun_min);
+  sprintf(value,"%lld",rx->ctun_min);
   setProperty(name,value);
   sprintf(name,"receiver[%d].ctun_max",rx->channel);
-  sprintf(value,"%ld",rx->ctun_max);
+  sprintf(value,"%lld",rx->ctun_max);
   setProperty(name,value);
 
   /* freetune state */
@@ -255,7 +255,7 @@ void receiver_save_state(RECEIVER *rx) {
   setProperty(name,value);
 
   sprintf(name,"receiver[%d].offset",rx->channel);
-  sprintf(value,"%ld",rx->offset);
+  sprintf(value,"%lld",rx->offset);
   setProperty(name,value);
   sprintf(name,"receiver[%d].bandstack",rx->channel);
   sprintf(value,"%d",rx->bandstack);
@@ -290,7 +290,7 @@ void receiver_save_state(RECEIVER *rx) {
 
 
   sprintf(name,"receiver[%d].step",rx->channel);
-  sprintf(value,"%ld",rx->step);
+  sprintf(value,"%lld",rx->step);
   setProperty(name,value);
   sprintf(name,"receiver[%d].zoom",rx->channel);
   sprintf(value,"%d",rx->zoom);
@@ -352,10 +352,10 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->rit_enabled);
   setProperty(name,value);
   sprintf(name,"receiver[%d].rit",rx->channel);
-  sprintf(value,"%ld",rx->rit);
+  sprintf(value,"%lld",rx->rit);
   setProperty(name,value);
   sprintf(name,"receiver[%d].rit_step",rx->channel);
-  sprintf(value,"%ld",rx->rit_step);
+  sprintf(value,"%lld",rx->rit_step);
   setProperty(name,value);
 
   sprintf(name,"receiver[%d].bpsk_enable",rx->channel);
@@ -993,14 +993,14 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
         }
       }
 
-      if(round && (rx->mode_a != CWL || rx->mode_a != CWU)) {
+      if(round && (rx->mode_a != CWL && rx->mode_a != CWU)) {
         rx->ctun_frequency = (rx->ctun_frequency / rx->step) * rx->step;
       }
       delta = rx->ctun_frequency - delta;
     } else {
       delta = rx->frequency_a;
       rx->frequency_a = rx->frequency_a - hz;
-      if(round && (rx->mode_a != CWL || rx->mode_a != CWU)) {
+      if(round && (rx->mode_a != CWL && rx->mode_a != CWU)) {
         rx->frequency_a = (rx->frequency_a / rx->step) * rx->step;
       }
       delta = rx->frequency_a - delta;
@@ -2266,7 +2266,7 @@ log_info("create_receiver: channel=%d sample_rate=%d\n", channel, sample_rate);
 
   rx->frequency_min=(gint64)radio->discovered->frequency_min;
   rx->frequency_max=(gint64)radio->discovered->frequency_max;
-log_info("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", channel, rx->frequency_min, rx->frequency_max);
+log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", channel, rx->frequency_min, rx->frequency_max);
 
 // DEBUG
   if(channel==0 ) {

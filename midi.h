@@ -285,9 +285,10 @@ void configure_midi_device(gboolean state);
 // devices and calls the Layer-1 function register_midi_device
 // for each device description that was successfully read.
 
+typedef struct _radio RADIO;
 void NewMidiEvent(enum MIDIevent event, int channel, int note, int val);
 int MIDIstartup(char *filename);
-int MIDIstop();
+int MIDIstop(RADIO *r);
 
 //
 // Layer-3 entry point (called by Layer2). In Layer-3, all the pihpsdr

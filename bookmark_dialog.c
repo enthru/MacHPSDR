@@ -82,13 +82,13 @@ static void save_bookmarks() {
     sprintf(name,"bookmark[%d].name",i);
     setProperty(name,bookmark->name);
     sprintf(name,"bookmark[%d].frequency_a",i);
-    sprintf(value,"%ld",bookmark->frequency_a);
+    sprintf(value,"%lld",bookmark->frequency_a);
     setProperty(name,value);
     sprintf(name,"bookmark[%d].frequency_b",i);
-    sprintf(value,"%ld",bookmark->frequency_b);
+    sprintf(value,"%lld",bookmark->frequency_b);
     setProperty(name,value);
     sprintf(name,"bookmark[%d].ctun_frequency",i);
-    sprintf(value,"%ld",bookmark->ctun_frequency);
+    sprintf(value,"%lld",bookmark->ctun_frequency);
     setProperty(name,value);
     sprintf(name,"bookmark[%d].ctun",i);
     sprintf(value,"%d",bookmark->ctun);
@@ -498,9 +498,9 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
 
       x=0;
       y=0;
-      g_snprintf((gchar *)&temp_a,sizeof(temp_a),"%4ld.%03ld.%03ld",rx->frequency_a/(long int)1000000,(rx->frequency_a%(long int)1000000)/(long int)1000,rx->frequency_a%(long int)1000);
-      g_snprintf((gchar *)&temp_b,sizeof(temp_b),"%4ld.%03ld.%03ld",rx->frequency_b/(long int)1000000,(rx->frequency_b%(long int)1000000)/(long int)1000,rx->frequency_b%(long int)1000);
-      g_snprintf((gchar *)&temp_ctun_frequency,sizeof(temp),"%4ld.%03ld.%03ld",rx->ctun_frequency/(long int)1000000,(rx->ctun_frequency%(long int)1000000)/(long int)1000,rx->ctun_frequency%(long int)1000);
+      g_snprintf((gchar *)&temp_a,sizeof(temp_a),"%4lld.%03lld.%03lld",rx->frequency_a/(long int)1000000,(rx->frequency_a%(long int)1000000)/(long int)1000,rx->frequency_a%(long int)1000);
+      g_snprintf((gchar *)&temp_b,sizeof(temp_b),"%4lld.%03lld.%03lld",rx->frequency_b/(long int)1000000,(rx->frequency_b%(long int)1000000)/(long int)1000,rx->frequency_b%(long int)1000);
+      g_snprintf((gchar *)&temp_ctun_frequency,sizeof(temp),"%4lld.%03lld.%03lld",rx->ctun_frequency/(long int)1000000,(rx->ctun_frequency%(long int)1000000)/(long int)1000,rx->ctun_frequency%(long int)1000);
       GtkWidget *name_title=gtk_label_new("Name: ");
       gtk_grid_attach(GTK_GRID(grid),name_title,x,y,1,1);
       x++;
@@ -611,9 +611,9 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       while(bmk!=NULL) {
         FILTER* band_filters=filters[bmk->mode];
         //FILTER* band_filter=&band_filters[bmk->filter]; // TO REMOVE
-        g_snprintf((gchar *)&temp_a,sizeof(temp),"%4ld.%03ld.%03ld",bmk->frequency_a/(long int)1000000,(bmk->frequency_a%(long int)1000000)/(long int)1000,bmk->frequency_a%(long int)1000);
-        g_snprintf((gchar *)&temp_b,sizeof(temp),"%4ld.%03ld.%03ld",bmk->frequency_b/(long int)1000000,(bmk->frequency_b%(long int)1000000)/(long int)1000,bmk->frequency_b%(long int)1000);
-        g_snprintf((gchar *)&temp_ctun_frequency,sizeof(temp_ctun_frequency),"%4ld.%03ld.%03ld",bmk->ctun_frequency/(long int)1000000,(bmk->ctun_frequency%(long int)1000000)/(long int)1000,bmk->ctun_frequency%(long int)1000);
+        g_snprintf((gchar *)&temp_a,sizeof(temp),"%4lld.%03lld.%03lld",bmk->frequency_a/(long int)1000000,(bmk->frequency_a%(long int)1000000)/(long int)1000,bmk->frequency_a%(long int)1000);
+        g_snprintf((gchar *)&temp_b,sizeof(temp),"%4lld.%03lld.%03lld",bmk->frequency_b/(long int)1000000,(bmk->frequency_b%(long int)1000000)/(long int)1000,bmk->frequency_b%(long int)1000);
+        g_snprintf((gchar *)&temp_ctun_frequency,sizeof(temp_ctun_frequency),"%4lld.%03lld.%03lld",bmk->ctun_frequency/(long int)1000000,(bmk->ctun_frequency%(long int)1000000)/(long int)1000,bmk->ctun_frequency%(long int)1000);
         g_snprintf((gchar *)&temp_ctun,sizeof(temp_ctun),"%d",bmk->ctun);
 
         gtk_list_store_append(store,&iter);
@@ -651,7 +651,7 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       gtk_grid_attach(GTK_GRID(grid),name_text,x,y,1,1);
       y++;
       x=0;
-      g_snprintf((gchar *)&temp_a,sizeof(temp_a),"%4ld.%03ld.%03ld",bookmark->frequency_a/(long int)1000000,(bookmark->frequency_a%(long int)1000000)/(long int)1000,bookmark->frequency_a%(long int)1000);
+      g_snprintf((gchar *)&temp_a,sizeof(temp_a),"%4lld.%03lld.%03lld",bookmark->frequency_a/(long int)1000000,(bookmark->frequency_a%(long int)1000000)/(long int)1000,bookmark->frequency_a%(long int)1000);
       frequency_title=gtk_label_new("Frequency A: ");
       gtk_grid_attach(GTK_GRID(grid),frequency_title,x,y,1,1);
       x++;
@@ -659,7 +659,7 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       gtk_grid_attach(GTK_GRID(grid),frequency_text,x,y,1,1);
       y++;
       x=0;
-      g_snprintf((gchar *)&temp_b,sizeof(temp_b),"%4ld.%03ld.%03ld",bookmark->frequency_b/(long int)1000000,(bookmark->frequency_b%(long int)1000000)/(long int)1000,bookmark->frequency_b%(long int)1000);
+      g_snprintf((gchar *)&temp_b,sizeof(temp_b),"%4lld.%03lld.%03lld",bookmark->frequency_b/(long int)1000000,(bookmark->frequency_b%(long int)1000000)/(long int)1000,bookmark->frequency_b%(long int)1000);
       frequency_title=gtk_label_new("Frequency B: ");
       gtk_grid_attach(GTK_GRID(grid),frequency_title,x,y,1,1);
       x++;
@@ -667,7 +667,7 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       gtk_grid_attach(GTK_GRID(grid),frequency_text,x,y,1,1);
       y++;
       x=0;
-      g_snprintf((gchar *)&temp,sizeof(temp),"%4ld.%03ld.%03ld",bookmark->ctun_frequency/(long int)1000000,(bookmark->ctun_frequency%(long int)1000000)/(long int)1000,bookmark->ctun_frequency%(long int)1000);
+      g_snprintf((gchar *)&temp,sizeof(temp),"%4lld.%03lld.%03lld",bookmark->ctun_frequency/(long int)1000000,(bookmark->ctun_frequency%(long int)1000000)/(long int)1000,bookmark->ctun_frequency%(long int)1000);
       frequency_title=gtk_label_new("CTUN Frequency: ");
       gtk_grid_attach(GTK_GRID(grid),frequency_title,x,y,1,1);
       x++;
