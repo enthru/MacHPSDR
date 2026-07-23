@@ -193,10 +193,13 @@ void vfo_b2a(RECEIVER *rx) {
   rx->lo_a=rx->lo_b;
   rx->error_a=rx->error_b;
   frequency_changed(rx);
+  // m/f are the *old* A values, kept only to detect what changed; the mode/filter
+  // to apply is the new A (copied from B), as in vfo_aswapb.  Passing m/f here
+  // reverted A to its old mode/filter, so B>A did nothing when the modes differed.
   if(m!=rx->mode_a) {
-    receiver_mode_changed(rx,m);
+    receiver_mode_changed(rx,rx->mode_a);
   } else if(f!=rx->filter_a) {
-    receiver_filter_changed(rx,f);
+    receiver_filter_changed(rx,rx->filter_a);
   }
   update_vfo(rx);
 }
