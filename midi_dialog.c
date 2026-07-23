@@ -288,123 +288,79 @@ static void clear_cb(GtkWidget *widget,gpointer user_data) {
   gtk_list_store_clear(store);
 }
 
-// GTK4: gtk_file_chooser_get_filename is gone — read the GFile's local path.
-static char *chooser_path(GtkFileChooser *c) {
-  GFile *f=gtk_file_chooser_get_file(c);
-  char *p=f?g_file_get_path(f):NULL;
-  if(f) g_object_unref(f);
-  return p;
+// GTK4: GtkFileChooserDialog is deprecated; GtkFileDialog is async — the accept
+// path runs in each *_done finish callback.
+static gchar *midi_default_filename(void) {
+  if(midi_device_name==NULL) return g_strdup("midi.midi");
+  return g_strdup_printf("%s.midi",midi_device_name);
+}
+
+static void save_done(GObject *src,GAsyncResult *res,gpointer user_data) {
+  GFile *gf=gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src),res,NULL);
+  if(gf==NULL) return;
+  char *savefilename=g_file_get_path(gf);
+  g_object_unref(gf);
+  initProperties();
+  midi_save_state();
+  saveProperties(savefilename);
+  g_free(savefilename);
 }
 
 static void save_cb(GtkWidget *widget,gpointer user_data) {
   RADIO *r=(RADIO *)user_data;
-  GtkWidget *dialog;
-  GtkFileChooser *chooser;
-  GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_SAVE;
-  gchar *filename;
-  gint res;
-  struct desc *cmd;
-
-  dialog = gtk_file_chooser_dialog_new ("Save File",
-                                      GTK_WINDOW(r->dialog),
-                                      action,
-                                      "_Cancel",
-                                      GTK_RESPONSE_CANCEL,
-                                      "_Save",
-                                      GTK_RESPONSE_ACCEPT,
-                                      NULL);
-  chooser = GTK_FILE_CHOOSER (dialog);
-  if(midi_device_name==NULL) {
-    filename=g_new(gchar,10);
-    sprintf(filename,"midi.midi");
-  } else {
-    filename=g_new(gchar,strlen(midi_device_name)+6);
-    sprintf(filename,"%s.midi",midi_device_name);
-  }
-  gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk4_dialog_run(dialog);
-  if(res==GTK_RESPONSE_ACCEPT) {
-    char *savefilename=chooser_path(chooser);
-    initProperties();
-    midi_save_state();
-    saveProperties(savefilename);
-    g_free(savefilename);
-  }
-  gtk_window_destroy(GTK_WINDOW(dialog));
+  GtkFileDialog *dialog=gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog,"Save File");
+  gchar *filename=midi_default_filename();
+  gtk_file_dialog_set_initial_name(dialog,filename);
   g_free(filename);
+  gtk_file_dialog_save(dialog,GTK_WINDOW(r->dialog),NULL,save_done,NULL);
+  g_object_unref(dialog);
+}
+
+static void load_done(GObject *src,GAsyncResult *res,gpointer user_data) {
+  GFile *gf=gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src),res,NULL);
+  if(gf==NULL) return;
+  char *loadfilename=g_file_get_path(gf);
+  g_object_unref(gf);
+  clear_cb(NULL,NULL);
+  initProperties();
+  loadProperties(loadfilename);
+  midi_restore_state();
+  load_store();
+  g_free(loadfilename);
 }
 
 static void load_cb(GtkWidget *widget,gpointer user_data) {
   RADIO *r=(RADIO *)user_data;
-  GtkWidget *dialog;
-  GtkFileChooser *chooser;
-  GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_OPEN;
-  gchar *filename;
-  gint res;
-  struct desc *cmd;
-
-  dialog = gtk_file_chooser_dialog_new ("Open MIDI File",
-                                      GTK_WINDOW(r->dialog),
-                                      action,
-                                      "_Cancel",
-                                      GTK_RESPONSE_CANCEL,
-                                      "_Save",
-                                      GTK_RESPONSE_ACCEPT,
-                                      NULL);
-  chooser = GTK_FILE_CHOOSER (dialog);
-  if(midi_device_name==NULL) {
-    filename=g_new(gchar,10);
-    sprintf(filename,"midi.midi");
-  } else {
-    filename=g_new(gchar,strlen(midi_device_name)+6);
-    sprintf(filename,"%s.midi",midi_device_name);
-  }
-  gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk4_dialog_run(dialog);
-  if(res==GTK_RESPONSE_ACCEPT) {
-    char *loadfilename=chooser_path(chooser);
-    clear_cb(NULL,NULL);
-    initProperties();
-    loadProperties(loadfilename);
-    midi_restore_state();
-    load_store();
-    g_free(loadfilename);
-  }
-  gtk_window_destroy(GTK_WINDOW(dialog));
+  GtkFileDialog *dialog=gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog,"Open MIDI File");
+  gchar *filename=midi_default_filename();
+  gtk_file_dialog_set_initial_name(dialog,filename);
   g_free(filename);
+  gtk_file_dialog_open(dialog,GTK_WINDOW(r->dialog),NULL,load_done,NULL);
+  g_object_unref(dialog);
+}
+
+static void load_original_done(GObject *src,GAsyncResult *res,gpointer user_data) {
+  GFile *gf=gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src),res,NULL);
+  if(gf==NULL) return;
+  char *loadfilename=g_file_get_path(gf);
+  g_object_unref(gf);
+  clear_cb(NULL,NULL);
+  MIDIstartup(loadfilename);
+  load_store();
+  g_free(loadfilename);
 }
 
 static void load_original_cb(GtkWidget *widget,gpointer user_data) {
   RADIO *r=(RADIO *)user_data;
-  GtkWidget *dialog;
-  GtkFileChooser *chooser;
-  GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_OPEN;
-  gchar *filename;
-  gint res;
-  struct desc *cmd;
-
-  dialog = gtk_file_chooser_dialog_new ("Open ORIGINAL MIDI File",
-                                      GTK_WINDOW(r->dialog),
-                                      action,
-                                      "_Cancel",
-                                      GTK_RESPONSE_CANCEL,
-                                      "_Save",
-                                      GTK_RESPONSE_ACCEPT,
-                                      NULL);
-  chooser = GTK_FILE_CHOOSER (dialog);
-  filename=g_new(gchar,strlen(midi_device_name)+6);
-  sprintf(filename,"%s.midi",midi_device_name);
-  gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk4_dialog_run(dialog);
-  if(res==GTK_RESPONSE_ACCEPT) {
-    char *loadfilename=chooser_path(chooser);
-    clear_cb(NULL,NULL);
-    MIDIstartup(loadfilename);
-    load_store();
-    g_free(loadfilename);
-  }
-  gtk_window_destroy(GTK_WINDOW(dialog));
+  GtkFileDialog *dialog=gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog,"Open ORIGINAL MIDI File");
+  gchar *filename=g_strdup_printf("%s.midi",midi_device_name);
+  gtk_file_dialog_set_initial_name(dialog,filename);
   g_free(filename);
+  gtk_file_dialog_open(dialog,GTK_WINDOW(r->dialog),NULL,load_original_done,NULL);
+  g_object_unref(dialog);
 }
 
 static void add_store(int key,struct desc *cmd) {

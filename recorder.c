@@ -165,29 +165,30 @@ static void rec_dir_cb(GtkWidget *w, gpointer data) {
   g_strlcpy(r->rec_dir, gtk_editable_get_text(GTK_EDITABLE(w)), sizeof(r->rec_dir));
 }
 
+// GTK4: GtkFileChooserDialog is deprecated; GtkFileDialog is async — the
+// chosen folder is applied in this finish callback.
+static void rec_browse_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GtkWidget *entry=(GtkWidget *)data;
+  GFile *gf=gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if(gf==NULL) return;   // cancelled / error
+  char *dir=g_file_get_path(gf);
+  g_object_unref(gf);
+  if(dir) { gtk_editable_set_text(GTK_EDITABLE(entry), dir); g_free(dir); }
+}
+
 static void rec_browse_cb(GtkWidget *w, gpointer data) {
   GtkWidget *entry=(GtkWidget *)data;
-  // GTK4: gtk_widget_get_toplevel → gtk_widget_get_root.
   GtkRoot *root=gtk_widget_get_root(w);
-  GtkWidget *d=gtk_file_chooser_dialog_new(
-      "Choose recording folder",
-      root?GTK_WINDOW(root):NULL,
-      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-      "Cancel", GTK_RESPONSE_CANCEL, "Select", GTK_RESPONSE_ACCEPT, NULL);
+  GtkFileDialog *d=gtk_file_dialog_new();
+  gtk_file_dialog_set_title(d,"Choose recording folder");
   const char *cur=gtk_editable_get_text(GTK_EDITABLE(entry));
   if(cur && cur[0]) {
-    // GTK4: set_current_folder takes a GFile (+GError**), not a path string.
     GFile *cf=g_file_new_for_path(cur);
-    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(d), cf, NULL);
+    gtk_file_dialog_set_initial_folder(d, cf);
     g_object_unref(cf);
   }
-  if(gtk4_dialog_run(d)==GTK_RESPONSE_ACCEPT) {
-    GFile *gf=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(d));
-    char *dir=gf?g_file_get_path(gf):NULL;
-    if(gf) g_object_unref(gf);
-    if(dir) { gtk_editable_set_text(GTK_EDITABLE(entry), dir); g_free(dir); }
-  }
-  gtk_window_destroy(GTK_WINDOW(d));
+  gtk_file_dialog_select_folder(d, root?GTK_WINDOW(root):NULL, NULL, rec_browse_done, entry);
+  g_object_unref(d);
 }
 
 static void rec_iq_cb(GtkWidget *w, gpointer data) {

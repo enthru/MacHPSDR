@@ -57,7 +57,3 @@ extern int ext_vfo_update(void *data);
 extern int ext_vfo_step(void *data);
 extern int ext_set_afgain(void *data);
 
-/* GTK4 shim for the removed gtk_dialog_run(): shows the dialog modally and
- * spins a nested GMainLoop until "response", returning the response id. */
-extern int gtk4_dialog_run(GtkWidget *dialog);
-

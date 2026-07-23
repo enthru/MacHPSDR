@@ -54,7 +54,6 @@ static volatile gboolean seen_data = FALSE;
 static gboolean  dialog_open   = FALSE;   // the Reconnect/Exit dialog is up
 static gboolean  reconnecting  = FALSE;   // a reconnect attempt is in progress
 static guint     watchdog_id   = 0;
-static GtkWidget *reconnect_dialog = NULL;
 
 static gint monotonic_sec(void) {
   return (gint)(g_get_monotonic_time() / G_USEC_PER_SEC);
@@ -100,19 +99,20 @@ static gboolean do_reconnect(RADIO *r) {
   return ok;
 }
 
-static void on_dialog_response(GtkDialog *dialog, gint response, gpointer data) {
-  gtk_window_destroy(GTK_WINDOW(dialog));
-  reconnect_dialog = NULL;
+// GTK4: GtkMessageDialog is deprecated; GtkAlertDialog is async and returns the
+// chosen button index (0 = Reconnect, 1 = Exit, -1 = dismissed).
+static void on_dialog_response(GObject *src, GAsyncResult *res, gpointer data) {
+  int btn = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, NULL);
 
-  if(response == GTK_RESPONSE_ACCEPT) {
+  if(btn == 0) {            // Reconnect
     reconnecting = TRUE;
     do_reconnect(radio);
     reconnecting = FALSE;
     dialog_open = FALSE;
-  } else {
-    // Exit: save state, stop the protocol cleanly and quit (same as the
-    // window-close / Quit path).
+  } else if(btn == 1) {     // Exit: save state, stop cleanly and quit
     main_delete(NULL);
+  } else {                  // dismissed — let the watchdog ask again
+    dialog_open = FALSE;
   }
 }
 
@@ -121,19 +121,18 @@ static void show_reconnect_dialog(RADIO *r) {
 
   dialog_open = TRUE;
 
-  reconnect_dialog = gtk_message_dialog_new(GTK_WINDOW(main_window),
-      GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-      GTK_MESSAGE_ERROR, GTK_BUTTONS_NONE,
-      "Connection to the SDR was lost");
-  gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(reconnect_dialog),
+  GtkAlertDialog *dialog = gtk_alert_dialog_new("Connection to the SDR was lost");
+  char detail[256];
+  g_snprintf(detail, sizeof detail,
       "The receiver (%s) stopped sending data.\n\n"
       "Try to reconnect, or exit the application?", name);
-  gtk_dialog_add_button(GTK_DIALOG(reconnect_dialog), "Reconnect", GTK_RESPONSE_ACCEPT);
-  gtk_dialog_add_button(GTK_DIALOG(reconnect_dialog), "Exit", GTK_RESPONSE_CLOSE);
-  gtk_dialog_set_default_response(GTK_DIALOG(reconnect_dialog), GTK_RESPONSE_ACCEPT);
-
-  g_signal_connect(reconnect_dialog, "response", G_CALLBACK(on_dialog_response), NULL);
-  gtk_widget_set_visible(reconnect_dialog, TRUE);
+  gtk_alert_dialog_set_detail(dialog, detail);
+  const char *buttons[] = { "Reconnect", "Exit", NULL };
+  gtk_alert_dialog_set_buttons(dialog, buttons);
+  gtk_alert_dialog_set_default_button(dialog, 0);
+  gtk_alert_dialog_set_modal(dialog, TRUE);
+  gtk_alert_dialog_choose(dialog, GTK_WINDOW(main_window), NULL, on_dialog_response, NULL);
+  g_object_unref(dialog);
 }
 
 static gboolean watchdog_cb(gpointer data) {

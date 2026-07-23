@@ -132,13 +132,15 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 
   g_snprintf((gchar *)&title,sizeof(title),"Linux HPSDR: %s %s",radio->discovered->name,inet_ntoa(radio->discovered->info.network.address.sin_addr));
 
-  GtkWidget *dialog=gtk_dialog_new();
+  // GTK4: GtkDialog is deprecated; use a plain GtkWindow with a content box.
+  GtkWidget *dialog=gtk_window_new();
   gtk_widget_set_name(dialog,"config-dialog");
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));
   gtk_window_set_title(GTK_WINDOW(dialog),title);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
-  GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+  GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_window_set_child(GTK_WINDOW(dialog),content);
 
   n_pages=0;
   stack=gtk_stack_new();

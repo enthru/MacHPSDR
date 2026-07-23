@@ -485,10 +485,12 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
   if(bookmark_head==NULL) {
     restore_bookmarks();
   }
-  GtkWidget *dialog=gtk_dialog_new();
+  // GTK4: GtkDialog is deprecated; use a plain GtkWindow with a content box.
+  GtkWidget *dialog=gtk_window_new();
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));
   g_signal_connect (dialog,"close-request",G_CALLBACK(delete_event),(gpointer)rx);
-  GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+  GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_window_set_child(GTK_WINDOW(dialog),content);
 
   GtkWidget *grid=gtk_grid_new();
   gtk_box_append(GTK_BOX(content),grid);

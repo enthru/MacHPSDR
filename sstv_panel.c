@@ -26,10 +26,6 @@
 #include "sstv_encoder.h"
 #include "log.h"
 
-// GTK4 gtk_dialog_run() shim (defined in ext.c). Declared locally to avoid
-// pulling ext.h's RECEIVER/RADIO type dependencies into this panel.
-extern int gtk4_dialog_run(GtkWidget *dialog);
-
 #define REFRESH_MS 200          // ~5 fps
 
 // Mode combo entries → VIS codes (index-aligned with the combo appends below).
@@ -172,41 +168,48 @@ static void save_clicked(GtkButton *b, gpointer data) {
 // --- transmit ---------------------------------------------------------------
 // Load an image to transmit (any format GdkPixbuf reads; scaled to the mode at
 // encode time).
+// GTK4: GtkFileChooserDialog is deprecated; GtkFileDialog is async — the
+// accept path runs in this finish callback.
+static void load_done(GObject *src, GAsyncResult *res, gpointer data) {
+  SstvPanel *p = data;
+  GFile *gf = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf == NULL) return;   // cancelled / error
+  char *path = g_file_get_path(gf);
+  g_object_unref(gf);
+  GError *err = NULL;
+  GdkPixbuf *pb = gdk_pixbuf_new_from_file(path, &err);
+  if (pb != NULL) {
+    if (p->tx_img != NULL) g_object_unref(p->tx_img);
+    p->tx_img = pb;
+    char *base = g_path_get_basename(path);
+    gtk_label_set_text(GTK_LABEL(p->tx_file_lbl), base);
+    g_free(base);
+    gtk_widget_set_sensitive(p->tx_send, TRUE);
+    gtk_widget_queue_draw(p->area);
+    log_info("SSTV TX: loaded %s (%dx%d)\n", path,
+             gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
+  } else {
+    log_error("SSTV TX: load failed: %s\n", err ? err->message : "?");
+    if (err) g_error_free(err);
+  }
+  g_free(path);
+}
+
 static void load_clicked(GtkButton *b, gpointer data) {
   SstvPanel *p = data;
-  // GTK4: gtk_widget_get_toplevel → gtk_widget_get_root (returns the GtkRoot/window).
   GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
-  GtkWidget *dlg = gtk_file_chooser_dialog_new(
-      "Load image to transmit", GTK_WINDOW(top), GTK_FILE_CHOOSER_ACTION_OPEN,
-      "_Cancel", GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, NULL);
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Load image to transmit");
   GtkFileFilter *filt = gtk_file_filter_new();
   gtk_file_filter_set_name(filt, "Images");
-  gtk_file_filter_add_pixbuf_formats(filt);
-  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), filt);
-  if (gtk4_dialog_run(dlg) == GTK_RESPONSE_ACCEPT) {
-    // GTK4: gtk_file_chooser_get_filename → get_file (GFile) + g_file_get_path.
-    GFile *gf = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
-    char *path = gf ? g_file_get_path(gf) : NULL;
-    if (gf) g_object_unref(gf);
-    GError *err = NULL;
-    GdkPixbuf *pb = gdk_pixbuf_new_from_file(path, &err);
-    if (pb != NULL) {
-      if (p->tx_img != NULL) g_object_unref(p->tx_img);
-      p->tx_img = pb;
-      char *base = g_path_get_basename(path);
-      gtk_label_set_text(GTK_LABEL(p->tx_file_lbl), base);
-      g_free(base);
-      gtk_widget_set_sensitive(p->tx_send, TRUE);
-      gtk_widget_queue_draw(p->area);
-      log_info("SSTV TX: loaded %s (%dx%d)\n", path,
-               gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
-    } else {
-      log_error("SSTV TX: load failed: %s\n", err ? err->message : "?");
-      if (err) g_error_free(err);
-    }
-    g_free(path);
-  }
-  gtk_window_destroy(GTK_WINDOW(dlg));
+  gtk_file_filter_add_mime_type(filt, "image/*");
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filt);
+  g_object_unref(filt);
+  gtk_file_dialog_set_filters(dlg, G_LIST_MODEL(filters));
+  g_object_unref(filters);
+  gtk_file_dialog_open(dlg, GTK_WINDOW(top), NULL, load_done, p);
+  g_object_unref(dlg);
 }
 
 static void send_clicked(GtkButton *b, gpointer data) {

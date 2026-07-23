@@ -55,12 +55,14 @@ static gboolean close_request(GtkWindow *widget, gpointer data) {
 }
 
 GtkWidget *create_tx_info(TRANSMITTER *tx) {
-  GtkWidget *dialog = gtk_dialog_new();
-  
+  // GTK4: GtkDialog is deprecated; use a plain GtkWindow with a content box.
+  GtkWidget *dialog = gtk_window_new();
+
   gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(main_window));
   g_signal_connect (dialog, "close-request", G_CALLBACK(close_request), (gpointer)tx);
-  
-  GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_window_set_child(GTK_WINDOW(dialog),content);
 
   GtkWidget *grid=gtk_grid_new();
   

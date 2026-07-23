@@ -164,22 +164,3 @@ int ext_set_afgain(void *data) {
   return 0;
 }
 
-// GTK4 removed gtk_dialog_run(). This shim reproduces its synchronous, modal
-// behaviour with a nested GMainLoop so existing "run then read result" call
-// sites keep working. GTK main thread only.
-struct _dlg_run { GMainLoop *loop; int response; };
-static void _dlg_run_response(GtkDialog *d, int resp, gpointer data) {
-  struct _dlg_run *r=(struct _dlg_run *)data;
-  r->response=resp;
-  if(g_main_loop_is_running(r->loop)) g_main_loop_quit(r->loop);
-}
-int gtk4_dialog_run(GtkWidget *dialog) {
-  struct _dlg_run r={ g_main_loop_new(NULL,FALSE), GTK_RESPONSE_NONE };
-  gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
-  gulong id=g_signal_connect(dialog,"response",G_CALLBACK(_dlg_run_response),&r);
-  gtk_widget_set_visible(dialog,TRUE);
-  g_main_loop_run(r.loop);
-  g_signal_handler_disconnect(dialog,id);
-  g_main_loop_unref(r.loop);
-  return r.response;
-}
