@@ -194,6 +194,7 @@ typedef struct _receiver {
   GtkWidget *vpaned;
   gint paned_position;
   double paned_percent;
+  gint paned_restore_tries;   // bounded retries in restore_paned_position_cb
 
   GtkWidget *panadapter;
   gint panadapter_width;

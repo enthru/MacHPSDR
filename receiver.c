@@ -78,6 +78,14 @@
 #define DECODERS 1
 #endif
 
+// Minimum on-screen height (px) for the panadapter (the "spectroscope") and the
+// waterfall in the vertical split, so neither can open collapsed to a sliver.
+// The panadapter's size-request + shrink=FALSE enforce this against the pane's
+// own apportioning; restore_paned_position_cb also clamps the restored split so
+// both children keep at least this much when the RX area is short.
+#define MIN_PANADAPTER_HEIGHT 90
+#define MIN_WATERFALL_HEIGHT  60
+
 void receiver_save_state(RECEIVER *rx) {
   if (rx->show_rx == FALSE) return;
   char name[80];
@@ -2113,9 +2121,12 @@ static void create_visual(RECEIVER *rx) {
   gtk_widget_set_margin_top(rx->vpaned, 8);
 
   rx->panadapter=create_rx_panadapter(rx);
+  // Guarantee the spectroscope a minimum height and forbid the pane from
+  // shrinking it below that (shrink=FALSE) so it can never open as a sliver.
+  gtk_widget_set_size_request(rx->panadapter, -1, MIN_PANADAPTER_HEIGHT);
   gtk_paned_set_start_child (GTK_PANED(rx->vpaned), rx->panadapter);
   gtk_paned_set_resize_start_child (GTK_PANED(rx->vpaned), TRUE);
-  gtk_paned_set_shrink_start_child (GTK_PANED(rx->vpaned), TRUE);
+  gtk_paned_set_shrink_start_child (GTK_PANED(rx->vpaned), FALSE);
   // GTK4: enter/leave come from a motion controller (crossing events are gone).
   GtkEventController *pan_cross=gtk_event_controller_motion_new();
   g_signal_connect(pan_cross,"enter",G_CALLBACK(enter),rx);
@@ -2246,6 +2257,7 @@ static gboolean restore_paned_position_cb(gpointer data);
 // restore (retries until allocated) so the split re-fits the new height.
 void receiver_refit_vpaned(RECEIVER *rx) {
   if(rx==NULL || rx->vpaned==NULL) return;
+  rx->paned_restore_tries=0;
   // 150 ms so this lands AFTER the outer rx_stack_balance (100 ms) has set the
   // RX area height; restore_paned_position_cb then retries until the vpaned is
   // allocated at its final size.
@@ -2256,13 +2268,27 @@ static gboolean restore_paned_position_cb(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(rx->vpaned==NULL) return FALSE;
   gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
+  // Keep waiting until the pane is allocated a usable height. A tiny but >1
+  // height (mid-allocation) would otherwise compute a sliver position and stop
+  // for good, opening the spectroscope collapsed — the bug this guards against.
+  // Once it is at least the two minimums tall we commit; a cramped pane past
+  // ~20 retries (~3 s) is committed anyway (clamped) so we never spin forever.
+  gint min_total=MIN_PANADAPTER_HEIGHT+MIN_WATERFALL_HEIGHT;
   if(paned_height<=1) return TRUE;  // not allocated yet, keep waiting
+  if(paned_height<min_total && ++rx->paned_restore_tries<20) return TRUE;
+  rx->paned_restore_tries=0;
   // Guard a degenerate saved split: 0 collapses the panadapter (spectroscope
   // invisible), 1 collapses the waterfall, and NaN fails every comparison —
   // fall back to an even split so the spectrum is always visible.
   double pct=rx->paned_percent;
   if(!(pct>0.05 && pct<0.95)) pct=0.5;
   gint position=(gint)((double)paned_height*pct);
+  // Clamp so both the spectroscope and the waterfall keep their minimum height
+  // (skip when the pane is too short to satisfy both — clamp order would flip).
+  if(paned_height>=min_total) {
+    if(position < MIN_PANADAPTER_HEIGHT) position=MIN_PANADAPTER_HEIGHT;
+    if(position > paned_height - MIN_WATERFALL_HEIGHT) position=paned_height - MIN_WATERFALL_HEIGHT;
+  }
   gtk_paned_set_position(GTK_PANED(rx->vpaned),position);
   return FALSE;  // done, stop the timeout
 }
@@ -2560,6 +2586,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->vpaned=NULL;
   rx->paned_position=-1;
+  rx->paned_restore_tries=0;
   rx->paned_percent=0.5;
 
   rx->split=SPLIT_OFF;
