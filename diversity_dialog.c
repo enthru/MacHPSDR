@@ -65,9 +65,9 @@ static void phase_fine_changed_cb(GtkWidget *widget, gpointer data) {
   set_gain_phase(dmix);
 }
 
-static void dmix_adc_cb(GtkWidget *widget, gpointer data) {
-  DIVMIXER *dmix=(DIVMIXER *)data; 
-  dmix->num_streams = gtk_combo_box_get_active(GTK_COMBO_BOX (widget));
+static void dmix_adc_cb(GtkDropDown *dd, GParamSpec *ps, gpointer data) {
+  DIVMIXER *dmix=(DIVMIXER *)data;
+  dmix->num_streams = gtk_drop_down_get_selected(dd);
   SetNumStreams(dmix);
 }
 
@@ -163,13 +163,11 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   g_signal_connect(G_OBJECT(phase_fine_scale),"value_changed",G_CALLBACK(phase_fine_changed_cb),dmix);
 
   // ADC1, ADC2 or ADC1+ADC2 (diversity mode)
-  GtkWidget *dmix_adc_combo=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(dmix_adc_combo),NULL,"ADC1");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(dmix_adc_combo),NULL,"ADC2");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(dmix_adc_combo),NULL,"ADC1+ADC2");    
-  gtk_combo_box_set_active(GTK_COMBO_BOX(dmix_adc_combo),dmix->num_streams);
+  const char *dmix_adc_opts[] = {"ADC1","ADC2","ADC1+ADC2",NULL};
+  GtkWidget *dmix_adc_combo=gtk_drop_down_new_from_strings(dmix_adc_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dmix_adc_combo),dmix->num_streams);
   gtk_grid_attach(GTK_GRID(grid),dmix_adc_combo,0,3,2,1);
-  g_signal_connect(dmix_adc_combo,"changed",G_CALLBACK(dmix_adc_cb),dmix);
+  g_signal_connect(dmix_adc_combo,"notify::selected",G_CALLBACK(dmix_adc_cb),dmix);
 
   // Calibrate gain
   GtkWidget *calibrate_gain_label = gtk_label_new("Calibrate gain:");

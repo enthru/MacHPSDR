@@ -56,22 +56,22 @@ static void att20_label_cb(GtkWidget *widget, gpointer data) {
               radio->att20_button,radio->att20_check);
 }
 
-static void wfm_deemph_cb(GtkWidget *widget, gpointer data) {
+static void wfm_deemph_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int sel=(int)gtk_drop_down_get_selected(widget);
   if(sel<0) sel=0;
   radio_set_wfm_deemphasis(radio,sel);
 }
 
-static void rds_rbds_cb(GtkWidget *widget, gpointer data) {
+static void rds_rbds_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int sel=(int)gtk_drop_down_get_selected(widget);
   radio->rds_rbds=(sel>0)?1:0;   // 0 = RDS (Europe), 1 = RBDS (N. America)
 }
 
-static void theme_cb(GtkWidget *widget, gpointer data) {
+static void theme_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int sel=(int)gtk_drop_down_get_selected(widget);
   if(sel<0) sel=0;
   radio->theme=sel;
   css_set_theme(sel);         // restyle the CSS chrome live
@@ -107,9 +107,9 @@ static void ppm_value_cb(GtkWidget *widget, gpointer data) {
   ppm_status_refresh(r);
 }
 
-static void ppm_station_cb(GtkWidget *widget, gpointer data) {
+static void ppm_station_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *r=(RADIO *)data;
-  int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int sel=(int)gtk_drop_down_get_selected(widget);
   if(sel<0) sel=0;
   r->ppm_ref_station=sel;
   ppm_status_refresh(r);
@@ -118,7 +118,7 @@ static void ppm_station_cb(GtkWidget *widget, gpointer data) {
 static void ppm_tune_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
   int sel=r->ppm_ref_station;
-  if(ppm_station_combo!=NULL) sel=gtk_combo_box_get_active(GTK_COMBO_BOX(ppm_station_combo));
+  if(ppm_station_combo!=NULL) sel=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(ppm_station_combo));
   if(sel<0) sel=0;
   ppm_cal_tune_to_station(r,sel);
   ppm_status_refresh(r);
@@ -155,7 +155,7 @@ static void ppm_calib_cb(GtkWidget *widget, gpointer data) {
     return;                            // the poll relabels the button and restores the RX
   }
   if(ppm_station_combo!=NULL) {
-    int sel=gtk_combo_box_get_active(GTK_COMBO_BOX(ppm_station_combo));
+    int sel=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(ppm_station_combo));
     if(sel>=0) r->ppm_ref_station=sel;
   }
   if(!ppm_cal_measure_start(r)) {
@@ -228,22 +228,20 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *de_lbl=gtk_label_new("De-emphasis:");
   gtk_widget_set_halign(de_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(fm_grid),de_lbl,0,1,1,1);
-  GtkWidget *de_combo=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(de_combo),NULL,"50 µs");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(de_combo),NULL,"75 µs");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(de_combo),r->wfm_deemphasis?1:0);
+  const char *de_opts[]={"50 µs","75 µs",NULL};
+  GtkWidget *de_combo=gtk_drop_down_new_from_strings(de_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(de_combo),r->wfm_deemphasis?1:0);
   gtk_grid_attach(GTK_GRID(fm_grid),de_combo,1,1,1,1);
-  g_signal_connect(de_combo,"changed",G_CALLBACK(wfm_deemph_cb),r);
+  g_signal_connect(de_combo,"notify::selected",G_CALLBACK(wfm_deemph_cb),r);
 
   GtkWidget *pty_lbl=gtk_label_new("RDS PTY names:");
   gtk_widget_set_halign(pty_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(fm_grid),pty_lbl,0,2,1,1);
-  GtkWidget *pty_combo=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(pty_combo),NULL,"RDS (Europe)");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(pty_combo),NULL,"RBDS (North America)");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(pty_combo),r->rds_rbds?1:0);
+  const char *pty_opts[]={"RDS (Europe)","RBDS (North America)",NULL};
+  GtkWidget *pty_combo=gtk_drop_down_new_from_strings(pty_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(pty_combo),r->rds_rbds?1:0);
   gtk_grid_attach(GTK_GRID(fm_grid),pty_combo,1,2,1,1);
-  g_signal_connect(pty_combo,"changed",G_CALLBACK(rds_rbds_cb),r);
+  g_signal_connect(pty_combo,"notify::selected",G_CALLBACK(rds_rbds_cb),r);
 
   // ---- Appearance (main-window skin) ----
   GtkWidget *skin_frame=gtk_frame_new("Appearance");
@@ -264,13 +262,14 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *skin_lbl=gtk_label_new("Skin:");
   gtk_widget_set_halign(skin_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_lbl,0,1,1,1);
-  GtkWidget *skin_combo=gtk_combo_box_text_new();
+  GtkStringList *skin_sl=gtk_string_list_new(NULL);
   for(int t=0;t<css_theme_count();t++) {
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(skin_combo),NULL,css_theme_name(t));
+    gtk_string_list_append(skin_sl,css_theme_name(t));
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(skin_combo),r->theme);
+  GtkWidget *skin_combo=gtk_drop_down_new(G_LIST_MODEL(skin_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(skin_combo),r->theme);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
-  g_signal_connect(skin_combo,"changed",G_CALLBACK(theme_cb),r);
+  g_signal_connect(skin_combo,"notify::selected",G_CALLBACK(theme_cb),r);
 
   // ---- Frequency Calibration (PPM) ----
   GtkWidget *ppm_frame=gtk_frame_new("Frequency Calibration (PPM)");
@@ -302,13 +301,14 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *st_lbl=gtk_label_new("Reference station:");
   gtk_widget_set_halign(st_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ppm_grid),st_lbl,0,2,1,1);
-  ppm_station_combo=gtk_combo_box_text_new();
+  GtkStringList *station_sl=gtk_string_list_new(NULL);
   for(int s=0;s<ppm_station_count();s++) {
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(ppm_station_combo),NULL,ppm_station(s)->name);
+    gtk_string_list_append(station_sl,ppm_station(s)->name);
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ppm_station_combo),r->ppm_ref_station);
+  ppm_station_combo=gtk_drop_down_new(G_LIST_MODEL(station_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(ppm_station_combo),r->ppm_ref_station);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_station_combo,1,2,1,1);
-  g_signal_connect(ppm_station_combo,"changed",G_CALLBACK(ppm_station_cb),r);
+  g_signal_connect(ppm_station_combo,"notify::selected",G_CALLBACK(ppm_station_cb),r);
 
   GtkWidget *btn_box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
   ppm_calib_btn=gtk_button_new_with_label("Calibrate");

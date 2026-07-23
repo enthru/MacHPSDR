@@ -126,8 +126,8 @@ static gboolean tick(gpointer data) {
   return G_SOURCE_CONTINUE;
 }
 
-static void mode_changed(GtkComboBox *combo, gpointer data) {
-  int idx = gtk_combo_box_get_active(combo);
+static void mode_changed(GtkDropDown *combo, GParamSpec *ps, gpointer data) {
+  int idx = (int)gtk_drop_down_get_selected(combo);
   if (idx < 0 || idx >= N_MODE_ENTRIES) idx = 0;
   sstv_decoder_set_mode(MODE_ENTRIES[idx].vis);
 }
@@ -213,7 +213,7 @@ static void send_clicked(GtkButton *b, gpointer data) {
   SstvPanel *p = data;
   if (sstv_tx_active()) { sstv_tx_stop(); return; }
   if (p->tx_img == NULL) return;
-  int idx = gtk_combo_box_get_active(GTK_COMBO_BOX(p->tx_mode));
+  int idx = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(p->tx_mode));
   // The TX combo lists the concrete modes only (MODE_ENTRIES[1..]).
   if (idx < 0) idx = 0;
   int vis = MODE_ENTRIES[idx + 1].vis;
@@ -246,11 +246,12 @@ GtkWidget *sstv_panel_create(void) {
 
   // Toolbar row.
   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-  GtkWidget *mode = gtk_combo_box_text_new();
+  GtkStringList *mode_sl = gtk_string_list_new(NULL);
   for (int i = 0; i < N_MODE_ENTRIES; i++)
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), MODE_ENTRIES[i].name);
-  gtk_combo_box_set_active(GTK_COMBO_BOX(mode), 0);
-  g_signal_connect(mode, "changed", G_CALLBACK(mode_changed), p);
+    gtk_string_list_append(mode_sl, MODE_ENTRIES[i].name);
+  GtkWidget *mode = gtk_drop_down_new(G_LIST_MODEL(mode_sl), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(mode), 0);
+  g_signal_connect(mode, "notify::selected", G_CALLBACK(mode_changed), p);
   gtk_box_append(GTK_BOX(bar),gtk_label_new("Mode:"));
   gtk_box_append(GTK_BOX(bar),mode);
 
@@ -275,10 +276,11 @@ GtkWidget *sstv_panel_create(void) {
   // and a progress bar.
   GtkWidget *txbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
   gtk_box_append(GTK_BOX(txbar),gtk_label_new("Tx:"));
-  p->tx_mode = gtk_combo_box_text_new();
+  GtkStringList *txmode_sl = gtk_string_list_new(NULL);
   for (int i = 1; i < N_MODE_ENTRIES; i++)   // skip "Auto" — TX needs a real mode
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->tx_mode), MODE_ENTRIES[i].name);
-  gtk_combo_box_set_active(GTK_COMBO_BOX(p->tx_mode), 0);
+    gtk_string_list_append(txmode_sl, MODE_ENTRIES[i].name);
+  p->tx_mode = gtk_drop_down_new(G_LIST_MODEL(txmode_sl), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(p->tx_mode), 0);
   gtk_box_append(GTK_BOX(txbar),p->tx_mode);
 
   GtkWidget *load = gtk_button_new_with_label("Load…");

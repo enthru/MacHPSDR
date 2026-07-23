@@ -115,15 +115,15 @@ static gboolean tick(gpointer data) {
   return G_SOURCE_CONTINUE;
 }
 
-static void lpm_changed(GtkComboBox *c, gpointer data) {
-  int idx = gtk_combo_box_get_active(c);
+static void lpm_changed(GtkDropDown *c, GParamSpec *ps, gpointer data) {
+  int idx = (int)gtk_drop_down_get_selected(c);
   if (idx >= 0 && idx < N_LPM) {
     wefax_decoder_set_lpm(LPM_ENTRIES[idx]);
     if (radio) radio->wefax_lpm = LPM_ENTRIES[idx];
   }
 }
-static void ioc_changed(GtkComboBox *c, gpointer data) {
-  int idx = gtk_combo_box_get_active(c);
+static void ioc_changed(GtkDropDown *c, GParamSpec *ps, gpointer data) {
+  int idx = (int)gtk_drop_down_get_selected(c);
   if (idx >= 0 && idx < N_IOC) {
     wefax_decoder_set_ioc(IOC_ENTRIES[idx]);
     if (radio) radio->wefax_ioc = IOC_ENTRIES[idx];
@@ -218,27 +218,29 @@ GtkWidget *wefax_panel_create(void) {
   wefax_decoder_set_invert(inv0);
 
   gtk_box_append(GTK_BOX(bar),gtk_label_new("LPM:"));
-  GtkWidget *lpm = gtk_combo_box_text_new();
+  GtkStringList *lpm_sl = gtk_string_list_new(NULL);
   int lpm_idx = 2;
   for (int i = 0; i < N_LPM; i++) {
     char t[8]; g_snprintf(t, sizeof(t), "%d", LPM_ENTRIES[i]);
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(lpm), t);
+    gtk_string_list_append(lpm_sl, t);
     if (LPM_ENTRIES[i] == lpm0) lpm_idx = i;
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(lpm), lpm_idx);
-  g_signal_connect(lpm, "changed", G_CALLBACK(lpm_changed), p);
+  GtkWidget *lpm = gtk_drop_down_new(G_LIST_MODEL(lpm_sl), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(lpm), lpm_idx);
+  g_signal_connect(lpm, "notify::selected", G_CALLBACK(lpm_changed), p);
   gtk_box_append(GTK_BOX(bar),lpm);
 
   gtk_box_append(GTK_BOX(bar),gtk_label_new("IOC:"));
-  GtkWidget *ioc = gtk_combo_box_text_new();
+  GtkStringList *ioc_sl = gtk_string_list_new(NULL);
   int ioc_idx = 0;
   for (int i = 0; i < N_IOC; i++) {
     char t[8]; g_snprintf(t, sizeof(t), "%d", IOC_ENTRIES[i]);
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ioc), t);
+    gtk_string_list_append(ioc_sl, t);
     if (IOC_ENTRIES[i] == ioc0) ioc_idx = i;
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ioc), ioc_idx);
-  g_signal_connect(ioc, "changed", G_CALLBACK(ioc_changed), p);
+  GtkWidget *ioc = gtk_drop_down_new(G_LIST_MODEL(ioc_sl), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(ioc), ioc_idx);
+  g_signal_connect(ioc, "notify::selected", G_CALLBACK(ioc_changed), p);
   gtk_box_append(GTK_BOX(bar),ioc);
 
   GtkWidget *autob = gtk_check_button_new_with_label("Auto-start");
