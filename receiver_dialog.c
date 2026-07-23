@@ -826,7 +826,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *preamp_scale=gtk_scale_new(GTK_ORIENTATION_VERTICAL,gtk_adjustment_new(rx->equalizer[0],-12.0,15.0,1.0,1.0,1.0));
   gtk_range_set_inverted(GTK_RANGE(preamp_scale),TRUE);
-  sui_scale_show_value(preamp_scale,0);
   g_signal_connect(preamp_scale,"value-changed",G_CALLBACK(preamp_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),preamp_scale,0,2,1,10);
   gtk_widget_set_size_request(preamp_scale,10,270);
@@ -843,7 +842,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *low_scale=gtk_scale_new(GTK_ORIENTATION_VERTICAL,gtk_adjustment_new(rx->equalizer[1],-12.0,15.0,1.0,1.0,1.0));
   gtk_range_set_inverted(GTK_RANGE(low_scale),TRUE);
-  sui_scale_show_value(low_scale,0);
   g_signal_connect(low_scale,"value-changed",G_CALLBACK(low_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),low_scale,1,2,1,10);
   gtk_scale_add_mark(GTK_SCALE(low_scale),-12.0,GTK_POS_LEFT,"-12dB");
@@ -859,7 +857,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *mid_scale=gtk_scale_new(GTK_ORIENTATION_VERTICAL,gtk_adjustment_new(rx->equalizer[2],-12.0,15.0,1.0,1.0,1.0));
   gtk_range_set_inverted(GTK_RANGE(mid_scale),TRUE);
-  sui_scale_show_value(mid_scale,0);
   g_signal_connect(mid_scale,"value-changed",G_CALLBACK(mid_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),mid_scale,2,2,1,10);
   gtk_scale_add_mark(GTK_SCALE(mid_scale),-12.0,GTK_POS_LEFT,"-12dB");
@@ -875,7 +872,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *high_scale=gtk_scale_new(GTK_ORIENTATION_VERTICAL,gtk_adjustment_new(rx->equalizer[3],-12.0,15.0,1.0,1.0,1.0));
   gtk_range_set_inverted(GTK_RANGE(high_scale),TRUE);
-  sui_scale_show_value(high_scale,0);
   g_signal_connect(high_scale,"value-changed",G_CALLBACK(high_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),high_scale,3,2,1,10);
   gtk_scale_add_mark(GTK_SCALE(high_scale),-12.0,GTK_POS_LEFT,"-12dB");
