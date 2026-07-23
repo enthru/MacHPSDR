@@ -79,7 +79,7 @@ void save_xvtr () {
       xvtr->frequencyLO=(long long)(atof(lof)*1000000.0);
       loerr=gtk_editable_get_text(GTK_EDITABLE(lo_error[i]));
       xvtr->errorLO=atoll(loerr);
-      xvtr->disablePA=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(disable_pa[i]));
+      xvtr->disablePA=gtk_check_button_get_active(GTK_CHECK_BUTTON(disable_pa[i]));
       for(b=0;b<bandstack->entries;b++) {
         BANDSTACK_ENTRY *entry=&bandstack->entry[b];
 	switch(b) {
@@ -208,7 +208,7 @@ static void pa_xvtr_value_changed_cb(GtkWidget *widget, gpointer user_data) {
 static void xvtr_pa_disable_changed_cb(GtkWidget *widget, gpointer user_data) {
   int band = GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
-  xvtr->disablePA = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  xvtr->disablePA = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   update_receiver(band);    
 }
 
@@ -219,7 +219,7 @@ static void xvtr_pa_disable_changed_cb(GtkWidget *widget, gpointer user_data) {
 // for the versaclock PLL.
 static void cl2_mode_cb(GtkWidget *widget, gpointer data) {
   HERMESLITE2 *hl2 = (HERMESLITE2 *)data;
-  hl2->cl2_integer_mode = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  hl2->cl2_integer_mode = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
  
   // Update display and disable input of LO freq while in 
   // integer mode for CL2
@@ -254,7 +254,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
     GtkWidget *cl2_label = gtk_label_new("Use CL2 in integer mode");
     gtk_grid_attach(GTK_GRID(grid), cl2_label, col++, row, 1, 1);
     GtkWidget *cl2 = gtk_check_button_new();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cl2), radio->hl2->cl2_integer_mode);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cl2), radio->hl2->cl2_integer_mode);
     gtk_grid_attach(GTK_GRID(grid), cl2, col++, row, 1, 1);
     g_signal_connect(cl2, "toggled", G_CALLBACK(cl2_mode_cb), radio->hl2);
   }
@@ -320,7 +320,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
     g_signal_connect(lo_error[i],"changed",G_CALLBACK(lo_error_cb),GINT_TO_POINTER(i));
 
     disable_pa[i]=gtk_check_button_new();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(disable_pa[i]),xvtr->disablePA);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(disable_pa[i]),xvtr->disablePA);
     gtk_grid_attach(GTK_GRID(grid),disable_pa[i],col++,row,1,1);
     g_signal_connect(disable_pa[i], "toggled", G_CALLBACK(xvtr_pa_disable_changed_cb), GINT_TO_POINTER(i));
 

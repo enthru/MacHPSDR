@@ -105,18 +105,18 @@ static gboolean midi_enable_cb(GtkWidget *widget,gpointer data) {
   if(r->midi_enabled) {
     close_midi_device();
   }
-  r->midi_enabled=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  r->midi_enabled=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(r->midi_enabled && midi_device_name!=NULL) {
     if(register_midi_device(midi_device_name)<0) {
       r->midi_enabled=false;
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (widget), r->midi_enabled);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (widget), r->midi_enabled);
     }
   }
   return TRUE;
 }
 
 static void configure_cb(GtkWidget *widget, gpointer data) {
-  gboolean conf=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  gboolean conf=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   configure_midi_device(conf);
 }
 
@@ -132,7 +132,7 @@ static void device_changed_cb(GtkWidget *widget, gpointer data) {
     close_midi_device();
     if(register_midi_device(midi_device_name)) {
       r->midi_enabled=false;
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(midi_enable_b), r->midi_enabled);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(midi_enable_b), r->midi_enabled);
     }
   }
 }
@@ -203,7 +203,7 @@ static void tree_selection_changed_cb (GtkTreeSelection *selection, gpointer dat
   char *str_action;
 
   //g_print("%s\n",__FUNCTION__);
-  //if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(configure_b))) {
+  //if(gtk_check_button_get_active(GTK_CHECK_BUTTON(configure_b))) {
     if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
       gtk_tree_model_get(model, &iter, EVENT_COLUMN, &str_event, -1);
       gtk_tree_model_get(model, &iter, CHANNEL_COLUMN, &str_channel, -1);
@@ -683,12 +683,12 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   }
 
   midi_enable_b=gtk_check_button_new_with_label("MIDI Enable");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (midi_enable_b), r->midi_enabled);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (midi_enable_b), r->midi_enabled);
   gtk_grid_attach(GTK_GRID(dev_grid),midi_enable_b,0,1,2,1);
   g_signal_connect(midi_enable_b,"toggled",G_CALLBACK(midi_enable_cb),r);
 
   configure_b=gtk_check_button_new_with_label("MIDI Configure");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (configure_b), false);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (configure_b), false);
   gtk_grid_attach(GTK_GRID(dev_grid),configure_b,0,2,2,1);
   g_signal_connect(configure_b,"toggled",G_CALLBACK(configure_cb),r);
 
@@ -728,17 +728,17 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(map_grid),newAction,7,1,1,1);
 
   add_b=gtk_button_new_with_label("Add");
-  g_signal_connect(add_b, "pressed", G_CALLBACK(add_cb),NULL);
+  g_signal_connect(add_b, "clicked", G_CALLBACK(add_cb),NULL);
   gtk_grid_attach(GTK_GRID(map_grid),add_b,8,1,1,1);
   gtk_widget_set_sensitive(add_b,false);
 
   update_b=gtk_button_new_with_label("Update");
-  g_signal_connect(update_b, "pressed", G_CALLBACK(update_cb),NULL);
+  g_signal_connect(update_b, "clicked", G_CALLBACK(update_cb),NULL);
   gtk_grid_attach(GTK_GRID(map_grid),update_b,9,1,1,1);
   gtk_widget_set_sensitive(update_b,false);
 
   delete_b=gtk_button_new_with_label("Delete");
-  g_signal_connect(delete_b, "pressed", G_CALLBACK(delete_cb),NULL);
+  g_signal_connect(delete_b, "clicked", G_CALLBACK(delete_cb),NULL);
   gtk_grid_attach(GTK_GRID(map_grid),delete_b,10,1,1,1);
   gtk_widget_set_sensitive(delete_b,false);
 

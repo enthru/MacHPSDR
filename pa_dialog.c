@@ -61,7 +61,7 @@ static void pa_value_changed_cb(GtkWidget *widget, gpointer data) {
 static void pa_disable_changed_cb(GtkWidget *widget, gpointer data) {
   BAND *band=(BAND *)data;
 
-  band->disablePA = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  band->disablePA = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   //if(radio->discovered->protocol==PROTOCOL_2) {
   //  protocol2_high_priority();
   //}
@@ -83,7 +83,7 @@ static void hl2mrf_bias_changed_cb(GtkWidget *widget, gpointer data) {
 static void enable_bias_cb(GtkWidget *widget, gpointer data) {
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;  
 
-  hl2->mrf101_bias_enable = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
+  hl2->mrf101_bias_enable = gtk_check_button_get_active (GTK_CHECK_BUTTON (widget));
   if (hl2->mrf101_bias_enable == TRUE) {
     log_info("Bias enabled\n");
     gtk_widget_set_sensitive(hl2mrf_scale, TRUE);    
@@ -130,7 +130,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     gtk_grid_attach(GTK_GRID(pa_grid),band_label,(i%3)*3,i/3,1,1);
 
     GtkWidget *pa_disable_b = gtk_check_button_new();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pa_disable_b), band->disablePA);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(pa_disable_b), band->disablePA);
     gtk_widget_show(pa_disable_b);   
     gtk_grid_attach(GTK_GRID(pa_grid), pa_disable_b, ((i%3)*3)+1,i/3,1,1);
     g_signal_connect(pa_disable_b,"toggled",G_CALLBACK(pa_disable_changed_cb), band); 
@@ -167,7 +167,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     // Only allow bias to be set if user enables this tick box, this acts as
     // a caution to make sure user thinks about what they are doing
     GtkWidget *enable_bias_b = gtk_check_button_new();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_bias_b), r->hl2->mrf101_bias_enable);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_bias_b), r->hl2->mrf101_bias_enable);
     gtk_widget_show(enable_bias_b);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), enable_bias_b, x, y, 1, 1);
     g_signal_connect(enable_bias_b,"toggled",G_CALLBACK(enable_bias_cb), r->hl2); 

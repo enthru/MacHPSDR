@@ -74,11 +74,11 @@ static void microphone_audio_cb(GtkWidget *widget,gpointer data) {
   if(radio->local_microphone) {
     audio_close_input(radio);
   }
-  radio->local_microphone=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  radio->local_microphone=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   if(radio->local_microphone) {
     if(audio_open_input(radio)<0) {
       radio->local_microphone=FALSE;
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (radio->transmitter->local_microphone_b),FALSE);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (radio->transmitter->local_microphone_b),FALSE);
     }
   }
 }
@@ -96,7 +96,7 @@ static void microphone_choice_cb(GtkComboBox *widget,gpointer data) {
     strcpy(radio->microphone_name,input_devices[i].name);
     if(audio_open_input(radio)<0) {
       radio->local_microphone=FALSE;
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (radio->transmitter->local_microphone_b),FALSE);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (radio->transmitter->local_microphone_b),FALSE);
     }
   }  else {
       i=gtk_combo_box_get_active(widget);
@@ -132,12 +132,12 @@ static void tune_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void tune_use_drive_cb(GtkWidget *widget,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->tune_use_drive=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  tx->tune_use_drive=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void use_rx_filter_cb(GtkWidget *widget,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->use_rx_filter=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  tx->use_rx_filter=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   if(tx->use_rx_filter) {
     transmitter_set_filter(tx,tx->rx->filter_low_a,tx->rx->filter_high_a);
   } else {
@@ -162,7 +162,7 @@ static void tx_spin_high_cb (GtkWidget *widget, gpointer data) {
 
 static void emp_cb (GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->pre_emphasize=gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
+  tx->pre_emphasize=gtk_check_button_get_active (GTK_CHECK_BUTTON (widget));
   transmitter_set_pre_emphasize(tx,tx->pre_emphasize);
 }
 
@@ -174,7 +174,7 @@ static void am_carrier_level_value_changed_cb(GtkWidget *widget, gpointer data) 
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->enable_equalizer=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  tx->enable_equalizer=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   SetTXAEQRun(tx->channel, tx->enable_equalizer);
 }
 
@@ -220,7 +220,7 @@ static void panadapter_low_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void ctcss_enable_cb (GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  int state=gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
+  int state=gtk_check_button_get_active (GTK_CHECK_BUTTON (widget));
   transmitter_set_ctcss(tx,state,tx->ctcss);
 }
 
@@ -237,7 +237,7 @@ static void tx_latency_cb(GtkWidget *widget, gpointer data) {
 
 static void tx_leveler_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->leveler = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  tx->leveler = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   SetTXALevelerSt(tx->channel, tx->leveler);
 }
 
@@ -249,7 +249,7 @@ static void comp_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void tx_compressor_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->compressor = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  tx->compressor = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   SetTXACompressorRun(tx->channel, tx->compressor);
 }
 
@@ -273,7 +273,7 @@ log_info("adding: %s\n",input_devices[i].description);
       }
     }
   }
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (tx->local_microphone_b), radio->local_microphone);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (tx->local_microphone_b), radio->local_microphone);
 
   if(gtk_combo_box_get_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b))==-1) {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, FALSE);
@@ -311,7 +311,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   if(n_input_devices>=0) {
     radio->transmitter->local_microphone_b=gtk_check_button_new_with_label("Local Microphone");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (radio->transmitter->local_microphone_b), radio->local_microphone);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (radio->transmitter->local_microphone_b), radio->local_microphone);
     gtk_grid_attach(GTK_GRID(microphone_grid),radio->transmitter->local_microphone_b,0,0,1,1);
     radio->transmitter->local_microphone_signal_id=g_signal_connect(radio->transmitter->local_microphone_b,"toggled",G_CALLBACK(microphone_audio_cb),radio);
 
@@ -360,7 +360,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_scale,1,1,1,1);
 
   GtkWidget *tune_use_drive=gtk_check_button_new_with_label("Tune Use Drive");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (tune_use_drive), tx->tune_use_drive);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (tune_use_drive), tx->tune_use_drive);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_use_drive,0,2,1,1);
   g_signal_connect(tune_use_drive,"toggled",G_CALLBACK(tune_use_drive_cb),tx);
 
@@ -374,7 +374,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),filter_frame,col,row++,1,1);
 
   GtkWidget *use_rx_filter=gtk_check_button_new_with_label("Use Rx Filter");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (use_rx_filter), tx->use_rx_filter);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (use_rx_filter), tx->use_rx_filter);
   gtk_grid_attach(GTK_GRID(filter_grid),use_rx_filter,0,0,2,1);
   g_signal_connect(use_rx_filter,"toggled",G_CALLBACK(use_rx_filter_cb),tx);
 
@@ -409,7 +409,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),fm_frame,col,row++,1,1);
 
   GtkWidget *emp_b=gtk_check_button_new_with_label("FM TX Pre-emphasize before limiting");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (emp_b), tx->pre_emphasize);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (emp_b), tx->pre_emphasize);
   gtk_widget_show(emp_b);
   gtk_grid_attach(GTK_GRID(fm_grid),emp_b,0,0,1,1);
   g_signal_connect(emp_b,"toggled",G_CALLBACK(emp_cb),tx);
@@ -445,7 +445,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),ctcss_frame,col,row++,1,1);
 
   GtkWidget *ctcss_enable=gtk_check_button_new_with_label("Enable CTCSS");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ctcss_enable), tx->ctcss_enabled);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (ctcss_enable), tx->ctcss_enabled);
   gtk_grid_attach(GTK_GRID(ctcss_grid),ctcss_enable,0,0,1,1);
   g_signal_connect(ctcss_enable,"toggled",G_CALLBACK(ctcss_enable_cb),tx);
 
@@ -510,7 +510,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row++,1,4);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->enable_equalizer);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), tx->enable_equalizer);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),tx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,4,1);
 
@@ -636,12 +636,12 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),compressor_frame,col,row++,1,1);
 
   GtkWidget *enable_comp = gtk_check_button_new_with_label("Enable compressor");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_comp), tx->compressor);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_comp), tx->compressor);
   gtk_grid_attach(GTK_GRID(compressor_grid), enable_comp, 0, 2, 1, 1);
   g_signal_connect(enable_comp,"toggled", G_CALLBACK(tx_compressor_cb), tx);
 
   GtkWidget *enable_leveler = gtk_check_button_new_with_label("Enable leveler");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable_leveler), tx->leveler);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_leveler), tx->leveler);
   gtk_grid_attach(GTK_GRID(compressor_grid), enable_leveler,1,2,1,1);
   g_signal_connect(enable_leveler, "toggled", G_CALLBACK(tx_leveler_cb), tx);
   

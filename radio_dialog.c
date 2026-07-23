@@ -362,31 +362,31 @@ static void adc1_hpf_cb(GtkComboBox *widget,gpointer data) {
 
 static void ptt_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->mic_ptt_enabled=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  radio->mic_ptt_enabled=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void ptt_ring_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     radio->mic_ptt_tip_bias_ring=0;
   }
 }
 
 static void ptt_tip_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     radio->mic_ptt_tip_bias_ring=1;
   }
 }
 
 static void bias_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->mic_bias_enabled=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  radio->mic_bias_enabled=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void boost_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->mic_boost=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  radio->mic_boost=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void update_audio_backends(RADIO *radio) {
@@ -503,7 +503,7 @@ static void cw_keyer_sidetone_frequency_value_changed_cb(GtkWidget *widget, gpoi
 
 static void psu_clk_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  if (radio->hl2 != NULL) radio->hl2->psu_clk = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  if (radio->hl2 != NULL) radio->hl2->psu_clk = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void region_cb(GtkWidget *widget, gpointer data) {
@@ -513,27 +513,27 @@ static void region_cb(GtkWidget *widget, gpointer data) {
 
 static void dither_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->dither=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->dither=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void random_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->random=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->random=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void preamp_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->preamp=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->preamp=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void att10_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->att10=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->att10=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void att20_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->att20=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->att20=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 #ifdef SOAPYSDR
@@ -547,7 +547,7 @@ static void adc_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void agc_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
-  gboolean agc=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  gboolean agc=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   soapy_protocol_set_automatic_gain(radio->receiver[0],agc);
 }
 
@@ -562,7 +562,7 @@ static void dac0_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void iqswap_changed_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->iqswap=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  r->iqswap=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
 static void attenuation_value_changed_cb(GtkWidget *widget, gpointer data) {
@@ -584,7 +584,7 @@ static void lna2_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void enable_step_attenuation_cb(GtkWidget *widget,gpointer data) {
   ADC *adc=(ADC *)data;
-  adc->enable_step_attenuation=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  adc->enable_step_attenuation=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
@@ -592,7 +592,7 @@ static void enable_step_attenuation_cb(GtkWidget *widget,gpointer data) {
 
 static void freetune_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx = (RECEIVER *)data;
-  gboolean enable = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  gboolean enable = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   receiver_set_freetune(rx, enable);
   log_info("radio_dialog: freetune rx=%d enable=%d\n", rx->channel, enable);
 }
@@ -600,7 +600,7 @@ static void freetune_cb(GtkWidget *widget, gpointer data) {
 #ifdef CWDAEMON
 static void cwdaemon_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->cwdaemon=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  radio->cwdaemon=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   if(radio->cwdaemon) {
     log_info("Starting CWdaemon\n");
     radio->cwdaemon = cwdaemon_start();
@@ -678,7 +678,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   else {
     GtkWidget *iqswap=gtk_check_button_new_with_label("Swap I & Q");
     gtk_grid_attach(GTK_GRID(model_grid),iqswap,x,0,1,1);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(iqswap),radio->iqswap);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(iqswap),radio->iqswap);
     g_signal_connect(iqswap,"toggled",G_CALLBACK(iqswap_changed_cb),radio);
   }
   x++;
@@ -831,7 +831,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       if(radio->discovered->info.soapy.rx_has_automatic_gain) {
         GtkWidget *agc=gtk_check_button_new_with_label("Hardware AGC: ");
         gtk_grid_attach(GTK_GRID(adc0_grid),agc,1,2,1,1);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(agc),radio->adc[0].agc);
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(agc),radio->adc[0].agc);
         g_signal_connect(agc,"toggled",G_CALLBACK(agc_changed_cb),&radio->adc[0]);
       }
       }
@@ -847,7 +847,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 
       if (radio->hl2 != NULL) {
         disable_fpgaclk_b=gtk_check_button_new_with_label("FPGA PSU clock");
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (disable_fpgaclk_b), radio->hl2->psu_clk);
+        gtk_check_button_set_active (GTK_CHECK_BUTTON (disable_fpgaclk_b), radio->hl2->psu_clk);
         gtk_grid_attach(GTK_GRID(adc0_grid),disable_fpgaclk_b,0,1,1,1);
         g_signal_connect(disable_fpgaclk_b,"toggled",G_CALLBACK(psu_clk_cb),radio);
       }
@@ -862,7 +862,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       g_signal_connect(attenuation_b,"value_changed",G_CALLBACK(attenuation_value_changed_cb),&radio->adc[0]);
 
       enable_attenuation_b=gtk_check_button_new_with_label("Enable 20dB Attenuation");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_attenuation_b), radio->adc[0].dither);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_attenuation_b), radio->adc[0].dither);
       gtk_grid_attach(GTK_GRID(adc0_grid),enable_attenuation_b,0,1,1,1);
       g_signal_connect(enable_attenuation_b,"toggled",G_CALLBACK(dither_cb),&radio->adc[0]);
       break;
@@ -910,28 +910,28 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_lpf_combo_box,3,0,1,1);
 
       dither_b=gtk_check_button_new_with_label("Dither");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (dither_b), radio->adc[0].dither);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (dither_b), radio->adc[0].dither);
       gtk_grid_attach(GTK_GRID(adc0_grid),dither_b,0,1,1,1);
       g_signal_connect(dither_b,"toggled",G_CALLBACK(dither_cb),&radio->adc[0]);
 
       random_b=gtk_check_button_new_with_label("Random");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (random_b), radio->adc[0].random);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (random_b), radio->adc[0].random);
       gtk_grid_attach(GTK_GRID(adc0_grid),random_b,1,1,1,1);
       g_signal_connect(random_b,"toggled",G_CALLBACK(random_cb),&radio->adc[0]);
 
       preamp_b=gtk_check_button_new_with_label("Preamp");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (preamp_b), radio->adc[0].preamp);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (preamp_b), radio->adc[0].preamp);
       gtk_grid_attach(GTK_GRID(adc0_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[0]);
 
       att10_b=gtk_check_button_new_with_label(radio->att10_label);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att10_b), radio->adc[0].att10);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (att10_b), radio->adc[0].att10);
       gtk_grid_attach(GTK_GRID(adc0_grid),att10_b,3,1,1,1);
       g_signal_connect(att10_b,"toggled",G_CALLBACK(att10_cb),&radio->adc[0]);
       radio->att10_check=att10_b;
 
       att20_b=gtk_check_button_new_with_label(radio->att20_label);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att20_b), radio->adc[0].att20);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (att20_b), radio->adc[0].att20);
       gtk_grid_attach(GTK_GRID(adc0_grid),att20_b,4,1,1,1);
       g_signal_connect(att20_b,"toggled",G_CALLBACK(att20_cb),&radio->adc[0]);
       radio->att20_check=att20_b;
@@ -984,27 +984,27 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc1_grid),adc1_hpf_combo_box,2,0,1,1);
 
       dither_b=gtk_check_button_new_with_label("Dither");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (dither_b), radio->adc[1].dither);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (dither_b), radio->adc[1].dither);
       gtk_grid_attach(GTK_GRID(adc1_grid),dither_b,0,1,1,1);
       g_signal_connect(dither_b,"toggled",G_CALLBACK(dither_cb),&radio->adc[1]);
 
       random_b=gtk_check_button_new_with_label("Random");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (random_b), radio->adc[1].random);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (random_b), radio->adc[1].random);
       gtk_grid_attach(GTK_GRID(adc1_grid),random_b,1,1,1,1);
       g_signal_connect(random_b,"toggled",G_CALLBACK(random_cb),&radio->adc[1]);
 
       preamp_b=gtk_check_button_new_with_label("Preamp");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (preamp_b), radio->adc[1].preamp);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (preamp_b), radio->adc[1].preamp);
       gtk_grid_attach(GTK_GRID(adc1_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[1]);
 
       att10_b=gtk_check_button_new_with_label(radio->att10_label);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att10_b), radio->adc[1].att10);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (att10_b), radio->adc[1].att10);
       gtk_grid_attach(GTK_GRID(adc1_grid),att10_b,3,1,1,1);
       g_signal_connect(att10_b,"toggled",G_CALLBACK(att10_cb),&radio->adc[1]);
 
       att20_b=gtk_check_button_new_with_label(radio->att20_label);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (att20_b), radio->adc[1].att20);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (att20_b), radio->adc[1].att20);
       gtk_grid_attach(GTK_GRID(adc1_grid),att20_b,4,1,1,1);
       g_signal_connect(att20_b,"toggled",G_CALLBACK(att20_cb),&radio->adc[1]);
 
@@ -1117,17 +1117,17 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     g_signal_connect(ptt_tip_b,"toggled",G_CALLBACK(ptt_tip_cb),radio);
 
     GtkWidget *ptt_b=gtk_check_button_new_with_label("PTT Enabled");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ptt_b), radio->mic_ptt_enabled);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (ptt_b), radio->mic_ptt_enabled);
     gtk_grid_attach(GTK_GRID(mic_grid),ptt_b,x,y++,1,1);
     g_signal_connect(ptt_b,"toggled",G_CALLBACK(ptt_cb),radio);
 
     GtkWidget *bias_b=gtk_check_button_new_with_label("BIAS Enabled");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (bias_b), radio->mic_bias_enabled);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (bias_b), radio->mic_bias_enabled);
     gtk_grid_attach(GTK_GRID(mic_grid),bias_b,x,y++,1,1);
     g_signal_connect(bias_b,"toggled",G_CALLBACK(bias_cb),radio);
 
     GtkWidget *boost_b=gtk_check_button_new_with_label("20dB boost");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (boost_b), radio->mic_boost);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (boost_b), radio->mic_boost);
     gtk_grid_attach(GTK_GRID(mic_grid),boost_b,x,y++,1,1);
     g_signal_connect(boost_b,"toggled",G_CALLBACK(boost_cb),radio);
   }
@@ -1188,7 +1188,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       g_snprintf(label_text, sizeof(label_text), "RX-%d", i);
 
       GtkWidget *freetune_b = gtk_check_button_new_with_label(label_text);
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(freetune_b),
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(freetune_b),
                                    radio->receiver[i]->freetune);
       gtk_widget_show(freetune_b);
       gtk_widget_set_tooltip_text(freetune_b,
@@ -1286,7 +1286,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_reversed_label,x++,y,1,1);
 
     GtkWidget *cw_keys_reversed_b=gtk_check_button_new();
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cw_keys_reversed_b), radio->cw_keys_reversed);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (cw_keys_reversed_b), radio->cw_keys_reversed);
     gtk_widget_show(cw_keys_reversed_b);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keys_reversed_b,x,y,1,1);
     g_signal_connect(cw_keys_reversed_b,"toggled",G_CALLBACK(cw_keys_reversed_cb),radio);
@@ -1313,7 +1313,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(cw_grid),cwdaemon_label,x++,y,1,1);
 
     GtkWidget *cwdaemon_tick=gtk_check_button_new();
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cwdaemon_tick), radio->cwdaemon);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (cwdaemon_tick), radio->cwdaemon);
     gtk_widget_show(cwdaemon_tick);
     gtk_grid_attach(GTK_GRID(cw_grid),cwdaemon_tick,x++,y,1,1);
     g_signal_connect(cwdaemon_tick,"toggled",G_CALLBACK(cwdaemon_cb),radio);
@@ -1384,7 +1384,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_breakin_label,x++,y,1,1);
 
     GtkWidget *cw_breakin_b=gtk_check_button_new();
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cw_breakin_b), radio->cw_breakin);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (cw_breakin_b), radio->cw_breakin);
     gtk_widget_show(cw_breakin_b);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_breakin_b,x++,y,1,1);
     g_signal_connect(cw_breakin_b,"toggled",G_CALLBACK(cw_breakin_cb),radio);
@@ -1397,7 +1397,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(cw_grid),cw_cwd_sidetone_label,x++,y,1,1);
 
       cw_cwd_sidetone_b = gtk_check_button_new();
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cw_cwd_sidetone_b), radio->cwd_sidetone);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (cw_cwd_sidetone_b), radio->cwd_sidetone);
       gtk_widget_show(cw_cwd_sidetone_b);
       gtk_grid_attach(GTK_GRID(cw_grid),cw_cwd_sidetone_b,x++,y,1,1);
       g_signal_connect(cw_cwd_sidetone_b,"toggled",G_CALLBACK(cw_cwd_sidetone_cb),radio);

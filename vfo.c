@@ -1595,17 +1595,17 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->a2b=gtk_button_new_with_label("A>B");
   gtk_widget_set_name(v->a2b,"vfo-button");
-  g_signal_connect(v->a2b, "pressed", G_CALLBACK(a2b_cb),rx);
+  g_signal_connect(v->a2b, "clicked", G_CALLBACK(a2b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->a2b);
 
   v->b2a=gtk_button_new_with_label("A<B");
   gtk_widget_set_name(v->b2a,"vfo-button");
-  g_signal_connect(v->b2a, "pressed", G_CALLBACK(b2a_cb),rx);
+  g_signal_connect(v->b2a, "clicked", G_CALLBACK(b2a_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->b2a);
 
   v->aswapb=gtk_button_new_with_label("A<>B");
   gtk_widget_set_name(v->aswapb,"vfo-button");
-  g_signal_connect(v->aswapb, "pressed", G_CALLBACK(aswapb_cb),rx);
+  g_signal_connect(v->aswapb, "clicked", G_CALLBACK(aswapb_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->aswapb);
 
   switch(rx->split) {
@@ -1634,13 +1634,13 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   sprintf(temp,"ZOOM x%d",rx->zoom);
   v->zoom_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->zoom_b,"vfo-button");
-  g_signal_connect(v->zoom_b, "pressed",G_CALLBACK(zoom_b_cb),rx);
+  g_signal_connect(v->zoom_b, "clicked",G_CALLBACK(zoom_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->zoom_b);
 
   sprintf(temp,"STEP %s",step_labels[get_step(rx->step)]);
   v->step_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->step_b,"vfo-button");
-  g_signal_connect(v->step_b, "pressed",G_CALLBACK(step_b_cb),rx);
+  g_signal_connect(v->step_b, "clicked",G_CALLBACK(step_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->step_b);
 
   v->tx_label=gtk_label_new("");

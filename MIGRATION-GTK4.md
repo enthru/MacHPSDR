@@ -6,31 +6,46 @@ signature, removed menus/EventBox, drawing model) are too pervasive to `#ifdef`.
 `master` stays on GTK3.
 
 ---
-## ▶ RESUME HERE (state as of commit 63a3e02)
+## ▶ RESUME HERE (state as of the check-button-fix commit)
 
-**Where we are:** Phase 1 done — the tree builds, links, and launches on GTK 4.22.
-Branch `gtk4-migration`, working tree clean. Requires `brew install gtk4` (4.22
-installed). Build/run to confirm:
+**Where we are:** Phase 1 done + runtime check-button/signal fixups done — the
+tree builds, links, and launches clean on GTK 4.22 (no GTK criticals on faker
+launch). Branch `gtk4-migration`. Requires `brew install gtk4` (4.22 installed).
+Build/run to confirm:
 
 ```bash
 make                                   # clean arm64 machpsdr against gtk4
 ./machpsdr --faker ft4.wav --usb-only  # launches end-to-end (no hardware)
 ```
 
+**DONE this pass:**
+1. ✅ **Runtime check-button fix.** Converted every `gtk_toggle_button_*_active`
+   on an actual `GtkCheckButton` → `gtk_check_button_*_active`/`GTK_CHECK_BUTTON`.
+   Method: files with **no** `gtk_toggle_button_new` (all check buttons) were
+   blanket-converted; the mixed files were done per-variable. Real toggle buttons
+   kept the old API: **vfo.c** (16 `gtk_toggle_button_new` — VFO ctl bar),
+   **radio_info.c** (7 — status lamps), **radio.c** (mox/vox/tune + preamp/att10/
+   att20 bottom-bar toggles), **ft8_panel.c** `enable_btn` ("Enable Tx"). Check
+   buttons fixed in: eer/diversity/midi/ft8_dialog/oc/pa/puresignal/recorder/
+   receiver_dialog/radio_dialog/transmitter_dialog/wideband_dialog/xvtr_dialog +
+   panels wefax_panel (also fixed its `GtkToggleButton *b` cb sigs) and ft8_panel
+   (`auto_chk`, `cqchk`).
+2. ✅ **Grouped radio→check "pressed"→"toggled".** receiver_dialog grouped
+   selectors (deviation/filter/adc/sample_rate) now connect `"toggled"` with an
+   `if(!gtk_check_button_get_active(...)) return;` guard so only the newly-active
+   button acts. radio_dialog's grouped ptt_ring/tip cbs already guarded.
+3. ✅ **GtkButton "pressed"→"clicked".** GTK4 removed `"pressed"`/`"released"` from
+   GtkButton (moved to GtkGestureClick). Momentary buttons converted to
+   `"clicked"`: midi_dialog add/update/delete; vfo.c a2b/b2a/aswapb/zoom_b/step_b.
+   (vfo.c:93 `"pressed"` is on a GtkGestureClick — left as-is.)
+
 **TODO, in priority order:**
-1. **Runtime check-button fix** (biggest functional gap — dialogs' checkboxes
-   silently don't work). Replace `gtk_toggle_button_get/set_active(GTK_TOGGLE_BUTTON(cb))`
-   with `gtk_check_button_get/set_active(GTK_CHECK_BUTTON(cb))` for every widget
-   that is actually a `GtkCheckButton` (made with `gtk_check_button_new*`). Find:
-   `grep -rn 'gtk_toggle_button_.*_active' *.c`. Real `GtkToggleButton`
-   (`gtk_toggle_button_new*`) keeps the old API — check each site's widget type.
-2. **Grouped radio→check "pressed"** in receiver_dialog.c / radio_dialog.c: change
-   `g_signal_connect(btn,"pressed",...)` → `"toggled"` and have the cb guard on
-   `gtk_check_button_get_active()` (only act when becoming active).
-3. Sanity-drive the GUI (VFO menus/popovers, sliders, right-click config,
-   bookmark menu, file choosers) — only faker *launch* is verified so far.
-4. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184).
-5. **Phase 3**: Makefile `app` target (gtk-3.0→gtk-4.0 bundle paths, drop im
+1. Sanity-drive the GUI (VFO menus/popovers, sliders, right-click config,
+   bookmark menu, file choosers, dialog checkboxes) — only faker *launch* is
+   verified so far; the check-button/signal fixes are correct by construction but
+   not yet exercised by hand.
+2. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184).
+3. **Phase 3**: Makefile `app` target (gtk-3.0→gtk-4.0 bundle paths, drop im
    modules) + optional GtkSnapshot/GdkTexture GPU waterfalls.
 
 **Also revisit (deliberate Phase-1 simplifications):** vfo band right-click menu

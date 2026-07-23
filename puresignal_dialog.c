@@ -234,7 +234,7 @@ static gboolean info_timeout(gpointer arg) {
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     // PureSignal needs free receiver slots for the TX/RX feedback channels.
     if(radio->receivers <= (radio->discovered->ps_tx_fdbk_chan - 1)) {
       transmitter_set_ps(tx,1);
@@ -242,7 +242,7 @@ static void enable_cb(GtkWidget *widget, gpointer data) {
     } else {
       // Too many open receivers — undo the toggle without re-entering this cb.
       g_signal_handlers_block_by_func(widget,G_CALLBACK(enable_cb),tx);
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(widget),FALSE);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(widget),FALSE);
       g_signal_handlers_unblock_by_func(widget,G_CALLBACK(enable_cb),tx);
     }
   } else {
@@ -253,7 +253,7 @@ static void enable_cb(GtkWidget *widget, gpointer data) {
 
 static void twotone_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  transmitter_set_twotone(tx,gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget)));
+  transmitter_set_twotone(tx,gtk_check_button_get_active(GTK_CHECK_BUTTON (widget)));
   if(tx->ps_twotone && (tx->puresignal != NULL)) {
     running=TRUE;
     tx->ps_timer_id=g_timeout_add(100,info_timeout,(gpointer)tx);
@@ -284,7 +284,7 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable PureSignal");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->puresignal_enabled);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), tx->puresignal_enabled);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),tx);
   gtk_grid_attach(GTK_GRID(ps_grid),enable_b,0,0,1,1);
 

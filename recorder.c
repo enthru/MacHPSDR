@@ -191,10 +191,10 @@ static void rec_browse_cb(GtkWidget *w, gpointer data) {
 }
 
 static void rec_iq_cb(GtkWidget *w, gpointer data) {
-  ((RADIO *)data)->rec_iq=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
+  ((RADIO *)data)->rec_iq=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
 }
 static void rec_af_cb(GtkWidget *w, gpointer data) {
-  ((RADIO *)data)->rec_af=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
+  ((RADIO *)data)->rec_af=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
 }
 
 GtkWidget *create_recording_dialog(struct _radio *rp) {
@@ -236,12 +236,12 @@ GtkWidget *create_recording_dialog(struct _radio *rp) {
   gtk_grid_attach(GTK_GRID(grid),hint,1,2,2,1);
 
   GtkWidget *iq=gtk_check_button_new_with_label("Record I/Q (raw off-air, --faker-replayable)");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(iq),r->rec_iq);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(iq),r->rec_iq);
   gtk_grid_attach(GTK_GRID(grid),iq,0,3,3,1);
   g_signal_connect(iq,"toggled",G_CALLBACK(rec_iq_cb),r);
 
   GtkWidget *af=gtk_check_button_new_with_label("Record AF (demodulated audio, 48 kHz)");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(af),r->rec_af);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(af),r->rec_af);
   gtk_grid_attach(GTK_GRID(grid),af,0,4,3,1);
   g_signal_connect(af,"toggled",G_CALLBACK(rec_af_cb),r);
 

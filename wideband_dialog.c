@@ -151,7 +151,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
 
   GtkWidget *waterfall_automatic=gtk_check_button_new_with_label("Waterfall Automatic");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_automatic), w->waterfall_automatic);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_automatic), w->waterfall_automatic);
   gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_automatic,0,2,2,1);
   g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),w);
 

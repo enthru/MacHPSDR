@@ -55,7 +55,7 @@ static void oc_rx_cb(GtkWidget *widget, gpointer data) {
   BAND *band=band_get_band(d->band);
   int mask=0x01<<(d->oc-1);
 log_info("oc_rx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     band->OCrx|=mask;
   } else {
     band->OCrx&=~mask;
@@ -73,7 +73,7 @@ static void oc_tx_cb(GtkWidget *widget, gpointer data) {
 
 log_info("oc_tx_cb: band=%d oc=%d mask=%d\n",d->band,d->oc,mask);
 
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     band->OCtx|=mask;
   } else {
     band->OCtx&=~mask;
@@ -87,7 +87,7 @@ static void oc_tune_cb(GtkWidget *widget, gpointer data) {
   DATA *d=(DATA *)data;
   int mask=0x01<<(d->oc-1);
 log_info("oc_tune_cb: oc=%d mask=%d\n",d->oc,mask);
-  if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
     d->radio->oc_tune|=mask;
   } else {
     d->radio->oc_tune&=~mask;
@@ -122,8 +122,8 @@ void update_oc_dialog(RADIO *r) {
       g_signal_handler_block(G_OBJECT(r->oc_rx_b[band_idx]), r->oc_rx_signal_id[band_idx]);
 
       mask = 0x01 << (j-1);
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (r->oc_rx_b[band_idx]), (band->OCrx&mask) == mask);
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (r->oc_tx_b[band_idx]), (band->OCtx&mask) == mask);      
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (r->oc_rx_b[band_idx]), (band->OCrx&mask) == mask);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (r->oc_tx_b[band_idx]), (band->OCtx&mask) == mask);      
       
       g_signal_handler_unblock(G_OBJECT(r->oc_tx_b[band_idx]), r->oc_tx_signal_id[band_idx]);
       g_signal_handler_unblock(G_OBJECT(r->oc_rx_b[band_idx]), r->oc_rx_signal_id[band_idx]);
@@ -188,7 +188,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
 
         mask=0x01<<(j-1);
         radio->oc_rx_b[band_idx] = gtk_check_button_new();
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (radio->oc_rx_b[band_idx]), (band->OCrx&mask)==mask);
+        gtk_check_button_set_active (GTK_CHECK_BUTTON (radio->oc_rx_b[band_idx]), (band->OCrx&mask)==mask);
         gtk_widget_show(radio->oc_rx_b[band_idx]);
         gtk_grid_attach(GTK_GRID(grid),radio->oc_rx_b[band_idx],j,dr,1,1);
         data=g_new0(DATA,1);
@@ -198,7 +198,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
         radio->oc_rx_signal_id[band_idx] = g_signal_connect(radio->oc_rx_b[band_idx], "toggled", G_CALLBACK(oc_rx_cb), (gpointer)data);
 
         radio->oc_tx_b[band_idx] = gtk_check_button_new();
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (radio->oc_tx_b[band_idx]), (band->OCtx&mask)==mask);
+        gtk_check_button_set_active (GTK_CHECK_BUTTON (radio->oc_tx_b[band_idx]), (band->OCtx&mask)==mask);
         gtk_widget_show(radio->oc_tx_b[band_idx]);
         gtk_grid_attach(GTK_GRID(grid),radio->oc_tx_b[band_idx],j+7,dr,1,1);
         data->radio=radio;
@@ -231,7 +231,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
 
     mask=0x01<<(j-1);
     GtkWidget *oc_tune_b=gtk_check_button_new();
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (oc_tune_b), (radio->oc_tune&mask)==mask);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (oc_tune_b), (radio->oc_tune&mask)==mask);
     gtk_grid_attach(GTK_GRID(tune_grid),oc_tune_b,1,j,1,1);
     DATA *tdata=g_new0(DATA,1);
     tdata->radio=radio;

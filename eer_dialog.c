@@ -39,18 +39,18 @@
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->classE=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  radio->classE=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   transmitter_enable_eer(radio->transmitter,radio->classE);
 }
 
 static void amiq_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  transmitter_set_eer_mode_amiq(tx,gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget)));
+  transmitter_set_eer_mode_amiq(tx,gtk_check_button_get_active(GTK_CHECK_BUTTON (widget)));
 }
 
 static void delays_en_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  transmitter_enable_eer_delays(tx,gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget)));
+  transmitter_enable_eer_delays(tx,gtk_check_button_get_active(GTK_CHECK_BUTTON (widget)));
 }
 
 static void eer_pgain_cb(GtkWidget *widget, gpointer data) {
@@ -99,17 +99,17 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   gtk_frame_set_child(GTK_FRAME(eer_frame),eer_grid);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Transmit in EER mode");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), tx->eer);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), tx->eer);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),r);
   gtk_grid_attach(GTK_GRID(eer_grid),enable_b,0,0,1,1);
 
   GtkWidget *amiq_b=gtk_check_button_new_with_label("Amplitude Modulate IQ");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (amiq_b), tx->eer_amiq);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (amiq_b), tx->eer_amiq);
   g_signal_connect(amiq_b,"toggled",G_CALLBACK(amiq_cb),tx);
   gtk_grid_attach(GTK_GRID(eer_grid),amiq_b,0,1,1,1);
 
   GtkWidget *delays_en_b=gtk_check_button_new_with_label("Use Delays");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (delays_en_b), tx->eer_enable_delays);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (delays_en_b), tx->eer_enable_delays);
   g_signal_connect(delays_en_b,"toggled",G_CALLBACK(delays_en_cb),tx);
   gtk_grid_attach(GTK_GRID(eer_grid),delays_en_b,0,2,1,1);
 

@@ -62,7 +62,7 @@ static void grid_cb(GtkWidget *w, gpointer data) {
 }
 static void udp_enable_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->ft8_log_udp=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
+  r->ft8_log_udp=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
 }
 static void udp_host_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
@@ -74,7 +74,7 @@ static void udp_port_cb(GtkWidget *w, gpointer data) {
 }
 static void pskr_enable_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->ft8_pskr=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w));
+  r->ft8_pskr=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
 }
 
 // One-line-ish status of the loaded DXCC country file.
@@ -172,7 +172,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(lgrid),linfo,0,0,2,1);
 
   GtkWidget *en=gtk_check_button_new_with_label("Send QSOs over the network");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(en),r->ft8_log_udp);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(en),r->ft8_log_udp);
   gtk_grid_attach(GTK_GRID(lgrid),en,0,1,2,1);
   g_signal_connect(en,"toggled",G_CALLBACK(udp_enable_cb),r);
 
@@ -211,7 +211,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(pgrid),pinfo,0,0,2,1);
 
   GtkWidget *pen=gtk_check_button_new_with_label("Report spots to PSK Reporter");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pen),r->ft8_pskr);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(pen),r->ft8_pskr);
   gtk_grid_attach(GTK_GRID(pgrid),pen,0,1,2,1);
   g_signal_connect(pen,"toggled",G_CALLBACK(pskr_enable_cb),r);
 

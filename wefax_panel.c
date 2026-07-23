@@ -129,23 +129,23 @@ static void ioc_changed(GtkComboBox *c, gpointer data) {
     if (radio) radio->wefax_ioc = IOC_ENTRIES[idx];
   }
 }
-static void autostart_toggled(GtkToggleButton *b, gpointer data) {
-  gboolean on = gtk_toggle_button_get_active(b);
+static void autostart_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
   wefax_decoder_set_autostart(on);
   if (radio) radio->wefax_autostart = on;
 }
-static void autophase_toggled(GtkToggleButton *b, gpointer data) {
-  gboolean on = gtk_toggle_button_get_active(b);
+static void autophase_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
   wefax_decoder_set_autophase(on);
   if (radio) radio->wefax_autophase = on;
 }
-static void denoise_toggled(GtkToggleButton *b, gpointer data) {
-  gboolean on = gtk_toggle_button_get_active(b);
+static void denoise_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
   wefax_decoder_set_denoise(on);
   if (radio) radio->wefax_denoise = on;
 }
-static void invert_toggled(GtkToggleButton *b, gpointer data) {
-  gboolean on = gtk_toggle_button_get_active(b);
+static void invert_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
   wefax_decoder_set_invert(on);
   if (radio) radio->wefax_invert = on;
 }
@@ -242,22 +242,22 @@ GtkWidget *wefax_panel_create(void) {
   gtk_box_append(GTK_BOX(bar),ioc);
 
   GtkWidget *autob = gtk_check_button_new_with_label("Auto-start");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(autob), auto0);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(autob), auto0);
   g_signal_connect(autob, "toggled", G_CALLBACK(autostart_toggled), p);
   gtk_box_append(GTK_BOX(bar),autob);
 
   GtkWidget *phaseb = gtk_check_button_new_with_label("Auto-phase");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(phaseb), phase0);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(phaseb), phase0);
   g_signal_connect(phaseb, "toggled", G_CALLBACK(autophase_toggled), p);
   gtk_box_append(GTK_BOX(bar),phaseb);
 
   GtkWidget *denb = gtk_check_button_new_with_label("Denoise");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(denb), den0);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(denb), den0);
   g_signal_connect(denb, "toggled", G_CALLBACK(denoise_toggled), p);
   gtk_box_append(GTK_BOX(bar),denb);
 
   GtkWidget *invb = gtk_check_button_new_with_label("Invert");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(invb), inv0);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(invb), inv0);
   g_signal_connect(invb, "toggled", G_CALLBACK(invert_toggled), p);
   gtk_box_append(GTK_BOX(bar),invb);
 

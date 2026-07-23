@@ -99,8 +99,8 @@ static void tx_clicked(GtkButton *b, gpointer data) {
 static void enable_toggled(GtkToggleButton *t, gpointer data) {
   ft8_qso_set_tx_enabled(gtk_toggle_button_get_active(t));
 }
-static void auto_toggled(GtkToggleButton *t, gpointer data) {
-  ft8_qso_set_auto(gtk_toggle_button_get_active(t));
+static void auto_toggled(GtkCheckButton *t, gpointer data) {
+  ft8_qso_set_auto(gtk_check_button_get_active(t));
 }
 static void free_send(GtkWidget *w, gpointer data) {
   if (free_entry) ft8_qso_send_free(gtk_editable_get_text(GTK_EDITABLE(free_entry)));
@@ -111,8 +111,8 @@ static gboolean filter_visible(GtkTreeModel *m, GtkTreeIter *it, gpointer data) 
   gtk_tree_model_get(m, it, COL_CQ, &cq, -1);
   return cq;
 }
-static void cqonly_toggled(GtkToggleButton *t, gpointer data) {
-  cq_only = gtk_toggle_button_get_active(t);
+static void cqonly_toggled(GtkCheckButton *t, gpointer data) {
+  cq_only = gtk_check_button_get_active(t);
   if (filter) gtk_tree_model_filter_refilter(GTK_TREE_MODEL_FILTER(filter));
 }
 static void erase_clicked(GtkButton *b, gpointer data) {
@@ -265,7 +265,7 @@ static gboolean refresh(gpointer data) {
   }
   if (auto_chk) {
     g_signal_handlers_block_by_func(auto_chk, (gpointer)auto_toggled, NULL);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(auto_chk), ft8_qso_auto());
     g_signal_handlers_unblock_by_func(auto_chk, (gpointer)auto_toggled, NULL);
   }
   if (offset_spin) {   // reflect shift-click changes made on the panadapter
@@ -423,7 +423,7 @@ GtkWidget *ft8_panel_create(void) {
   g_signal_connect(enable_btn, "toggled", G_CALLBACK(enable_toggled), NULL);
   gtk_box_append(GTK_BOX(ctl),enable_btn);
   auto_chk = gtk_check_button_new_with_label("Auto Seq");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(auto_chk), ft8_qso_auto());
   g_signal_connect(auto_chk, "toggled", G_CALLBACK(auto_toggled), NULL);
   gtk_box_append(GTK_BOX(ctl),auto_chk);
   GtkWidget *cqchk = gtk_check_button_new_with_label("CQ only");

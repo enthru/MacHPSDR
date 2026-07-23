@@ -73,13 +73,13 @@ static void dmix_adc_cb(GtkWidget *widget, gpointer data) {
 
 static void calibrate_gain_cb(GtkWidget *widget, gpointer data) {
   DIVMIXER *dmix=(DIVMIXER *)data; 
-  dmix->calibrate_gain = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));  
+  dmix->calibrate_gain = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));  
   diversity_mix_calibrate_gain_visuals(dmix);
 }
 
 static void dir_flip_cb(GtkWidget *widget, gpointer data) {
   DIVMIXER *dmix=(DIVMIXER *)data; 
-  dmix->flip = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));  
+  dmix->flip = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));  
   
   if (dmix->flip) {
     dmix->phase += 180;
@@ -174,7 +174,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   gtk_grid_attach(GTK_GRID(grid), calibrate_gain_label, 0, 4, 1, 1);
   
   GtkWidget *calibrate_gain_b = gtk_check_button_new();
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(calibrate_gain_b), dmix->calibrate_gain);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(calibrate_gain_b), dmix->calibrate_gain);
   gtk_widget_show(calibrate_gain_b);
   gtk_grid_attach(GTK_GRID(grid), calibrate_gain_b, 1, 4, 1, 1);
   g_signal_connect(calibrate_gain_b,"toggled",G_CALLBACK(calibrate_gain_cb), dmix); 
@@ -187,7 +187,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   gtk_grid_attach(GTK_GRID(grid), dir_flip_label, 0, 5, 1, 1);
   
   GtkWidget *dir_flip_b = gtk_check_button_new();
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dir_flip_b), dmix->flip);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dir_flip_b), dmix->flip);
   gtk_widget_show(dir_flip_b);
   gtk_grid_attach(GTK_GRID(grid), dir_flip_b, 1, 5, 1, 1);
   g_signal_connect(dir_flip_b,"toggled",G_CALLBACK(dir_flip_cb), dmix); 

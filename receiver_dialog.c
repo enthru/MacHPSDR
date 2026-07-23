@@ -81,6 +81,7 @@ static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) 
 */
 
 static void sample_rate_cb(GtkWidget *widget,gpointer data) {
+  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return;
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   int sample_rate=select->choice;
@@ -88,6 +89,7 @@ static void sample_rate_cb(GtkWidget *widget,gpointer data) {
 }
 
 static void adc_cb(GtkWidget *widget,gpointer data) {
+  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return;
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   rx->adc=select->choice;
@@ -95,6 +97,7 @@ static void adc_cb(GtkWidget *widget,gpointer data) {
 }
 
 static gboolean filter_select_cb(GtkWidget *widget,gpointer data) {
+  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return TRUE;
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   gint f=select->choice;
@@ -113,6 +116,7 @@ static gboolean filter_select_cb(GtkWidget *widget,gpointer data) {
 }
 
 static gboolean deviation_select_cb(GtkWidget *widget,gpointer data) {
+  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return TRUE;
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   rx->deviation=select->choice;
@@ -195,7 +199,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=2500;
-      g_signal_connect(b,"pressed",G_CALLBACK(deviation_select_cb),(gpointer)select);
+      g_signal_connect(b,"toggled",G_CALLBACK(deviation_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,1,1,1,1);
 
       b=gtk_button_new_with_label("5.0K");
@@ -208,7 +212,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=5000;
-      g_signal_connect(b,"pressed",G_CALLBACK(deviation_select_cb),(gpointer)select);
+      g_signal_connect(b,"toggled",G_CALLBACK(deviation_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,2,1,1,1);
       }
       break;
@@ -227,7 +231,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
         select=g_new0(SELECT,1);
         select->rx=rx;
         select->choice=i;
-        g_signal_connect(b,"pressed",G_CALLBACK(filter_select_cb),(gpointer)select);
+        g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
         gtk_grid_attach(GTK_GRID(rx->filter_grid),b,i%FILTER_COLUMNS,i/FILTER_COLUMNS,1,1);
       }
       */
@@ -246,7 +250,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=i;
-      g_signal_connect(b,"pressed",G_CALLBACK(filter_select_cb),(gpointer)select);
+      g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,0,row,1,1);
 
       GtkWidget *var1_spin_low=gtk_spin_button_new_with_range(-8000.0,+8000.0,1.0);
@@ -276,7 +280,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select->rx=rx;
       select->choice=i;
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,0,row,1,1);
-      g_signal_connect(b,"pressed",G_CALLBACK(filter_select_cb),(gpointer)select);
+      g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
 
      GtkWidget *var2_spin_low=gtk_spin_button_new_with_range(-8000.0,+8000.0,1.0);
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(var2_spin_low),(double)band_filter->low);
@@ -297,7 +301,7 @@ static void tx_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   RECEIVER *temp=radio->transmitter->rx;
   if(radio->transmitter->rx==rx) {
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), radio->transmitter->rx==rx);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (widget), radio->transmitter->rx==rx);
   } else {
     radio->transmitter->rx=rx;
   }
@@ -414,11 +418,11 @@ static void mute_while_tx_cb(GtkWidget *widget, gpointer data) {
 
 static void local_audio_cb(GtkWidget *widget,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->local_audio=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  rx->local_audio=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->local_audio) {
     if(audio_open_output(rx)<0) {
       rx->local_audio=FALSE;
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (widget),FALSE);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON (widget),FALSE);
     }
   } else {
     audio_close_output(rx);
@@ -446,7 +450,7 @@ static void audio_choice_cb(GtkComboBox *widget,gpointer data) {
       strcpy(rx->audio_name,output_devices[i].name);
       if(audio_open_output(rx)<0) {
         rx->local_audio=FALSE;
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON (rx->local_audio_b),FALSE);
+        gtk_check_button_set_active(GTK_CHECK_BUTTON (rx->local_audio_b),FALSE);
       }
     }
   } else {
@@ -486,7 +490,7 @@ static void latency_spin_cb(GtkWidget *widget,gpointer data) {
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->enable_equalizer=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  rx->enable_equalizer=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   SetRXAEQRun(rx->channel, rx->enable_equalizer);
 }
 
@@ -517,7 +521,7 @@ static void high_value_changed_cb (GtkWidget *widget, gpointer data) {
 
 static void cat_debug_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->rigctl_debug=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  rx->rigctl_debug=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->rigctl!=NULL) {
     rigctl_set_debug(rx);
   }
@@ -525,7 +529,7 @@ static void cat_debug_cb(GtkWidget *widget, gpointer data) {
 
 static void cat_enable_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->rigctl_enable=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  rx->rigctl_enable=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->rigctl_enable) {
     launch_rigctl(rx);
   } else {
@@ -541,7 +545,7 @@ static void rigctl_value_changed_cb(GtkWidget *widget, gpointer data) {
 static void cat_serial_enable_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(rx->serial_port_entry)));
-  rx->rigctl_serial_enable=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON (widget));
+  rx->rigctl_serial_enable=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->rigctl_serial_enable) {
     launch_serial(rx);
   } else {
@@ -592,7 +596,7 @@ void update_receiver_dialog(RECEIVER *rx) {
       }
     }
   }
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (rx->local_audio_b), rx->local_audio);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->local_audio_b), rx->local_audio);
 
   if(gtk_combo_box_get_active(GTK_COMBO_BOX(rx->audio_choice_b))==-1) {
     gtk_widget_set_sensitive(rx->local_audio_b, FALSE);
@@ -606,7 +610,7 @@ void update_receiver_dialog(RECEIVER *rx) {
   if(radio->transmitter) {
     // update TX Frequency
     g_signal_handler_block(G_OBJECT(rx->tx_control_b),rx->tx_control_signal_id);
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (rx->tx_control_b), radio->transmitter->rx==rx);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->tx_control_b), radio->transmitter->rx==rx);
     g_signal_handler_unblock(G_OBJECT(rx->tx_control_b),rx->tx_control_signal_id);
   }
 
@@ -637,19 +641,19 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(grid),adc_frame,col,row++,1,1);
 
     GtkWidget *adc0_b=gtk_check_button_new_with_label("ADC-0");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (adc0_b), rx->adc==0);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (adc0_b), rx->adc==0);
     gtk_grid_attach(GTK_GRID(adc_grid),adc0_b,0,0,1,1);
     select=g_new0(SELECT,1);
     select->rx=rx;
     select->choice=0;
-    g_signal_connect(adc0_b,"pressed",G_CALLBACK(adc_cb),(gpointer)select);
+    g_signal_connect(adc0_b,"toggled",G_CALLBACK(adc_cb),(gpointer)select);
 
     GtkWidget *adc1_b=gtk_check_button_new_with_label("ADC-1"); gtk_check_button_set_group(GTK_CHECK_BUTTON(adc1_b),GTK_CHECK_BUTTON(adc0_b));
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (adc1_b), rx->adc==1);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (adc1_b), rx->adc==1);
     select=g_new0(SELECT,1);
     select->rx=rx;
     select->choice=1;
-    g_signal_connect(adc1_b,"pressed",G_CALLBACK(adc_cb),(gpointer)select);
+    g_signal_connect(adc1_b,"toggled",G_CALLBACK(adc_cb),(gpointer)select);
     gtk_grid_attach(GTK_GRID(adc_grid),adc1_b,1,0,1,1);
   }
 
@@ -673,38 +677,38 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       row+=2;
 
       GtkWidget *sample_rate_48=gtk_check_button_new_with_label("48000");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_48), rx->sample_rate==48000);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_48), rx->sample_rate==48000);
       gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_48,x,y++,1,1);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=48000;
-      g_signal_connect(sample_rate_48,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+      g_signal_connect(sample_rate_48,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
       GtkWidget *sample_rate_96=gtk_check_button_new_with_label("96000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_96),GTK_CHECK_BUTTON(sample_rate_48));
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_96), rx->sample_rate==96000);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_96), rx->sample_rate==96000);
       gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_96,x,y++,1,1);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=96000;
-      g_signal_connect(sample_rate_96,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+      g_signal_connect(sample_rate_96,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
       GtkWidget *sample_rate_192=gtk_check_button_new_with_label("192000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_192),GTK_CHECK_BUTTON(sample_rate_96));
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_192), rx->sample_rate==192000);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_192), rx->sample_rate==192000);
       gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_192,x,y++,1,1);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=192000;
-      g_signal_connect(sample_rate_192,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+      g_signal_connect(sample_rate_192,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
       x++;
       y=0;
       GtkWidget *sample_rate_384=gtk_check_button_new_with_label("384000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_384),GTK_CHECK_BUTTON(sample_rate_192));
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_384), rx->sample_rate==384000);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_384), rx->sample_rate==384000);
       gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_384,x,y++,1,1);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=384000;
-      g_signal_connect(sample_rate_384,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+      g_signal_connect(sample_rate_384,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
       if((radio->discovered->protocol==PROTOCOL_2)
 #ifdef SOAPYSDR
@@ -712,21 +716,21 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 #endif
       ) {
         GtkWidget *sample_rate_768=gtk_check_button_new_with_label("768000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_768),GTK_CHECK_BUTTON(sample_rate_384));
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_768), rx->sample_rate==768000);
+        gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_768), rx->sample_rate==768000);
         gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_768,x,y++,1,1);
         select=g_new0(SELECT,1);
         select->rx=rx;
         select->choice=768000;
-        g_signal_connect(sample_rate_768,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+        g_signal_connect(sample_rate_768,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
         if(radio->discovered->protocol==PROTOCOL_2) {
           GtkWidget *sample_rate_1536=gtk_check_button_new_with_label("1536000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_1536),GTK_CHECK_BUTTON(sample_rate_768));
-          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (sample_rate_1536), rx->sample_rate==1536000);
+          gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_1536), rx->sample_rate==1536000);
           gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_1536,x,y++,1,1);
           select=g_new0(SELECT,1);
           select->rx=rx;
           select->choice=1536000;
-          g_signal_connect(sample_rate_1536,"pressed",G_CALLBACK(sample_rate_cb),(gpointer)select);
+          g_signal_connect(sample_rate_1536,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
         }
       }
     }
@@ -752,7 +756,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     row++;
 
     rx->local_audio_b=gtk_check_button_new_with_label("Local Audio");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (rx->local_audio_b), rx->local_audio);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->local_audio_b), rx->local_audio);
     gtk_grid_attach(GTK_GRID(audio_grid),rx->local_audio_b,0,0,1,1);
     rx->local_audio_signal_id=g_signal_connect(rx->local_audio_b,"toggled",G_CALLBACK(local_audio_cb),rx);
 
@@ -764,7 +768,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       ) {
 
       GtkWidget *remote_audio=gtk_check_button_new_with_label("Remote Audio");
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (remote_audio), rx->remote_audio);
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (remote_audio), rx->remote_audio);
       gtk_grid_attach(GTK_GRID(audio_grid),remote_audio,1,0,1,1);
       g_signal_connect(remote_audio,"toggled",G_CALLBACK(remote_audio_cb),rx);
     }
@@ -783,7 +787,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     g_signal_connect(audio_channels_combo,"changed",G_CALLBACK(audio_channels_cb),rx);
 
     GtkWidget *tx_mute_b = gtk_check_button_new_with_label("Mute while TX");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(tx_mute_b), rx->mute_while_transmitting);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(tx_mute_b), rx->mute_while_transmitting);
     gtk_grid_attach(GTK_GRID(audio_grid),tx_mute_b,0,3,1,1);
     g_signal_connect(tx_mute_b,"toggled",G_CALLBACK(mute_while_tx_cb),rx);
   }
@@ -798,7 +802,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   row+=4;
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (enable_b), rx->enable_equalizer);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), rx->enable_equalizer);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),rx);
   gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,4,1);
 
@@ -889,7 +893,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     row++;
 
     rx->tx_control_b=gtk_check_button_new_with_label("Use This Receivers Frequency");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (rx->tx_control_b), radio->transmitter!=NULL && radio->transmitter->rx==rx);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->tx_control_b), radio->transmitter!=NULL && radio->transmitter->rx==rx);
     gtk_grid_attach(GTK_GRID(tx_grid),rx->tx_control_b,0,0,1,1);
     rx->tx_control_signal_id=g_signal_connect(rx->tx_control_b,"toggled",G_CALLBACK(tx_cb),rx);
   }
@@ -950,17 +954,17 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_step_scale,1,4,1,1);
 
   GtkWidget *panadapter_filled=gtk_check_button_new_with_label("Panadapter Filled");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panadapter_filled), rx->panadapter_filled);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_filled), rx->panadapter_filled);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_filled,0,5,2,1);
   g_signal_connect(panadapter_filled,"toggled",G_CALLBACK(panadapter_filled_changed_cb),rx);
 
   GtkWidget *panadapter_gradient=gtk_check_button_new_with_label("Panadapter Gradient");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panadapter_gradient), rx->panadapter_gradient);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_gradient), rx->panadapter_gradient);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_gradient,0,6,2,1);
   g_signal_connect(panadapter_gradient,"toggled",G_CALLBACK(panadapter_gradient_changed_cb),rx);
 
   GtkWidget *panadapter_agc_line=gtk_check_button_new_with_label("AGC Lines");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panadapter_agc_line), rx->panadapter_agc_line);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_agc_line), rx->panadapter_agc_line);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_agc_line,0,7,2,1);
   g_signal_connect(panadapter_agc_line,"toggled",G_CALLBACK(panadapter_agc_line_changed_cb),rx);
 
@@ -1005,12 +1009,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
 
     GtkWidget *waterfall_automatic=gtk_check_button_new_with_label("Waterfall Automatic");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_automatic), rx->waterfall_automatic);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_automatic), rx->waterfall_automatic);
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_automatic,0,2,2,1);
     g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),rx);
 
     GtkWidget *waterfall_ft8_marker=gtk_check_button_new_with_label("Waterfall FT8 Marker");
-    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
+    gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_ft8_marker,0,3,2,1);
     g_signal_connect(waterfall_ft8_marker,"toggled",G_CALLBACK(waterfall_ft8_marker_cb),rx);
 
@@ -1038,13 +1042,13 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   row++;
 
   GtkWidget *cat_debug_b=gtk_check_button_new_with_label("CAT Debug");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cat_debug_b), rx->rigctl_debug);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_debug_b), rx->rigctl_debug);
   gtk_grid_attach(GTK_GRID(cat_grid),cat_debug_b,0,0,1,1);
   g_signal_connect(cat_debug_b,"toggled",G_CALLBACK(cat_debug_cb),rx);
 
 
   GtkWidget *cat_enable_b=gtk_check_button_new_with_label("TCP/IP enable");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cat_enable_b), rx->rigctl_enable);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_enable_b), rx->rigctl_enable);
   gtk_grid_attach(GTK_GRID(cat_grid),cat_enable_b,0,1,1,1);
   g_signal_connect(cat_enable_b,"toggled",G_CALLBACK(cat_enable_cb),rx);
 
@@ -1057,7 +1061,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
 
   GtkWidget *cat_serial_enable_b=gtk_check_button_new_with_label("Serial Port Enable");
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (cat_serial_enable_b), rx->rigctl_serial_enable);
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_serial_enable_b), rx->rigctl_serial_enable);
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_enable_b,0,4,1,1);
   g_signal_connect(cat_serial_enable_b,"toggled",G_CALLBACK(cat_serial_enable_cb),rx);
 
