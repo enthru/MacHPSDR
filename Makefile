@@ -154,6 +154,11 @@ endif
 # calling `f(x)` is a hard error; macOS clang defaults to a lenient C17. Pinning
 # gnu11 restores the "unspecified args" meaning of `()` so the build is identical
 # and warning-clean on both compilers, rather than error-per-callsite on Linux.
+# All deprecated GTK widget APIs (ComboBox/TreeView/Dialog families, etc.) have
+# been migrated off. The only deprecation left is gdk_cairo_set_source_pixbuf in
+# the cairo-based waterfall/image draw funcs, whose fix is the GtkSnapshot/
+# GdkTexture GPU rendering rework (a separate, optional phase) — so keep the
+# suppression until that lands rather than living with per-build warnings.
 CFLAGS= -g -Wno-deprecated-declarations -O3 -std=gnu11
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) \

@@ -672,7 +672,7 @@ int main(int argc, char **argv) {
   rc=mkdir(text,0777);
 
   sprintf(text,"org.g0orx.hpsdr.pid%d",getpid());
-  hpsdr=gtk_application_new(text, G_APPLICATION_FLAGS_NONE);
+  hpsdr=gtk_application_new(text, G_APPLICATION_DEFAULT_FLAGS);
   g_signal_connect(hpsdr, "activate", G_CALLBACK(activate_hpsdr), NULL);
 
   // Register app.quit so Cmd-Q (macOS) / Ctrl-Q performs a clean shutdown.

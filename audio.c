@@ -34,6 +34,11 @@
 #include <soundio/soundio.h>
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
+// macOS 12 renamed kAudioObjectPropertyElementMaster -> …ElementMain (same
+// value); fall back on older SDKs that only have the deprecated spelling.
+#ifndef kAudioObjectPropertyElementMain
+#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+#endif
 #endif
 #ifndef __APPLE__
 #include <pulse/pulseaudio.h>
@@ -1650,7 +1655,7 @@ static void install_default_output_listener(void) {
   AudioObjectPropertyAddress addr = {
     kAudioHardwarePropertyDefaultOutputDevice,
     kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyElementMaster
+    kAudioObjectPropertyElementMain
   };
   OSStatus st=AudioObjectAddPropertyListener(kAudioObjectSystemObject, &addr,
                                              default_output_listener, NULL);
@@ -1684,7 +1689,7 @@ static void install_default_input_listener(void) {
   AudioObjectPropertyAddress addr = {
     kAudioHardwarePropertyDefaultInputDevice,
     kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyElementMaster
+    kAudioObjectPropertyElementMain
   };
   OSStatus st=AudioObjectAddPropertyListener(kAudioObjectSystemObject, &addr,
                                              default_input_listener, NULL);
