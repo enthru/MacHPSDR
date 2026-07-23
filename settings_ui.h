@@ -35,4 +35,13 @@ void sui_style_group(GtkWidget *grid);
 /* Left-align a label (the common case for a "Name:" field caption). */
 void sui_label_left(GtkWidget *label);
 
+/*
+ * Show the current numeric value beside a GtkScale slider. GtkScale draws its
+ * value by default, but the config dialog's short (30 px) horizontal scales clip
+ * the number when it is drawn on top of the trough, so it never shows. This puts
+ * the readout on the trailing side (RIGHT for a horizontal scale, BOTTOM for a
+ * vertical one) where there is room for it, with `digits` decimal places.
+ */
+void sui_scale_show_value(GtkWidget *scale, int digits);
+
 #endif

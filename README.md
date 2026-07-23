@@ -79,7 +79,9 @@ auto-detected and the picture is painted line-by-line beside the receiver.
 
 **Settings** — Configure → Misc: colour-skin selection (applied immediately and
 remembered per radio), custom attenuator-button labels, and Broadcast FM
-de-emphasis / RDS options.
+de-emphasis / RDS options. Every slider in the settings dialogs shows its
+current numeric value beside the control, so you can read off the exact figure
+you've dialled in.
 
 ![Settings — appearance & skin selection](./settings.jpg)
 

@@ -117,6 +117,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   GtkWidget* gain_coarse_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-25.0,+25.0,0.5);
   gtk_widget_set_size_request (gain_coarse_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(gain_coarse_scale),dmix->gain);
+  sui_scale_show_value(gain_coarse_scale,1);
   gtk_widget_show(gain_coarse_scale);
   gtk_grid_attach(GTK_GRID(grid),gain_coarse_scale,1,1,1,1);
   g_signal_connect(G_OBJECT(gain_coarse_scale),"value_changed",G_CALLBACK(gain_coarse_changed_cb),dmix);
@@ -129,6 +130,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   GtkWidget* phase_coarse_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-180.0,180.0,1.0);
   gtk_widget_set_size_request (phase_coarse_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(phase_coarse_scale),dmix->phase);
+  sui_scale_show_value(phase_coarse_scale,0);
   gtk_widget_show(phase_coarse_scale);
   gtk_grid_attach(GTK_GRID(grid),phase_coarse_scale,3,1,1,1);
   g_signal_connect(G_OBJECT(phase_coarse_scale),"value_changed",G_CALLBACK(phase_coarse_changed_cb),dmix);
@@ -142,6 +144,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   GtkWidget* gain_fine_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-2.0,+2.0,0.05);
   gtk_widget_set_size_request (gain_fine_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(gain_fine_scale), dmix->gain_fine);
+  sui_scale_show_value(gain_fine_scale,2);
   gtk_widget_show(gain_coarse_scale);
   gtk_grid_attach(GTK_GRID(grid),gain_fine_scale,1,2,1,1);
   g_signal_connect(G_OBJECT(gain_fine_scale),"value_changed",G_CALLBACK(gain_fine_changed_cb),dmix);
@@ -154,6 +157,7 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   GtkWidget* phase_fine_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-2.0,2.0,0.05);
   gtk_widget_set_size_request (phase_fine_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(phase_fine_scale),dmix->phase_fine);
+  sui_scale_show_value(phase_fine_scale,2);
   gtk_widget_show(phase_fine_scale);
   gtk_grid_attach(GTK_GRID(grid),phase_fine_scale,3,2,1,1);
   g_signal_connect(G_OBJECT(phase_fine_scale),"value_changed",G_CALLBACK(phase_fine_changed_cb),dmix);

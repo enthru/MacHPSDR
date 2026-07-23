@@ -191,6 +191,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     hl2mrf_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0, 255, 1);
     gtk_widget_set_size_request (hl2mrf_scale, 300, 25);
     gtk_range_set_value(GTK_RANGE(hl2mrf_scale), r->hl2->mrf101_bias_value);
+    sui_scale_show_value(hl2mrf_scale,0);
     gtk_widget_show(hl2mrf_scale);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), hl2mrf_scale, x, y, 1, 1);
     g_signal_connect(G_OBJECT(hl2mrf_scale), "value_changed", G_CALLBACK(hl2mrf_bias_changed_cb), r->hl2);

@@ -45,3 +45,14 @@ void sui_label_left(GtkWidget *label) {
   if(label==NULL) return;
   gtk_widget_set_halign(label,GTK_ALIGN_START);
 }
+
+void sui_scale_show_value(GtkWidget *scale, int digits) {
+  if(scale==NULL || !GTK_IS_SCALE(scale)) return;
+  gtk_scale_set_draw_value(GTK_SCALE(scale),TRUE);
+  gtk_scale_set_digits(GTK_SCALE(scale),digits);
+  // Put the number on the trailing edge, where a short slider has room for it.
+  if(gtk_orientable_get_orientation(GTK_ORIENTABLE(scale))==GTK_ORIENTATION_VERTICAL)
+    gtk_scale_set_value_pos(GTK_SCALE(scale),GTK_POS_BOTTOM);
+  else
+    gtk_scale_set_value_pos(GTK_SCALE(scale),GTK_POS_RIGHT);
+}
