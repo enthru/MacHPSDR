@@ -5,6 +5,35 @@ This branch is **GTK4-only** (no dual-build): the API changes (pack_start
 signature, removed menus/EventBox, drawing model) are too pervasive to `#ifdef`.
 `master` stays on GTK3.
 
+## ✅ PHASE 1 COMPLETE — builds, links, and launches on GTK 4.22
+
+`make` produces a clean `machpsdr` arm64 binary against `pkg-config gtk4`, and it
+runs end-to-end under `--faker` (discovery → radio → **create_vfo with all the
+migrated menus/controllers** → receiver → CoreAudio audio, no crash). All 0
+compile errors across the tree (version.c/cwdaemon.c only errored in the isolated
+syntax check — GIT_* defines come from the Makefile; cwdaemon is Linux-only).
+
+### Remaining after Phase 1
+- **Runtime fixups (compile-clean, wrong at runtime)** — do a dedicated pass:
+  - `GtkCheckButton` is no longer a `GtkToggleButton`: every
+    `gtk_toggle_button_get/set_active(GTK_TOGGLE_BUTTON(cb))` on a *check* button
+    must become `gtk_check_button_get/set_active(GTK_CHECK_BUTTON(cb))`
+    (pervasive across dialogs + panels).
+  - `receiver_dialog` / `radio_dialog` grouped check-buttons connect `"pressed"`
+    (a removed GtkButton signal) — should be `"toggled"` with an active-guard.
+  - `vfo.c` band right-click menu was **flattened** (no submenus) — bands are
+    non-clickable headers with entries below; revisit if a two-level
+    `GtkPopoverMenu` is wanted.
+  - ft8 waterfall no longer re-splits its 1/3 width live on window resize
+    (`size-allocate` gone); sized once on open.
+  - client-side window position (`gtk_window_move`) is gone — radio.x/y persist
+    as -1 and are not restored (compositor owns placement).
+- **Phase 2**: ComboBox → GtkDropDown (~318), TreeView/ListStore → GtkColumnView
+  (~184) — currently deprecated-but-working under `-Wno-deprecated-declarations`.
+- **Phase 3**: `.app` bundle (`app` target: gtk-3.0 → gtk-4.0 paths, drop im
+  modules); optional GtkSnapshot/GdkTexture GPU path for the waterfalls.
+- Verify on real hardware / full GUI interaction (only faker-launch tested).
+
 ## Strategy (agreed)
 
 1. **Phase 1 — compile & RUN on GTK4.** Mechanical replacements + real reworks

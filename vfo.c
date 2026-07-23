@@ -49,6 +49,70 @@ typedef struct _choice {
   GtkWidget *button;
 } CHOICE;
 
+// ---------------------------------------------------------------------------
+// GTK4 popup-menu shim.  GtkMenu/GtkMenuItem are gone; the many right-click and
+// button menus in this file are reproduced as a GtkPopover containing a vertical
+// box of flat buttons.  The macros below let the existing gtk_menu_* call sites
+// compile unchanged: gtk_menu_new() builds a popover parented to `widget` (which
+// every menu handler here has in scope), gtk_menu_item_new_with_label() makes a
+// flat button, gtk_menu_shell_append() adds it (and wires popdown-on-click), and
+// gtk_menu_popup_at_pointer() shows it.  Menu-item callbacks are connected to
+// "clicked" (see the "activate"->"clicked" migration).
+static GtkWidget *vfo_pop_new(GtkWidget *relto) {
+  GtkWidget *pop=gtk_popover_new();
+  gtk_widget_set_parent(pop,relto);
+  gtk_popover_set_has_arrow(GTK_POPOVER(pop),FALSE);
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_popover_set_child(GTK_POPOVER(pop),box);
+  g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
+  return pop;
+}
+static GtkWidget *vfo_menu_button(const char *label) {
+  GtkWidget *b=gtk_button_new_with_label(label);
+  gtk_widget_add_css_class(b,"flat");
+  GtkWidget *lbl=gtk_button_get_child(GTK_BUTTON(b));
+  if(lbl) gtk_widget_set_halign(lbl,GTK_ALIGN_START);
+  return b;
+}
+static void vfo_menu_append(GtkWidget *pop, GtkWidget *item) {
+  GtkWidget *box=gtk_popover_get_child(GTK_POPOVER(pop));
+  gtk_box_append(GTK_BOX(box),item);
+  g_signal_connect_swapped(item,"clicked",G_CALLBACK(gtk_popover_popdown),pop);
+}
+static void vfo_menu_popup(GtkWidget *pop) { gtk_popover_popup(GTK_POPOVER(pop)); }
+
+// GTK4 replacement for the old GtkEventBox + event masks: attach the requested
+// gesture/motion/scroll controllers straight onto a widget.  Any callback may be
+// NULL.  Press/release share one GtkGestureClick (any button).
+static void vfo_attach_ctl(GtkWidget *w, gpointer rx,
+                           GCallback press, GCallback release,
+                           GCallback motion, GCallback scroll) {
+  if(press||release) {
+    GtkGesture *g=gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g),0);
+    if(press)   g_signal_connect(g,"pressed",press,rx);
+    if(release) g_signal_connect(g,"released",release,rx);
+    gtk_widget_add_controller(w,GTK_EVENT_CONTROLLER(g));
+  }
+  if(motion) {
+    GtkEventController *m=gtk_event_controller_motion_new();
+    g_signal_connect(m,"motion",motion,rx);
+    gtk_widget_add_controller(w,m);
+  }
+  if(scroll) {
+    GtkEventController *s=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    g_signal_connect(s,"scroll",scroll,rx);
+    gtk_widget_add_controller(w,s);
+  }
+}
+
+#define gtk_menu_new()                   vfo_pop_new(widget)
+#define gtk_menu_item_new_with_label(l)  vfo_menu_button(l)
+#define GTK_MENU_SHELL(m)                (m)
+#define GTK_MENU(m)                      (m)
+#define gtk_menu_shell_append(m,i)       vfo_menu_append((m),(i))
+#define gtk_menu_popup_at_pointer(m,e)   vfo_menu_popup(m)
+
 typedef struct _step {
   gint64 step;
   char *label;
@@ -76,6 +140,9 @@ char *step_labels[STEPS]={"1 Hz","10 Hz","25 Hz","50 Hz","100 Hz","250 Hz","500 
 static gboolean pressed=FALSE;
 static gdouble last_x;
 static gboolean has_moved=FALSE;
+// GTK4: scroll controllers carry no pointer position, so the freq-label motion
+// handler stashes the hover x here for the scroll handler's digit-under-cursor.
+static double freq_hover_x=0;
 
 static int get_step(gint64 step) {
   int i;
@@ -291,13 +358,13 @@ void split_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean split_b_press_cb(GtkWidget *widget,GdkEvent *event, gpointer user_data) {
+static gboolean split_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
 
-  switch(((GdkEventButton*)event)->button) {
+  switch(button) {
     case 1:  // LEFT
       if(rx->split!=SPLIT_OFF) {
         transmitter_set_mode(radio->transmitter,rx->mode_a);
@@ -321,34 +388,33 @@ static gboolean split_b_press_cb(GtkWidget *widget,GdkEvent *event, gpointer use
       choice->rx=rx;
       choice->selection=SPLIT_OFF;
       choice->button=widget;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(split_cb),choice);
+      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("SPLIT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_ON;
       choice->button=widget;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(split_cb),choice);
+      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("SAT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_SAT;
       choice->button=widget;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(split_cb),choice);
+      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("RSAT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_RSAT;
       choice->button=widget;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(split_cb),choice);
+      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-      gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
       gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-      gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+      gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
       frequency_changed(rx);
       return TRUE;
@@ -378,56 +444,56 @@ static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x3");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=3;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x4");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=4;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x5");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=5;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x6");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=6;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x7");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=7;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x8");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=8;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   // Deep zoom levels (handy for FT8 / narrow digital signals).
   int deep_zoom[]={10,12,16,32};
@@ -439,14 +505,13 @@ static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=deep_zoom[dz];
     choice->button=widget;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(zoom_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   }
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),NULL);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,NULL);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,NULL);
 #endif
 }
 
@@ -473,14 +538,13 @@ static void step_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=i;
     choice->button=widget;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(step_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(step_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   }
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),NULL);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,NULL);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,NULL);
 #endif
 }
 
@@ -534,8 +598,9 @@ static void lock_b_cb(GtkToggleButton *widget,gpointer user_data) {
 }
 
 static void vfo_set_mute_icon(GtkWidget *button,gboolean muted) {
-  GtkWidget *img=gtk_image_new_from_icon_name(muted?"audio-volume-muted-symbolic":"audio-volume-high-symbolic",GTK_ICON_SIZE_BUTTON);
-  gtk_button_set_image(GTK_BUTTON(button),img);
+  // GTK4: gtk_image_new_from_icon_name takes no size; button child replaces set_image.
+  GtkWidget *img=gtk_image_new_from_icon_name(muted?"audio-volume-muted-symbolic":"audio-volume-high-symbolic");
+  gtk_button_set_child(GTK_BUTTON(button),img);
 }
 
 static void mute_b_cb(GtkToggleButton *widget,gpointer user_data) {
@@ -575,14 +640,13 @@ static void mode_b_cb(GtkButton *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=i;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(mode_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(mode_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     }
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),NULL);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,NULL);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,NULL);
 #endif
 }
 
@@ -610,14 +674,14 @@ static void filter_b_cb(GtkButton *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=0;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(filter_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     menu_item=gtk_menu_item_new_with_label("5.0k Dev");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=1;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(filter_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   } else {
     mode_filters=filters[rx->mode_a];
@@ -633,19 +697,18 @@ static void filter_b_cb(GtkButton *widget,gpointer user_data) {
       choice->rx=rx;
       choice->selection=i;
       choice->button=(GtkWidget *)widget;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(filter_cb),choice);
+      g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     }
   }
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),NULL);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,NULL);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,NULL);
 #endif
 }
 
-static gboolean nb_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data);
+static gboolean nb_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data);
 
 void nb_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
@@ -677,7 +740,7 @@ void nb_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean nb_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data) {
+static gboolean nb_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu;
   GtkWidget *menu_item;
@@ -689,32 +752,31 @@ static gboolean nb_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer
   choice->rx=rx;
   choice->selection=0;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nb_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NB");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nb_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NB2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nb_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
   return TRUE;
 }
 
-static gboolean nr_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data);
+static gboolean nr_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data);
 
 void nr_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
@@ -746,7 +808,7 @@ void nr_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean nr_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data) {
+static gboolean nr_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu;
   GtkWidget *menu_item;
@@ -758,27 +820,26 @@ static gboolean nr_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer
   choice->rx=rx;
   choice->selection=0;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nr_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nr_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(nr_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
   return TRUE;
 }
@@ -825,11 +886,11 @@ static void rit_b_cb(GtkToggleButton *widget,gpointer user_data) {
   update_frequency(rx);
 }
 
-static gboolean rit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean rit_b_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   char text[16];
-  if(event->direction==GDK_SCROLL_UP) {
+  if((dy<0.0)) {
     rx->rit=rx->rit+rx->rit_step;
     if(rx->rit>10000) rx->rit=10000;
   } else {
@@ -849,67 +910,65 @@ void rit_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean rit_b_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean rit_b_press_event_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
-  if(event->button==3) {  // RIGHT
+  if(button==3) {  // RIGHT
     menu=gtk_menu_new();
 
     menu_item=gtk_menu_item_new_with_label("1Hz");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=1;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
     menu_item=gtk_menu_item_new_with_label("5Hz");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=5;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
     menu_item=gtk_menu_item_new_with_label("10Hz");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=10;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
     menu_item=gtk_menu_item_new_with_label("100Hz");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=100;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
     menu_item=gtk_menu_item_new_with_label("1000Hz");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=1000;
-    g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
-    gtk_widget_show_all(menu);
-    gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
     gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-    gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+    gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
     return TRUE;
   }
   return FALSE;
 }
 
-static gboolean rit_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_data) {
+static gboolean rit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
-  switch(((GdkEventButton*)event)->button) {
+  switch(button) {
     case 3:  // RIGHT
      menu=gtk_menu_new();
 
@@ -917,43 +976,41 @@ static gboolean rit_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_d
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("5Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=5;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("10Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=10;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("100Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=100;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("1000Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1000;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(rit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
-     gtk_widget_show_all(menu);
-     gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
      gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-     gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+     gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
       return TRUE;
       break;
@@ -968,12 +1025,12 @@ static void xit_b_cb(GtkToggleButton *widget,gpointer user_data) {
   }
 }
 
-static gboolean xit_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean xit_b_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   char text[16];
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
-    if(event->direction==GDK_SCROLL_UP) {
+    if((dy<0.0)) {
       radio->transmitter->xit=radio->transmitter->xit+radio->transmitter->xit_step;
       if(radio->transmitter->xit>10000) radio->transmitter->xit=10000;
     } else {
@@ -992,12 +1049,12 @@ void xit_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean xit_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_data) {
+static gboolean xit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
-  switch(((GdkEventButton*)event)->button) {
+  switch(button) {
     case 3:  // RIGHT
      menu=gtk_menu_new();
 
@@ -1005,43 +1062,41 @@ static gboolean xit_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_d
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(xit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("5Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=5;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(xit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("10Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=10;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(xit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("100Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=100;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(xit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("1000Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1000;
-     g_signal_connect(menu_item,"activate",G_CALLBACK(xit_cb),choice);
+     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
-     gtk_widget_show_all(menu);
-     gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
      gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-     gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+     gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
       return TRUE;
       break;
@@ -1060,9 +1115,9 @@ static void ctun_b_cb(GtkToggleButton *widget,gpointer user_data) {
   receiver_set_ctun(rx);
 }
 
-static gboolean bmk_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data) {
+static gboolean bmk_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
-  switch(event->button) {
+  switch(button) {
     case 1:  // LEFT
       if(rx->bookmark_dialog==NULL) {
         rx->bookmark_dialog=create_bookmark_dialog(rx,VIEW_BOOKMARKS,NULL);
@@ -1077,7 +1132,7 @@ static gboolean bmk_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointe
   return TRUE;
 }
 
-static gboolean agc_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data);
+static gboolean agc_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data);
 
 void agc_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
@@ -1111,7 +1166,7 @@ void agc_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean agc_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointer user_data) {
+static gboolean agc_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu;
   GtkWidget *menu_item;
@@ -1123,57 +1178,56 @@ static gboolean agc_b_pressed_cb(GtkWidget *widget,GdkEventButton *event,gpointe
   choice->rx=rx;
   choice->selection=AGC_OFF;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(agc_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("LONG");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_LONG;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(agc_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("SLOW");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_SLOW;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(agc_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("MEDIUM");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_MEDIUM;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(agc_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("FAST");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_FAST;
   choice->button=widget;
-  g_signal_connect(menu_item,"activate",G_CALLBACK(agc_cb),choice);
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-  gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
-  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
+  gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
 #endif
   return TRUE;
 }
 
-static gboolean afgain_press_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean afgain_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   pressed=TRUE;
-  last_x=event->x;
+  last_x=ex;
   has_moved=FALSE;
   return TRUE;
 }
 
-static gboolean afgain_scale_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static gboolean afgain_scale_motion_notify_event_cb(GtkEventControllerMotion *ctrl, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(pressed) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     if (moved > 1 && moved < -1) {
       has_moved=TRUE;
     }
@@ -1181,22 +1235,22 @@ static gboolean afgain_scale_motion_notify_event_cb(GtkWidget *widget, GdkEventM
     if(rx->volume>1.0) rx->volume=1.0;
     if(rx->volume<0.0) rx->volume=0.0;
     receiver_set_volume(rx);
-    last_x=event->x;
+    last_x=ex;
     update_vfo(rx);
   }
   return TRUE;
 }
 
-static gboolean afgain_release_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean afgain_release_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   if(has_moved) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     rx->volume=rx->volume+(moved/100.0);
     if(rx->volume>1.0) rx->volume=1.0;
     if(rx->volume<0.0) rx->volume=0.0;
     receiver_set_volume(rx);
   } else {
-    rx->volume=event->x/100.0;
+    rx->volume=ex/100.0;
     if(rx->volume>1.0) rx->volume=1.0;
     if(rx->volume<0.0) rx->volume=0.0;
     receiver_set_volume(rx);
@@ -1207,14 +1261,14 @@ static gboolean afgain_release_cb(GtkWidget *widget,GdkEventButton *event,gpoint
   return TRUE;
 }
 
-static gboolean afgain_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean afgain_scale_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
-  if(event->direction==GDK_SCROLL_DOWN) {
+  if((dy>0.0)) {
     if(rx->volume>0.0) {
       rx->volume=rx->volume-0.01;
     }
-  } else if(event->direction==GDK_SCROLL_UP) {
+  } else if((dy<0.0)) {
     if(rx->volume<1.0) {
       rx->volume=rx->volume+0.01;
     }
@@ -1224,18 +1278,18 @@ static gboolean afgain_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *e
   return TRUE;
 }
 
-static gboolean agcgain_press_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean agcgain_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   pressed=TRUE;
-  last_x=event->x;
+  last_x=ex;
   has_moved=FALSE;
   return TRUE;
 }
 
-static gboolean agcgain_scale_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static gboolean agcgain_scale_motion_notify_event_cb(GtkEventControllerMotion *ctrl, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(pressed) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     if (moved > 1 && moved < -1) {
       has_moved=TRUE;
     }
@@ -1243,22 +1297,22 @@ static gboolean agcgain_scale_motion_notify_event_cb(GtkWidget *widget, GdkEvent
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
-    last_x=event->x;
+    last_x=ex;
     update_vfo(rx);
   }
   return TRUE;
 }
 
-static gboolean agcgain_release_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean agcgain_release_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   if(has_moved) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     rx->agc_gain=rx->agc_gain+moved*1.4;
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
   } else {
-    rx->agc_gain=event->x*1.4-20.0;
+    rx->agc_gain=ex*1.4-20.0;
     if(rx->agc_gain>120.0) rx->agc_gain=120.0;
     if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
     receiver_set_agc_gain(rx);
@@ -1269,14 +1323,14 @@ static gboolean agcgain_release_cb(GtkWidget *widget,GdkEventButton *event,gpoin
   return TRUE;
 }
 
-static gboolean agcgain_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean agcgain_scale_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
-  if(event->direction==GDK_SCROLL_DOWN) {
+  if((dy>0.0)) {
     if(rx->agc_gain>-20.0) {
       rx->agc_gain=rx->agc_gain-1.0;
     }
-  } if(event->direction==GDK_SCROLL_UP) {
+  } if((dy<0.0)) {
     if(rx->agc_gain<120.0) {
       rx->agc_gain=rx->agc_gain+1.0;
     }
@@ -1288,18 +1342,18 @@ static gboolean agcgain_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *
 
 //**********************************************************************************
 //**********************************************************************************
-static gboolean squelch_press_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean squelch_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   pressed=TRUE;
-  last_x=event->x;
+  last_x=ex;
   has_moved=FALSE;
   return TRUE;
 }
 
-static gboolean squelch_scale_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static gboolean squelch_scale_motion_notify_event_cb(GtkEventControllerMotion *ctrl, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(pressed) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     if (moved > 1 && moved < -1) {
       has_moved=TRUE;
     }
@@ -1307,22 +1361,22 @@ static gboolean squelch_scale_motion_notify_event_cb(GtkWidget *widget, GdkEvent
     if(rx->squelch > 1.0) rx->squelch= 1.0;
     if(rx->squelch < 0) rx->squelch = 0;
     set_squelch(rx);
-    last_x=event->x;
+    last_x=ex;
     update_vfo(rx);
   }
   return TRUE;
 }
 
-static gboolean squelch_release_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+static gboolean squelch_release_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   if(has_moved) {
-    gdouble moved=event->x-last_x;
+    gdouble moved=ex-last_x;
     rx->squelch = rx->squelch + (moved/100);
     if(rx->squelch>1.0) rx->squelch = 1.0;
     if(rx->squelch<0.0) rx->squelch = 0.0;
     set_squelch(rx);
   } else {
-    rx->squelch = event->x/100;
+    rx->squelch = ex/100;
     if(rx->squelch>1.0) rx->squelch = 1.0;
     if(rx->squelch<0.0) rx->squelch = 0.0;
     set_squelch(rx);
@@ -1333,14 +1387,14 @@ static gboolean squelch_release_cb(GtkWidget *widget,GdkEventButton *event,gpoin
   return TRUE;
 }
 
-static gboolean squelch_scale_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean squelch_scale_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
-  if(event->direction==GDK_SCROLL_DOWN) {
+  if((dy>0.0)) {
     if(rx->squelch>0.0) {
       rx->squelch=rx->squelch-0.01;
     }
-  } else if(event->direction==GDK_SCROLL_UP) {
+  } else if((dy<0.0)) {
     if(rx->squelch<1.0) {
       rx->squelch = rx->squelch+0.01;
     }
@@ -1359,7 +1413,7 @@ void band_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean frequency_a_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_data) {
+static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *band_menu;
@@ -1385,9 +1439,11 @@ static gboolean frequency_a_press_cb(GtkWidget *widget,GdkEvent *event,gpointer 
       bandstack=band->bandstack;
 
       if(strlen(band->title)>0) {
-        GtkWidget *band_menu=gtk_menu_new();
+        // GTK4: no submenus in this flat popover — the band title is a
+        // non-clickable header and its entries follow it in the same popover.
+        GtkWidget *band_menu=menu;
         menu_item=gtk_menu_item_new_with_label(band->title);
-        gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item),band_menu);
+        gtk_widget_set_sensitive(menu_item,FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
 	for(j=0;j<bandstack->entries;j++) {
@@ -1398,12 +1454,11 @@ static gboolean frequency_a_press_cb(GtkWidget *widget,GdkEvent *event,gpointer 
           choice->rx=rx;
           choice->selection=i;
           choice->sub_selection=j;
-          g_signal_connect(menu_item,"activate",G_CALLBACK(band_cb),choice);
+          g_signal_connect(menu_item,"clicked",G_CALLBACK(band_cb),choice);
           gtk_menu_shell_append(GTK_MENU_SHELL(band_menu),menu_item);
 	}
       }
     }
-    gtk_widget_show_all(menu);
 #if GTK_CHECK_VERSION(3,22,0)
     gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
 #else
@@ -1413,21 +1468,21 @@ static gboolean frequency_a_press_cb(GtkWidget *widget,GdkEvent *event,gpointer 
   return TRUE;
 }
 
-static gboolean frequency_a_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
   if(!rx->locked) {
-    digit=event->x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
     long long step=0LL;
     if(digit<13) {
       step=ll_step[digit];
     }
-    if(event->direction==GDK_SCROLL_DOWN && rx->ctun) {
+    if((dy>0.0) && rx->ctun) {
       step=-step;
     }
-    if(event->direction==GDK_SCROLL_UP && !rx->ctun) {
+    if((dy<0.0) && !rx->ctun) {
       step=-step;
     }
 //g_print("%s: digit=%d step=%lld\n",__FUNCTION__,digit,step);
@@ -1437,43 +1492,44 @@ static gboolean frequency_a_scroll_event_cb(GtkWidget *widget,GdkEventScroll *ev
   return TRUE;
 }
 
-static gboolean frequency_a_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static gboolean frequency_a_motion_notify_event_cb(GtkEventControllerMotion *ctrl, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+  freq_hover_x=ex;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
   if(!rx->locked) {
-    digit=event->x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
-        gdk_window_set_cursor(gtk_widget_get_window(v->frequency_a_text),gdk_cursor_new(GDK_ARROW));
+        gtk_widget_set_cursor_from_name(v->frequency_a_text,"default");
       } else {
-        gdk_window_set_cursor(gtk_widget_get_window(v->frequency_a_text),gdk_cursor_new(GDK_DOUBLE_ARROW));
+        gtk_widget_set_cursor_from_name(v->frequency_a_text,"ew-resize");
       }
     } else {
-      gdk_window_set_cursor(gtk_widget_get_window(v->frequency_a_text),gdk_cursor_new(GDK_ARROW));
+      gtk_widget_set_cursor_from_name(v->frequency_a_text,"default");
     }
  }
  return TRUE;
 }
 
-static gboolean frequency_b_press_cb(GtkWidget *widget,GdkEvent *event,gpointer user_data) {
+static gboolean frequency_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   return TRUE;
 }
 
-static gboolean frequency_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,double dy,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
   if(!rx->locked) {
-    digit=event->x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
     long long step=0LL;
     if(digit<13) {
       step=ll_step[digit];
     }
-    if(event->direction==GDK_SCROLL_DOWN) {
+    if((dy>0.0)) {
       step=-step;
     }
     switch(rx->split) {
@@ -1492,22 +1548,23 @@ static gboolean frequency_b_scroll_event_cb(GtkWidget *widget,GdkEventScroll *ev
   return TRUE;
 }
 
-static gboolean frequency_b_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static gboolean frequency_b_motion_notify_event_cb(GtkEventControllerMotion *ctrl, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+  freq_hover_x=ex;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
   if(!rx->locked) {
-    digit=event->x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
-        gdk_window_set_cursor(gtk_widget_get_window(v->frequency_b_text),gdk_cursor_new(GDK_ARROW));
+        gtk_widget_set_cursor_from_name(v->frequency_b_text,"default");
       } else {
-        gdk_window_set_cursor(gtk_widget_get_window(v->frequency_b_text),gdk_cursor_new(GDK_DOUBLE_ARROW));
+        gtk_widget_set_cursor_from_name(v->frequency_b_text,"ew-resize");
       }
     } else {
-      gdk_window_set_cursor(gtk_widget_get_window(v->frequency_b_text),gdk_cursor_new(GDK_ARROW));
+      gtk_widget_set_cursor_from_name(v->frequency_b_text,"default");
     }
  }
  return TRUE;
@@ -1565,7 +1622,6 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->split_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->split_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->split_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->split_b),rx->split!=SPLIT_OFF);
   g_signal_connect(v->split_b, "toggled", G_CALLBACK(split_b_cb),rx);
   g_signal_connect(v->split_b, "button_press_event", G_CALLBACK(split_b_press_cb),rx);
@@ -1608,13 +1664,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->frequency_a_text,"frequency-a-text");
   gtk_label_set_width_chars(GTK_LABEL(v->frequency_a_text),rx->vfo_a_digits);
 
-  GtkWidget *event_box_a=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_a),v->frequency_a_text);
-  gtk_box_append(GTK_BOX(vfo_row_freq),event_box_a);
-  gtk_widget_set_events(event_box_a, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
-  g_signal_connect(event_box_a,"button_press_event",G_CALLBACK(frequency_a_press_cb),rx);
-  g_signal_connect(event_box_a,"motion-notify-event",G_CALLBACK(frequency_a_motion_notify_event_cb),rx);
-  g_signal_connect(event_box_a,"scroll_event",G_CALLBACK(frequency_a_scroll_event_cb),(gpointer)rx);
+  gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_a_text);
+  vfo_attach_ctl(v->frequency_a_text, rx, G_CALLBACK(frequency_a_press_cb), NULL,
+                 G_CALLBACK(frequency_a_motion_notify_event_cb), G_CALLBACK(frequency_a_scroll_event_cb));
 
   long long bf=rx->frequency_b;
   sprintf(temp,"%05lld.%03lld.%03lld",bf/(long long)1000000,(bf%(long long)1000000)/(long long)1000,bf%(long long)1000);
@@ -1623,16 +1675,12 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->frequency_b_text,"frequency-b-text");
   gtk_label_set_width_chars(GTK_LABEL(v->frequency_b_text),rx->vfo_b_digits);
 
-  GtkWidget *event_box_b=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_b),v->frequency_b_text);
-  gtk_box_append(GTK_BOX(vfo_row_freq),event_box_b);
-  g_signal_connect(event_box_b,"motion-notify-event",G_CALLBACK(frequency_b_motion_notify_event_cb),rx);
-  g_signal_connect(event_box_b,"scroll_event",G_CALLBACK(frequency_b_scroll_event_cb),(gpointer)rx);
-  gtk_widget_set_events(event_box_b, GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_b_text);
+  vfo_attach_ctl(v->frequency_b_text, rx, G_CALLBACK(frequency_b_press_cb), NULL,
+                 G_CALLBACK(frequency_b_motion_notify_event_cb), G_CALLBACK(frequency_b_scroll_event_cb));
 
   v->subrx_b=gtk_toggle_button_new_with_label("SUBRX");
   gtk_widget_set_name(v->subrx_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->subrx_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),FALSE);
   g_signal_connect(v->subrx_b, "toggled", G_CALLBACK(subrx_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_freq),v->subrx_b);
@@ -1649,19 +1697,13 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_size_request(v->afgain_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->afgain_scale),rx->volume);
 
-  GtkWidget *event_box_afgain=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_afgain),v->afgain_scale);
-  gtk_box_append(GTK_BOX(vfo_row_freq),event_box_afgain);
-  g_signal_connect(event_box_afgain,"motion-notify-event",G_CALLBACK(afgain_scale_motion_notify_event_cb),rx);
-  g_signal_connect(event_box_afgain,"scroll_event",G_CALLBACK(afgain_scale_scroll_event_cb),(gpointer)rx);
-  g_signal_connect(event_box_afgain,"button_press_event",G_CALLBACK(afgain_press_cb),rx);
-  g_signal_connect(event_box_afgain,"button_release_event",G_CALLBACK(afgain_release_cb),rx);
-  gtk_widget_set_events(event_box_afgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_freq),v->afgain_scale);
+  vfo_attach_ctl(v->afgain_scale, rx, G_CALLBACK(afgain_press_cb), G_CALLBACK(afgain_release_cb),
+                 G_CALLBACK(afgain_scale_motion_notify_event_cb), G_CALLBACK(afgain_scale_scroll_event_cb));
 
   v->mute_b=gtk_toggle_button_new();
   gtk_widget_set_name(v->mute_b,"vfo-toggle");
   gtk_widget_set_tooltip_text(v->mute_b,"Mute this receiver");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->mute_b),FALSE);
   vfo_set_mute_icon(v->mute_b,rx->mute);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->mute_b),rx->mute);
   g_signal_connect(v->mute_b, "toggled", G_CALLBACK(mute_b_cb),rx);
@@ -1679,14 +1721,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_size_request(v->squelch_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
 
-  GtkWidget *event_box_squelch = gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_squelch),v->squelch_scale);
-  gtk_box_append(GTK_BOX(vfo_row_freq),event_box_squelch);
-  g_signal_connect(event_box_squelch,"motion-notify-event",G_CALLBACK(squelch_scale_motion_notify_event_cb),rx);
-  g_signal_connect(event_box_squelch,"scroll_event",G_CALLBACK(squelch_scale_scroll_event_cb),(gpointer)rx);
-  g_signal_connect(event_box_squelch,"button_press_event",G_CALLBACK(squelch_press_cb),rx);
-  g_signal_connect(event_box_squelch,"button_release_event",G_CALLBACK(squelch_release_cb),rx);
-  gtk_widget_set_events(event_box_squelch, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_freq),v->squelch_scale);
+  vfo_attach_ctl(v->squelch_scale, rx, G_CALLBACK(squelch_press_cb), G_CALLBACK(squelch_release_cb),
+                 G_CALLBACK(squelch_scale_motion_notify_event_cb), G_CALLBACK(squelch_scale_scroll_event_cb));
 
   GtkWidget *agcgain_label=gtk_label_new("AGC GAIN");
   gtk_widget_set_name(agcgain_label,"agcgain-text");
@@ -1700,25 +1737,19 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_size_request(v->agcgain_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->agcgain_scale),rx->agc_gain+20.0);
 
-  GtkWidget *event_box_agcgain=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_agcgain),v->agcgain_scale);
-  gtk_box_append(GTK_BOX(vfo_row_freq),event_box_agcgain);
-  g_signal_connect(event_box_agcgain,"motion-notify-event",G_CALLBACK(agcgain_scale_motion_notify_event_cb),rx);
-  g_signal_connect(event_box_agcgain,"scroll_event",G_CALLBACK(agcgain_scale_scroll_event_cb),(gpointer)rx);
-  g_signal_connect(event_box_agcgain,"button_press_event",G_CALLBACK(agcgain_press_cb),rx);
-  g_signal_connect(event_box_agcgain,"button_release_event",G_CALLBACK(agcgain_release_cb),rx);
-  gtk_widget_set_events(event_box_agcgain, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_freq),v->agcgain_scale);
+  vfo_attach_ctl(v->agcgain_scale, rx, G_CALLBACK(agcgain_press_cb), G_CALLBACK(agcgain_release_cb),
+                 G_CALLBACK(agcgain_scale_motion_notify_event_cb), G_CALLBACK(agcgain_scale_scroll_event_cb));
 
   v->lock_b=gtk_toggle_button_new_with_label("LOCK");
   gtk_widget_set_name(v->lock_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
   g_signal_connect(v->lock_b, "toggled", G_CALLBACK(lock_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->lock_b);
 
   v->mode_b=gtk_button_new_with_label(mode_string[rx->mode_a]);
   gtk_widget_set_name(v->mode_b,"vfo-mode-filter-button");
-  g_signal_connect(v->mode_b, "pressed", G_CALLBACK(mode_b_cb),rx);
+  g_signal_connect(v->mode_b, "clicked", G_CALLBACK(mode_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->mode_b);
 
   FILTER *band_filters=filters[rx->mode_a];
@@ -1735,7 +1766,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->filter_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->filter_b,"vfo-mode-filter-button");
-  g_signal_connect(v->filter_b, "pressed", G_CALLBACK(filter_b_cb),rx);
+  g_signal_connect(v->filter_b, "clicked", G_CALLBACK(filter_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->filter_b);
 
   strcpy(temp,"NB");
@@ -1744,28 +1775,24 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->nb_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->nb_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->nb_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nb_b),rx->nb|rx->nb2);
-  g_signal_connect(v->nb_b, "button-press-event", G_CALLBACK(nb_b_pressed_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(nb_b_pressed_cb),rx); gtk_widget_add_controller(v->nb_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->nb_b);
 
   v->nr_b=gtk_toggle_button_new_with_label("NR");
   gtk_widget_set_name(v->nr_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->nr_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2);
-  g_signal_connect(v->nr_b, "button-press-event", G_CALLBACK(nr_b_pressed_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(nr_b_pressed_cb),rx); gtk_widget_add_controller(v->nr_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->nr_b);
 
   v->snb_b=gtk_toggle_button_new_with_label("SNB");
   gtk_widget_set_name(v->snb_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->snb_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->snb_b),rx->snb);
   g_signal_connect(v->snb_b, "toggled", G_CALLBACK(snb_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->snb_b);
 
   v->anf_b=gtk_toggle_button_new_with_label("ANF");
   gtk_widget_set_name(v->anf_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->anf_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->anf_b),rx->anf);
   g_signal_connect(v->anf_b, "toggled", G_CALLBACK(anf_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->anf_b);
@@ -1789,37 +1816,31 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->agc_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->agc_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->agc_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->agc_b),rx->agc!=AGC_OFF);
-  g_signal_connect(v->agc_b, "button-press-event", G_CALLBACK(agc_b_pressed_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(agc_b_pressed_cb),rx); gtk_widget_add_controller(v->agc_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->agc_b);
 
   v->rit_b=gtk_toggle_button_new_with_label("RIT");
   gtk_widget_set_name(v->rit_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->rit_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->rit_b),rx->rit_enabled);
   g_signal_connect(v->rit_b, "toggled", G_CALLBACK(rit_b_cb),rx);
-  g_signal_connect(v->rit_b, "button-press-event", G_CALLBACK(rit_b_press_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(rit_b_press_cb),rx); gtk_widget_add_controller(v->rit_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->rit_b);
 
   sprintf(temp,"%+05lld",rx->rit);
   v->rit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->rit_value,"rit-value");
 
-  GtkWidget *event_box_rit_b=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_rit_b),v->rit_value);
-  gtk_box_append(GTK_BOX(vfo_row_ctl),event_box_rit_b);
-  g_signal_connect(event_box_rit_b,"scroll_event",G_CALLBACK(rit_b_scroll_event_cb),(gpointer)rx);
-  gtk_widget_set_events(event_box_rit_b, GDK_SCROLL_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_ctl),v->rit_value);
+  vfo_attach_ctl(v->rit_value, rx, NULL, NULL, NULL, G_CALLBACK(rit_b_scroll_event_cb));
 
   v->xit_b=gtk_toggle_button_new_with_label("XIT");
   gtk_widget_set_name(v->xit_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->xit_b),FALSE);
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->xit_b),radio->transmitter->xit_enabled);
   }
   g_signal_connect(v->xit_b, "toggled", G_CALLBACK(xit_b_cb),rx);
-  g_signal_connect(v->xit_b, "button-press-event", G_CALLBACK(xit_b_press_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(xit_b_press_cb),rx); gtk_widget_add_controller(v->xit_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->xit_b);
 
 
@@ -1831,15 +1852,11 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   v->xit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->xit_value,"xit-value");
 
-  GtkWidget *event_box_xit_b=gtk_event_box_new();
-  gtk_container_add(GTK_CONTAINER(event_box_xit_b),v->xit_value);
-  gtk_box_append(GTK_BOX(vfo_row_ctl),event_box_xit_b);
-  g_signal_connect(event_box_xit_b,"scroll_event",G_CALLBACK(xit_b_scroll_event_cb),(gpointer)rx);
-  gtk_widget_set_events(event_box_xit_b, GDK_SCROLL_MASK);
+  gtk_box_append(GTK_BOX(vfo_row_ctl),v->xit_value);
+  vfo_attach_ctl(v->xit_value, rx, NULL, NULL, NULL, G_CALLBACK(xit_b_scroll_event_cb));
 
   v->ctun_b=gtk_toggle_button_new_with_label("CTUN");
   gtk_widget_set_name(v->ctun_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->ctun_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ctun_b),rx->ctun);
   g_signal_connect(v->ctun_b, "toggled", G_CALLBACK(ctun_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->ctun_b);
@@ -1847,7 +1864,6 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->dup_b=gtk_toggle_button_new_with_label("DUP");
   gtk_widget_set_name(v->dup_b,"vfo-toggle");
-  gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->dup_b),FALSE);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->dup_b),rx->duplex);
   g_signal_connect(v->dup_b, "toggled", G_CALLBACK(dup_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->dup_b);
@@ -1856,7 +1872,6 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
     v->ant_b=gtk_toggle_button_new_with_label("RXANT");
     gtk_widget_set_name(v->ant_b,"vfo-toggle");
-    gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->ant_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ant_b),radio->adc[0].antenna!=0);
     g_signal_connect(v->ant_b, "toggled", G_CALLBACK(ant_b_cb),rx);
     gtk_box_append(GTK_BOX(vfo_row_ctl),v->ant_b);
@@ -1864,7 +1879,6 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   else {
     v->bpsk_b=gtk_toggle_button_new_with_label("BPSK");
     gtk_widget_set_name(v->bpsk_b,"vfo-toggle");
-    gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->bpsk_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->bpsk_b),rx->bpsk_enable);
     g_signal_connect(v->bpsk_b, "toggled", G_CALLBACK(bpsk_b_cb),rx);
     gtk_box_append(GTK_BOX(vfo_row_ctl),v->bpsk_b);
@@ -1872,13 +1886,12 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->bmk_b=gtk_button_new_with_label("BMK");
   gtk_widget_set_name(v->bmk_b,"vfo-button");
-  g_signal_connect(v->bmk_b, "button-press-event", G_CALLBACK(bmk_b_pressed_cb),rx);
+  { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(bmk_b_pressed_cb),rx); gtk_widget_add_controller(v->bmk_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->bmk_b);
 
   if(radio->discovered->protocol == PROTOCOL_1) {
     v->div_b=gtk_toggle_button_new_with_label("DIV");
     gtk_widget_set_name(v->div_b,"vfo-toggle");
-    gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(v->div_b),FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b),rx->diversity);
     g_signal_connect(v->div_b, "toggled", G_CALLBACK(div_b_cb),rx);
     gtk_box_append(GTK_BOX(vfo_row_ctl),v->div_b);
