@@ -173,7 +173,8 @@ static void restore_bookmarks() {
   }
 }
 
-static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
+// GTK4: window "close-request" replaces "delete-event".
+static gboolean delete_event(GtkWindow *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->bookmark_dialog=NULL;
   return FALSE;
@@ -353,44 +354,45 @@ void delete_cb(GtkWidget *menuitem,gpointer data) {
 void cancel_cb(GtkWidget *menuitem,gpointer userdata) {
 }
 
-gboolean button_pressed_cb(GtkWidget *view,GdkEventButton *event,gpointer data) {
-  GtkTreeSelection *selection;
-  GtkTreeModel *model;
-  GtkTreeIter   iter;
-  gchar *name;
-  GtkWidget *menu;
-  GtkWidget *menuitem;
-  char label[128];
-  RECEIVER *rx=(RECEIVER *)data;
+// Add a flat "menu item" button to the context popover.
+static void bm_add_item(GtkWidget *box,GtkWidget *pop,const char *label,GCallback cb,gpointer rx) {
+  GtkWidget *b=gtk_button_new_with_label(label);
+  gtk_widget_add_css_class(b,"flat");
+  gtk_widget_set_halign(gtk_button_get_child(GTK_BUTTON(b)),GTK_ALIGN_START);
+  if(cb) g_signal_connect(b,"clicked",cb,rx);
+  g_signal_connect_swapped(b,"clicked",G_CALLBACK(gtk_popover_popdown),pop);
+  gtk_box_append(GTK_BOX(box),b);
+}
 
-  if(event->type==GDK_BUTTON_PRESS && event->button==3) {
-    model = gtk_tree_view_get_model(GTK_TREE_VIEW(view));
-    selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-    if (gtk_tree_selection_get_selected(selection,&model,&iter)) {
-      gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
-      menu=gtk_menu_new();
-      sprintf(label,"Edit: %s",name);
-      menuitem=gtk_menu_item_new_with_label(label);
-      g_signal_connect(menuitem,"activate",G_CALLBACK(edit_cb),rx);
-      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menuitem);
-      sprintf(label,"Delete: %s",name);
-      menuitem=gtk_menu_item_new_with_label(label);
-      g_signal_connect(menuitem,"activate",G_CALLBACK(delete_cb),rx);
-      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menuitem);
-      menuitem=gtk_menu_item_new_with_label("Cancel");
-      g_signal_connect(menuitem,"activate",G_CALLBACK(cancel_cb),rx);
-      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menuitem);
-      gtk_widget_show_all(menu);
-#if GTK_CHECK_VERSION(3,22,0)
-      gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
-#else
-      gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
-#endif
-      g_free (name);
-    }
-    return TRUE;
-  }
-  return FALSE;
+// GTK4: right-click context menu on the bookmark list → a GtkPopover of buttons
+// (GtkMenu is gone).  Driven by a GtkGestureClick attached to the tree view.
+void bookmark_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture))!=3) return;
+  GtkWidget *view=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  GtkTreeModel *model=gtk_tree_view_get_model(GTK_TREE_VIEW(view));
+  GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
+  GtkTreeIter iter;
+  if(!gtk_tree_selection_get_selected(selection,&model,&iter)) return;
+  gchar *name=NULL;
+  gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
+  char label[128];
+
+  GtkWidget *pop=gtk_popover_new();
+  gtk_widget_set_parent(pop,view);
+  gtk_popover_set_pointing_to(GTK_POPOVER(pop),&(GdkRectangle){(int)px,(int)py,1,1});
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_popover_set_child(GTK_POPOVER(pop),box);
+
+  snprintf(label,sizeof(label),"Edit: %s",name?name:"");
+  bm_add_item(box,pop,label,G_CALLBACK(edit_cb),rx);
+  snprintf(label,sizeof(label),"Delete: %s",name?name:"");
+  bm_add_item(box,pop,label,G_CALLBACK(delete_cb),rx);
+  bm_add_item(box,pop,"Cancel",G_CALLBACK(cancel_cb),rx);
+
+  g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
+  gtk_popover_popup(GTK_POPOVER(pop));
+  g_free(name);
 }
 
 void tree_selection_activated_cb(GtkTreeView *treeview,GtkTreePath *path,GtkTreeViewColumn *col,gpointer data) {
@@ -485,11 +487,11 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
   }
   GtkWidget *dialog=gtk_dialog_new();
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));
-  g_signal_connect (dialog,"delete_event",G_CALLBACK(delete_event),(gpointer)rx);
+  g_signal_connect (dialog,"close-request",G_CALLBACK(delete_event),(gpointer)rx);
   GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
 
   GtkWidget *grid=gtk_grid_new();
-  gtk_container_add(GTK_CONTAINER(content),grid);
+  gtk_box_append(GTK_BOX(content),grid);
 
   switch(function) {
     case ADD_BOOKMARK:
@@ -635,7 +637,11 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
       g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(tree_selection_changed_cb),rx);
       g_signal_connect(view,"row-activated", G_CALLBACK(tree_selection_activated_cb), rx);
-      g_signal_connect(view,"button-press-event", G_CALLBACK(button_pressed_cb), rx);
+      // GTK4: right-click via a gesture controller (button-press-event is gone).
+      GtkGesture *bm_click=gtk_gesture_click_new();
+      gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(bm_click),3);
+      g_signal_connect(bm_click,"pressed",G_CALLBACK(bookmark_pressed_cb),rx);
+      gtk_widget_add_controller(view,GTK_EVENT_CONTROLLER(bm_click));
       break;
     case EDIT_BOOKMARK:
       g_snprintf((gchar *)&temp,sizeof(temp),"Linux HPSDR: Bookmark");
