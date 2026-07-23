@@ -1268,10 +1268,18 @@ static gboolean rx_stack_balance(gpointer data) {
   int total=gtk_widget_get_allocated_height(r->rx_container);
   if(total<=1) return TRUE;  // not allocated yet; retry on next timeout
 
+  // Count panes exactly as radio_rebuild_rx_stack does: live receivers PLUS the
+  // open FT8/SSTV/WEFAX panel (which takes the second-receiver slot).  Counting
+  // receivers alone left n==1 whenever a panel replaced RX2, so this bailed at
+  // n<2 and never positioned the divider — the panel then grabbed almost the
+  // whole height and squeezed the panadapter to a sliver.
   int n=0;
   for(int i=0;i<r->discovered->supported_receivers;i++) {
     if(r->receiver[i]!=NULL && r->receiver[i]->table!=NULL) n++;
   }
+  if(r->ft8_panel!=NULL)   n++;
+  if(r->sstv_panel!=NULL)  n++;
+  if(r->wefax_panel!=NULL) n++;
   if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
 
   GtkWidget *w=gtk_widget_get_first_child(r->rx_container);
