@@ -83,12 +83,12 @@ static void microphone_audio_cb(GtkWidget *widget,gpointer data) {
   }
 }
 
-static void microphone_choice_cb(GtkComboBox *widget,gpointer data) {
+static void microphone_choice_cb(GtkDropDown *widget,GParamSpec *ps,gpointer data) {
   RADIO *radio=(RADIO *)data;
   int i;
   if(radio->local_microphone) {
     audio_close_input(radio);
-    i=gtk_combo_box_get_active(widget);
+    i=(int)gtk_drop_down_get_selected(widget);
     if(radio->microphone_name!=NULL) {
       g_free(radio->microphone_name);
     }
@@ -99,7 +99,7 @@ static void microphone_choice_cb(GtkComboBox *widget,gpointer data) {
       gtk_check_button_set_active(GTK_CHECK_BUTTON (radio->transmitter->local_microphone_b),FALSE);
     }
   }  else {
-      i=gtk_combo_box_get_active(widget);
+      i=(int)gtk_drop_down_get_selected(widget);
       if(radio->microphone_name!=NULL) {
         g_free(radio->microphone_name);
         radio->microphone_name=NULL;
@@ -109,7 +109,7 @@ static void microphone_choice_cb(GtkComboBox *widget,gpointer data) {
       strcpy(radio->microphone_name,input_devices[i].name);
     }
   }
-  if(gtk_combo_box_get_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b))==-1) {
+  if((int)gtk_drop_down_get_selected(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b))==-1) {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, FALSE);
   } else {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, TRUE);
@@ -224,9 +224,9 @@ static void ctcss_enable_cb (GtkWidget *widget, gpointer data) {
   transmitter_set_ctcss(tx,state,tx->ctcss);
 }
 
-static void ctcss_frequency_cb(GtkWidget *widget, gpointer data) {
+static void ctcss_frequency_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  int i=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int i=(int)gtk_drop_down_get_selected(widget);
   transmitter_set_ctcss(tx,tx->ctcss_enabled,i);
 }
 
@@ -263,19 +263,20 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   g_signal_handler_block(G_OBJECT(tx->microphone_choice_b),tx->microphone_choice_signal_id);
   g_signal_handler_block(G_OBJECT(tx->local_microphone_b),tx->local_microphone_signal_id);
 
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(radio->transmitter->microphone_choice_b));
+  GtkStringList *mic_sl=GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b)));
+  gtk_string_list_splice(mic_sl,0,g_list_model_get_n_items(G_LIST_MODEL(mic_sl)),NULL);
   for(i=0;i<n_input_devices;i++) {
 log_info("adding: %s\n",input_devices[i].description);
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(radio->transmitter->microphone_choice_b),NULL,input_devices[i].description);
+    gtk_string_list_append(mic_sl,input_devices[i].description);
     if(radio->microphone_name!=NULL) {
       if(strcmp(input_devices[i].name,radio->microphone_name)==0) {
-        gtk_combo_box_set_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b),i);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b),i);
       }
     }
   }
   gtk_check_button_set_active (GTK_CHECK_BUTTON (tx->local_microphone_b), radio->local_microphone);
 
-  if(gtk_combo_box_get_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b))==-1) {
+  if((int)gtk_drop_down_get_selected(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b))==-1) {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, FALSE);
   } else {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, TRUE);
@@ -315,7 +316,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
     gtk_grid_attach(GTK_GRID(microphone_grid),radio->transmitter->local_microphone_b,0,0,1,1);
     radio->transmitter->local_microphone_signal_id=g_signal_connect(radio->transmitter->local_microphone_b,"toggled",G_CALLBACK(microphone_audio_cb),radio);
 
-    radio->transmitter->microphone_choice_b=gtk_combo_box_text_new();
+    radio->transmitter->microphone_choice_b=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
     //update_transmitter_audio_choices(tx);
     // TO REMOVE because the variable n_input_devices is always zero here
     // for(i=0;i<n_input_devices;i++) {
@@ -323,19 +324,19 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
     //   gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(radio->transmitter->microphone_choice_b),NULL,input_devices[i].description);
     //   if(radio->microphone_name!=NULL) {
     //     if(strcmp(input_devices[i].name,radio->microphone_name)==0) {
-    //       gtk_combo_box_set_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b),i);
+    //       gtk_drop_down_set_selected(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b),i);
     //     }
     //   }
     // }
     // Moved to update_transmitter_dialog
-    // if(gtk_combo_box_get_active(GTK_COMBO_BOX(radio->transmitter->microphone_choice_b))==-1) {
+    // if((int)gtk_drop_down_get_selected(GTK_DROP_DOWN(radio->transmitter->microphone_choice_b))==-1) {
     //   gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, FALSE);
     // } else {
     //   gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, TRUE);
     // }
 
     gtk_grid_attach(GTK_GRID(microphone_grid),radio->transmitter->microphone_choice_b,1,0,1,1);
-    radio->transmitter->microphone_choice_signal_id=g_signal_connect(radio->transmitter->microphone_choice_b,"changed",G_CALLBACK(microphone_choice_cb),radio);
+    radio->transmitter->microphone_choice_signal_id=g_signal_connect(radio->transmitter->microphone_choice_b,"notify::selected",G_CALLBACK(microphone_choice_cb),radio);
 
   }
 
@@ -450,14 +451,15 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(ctcss_grid),ctcss_enable,0,0,1,1);
   g_signal_connect(ctcss_enable,"toggled",G_CALLBACK(ctcss_enable_cb),tx);
 
-  GtkWidget *ctcss_frequency_b=gtk_combo_box_text_new();
+  GtkStringList *ctcss_sl=gtk_string_list_new(NULL);
   for(i=0;i<CTCSS_FREQUENCIES;i++) {
     sprintf(temp,"%0.1f",ctcss_frequencies[i]);
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(ctcss_frequency_b),NULL,temp);
+    gtk_string_list_append(ctcss_sl,temp);
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ctcss_frequency_b),tx->ctcss);
+  GtkWidget *ctcss_frequency_b=gtk_drop_down_new(G_LIST_MODEL(ctcss_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(ctcss_frequency_b),tx->ctcss);
   gtk_grid_attach(GTK_GRID(ctcss_grid),ctcss_frequency_b,1,0,1,1);
-  g_signal_connect(ctcss_frequency_b,"changed",G_CALLBACK(ctcss_frequency_cb),tx);
+  g_signal_connect(ctcss_frequency_b,"notify::selected",G_CALLBACK(ctcss_frequency_cb),tx);
 
   GtkWidget *panadapter_frame=gtk_frame_new("Panadapter");
   GtkWidget *panadapter_grid=gtk_grid_new();

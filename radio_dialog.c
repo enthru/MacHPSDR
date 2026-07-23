@@ -193,24 +193,30 @@ static void radio_dialog_update_controls() {
 #ifdef SOAPYSDR
   if(radio->discovered->device!=DEVICE_SOAPYSDR) {
 #endif
-    gtk_combo_box_set_active(GTK_COMBO_BOX(filter_board_combo_box),radio->filter_board);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(filter_board_combo_box),radio->filter_board);
 #ifdef SOAPYSDR
   }
 #endif
 }
 
-static void model_cb(GtkComboBox *widget,gpointer data) {
+// Read the selected row's text from a GtkStringList-backed GtkDropDown.
+static const char *dropdown_selected_text(GtkDropDown *dd) {
+  GtkStringObject *o=GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(dd));
+  return o ? gtk_string_object_get_string(o) : "";
+}
+
+static void model_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->model=gtk_combo_box_get_active(widget);
+  radio->model=gtk_drop_down_get_selected(widget);
   radio_dialog_update_controls();
 }
 
-static void sample_rate_cb(GtkComboBoxText *widget,gpointer data) {
+static void sample_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int rate;
   int i;
 
-  rate=atoi(gtk_combo_box_text_get_active_text(widget));
+  rate=atoi(dropdown_selected_text(widget));
 
   switch(radio->discovered->protocol) {
     case PROTOCOL_1:
@@ -253,9 +259,9 @@ static void sample_rate_cb(GtkComboBoxText *widget,gpointer data) {
 // the device actually supports); this control sets only the PER-RECEIVER rate,
 // i.e. the panadapter/waterfall span.  The receiver's resampler bridges the ADC
 // rate down to it, so no hardware re-tuning and no full radio restart is needed.
-static void soapy_rx_rate_cb(GtkComboBoxText *widget,gpointer data) {
+static void soapy_rx_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int rate=atoi(gtk_combo_box_text_get_active_text(widget));
+  int rate=atoi(dropdown_selected_text(widget));
   if(rate>radio->sample_rate) rate=radio->sample_rate;
   for(int i=0;i<radio->discovered->supported_receivers;i++) {
     if(radio->receiver[i]!=NULL) {
@@ -265,9 +271,9 @@ static void soapy_rx_rate_cb(GtkComboBoxText *widget,gpointer data) {
 }
 #endif
 
-static void filter_board_cb(GtkComboBox *widget,gpointer data) {
+static void filter_board_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->filter_board=gtk_combo_box_get_active(widget);
+  radio->filter_board=(int)gtk_drop_down_get_selected(widget);
 
   change_filters();
 
@@ -276,9 +282,9 @@ static void filter_board_cb(GtkComboBox *widget,gpointer data) {
   }
 }
 
-static void adc0_antenna_cb(GtkComboBox *widget,gpointer data) {
+static void adc0_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[0].antenna=gtk_combo_box_get_active(widget);
+  radio->adc[0].antenna=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
 #ifdef SOAPYSDR
@@ -288,18 +294,18 @@ static void adc0_antenna_cb(GtkComboBox *widget,gpointer data) {
   }
 }
 
-static void adc1_antenna_cb(GtkComboBox *widget,gpointer data) {
+static void adc1_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[1].antenna=gtk_combo_box_get_active(widget);
+  radio->adc[1].antenna=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
 }
 
 #ifdef SOAPYSDR
-static void dac0_antenna_cb(GtkComboBox *widget,gpointer data) {
+static void dac0_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->dac[0].antenna=gtk_combo_box_get_active(widget);
+  radio->dac[0].antenna=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
@@ -308,9 +314,9 @@ static void dac0_antenna_cb(GtkComboBox *widget,gpointer data) {
 }
 #endif
 
-static void adc0_filters_cb(GtkComboBox *widget,gpointer data) {
+static void adc0_filters_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[0].filters=gtk_combo_box_get_active(widget);
+  radio->adc[0].filters=(int)gtk_drop_down_get_selected(widget);
   if(radio->adc[0].filters==MANUAL) {
     gtk_widget_set_sensitive(adc0_hpf_combo_box, TRUE);
     gtk_widget_set_sensitive(adc0_lpf_combo_box, TRUE);
@@ -323,25 +329,25 @@ static void adc0_filters_cb(GtkComboBox *widget,gpointer data) {
   }
 }
 
-static void adc0_hpf_cb(GtkComboBox *widget,gpointer data) {
+static void adc0_hpf_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[0].hpf=gtk_combo_box_get_active(widget);
+  radio->adc[0].hpf=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
 }
 
-static void adc0_lpf_cb(GtkComboBox *widget,gpointer data) {
+static void adc0_lpf_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[0].lpf=gtk_combo_box_get_active(widget);
+  radio->adc[0].lpf=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
 }
 
-static void adc1_filters_cb(GtkComboBox *widget,gpointer data) {
+static void adc1_filters_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[1].filters=gtk_combo_box_get_active(widget);
+  radio->adc[1].filters=(int)gtk_drop_down_get_selected(widget);
   if(radio->adc[1].filters==MANUAL) {
     gtk_widget_set_sensitive(adc1_hpf_combo_box, TRUE);
   } else {
@@ -352,9 +358,9 @@ static void adc1_filters_cb(GtkComboBox *widget,gpointer data) {
   }
 }
 
-static void adc1_hpf_cb(GtkComboBox *widget,gpointer data) {
+static void adc1_hpf_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->adc[1].hpf=gtk_combo_box_get_active(widget);
+  radio->adc[1].hpf=(int)gtk_drop_down_get_selected(widget);
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
@@ -391,10 +397,11 @@ static void boost_cb(GtkWidget *widget, gpointer data) {
 
 static void update_audio_backends(RADIO *radio) {
   int i;
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(audio_backend_combo_box));
+  GtkStringList *ab_sl=GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_backend_combo_box)));
+  gtk_string_list_splice(ab_sl,0,g_list_model_get_n_items(G_LIST_MODEL(ab_sl)),NULL);
   if(radio->which_audio==USE_SOUNDIO) {
     for(i=0;i<audio_get_backends(radio);i++) {
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_backend_combo_box),NULL,audio_get_backend_name(i));
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_backend_combo_box))),audio_get_backend_name(i));
     }
   }
   if(radio->which_audio_backend>=0) {
@@ -402,17 +409,17 @@ static void update_audio_backends(RADIO *radio) {
   }
 }
 
-static void audio_cb(GtkWidget *widget, gpointer data) {
+static void audio_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int selected=gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
+  int selected=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 log_info("radio_dialog: audio_cb: selected=%d\n",selected);
   radio_change_audio(radio,selected);
   update_audio_backends(radio);
 }
 
-static void audio_backend_cb(GtkWidget *widget, gpointer data) {
+static void audio_backend_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int selected=gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
+  int selected=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 log_info("radio_dialog: audio_backend_cb: selected=%d\n",selected);
   radio_change_audio_backend(radio,selected);
 }
@@ -453,8 +460,8 @@ static void cw_breakin_cb(GtkWidget *widget, gpointer data) {
 }
 
 #ifdef CWDAEMON
-static void cw_gen_cb(GtkWidget *widget, gpointer data) {
-  radio->cw_generation_mode = gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
+static void cw_gen_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  radio->cw_generation_mode = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
   radio_change_cwgeneration(radio);
 }
 
@@ -479,9 +486,9 @@ static void cw_keys_reversed_cb(GtkWidget *widget, gpointer data) {
   radio->cw_keys_reversed=radio->cw_keys_reversed==1?0:1;
 }
 
-static void cw_keyer_cb(GtkComboBox *widget,gpointer data) {
+static void cw_keyer_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  radio->cw_keyer_mode=gtk_combo_box_get_active(widget);
+  radio->cw_keyer_mode=(int)gtk_drop_down_get_selected(widget);
 }
 
 static void cw_keyer_sidetone_level_value_changed_cb(GtkWidget *widget, gpointer data) {
@@ -506,8 +513,8 @@ static void psu_clk_cb(GtkWidget *widget, gpointer data) {
   if (radio->hl2 != NULL) radio->hl2->psu_clk = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
-static void region_cb(GtkWidget *widget, gpointer data) {
-  radio->region=gtk_combo_box_get_active (GTK_COMBO_BOX(widget));
+static void region_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  radio->region=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
   radio_change_region(radio);
 }
 
@@ -649,27 +656,27 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   int x=0;
   int y=0;
 
-  GtkWidget *model_combo_box=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_10");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_10E");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_100");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_100D");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_200D");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_7000DLE");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANAN_8000DLE");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ATLAS");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"HERMES");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"HERMES 2");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ANGELIA");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ORION");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"ORION 2");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"HERMES LITE");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"HERMES LITE 2");
+  GtkWidget *model_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_10");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_10E");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_100");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_100D");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_200D");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_7000DLE");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANAN_8000DLE");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ATLAS");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"HERMES");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"HERMES 2");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ANGELIA");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ORION");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"ORION 2");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"HERMES LITE");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"HERMES LITE 2");
 #ifdef SOAPYSDR
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(model_combo_box),NULL,"SoapySDR");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(model_combo_box))),"SoapySDR");
 #endif
-  gtk_combo_box_set_active(GTK_COMBO_BOX(model_combo_box),radio->model);
-  g_signal_connect(model_combo_box,"changed",G_CALLBACK(model_cb),radio);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(model_combo_box),radio->model);
+  g_signal_connect(model_combo_box,"notify::selected",G_CALLBACK(model_cb),radio);
   gtk_grid_attach(GTK_GRID(model_grid),model_combo_box,x,0,1,1);
   x++;
   if ((radio->discovered->device == DEVICE_HERMES_LITE2) || (radio->discovered->device == DEVICE_HERMES_LITE)) {
@@ -686,16 +693,16 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 #ifdef SOAPYSDR
   if(radio->discovered->device!=DEVICE_SOAPYSDR) {
 #endif
-    filter_board_combo_box=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"NONE");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"ALEX FILTERS");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"APOLLO FILTERS");
+    filter_board_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(filter_board_combo_box))),"NONE");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(filter_board_combo_box))),"ALEX FILTERS");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(filter_board_combo_box))),"APOLLO FILTERS");
     if(radio->discovered->device==DEVICE_HERMES_LITE2) {
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"N2ADR FILTERS");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(filter_board_combo_box),NULL,"HL2-MRF101");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(filter_board_combo_box))),"N2ADR FILTERS");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(filter_board_combo_box))),"HL2-MRF101");
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(filter_board_combo_box),radio->filter_board);
-    g_signal_connect(filter_board_combo_box,"changed",G_CALLBACK(filter_board_cb),radio);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(filter_board_combo_box),radio->filter_board);
+    g_signal_connect(filter_board_combo_box,"notify::selected",G_CALLBACK(filter_board_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),filter_board_combo_box,x,0,1,1);
     x++;
 #ifdef SOAPYSDR
@@ -708,54 +715,54 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   // resamples the file to whatever rate is chosen.
   if(radio->discovered->protocol==PROTOCOL_1 ||
      radio->discovered->protocol==PROTOCOL_FAKE) {
-    GtkWidget *sample_rate_combo_box=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"48000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"96000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"192000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"384000");
+    GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"48000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"96000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"192000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"384000");
     // The fake device runs the wideband I/O path, so it can also offer the wide
     // spans (real Protocol-1 hardware tops out at 384k).
     if(radio->discovered->protocol==PROTOCOL_FAKE) {
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"768000");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"1536000");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"1920000");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"768000");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"1536000");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"1920000");
     }
     switch(radio->sample_rate) {
-      case 48000:   gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),0); break;
-      case 96000:   gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),1); break;
-      case 192000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),2); break;
-      case 384000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),3); break;
-      case 768000:  gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),4); break;
-      case 1536000: gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),5); break;
-      case 1920000: gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),6); break;
+      case 48000:   gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),0); break;
+      case 96000:   gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),1); break;
+      case 192000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),2); break;
+      case 384000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),3); break;
+      case 768000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),4); break;
+      case 1536000: gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),5); break;
+      case 1920000: gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),6); break;
     }
-    g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(sample_rate_cb),radio);
+    g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(sample_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 
 #ifdef SOAPYSDR
   if(radio->discovered->device==DEVICE_SOAPYSDR &&
      strcmp(radio->discovered->name,"sdrplay")==0) {
-    GtkWidget *sample_rate_combo_box=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"96000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"192000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"384000");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,"768000");
+    GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"96000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"192000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"384000");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"768000");
     switch(radio->sample_rate) {
       case 96000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),0);
         break;
       case 192000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),1);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),1);
         break;
       case 384000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),2);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),2);
         break;
       case 768000:
-        gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),3);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),3);
         break;
     }
-    g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(sample_rate_cb),radio);
+    g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(sample_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 
@@ -764,7 +771,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   // wider view but more DSP load.
   if(radio->discovered->device==DEVICE_SOAPYSDR &&
      strcmp(radio->discovered->name,"sdrplay")!=0) {
-    GtkWidget *sample_rate_combo_box=gtk_combo_box_text_new();
+    GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
     // All are exact multiples of 48000 by a factor that divides buffer_size(5120)
     // so the 48k audio output rate stays exact (no drift/clicks).  1920000 is the
     // widest; 2000000 (HackRF ADC) is deliberately NOT offered because 2000000/48000
@@ -776,13 +783,13 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       if(rates[r]<=radio->sample_rate) {
         char buf[16];
         snprintf(buf,sizeof(buf),"%d",rates[r]);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sample_rate_combo_box),NULL,buf);
+        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),buf);
         if(rates[r]==rxrate) active=idx;
         idx++;
       }
     }
-    if(active>=0) gtk_combo_box_set_active(GTK_COMBO_BOX(sample_rate_combo_box),active);
-    g_signal_connect(sample_rate_combo_box,"changed",G_CALLBACK(soapy_rx_rate_cb),radio);
+    if(active>=0) gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),active);
+    g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(soapy_rx_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 #endif
@@ -803,14 +810,14 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       {
       GtkWidget *antenna_label=gtk_label_new("Antenna:");
       gtk_grid_attach(GTK_GRID(adc0_grid),antenna_label,0,0,1,1);
-      adc0_antenna_combo_box=gtk_combo_box_text_new();
+      adc0_antenna_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
 
       for(int i=0;i<radio->discovered->info.soapy.rx_antennas;i++) {
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,radio->discovered->info.soapy.rx_antenna[i]);
+        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),radio->discovered->info.soapy.rx_antenna[i]);
       }
 
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_antenna_combo_box),radio->adc[0].antenna);
-      g_signal_connect(adc0_antenna_combo_box,"changed",G_CALLBACK(adc0_antenna_cb),radio);
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc0_antenna_combo_box),radio->adc[0].antenna);
+      g_signal_connect(adc0_antenna_combo_box,"notify::selected",G_CALLBACK(adc0_antenna_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_antenna_combo_box,1,0,1,1);
 
       GtkWidget *adc_gain_label=gtk_label_new(NULL);
@@ -868,45 +875,45 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       break;
 
     default:
-      adc0_antenna_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_1");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_2");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"ANT_3");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"XVTR");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"EXT1");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_antenna_combo_box),NULL,"EXT2");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_antenna_combo_box),radio->adc[0].antenna);
-      g_signal_connect(adc0_antenna_combo_box,"changed",G_CALLBACK(adc0_antenna_cb),radio);
+      adc0_antenna_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"ANT_1");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"ANT_2");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"ANT_3");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"XVTR");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"EXT1");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_antenna_combo_box))),"EXT2");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc0_antenna_combo_box),radio->adc[0].antenna);
+      g_signal_connect(adc0_antenna_combo_box,"notify::selected",G_CALLBACK(adc0_antenna_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_antenna_combo_box,0,0,1,1);
 
-      adc0_filters_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_filters_combo_box),NULL,"Automatic");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_filters_combo_box),NULL,"Manual");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_filters_combo_box),radio->adc[0].filters);
-      g_signal_connect(adc0_filters_combo_box,"changed",G_CALLBACK(adc0_filters_cb),radio);
+      adc0_filters_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_filters_combo_box))),"Automatic");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_filters_combo_box))),"Manual");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc0_filters_combo_box),radio->adc[0].filters);
+      g_signal_connect(adc0_filters_combo_box,"notify::selected",G_CALLBACK(adc0_filters_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_filters_combo_box,1,0,1,1);
 
-      adc0_hpf_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"BYPASS HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"1.5 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"6.5 MHZ HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"9.5 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"13 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_hpf_combo_box),NULL,"20 MHz HPF");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_hpf_combo_box),radio->adc[0].hpf);
-      g_signal_connect(adc0_hpf_combo_box,"changed",G_CALLBACK(adc0_hpf_cb),radio);
+      adc0_hpf_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"BYPASS HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"1.5 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"6.5 MHZ HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"9.5 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"13 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_hpf_combo_box))),"20 MHz HPF");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc0_hpf_combo_box),radio->adc[0].hpf);
+      g_signal_connect(adc0_hpf_combo_box,"notify::selected",G_CALLBACK(adc0_hpf_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_hpf_combo_box,2,0,1,1);
 
-      adc0_lpf_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"160m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"80m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"60/40m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"30/20m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"17/15m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"12/10m LPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc0_lpf_combo_box),NULL,"6m LPF");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc0_lpf_combo_box),radio->adc[0].lpf);
-      g_signal_connect(adc0_lpf_combo_box,"changed",G_CALLBACK(adc0_lpf_cb),radio);
+      adc0_lpf_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"160m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"80m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"60/40m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"30/20m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"17/15m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"12/10m LPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc0_lpf_combo_box))),"6m LPF");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc0_lpf_combo_box),radio->adc[0].lpf);
+      g_signal_connect(adc0_lpf_combo_box,"notify::selected",G_CALLBACK(adc0_lpf_cb),radio);
       gtk_grid_attach(GTK_GRID(adc0_grid),adc0_lpf_combo_box,3,0,1,1);
 
       dither_b=gtk_check_button_new_with_label("Dither");
@@ -959,28 +966,28 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_frame_set_child(GTK_FRAME(adc1_frame),adc1_grid);
       gtk_grid_attach(GTK_GRID(grid),adc1_frame,col,row++,1,1);
 
-      adc1_antenna_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_antenna_combo_box),NULL,"RX2");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc1_antenna_combo_box),radio->adc[1].antenna);
-      g_signal_connect(adc1_antenna_combo_box,"changed",G_CALLBACK(adc1_antenna_cb),radio);
+      adc1_antenna_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_antenna_combo_box))),"RX2");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc1_antenna_combo_box),radio->adc[1].antenna);
+      g_signal_connect(adc1_antenna_combo_box,"notify::selected",G_CALLBACK(adc1_antenna_cb),radio);
       gtk_grid_attach(GTK_GRID(adc1_grid),adc1_antenna_combo_box,0,0,1,1);
 
-      adc1_filters_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_filters_combo_box),NULL,"Automatic");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_filters_combo_box),NULL,"Manual");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc1_filters_combo_box),radio->adc[1].filters);
-      g_signal_connect(adc1_filters_combo_box,"changed",G_CALLBACK(adc1_filters_cb),radio);
+      adc1_filters_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_filters_combo_box))),"Automatic");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_filters_combo_box))),"Manual");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc1_filters_combo_box),radio->adc[1].filters);
+      g_signal_connect(adc1_filters_combo_box,"notify::selected",G_CALLBACK(adc1_filters_cb),radio);
       gtk_grid_attach(GTK_GRID(adc1_grid),adc1_filters_combo_box,1,0,1,1);
 
-      adc1_hpf_combo_box=gtk_combo_box_text_new();
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"BYPASS HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"1.5 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"6.5 MHZ HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"9.5 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"13 MHz HPF");
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(adc1_hpf_combo_box),NULL,"20 MHz HPF");
-      gtk_combo_box_set_active(GTK_COMBO_BOX(adc1_hpf_combo_box),radio->adc[1].hpf);
-      g_signal_connect(adc1_hpf_combo_box,"changed",G_CALLBACK(adc1_hpf_cb),radio);
+      adc1_hpf_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"BYPASS HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"1.5 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"6.5 MHZ HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"9.5 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"13 MHz HPF");
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc1_hpf_combo_box))),"20 MHz HPF");
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(adc1_hpf_combo_box),radio->adc[1].hpf);
+      g_signal_connect(adc1_hpf_combo_box,"notify::selected",G_CALLBACK(adc1_hpf_cb),radio);
       gtk_grid_attach(GTK_GRID(adc1_grid),adc1_hpf_combo_box,2,0,1,1);
 
       dither_b=gtk_check_button_new_with_label("Dither");
@@ -1058,12 +1065,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         GtkWidget *antenna_label=gtk_label_new("Antenna:");
         gtk_grid_attach(GTK_GRID(dac0_grid),antenna_label,0,r,1,1);
 
-        dac0_antenna_combo_box=gtk_combo_box_text_new();
+        dac0_antenna_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
         for(int i=0;i<radio->discovered->info.soapy.tx_antennas;i++) {
-          gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(dac0_antenna_combo_box),NULL,radio->discovered->info.soapy.tx_antenna[i]);
+          gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(dac0_antenna_combo_box))),radio->discovered->info.soapy.tx_antenna[i]);
         }
-        gtk_combo_box_set_active(GTK_COMBO_BOX(dac0_antenna_combo_box),radio->dac[0].antenna);
-        g_signal_connect(dac0_antenna_combo_box,"changed",G_CALLBACK(dac0_antenna_cb),radio);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(dac0_antenna_combo_box),radio->dac[0].antenna);
+        g_signal_connect(dac0_antenna_combo_box,"notify::selected",G_CALLBACK(dac0_antenna_cb),radio);
         gtk_grid_attach(GTK_GRID(dac0_grid),dac0_antenna_combo_box,1,r,1,1);
         r++;
 
@@ -1209,24 +1216,24 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
   gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row++,1,1);
 
-  GtkWidget *audio_combo=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_combo),NULL,"SOUNDIO");
+  GtkWidget *audio_combo=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_combo))),"SOUNDIO");
 #ifndef __APPLE__
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_combo),NULL,"PULSEAUDIO");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_combo),NULL,"ALSA");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_combo))),"PULSEAUDIO");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_combo))),"ALSA");
 #endif
-  gtk_combo_box_set_active(GTK_COMBO_BOX(audio_combo),radio->which_audio);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_combo),radio->which_audio);
   gtk_grid_attach(GTK_GRID(audio_grid),audio_combo,0,0,1,1);
-  g_signal_connect(audio_combo,"changed",G_CALLBACK(audio_cb),radio);
+  g_signal_connect(audio_combo,"notify::selected",G_CALLBACK(audio_cb),radio);
 
   GtkWidget *backend_label=gtk_label_new(" Backend:");
   gtk_grid_attach(GTK_GRID(audio_grid),backend_label,1,0,1,1);
 
-  audio_backend_combo_box=gtk_combo_box_text_new();
+  audio_backend_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   update_audio_backends(radio);
-  gtk_combo_box_set_active(GTK_COMBO_BOX(audio_backend_combo_box),radio->which_audio_backend);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_backend_combo_box),radio->which_audio_backend);
   gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_combo_box,2,0,1,1);
-  g_signal_connect(audio_backend_combo_box,"changed",G_CALLBACK(audio_backend_cb),radio);
+  g_signal_connect(audio_backend_combo_box,"notify::selected",G_CALLBACK(audio_backend_cb),radio);
 
 
   GtkWidget *calibration_frame=gtk_frame_new("Calibration [dBm]");
@@ -1275,12 +1282,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_widget_set_visible(cw_keyer_mode_label, TRUE);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_mode_label,x++,y,1,1);
 
-    GtkWidget *cw_keyer_combo_box=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_keyer_combo_box),NULL,"Straight Key");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_keyer_combo_box),NULL,"Mode A");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_keyer_combo_box),NULL,"Mode B");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cw_keyer_combo_box),radio->cw_keyer_mode);
-    g_signal_connect(cw_keyer_combo_box,"changed",G_CALLBACK(cw_keyer_cb),radio);
+    GtkWidget *cw_keyer_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(cw_keyer_combo_box))),"Straight Key");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(cw_keyer_combo_box))),"Mode A");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(cw_keyer_combo_box))),"Mode B");
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cw_keyer_combo_box),radio->cw_keyer_mode);
+    g_signal_connect(cw_keyer_combo_box,"notify::selected",G_CALLBACK(cw_keyer_cb),radio);
     gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_combo_box,x++,y,1,1);
 
     GtkWidget *cw_keyer_reversed_label=gtk_label_new("Keys Reversed:");
@@ -1300,11 +1307,11 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_widget_set_visible(cw_gen_label, TRUE);
     gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_label, x++,y, 1, 1);
 
-    GtkWidget *cw_gen_combo = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "Radio");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cw_gen_combo), NULL, "MacHPSDR");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cw_gen_combo), radio->cw_generation_mode);
-    g_signal_connect(cw_gen_combo, "changed", G_CALLBACK(cw_gen_cb), radio);
+    GtkWidget *cw_gen_combo = gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(cw_gen_combo))),"Radio");
+    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(cw_gen_combo))),"MacHPSDR");
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cw_gen_combo),radio->cw_generation_mode);
+    g_signal_connect(cw_gen_combo, "notify::selected", G_CALLBACK(cw_gen_cb), radio);
     gtk_grid_attach(GTK_GRID(cw_grid), cw_gen_combo, x, y, 1, 1);
 
     y++;
@@ -1437,12 +1444,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_frame_set_child(GTK_FRAME(region_frame),region_grid);
   gtk_grid_attach(GTK_GRID(grid),region_frame,col,row++,1,1);
 
-  GtkWidget *region_combo=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(region_combo),NULL,"Other");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(region_combo),NULL,"UK");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(region_combo),radio->region);
+  GtkWidget *region_combo=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(region_combo))),"Other");
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(region_combo))),"UK");
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(region_combo),radio->region);
   gtk_grid_attach(GTK_GRID(region_grid),region_combo,0,0,1,1);
-  g_signal_connect(region_combo,"changed",G_CALLBACK(region_cb),radio);
+  g_signal_connect(region_combo,"notify::selected",G_CALLBACK(region_cb),radio);
 
   return grid;
 }

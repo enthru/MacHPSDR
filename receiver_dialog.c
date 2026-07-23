@@ -377,9 +377,9 @@ static const char *panadapter_color_names[] = {
 };
 #define PANADAPTER_COLOR_COUNT (sizeof(panadapter_color_names)/sizeof(panadapter_color_names[0]))
 
-static void panadapter_single_color_changed_cb(GtkWidget *widget, gpointer data) {
+static void panadapter_single_color_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->panadapter_single_color=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  rx->panadapter_single_color=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 }
 
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
@@ -402,9 +402,9 @@ static void waterfall_ft8_marker_cb(GtkWidget *widget, gpointer data) {
   rx->waterfall_ft8_marker=rx->waterfall_ft8_marker==TRUE?FALSE:TRUE;
 }
 
-static void waterfall_theme_cb(GtkWidget *widget, gpointer data) {
+static void waterfall_theme_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  int theme = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int theme = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
   rx->waterfall_color_theme = theme;
   waterfall_set_theme(rx, theme);
   // Persist immediately so the theme survives even if the app is quit without
@@ -435,17 +435,17 @@ static void local_audio_cb(GtkWidget *widget,gpointer data) {
   }
 }
 
-static void audio_channels_cb(GtkWidget *widget, gpointer data) {
+static void audio_channels_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->audio_channels = gtk_combo_box_get_active(GTK_COMBO_BOX (widget));
+  rx->audio_channels = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 }
 
-static void audio_choice_cb(GtkComboBox *widget,gpointer data) {
+static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   int i;
   if(rx->local_audio) {
     audio_close_output(rx);
-    i=gtk_combo_box_get_active(widget);
+    i=(int)gtk_drop_down_get_selected(widget);
     if(rx->audio_name!=NULL) {
       g_free(rx->audio_name);
       //rx->audio_name=NULL;
@@ -460,7 +460,7 @@ static void audio_choice_cb(GtkComboBox *widget,gpointer data) {
       }
     }
   } else {
-    i=gtk_combo_box_get_active(widget);
+    i=(int)gtk_drop_down_get_selected(widget);
     if(rx->audio_name!=NULL) {
       g_free(rx->audio_name);
       rx->audio_name=NULL;
@@ -470,7 +470,7 @@ static void audio_choice_cb(GtkComboBox *widget,gpointer data) {
       strcpy(rx->audio_name,output_devices[i].name);
     }
   }
-  if(gtk_combo_box_get_active(GTK_COMBO_BOX(rx->audio_choice_b))==-1) {
+  if((int)gtk_drop_down_get_selected(GTK_DROP_DOWN(rx->audio_choice_b))==-1) {
     gtk_widget_set_sensitive(rx->local_audio_b, FALSE);
   } else {
     gtk_widget_set_sensitive(rx->local_audio_b, TRUE);
@@ -564,9 +564,9 @@ static void cat_serial_port_cb(GtkWidget *widget, gpointer data) {
   strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(widget)));
 }
 
-static void cat_baudrate_cb(GtkWidget *widget,gpointer data) {
+static void cat_baudrate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  int selected=gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  int selected=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
   switch(selected) {
     case 0:
       rx->rigctl_serial_baudrate=B4800;
@@ -593,18 +593,19 @@ void update_receiver_dialog(RECEIVER *rx) {
   // update audio
   g_signal_handler_block(G_OBJECT(rx->audio_choice_b),rx->audio_choice_signal_id);
   g_signal_handler_block(G_OBJECT(rx->local_audio_b),rx->local_audio_signal_id);
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(rx->audio_choice_b));
+  GtkStringList *audio_sl=GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(rx->audio_choice_b)));
+  gtk_string_list_splice(audio_sl,0,g_list_model_get_n_items(G_LIST_MODEL(audio_sl)),NULL);
   for(i=0;i<n_output_devices;i++) {
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(rx->audio_choice_b),NULL,output_devices[i].description);
+    gtk_string_list_append(audio_sl,output_devices[i].description);
     if(rx->audio_name!=NULL) {
       if(strcmp(output_devices[i].name,rx->audio_name)==0) {
-        gtk_combo_box_set_active(GTK_COMBO_BOX(rx->audio_choice_b),i);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(rx->audio_choice_b),i);
       }
     }
   }
   gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->local_audio_b), rx->local_audio);
 
-  if(gtk_combo_box_get_active(GTK_COMBO_BOX(rx->audio_choice_b))==-1) {
+  if((int)gtk_drop_down_get_selected(GTK_DROP_DOWN(rx->audio_choice_b))==-1) {
     gtk_widget_set_sensitive(rx->local_audio_b, FALSE);
   } else {
     gtk_widget_set_sensitive(rx->local_audio_b, TRUE);
@@ -779,18 +780,16 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       g_signal_connect(remote_audio,"toggled",G_CALLBACK(remote_audio_cb),rx);
     }
 
-    rx->audio_choice_b=gtk_combo_box_text_new();
+    rx->audio_choice_b=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
     gtk_grid_attach(GTK_GRID(audio_grid),rx->audio_choice_b,0,2,2,1);
-    rx->audio_choice_signal_id=g_signal_connect(rx->audio_choice_b,"changed",G_CALLBACK(audio_choice_cb),rx);
+    rx->audio_choice_signal_id=g_signal_connect(rx->audio_choice_b,"notify::selected",G_CALLBACK(audio_choice_cb),rx);
 
     // Stereo, left, right audio
-    GtkWidget *audio_channels_combo=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Stereo");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Left");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(audio_channels_combo),NULL,"Right");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(audio_channels_combo),rx->audio_channels);
+    const char *audio_ch_opts[]={"Stereo","Left","Right",NULL};
+    GtkWidget *audio_channels_combo=gtk_drop_down_new_from_strings(audio_ch_opts);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_channels_combo),rx->audio_channels);
     gtk_grid_attach(GTK_GRID(audio_grid),audio_channels_combo,0,1,2,1);
-    g_signal_connect(audio_channels_combo,"changed",G_CALLBACK(audio_channels_cb),rx);
+    g_signal_connect(audio_channels_combo,"notify::selected",G_CALLBACK(audio_channels_cb),rx);
 
     GtkWidget *tx_mute_b = gtk_check_button_new_with_label("Mute while TX");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(tx_mute_b), rx->mute_while_transmitting);
@@ -983,14 +982,15 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_set_visible(panadapter_single_color_label, TRUE);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,0,8,1,1);
 
-  GtkWidget *panadapter_single_color_b=gtk_combo_box_text_new();
+  GtkStringList *psc_sl=gtk_string_list_new(NULL);
   for(i=0; i<(int)PANADAPTER_COLOR_COUNT; i++) {
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(panadapter_single_color_b),NULL,panadapter_color_names[i]);
+    gtk_string_list_append(psc_sl,panadapter_color_names[i]);
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(panadapter_single_color_b),rx->panadapter_single_color);
+  GtkWidget *panadapter_single_color_b=gtk_drop_down_new(G_LIST_MODEL(psc_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_single_color_b),rx->panadapter_single_color);
   gtk_widget_set_visible(panadapter_single_color_b, TRUE);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,1,8,1,1);
-  g_signal_connect(panadapter_single_color_b,"changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
+  g_signal_connect(panadapter_single_color_b,"notify::selected",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
   // Turn the spectroscope off entirely (waterfall then fills the whole area).
   GtkWidget *show_panadapter=gtk_check_button_new_with_label("Show Panadapter");
@@ -1040,13 +1040,14 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *waterfall_theme_label=gtk_label_new("Color Theme:");
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_theme_label,0,4,1,1);
 
-    GtkWidget *waterfall_theme_combo=gtk_combo_box_text_new();
+    GtkStringList *wt_sl=gtk_string_list_new(NULL);
     for(i=0; i<get_theme_count(); i++) {
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(waterfall_theme_combo), NULL, get_theme_name(i));
+      gtk_string_list_append(wt_sl, get_theme_name(i));
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(waterfall_theme_combo), rx->waterfall_color_theme);
+    GtkWidget *waterfall_theme_combo=gtk_drop_down_new(G_LIST_MODEL(wt_sl),NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(waterfall_theme_combo),rx->waterfall_color_theme);
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_theme_combo,1,4,1,1);
-    g_signal_connect(waterfall_theme_combo,"changed",G_CALLBACK(waterfall_theme_cb),rx);
+    g_signal_connect(waterfall_theme_combo,"notify::selected",G_CALLBACK(waterfall_theme_cb),rx);
 
   col++;
   row=0;
@@ -1098,21 +1099,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_label_set_markup(GTK_LABEL(serial_baudrate_label), "<b>Baudrate: </b>");
   gtk_grid_attach(GTK_GRID(cat_grid),serial_baudrate_label,0,6,1,1);
 
-  GtkWidget *cat_serial_port_baudrate=gtk_combo_box_text_new();
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cat_serial_port_baudrate),NULL,"4800");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cat_serial_port_baudrate),NULL,"9600");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cat_serial_port_baudrate),NULL,"19200");
-  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(cat_serial_port_baudrate),NULL,"38400");
+  const char *baud_opts[]={"4800","9600","19200","38400",NULL};
+  GtkWidget *cat_serial_port_baudrate=gtk_drop_down_new_from_strings(baud_opts);
   if(rx->rigctl_serial_baudrate==B4800) {
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cat_serial_port_baudrate),0);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),0);
   } else if(rx->rigctl_serial_baudrate==B9600) {
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cat_serial_port_baudrate),1);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),1);
   } else if(rx->rigctl_serial_baudrate==B19200) {
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cat_serial_port_baudrate),2);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),2);
   } else if(rx->rigctl_serial_baudrate==B38400) {
-    gtk_combo_box_set_active(GTK_COMBO_BOX(cat_serial_port_baudrate),3);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),3);
   }
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,1,6,1,1);
-  g_signal_connect(cat_serial_port_baudrate,"changed",G_CALLBACK(cat_baudrate_cb),rx);
+  g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
   return grid;
 }
