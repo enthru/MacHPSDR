@@ -27,6 +27,8 @@
 #include <alsa/asoundlib.h>
 #endif
 
+#include "mode.h"
+
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
 // --- WDSP spectrum-analyzer input-ring safety -------------------------------
@@ -103,6 +105,11 @@ typedef struct _receiver {
   gint band_a;
   gint mode_a;
   gint filter_a;
+  // The selected filter slot is remembered per mode so each mode keeps its own
+  // bandwidth: changing the AM filter must not move the SSB filter and vice
+  // versa.  filter_a always mirrors mode_filter[mode_a]; this array preserves
+  // the other modes' selections across a mode switch.
+  gint mode_filter[MODES];
   gint64 offset;
   gint bandstack;
 

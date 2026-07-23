@@ -201,6 +201,11 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].filter_a",rx->channel);
   sprintf(value,"%d",rx->filter_a);
   setProperty(name,value);
+  for(int i=0;i<MODES;i++) {
+    sprintf(name,"receiver[%d].mode_filter[%d]",rx->channel,i);
+    sprintf(value,"%d",rx->mode_filter[i]);
+    setProperty(name,value);
+  }
   sprintf(name,"receiver[%d].filter_low_a",rx->channel);
   sprintf(value,"%d",rx->filter_low_a);
   setProperty(name,value);
@@ -507,6 +512,14 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].filter_a",rx->channel);
   value=getProperty(name);
   if(value) rx->filter_a=atoi(value);
+  for(int i=0;i<MODES;i++) {
+    sprintf(name,"receiver[%d].mode_filter[%d]",rx->channel,i);
+    value=getProperty(name);
+    if(value) rx->mode_filter[i]=atoi(value);
+  }
+  // Older configs saved only filter_a; make sure the current mode's remembered
+  // filter agrees with it so the first mode switch doesn't reset the bandwidth.
+  if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_filter[rx->mode_a]=rx->filter_a;
   sprintf(name,"receiver[%d].filter_low_a",rx->channel);
   value=getProperty(name);
   if(value) rx->filter_low_a=atoi(value);
@@ -1621,6 +1634,9 @@ void receiver_fps_changed(RECEIVER *rx) {
 void receiver_filter_changed(RECEIVER *rx,int filter) {
 //fprintf(stderr,"receiver_filter_changed: %d\n",filter);
   rx->filter_a=filter;
+  // Keep this mode's remembered filter in sync so the selection is restored
+  // when the operator returns to the mode later.
+  if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_filter[rx->mode_a]=filter;
   if(rx->mode_a==FMN) {
     if(filter == 0) {
       rx->deviation = 2500;
@@ -1672,7 +1688,12 @@ void receiver_ft8_waterfall_sync(RECEIVER *rx) {
 #endif
 
 void receiver_mode_changed(RECEIVER *rx,int mode) {
+  // Remember the filter selected for the mode we are leaving, then restore the
+  // one this mode used last time, so each mode keeps its own bandwidth
+  // independently (changing the AM filter must not move the SSB filter).
+  if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_filter[rx->mode_a]=rx->filter_a;
   set_mode(rx,mode);
+  if(mode>=0 && mode<MODES) rx->filter_a=rx->mode_filter[mode];
   log_info("mode_changed: %d\n",mode);
   if(mode != 5) {
     rx->squelch_enable = FALSE;
@@ -2424,6 +2445,7 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->squelch = 0.1;
 
   rx->filter_a=F5;
+  for(int i=0;i<MODES;i++) rx->mode_filter[i]=F5;
   rx->lo_a=0;
   rx->error_a=0;
   rx->offset=0;

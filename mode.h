@@ -17,6 +17,9 @@
 *
 */
 
+#ifndef MODE_H
+#define MODE_H
+
 enum {
   LSB=0,
   USB,
@@ -35,3 +38,5 @@ enum {
 };
 
 extern char *mode_string[MODES];
+
+#endif
