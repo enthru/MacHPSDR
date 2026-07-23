@@ -51,6 +51,13 @@ static gpointer protocol2_discovery_thread(gpointer data) {
 void discovery() {
 log_info("discovery\n");
   devices=0;
+  // --faker: the fake device is the only thing we want; skip all real
+  // (network Protocol 1/2 + Soapy) discovery so it starts instantly and no
+  // real radio ever shows up alongside it.
+  if(enable_fake) {
+    fake_discovery();
+    return;
+  }
   // Run the two blocking network discoveries in parallel (each waits on a
   // socket receive timeout) so the total wait is one timeout window, not two.
   // The receive threads append to the shared discovered[] array under
