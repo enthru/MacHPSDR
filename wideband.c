@@ -75,7 +75,8 @@ void wideband_save_state(WIDEBAND *w) {
   sprintf(value,"%d",w->fps);
   setProperty(name,value);
 
-  gtk_window_get_position(GTK_WINDOW(w->window),&x,&y);
+  // GTK4: no client-side window position; persist -1 (ignored on restore).
+  x=-1; y=-1;
   sprintf(name,"wideband.x");
   sprintf(value,"%d",x);
   setProperty(name,value);
@@ -83,7 +84,8 @@ void wideband_save_state(WIDEBAND *w) {
   sprintf(value,"%d",y);
   setProperty(name,value);
 
-  gtk_window_get_size(GTK_WINDOW(w->window),&width,&height);
+  width=gtk_widget_get_width(w->window);
+  height=gtk_widget_get_height(w->window);
   sprintf(name,"wideband.width");
   sprintf(value,"%d",width);
   setProperty(name,value);
@@ -106,49 +108,26 @@ void wideband_restore_state(WIDEBAND *w) {
 
 }
 
-static gboolean window_delete(GtkWidget *widget,GdkEvent *event, gpointer data) {
+// GTK4: window "close-request" replaces "delete-event".
+static gboolean window_delete(GtkWindow *window, gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
   g_source_remove(w->update_timer_id);
   delete_wideband(w);
   return FALSE;
 }
 
-static void focus_in_event_cb(GtkWindow *window,GdkEventFocus *event,gpointer data) {
+// GTK4 controller-signal stubs (the wideband panadapter currently does nothing
+// with pointer input, but the controllers are wired in wideband_panadapter.c).
+void wideband_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
 }
 
-gboolean wideband_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-  switch(event->button) {
-    case 1: // left button
-      break;
-    case 3: // right button
-      break;
-  }
-  return TRUE;
+void wideband_released_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
 }
 
-gboolean wideband_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-  switch(event->button) {
-    case 1: // left button
-      break;
-    case 3: // right button
-      break;
-  }
-  return TRUE;
+void wideband_motion_cb(GtkEventControllerMotion *controller, double x, double y, gpointer data) {
 }
 
-gboolean wideband_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
-  gint x,y;
-  GdkModifierType state;
-  gdk_window_get_device_position(event->window,event->device,&x,&y,&state);
-  if((state & GDK_BUTTON1_MASK) == GDK_BUTTON1_MASK) {
-  }
-  return TRUE;
-}
-
-gboolean wideband_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data) {
-  if(event->direction==GDK_SCROLL_UP) {
-  } else {
-  }
+gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data) {
   return TRUE;
 }
 
@@ -186,15 +165,6 @@ void add_wideband_sample(WIDEBAND *w,double sample) {
   }
 }
 
-static gboolean receiver_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
-  WIDEBAND *w=(WIDEBAND *)data;
-  gint width=gtk_widget_get_allocated_width(widget);
-  gint height=gtk_widget_get_allocated_height(widget);
-  w->window_width=width;
-  w->window_height=height;
-  return FALSE;
-}
-
 void wideband_update_title(WIDEBAND *w) {
   gchar title[32];
   g_snprintf((gchar *)&title,sizeof(title),"Linux HPSDR: Wideband ADC-%d",w->adc);
@@ -204,33 +174,32 @@ log_info("create_visual: %s\n",title);
 
 static void create_visual(WIDEBAND *w) {
 
-  w->window=gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  g_signal_connect(w->window,"configure-event",G_CALLBACK(receiver_configure_event_cb),w);
-  g_signal_connect(w->window,"focus_in_event",G_CALLBACK(focus_in_event_cb),w);
-  g_signal_connect(w->window,"delete-event",G_CALLBACK (window_delete), w);
+  w->window=gtk_window_new();
+  g_signal_connect(w->window,"close-request",G_CALLBACK (window_delete), w);
 
   wideband_update_title(w);
 
-  gtk_widget_set_size_request(w->window,w->window_width,w->window_height);
+  gtk_window_set_default_size(GTK_WINDOW(w->window),w->window_width,w->window_height);
 
-  w->table=gtk_table_new(4,4,FALSE);
+  // GTK4: GtkTable is gone — a single-cell GtkGrid holds the spectrum split.
+  w->table=gtk_grid_new();
 
   GtkWidget *vpaned = gtk_paned_new (GTK_ORIENTATION_VERTICAL);
-  gtk_table_attach(GTK_TABLE(w->table), vpaned, 0, 4, 0, 4,
-      GTK_FILL | GTK_EXPAND, GTK_FILL | GTK_EXPAND, 0, 0);
+  gtk_widget_set_hexpand(vpaned,TRUE);
+  gtk_widget_set_vexpand(vpaned,TRUE);
+  gtk_grid_attach(GTK_GRID(w->table), vpaned, 0, 0, 1, 1);
 
   w->panadapter=create_wideband_panadapter(w);
-  gtk_paned_pack1 (GTK_PANED(vpaned), w->panadapter,TRUE,TRUE);
+  gtk_paned_set_start_child (GTK_PANED(vpaned), w->panadapter);
+  gtk_paned_set_resize_start_child (GTK_PANED(vpaned), TRUE);
+  gtk_paned_set_shrink_start_child (GTK_PANED(vpaned), TRUE);
 
   w->waterfall=create_wideband_waterfall(w);
-  gtk_paned_pack2 (GTK_PANED(vpaned), w->waterfall,TRUE,TRUE);
+  gtk_paned_set_end_child (GTK_PANED(vpaned), w->waterfall);
+  gtk_paned_set_resize_end_child (GTK_PANED(vpaned), TRUE);
+  gtk_paned_set_shrink_end_child (GTK_PANED(vpaned), TRUE);
 
-  gtk_container_add(GTK_CONTAINER(w->window),w->table);
-
-  gtk_widget_set_events(w->window,gtk_widget_get_events(w->window)
-                     | GDK_FOCUS_CHANGE_MASK
-                     | GDK_BUTTON_PRESS_MASK
-                     | GDK_BUTTON_RELEASE_MASK);
+  gtk_window_set_child(GTK_WINDOW(w->window),w->table);
 }
 
 void wideband_init_analyzer(WIDEBAND *w) {
@@ -340,24 +309,18 @@ log_info("create_wideband: channel=%d\n",channel);
 
   create_visual(w);
   if(w->window!=NULL) {
-    gtk_widget_show_all(w->window);
-    sprintf(name,"wideband.x");
+    // GTK4: no client-side window_move; only the size is restorable.
+    sprintf(name,"wideband.width");
     value=getProperty(name);
-    if(value) x=atoi(value);
-    sprintf(name,"wideband.y");
+    if(value) width=atoi(value);
+    sprintf(name,"wideband.height");
     value=getProperty(name);
-    if(value) y=atoi(value);
-    if(x!=-1 && y!=-1) {
-      gtk_window_move(GTK_WINDOW(w->window),x,y);
-    
-      sprintf(name,"wideband.width");
-      value=getProperty(name);
-      if(value) width=atoi(value);
-      sprintf(name,"wideband.height");
-      value=getProperty(name);
-      if(value) height=atoi(value);
-      gtk_window_resize(GTK_WINDOW(w->window),width,height);
+    if(value) height=atoi(value);
+    if(width>0 && height>0) {
+      gtk_window_set_default_size(GTK_WINDOW(w->window),width,height);
     }
+    (void)x; (void)y;
+    gtk_widget_set_visible(w->window,TRUE);
   }
 
 log_info("create_widband: update_timer: %d\n",1000/w->fps);

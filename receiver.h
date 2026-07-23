@@ -233,6 +233,10 @@ typedef struct _receiver {
   gboolean is_panning;
   gboolean has_moved;
   gint last_x;
+  // GTK4: the scroll controller's "scroll" signal carries no pointer position,
+  // so the motion controller stashes the latest cursor coords here for it.
+  gint cursor_x;
+  gint cursor_y;
 
   gint mixed_audio;
   short mixed_left_audio;

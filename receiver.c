@@ -389,7 +389,9 @@ void receiver_save_state(RECEIVER *rx) {
 
 
   if(rx->window!=NULL) {
-    gtk_window_get_position(GTK_WINDOW(rx->window),&x,&y);
+    // GTK4: client-side window position is not available; persist -1 (ignored
+    // on restore, matching main.c's dropped gtk_window_move).
+    x=-1; y=-1;
     sprintf(name,"receiver[%d].x",rx->channel);
     sprintf(value,"%d",x);
     setProperty(name,value);
@@ -397,7 +399,9 @@ void receiver_save_state(RECEIVER *rx) {
     sprintf(value,"%d",y);
     setProperty(name,value);
 
-    gtk_window_get_size(GTK_WINDOW(rx->window),&width,&height);
+    // GTK4: gtk_window_get_size is gone; use the current allocation.
+    width=gtk_widget_get_width(rx->window);
+    height=gtk_widget_get_height(rx->window);
     sprintf(name,"receiver[%d].width",rx->channel);
     sprintf(value,"%d",width);
     setProperty(name,value);
@@ -845,11 +849,11 @@ void receiver_close(RECEIVER *rx) {
 
   g_source_remove(rx->update_timer_id);
   if(radio->dialog!=NULL) {
-    gtk_widget_destroy(radio->dialog);
+    gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
   if(rx->bookmark_dialog!=NULL) {
-    gtk_widget_destroy(rx->bookmark_dialog);
+    gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
     rx->bookmark_dialog=NULL;
   }
   // Persist this receiver's current settings so they survive the close, then
@@ -875,12 +879,6 @@ void receiver_close(RECEIVER *rx) {
   radio_rebuild_rx_stack(radio);
 }
 
-static void focus_in_event_cb(GtkWindow *window,GdkEventFocus *event,gpointer data) {
-  if(event->in) {
-    radio->active_receiver=(RECEIVER *)data;
-  }
-}
-
 #ifdef FT8
 // TRUE when a panadapter gesture should place the FT8 TX offset rather than
 // tune the RX: Shift held while the active receiver is in DIGU.
@@ -903,27 +901,30 @@ static void ft8_set_tx_offset_from_x(RECEIVER *rx, double ex) {
 }
 #endif
 
-gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+// GTK4: GtkGestureClick "pressed" handler (button/state from the gesture).
+void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  radio->active_receiver=(RECEIVER *)data;
-  switch(event->button) {
+  radio->active_receiver=rx;
+  guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
+  switch(button) {
     case 1: // left button
 #ifdef FT8
       // Shift+click in DIGU sets the FT8 TX audio offset (dial+offset) without
       // tuning the dial.  Mirrors WSJT-X double-click-to-set-Tx.  The matching
       // guards in the release/motion handlers keep the RX from retuning.
-      if(ft8_tx_offset_gesture(rx,event->state)) {
-        ft8_set_tx_offset_from_x(rx,(double)event->x);
-        rx->last_x=(int)event->x;
+      if(ft8_tx_offset_gesture(rx,state)) {
+        ft8_set_tx_offset_from_x(rx,ex);
+        rx->last_x=(int)ex;
         rx->has_moved=FALSE;
         rx->is_panning=FALSE;
-        return TRUE;
+        return;
       }
 #endif
       //if(!rx->locked) {
-        rx->last_x=(int)event->x;
+        rx->last_x=(int)ex;
         rx->has_moved=FALSE;
-        if(rx->zoom>1 && event->y>=rx->panadapter_height-20) {
+        if(rx->zoom>1 && ey>=rx->panadapter_height-20) {
           rx->is_panning=TRUE;
         }
       //}
@@ -941,7 +942,6 @@ gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event
       }
       break;
   }
-  return TRUE;
 }
 
 void update_frequency(RECEIVER *rx) {
@@ -1210,16 +1210,17 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
 // every keyval the pressed hardware keycode produces across all layout groups
 // (there is always a Latin group where the physical Q key is q) so Cmd-Q quits
 // on any keyboard layout.
-static gboolean key_is_q(GdkEventKey *event) {
-  if(event->keyval==GDK_KEY_q || event->keyval==GDK_KEY_Q) return TRUE;
-  GdkKeymap *km=gdk_keymap_get_for_display(gdk_display_get_default());
-  if(!km || event->hardware_keycode==0) return FALSE;
+// GTK4: GdkKeymap is gone — map a hardware keycode to keyvals via the display.
+static gboolean key_is_q(guint keyval, guint keycode) {
+  if(keyval==GDK_KEY_q || keyval==GDK_KEY_Q) return TRUE;
+  GdkDisplay *display=gdk_display_get_default();
+  if(!display || keycode==0) return FALSE;
   GdkKeymapKey *keys=NULL;
   guint *keyvals=NULL;
-  gint n=0;
+  int n=0;
   gboolean found=FALSE;
-  if(gdk_keymap_get_entries_for_keycode(km,event->hardware_keycode,&keys,&keyvals,&n)) {
-    for(gint i=0;i<n;i++) {
+  if(gdk_display_map_keycode(display,keycode,&keys,&keyvals,&n)) {
+    for(int i=0;i<n;i++) {
       if(keyvals[i]==GDK_KEY_q || keyvals[i]==GDK_KEY_Q) { found=TRUE; break; }
     }
   }
@@ -1228,50 +1229,44 @@ static gboolean key_is_q(GdkEventKey *event) {
   return found;
 }
 
-gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  log_info("Pressed: %s\n", gdk_keyval_name(event->keyval));
+// GTK4: GtkEventControllerKey "key-pressed" handler (returns TRUE if handled).
+gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
+  log_info("Pressed: %s\n", gdk_keyval_name(keyval));
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
   // key_is_q() matches the physical Q key on any keyboard layout (e.g. Cmd-й on
   // a Russian layout).
-  if(key_is_q(event) &&
-     (event->state & (GDK_META_MASK|GDK_MOD2_MASK|GDK_CONTROL_MASK))) {
+  if(key_is_q(keyval,keycode) &&
+     (state & (GDK_META_MASK|GDK_ALT_MASK|GDK_CONTROL_MASK))) {
     main_delete(NULL);
     return TRUE;
   }
-  switch(event->keyval) {
+  switch(keyval) {
     case GDK_KEY_space:
         set_mox(radio,TRUE);
-      break;
+      return TRUE;
   }
-  return TRUE;
+  return FALSE;
 }
 
-gboolean receiver_key_release_event(GtkWidget *widget, GdkEventKey *event, gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  log_info("Released: %s\n", gdk_keyval_name(event->keyval));
-  switch(event->keyval) {
+// GTK4: GtkEventControllerKey "key-released" handler (void).
+void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
+  log_info("Released: %s\n", gdk_keyval_name(keyval));
+  switch(keyval) {
     case GDK_KEY_space:
-      log_info("test");
       set_mox(radio,FALSE);
       break;
   }
-  return TRUE;
 }
 
-gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-  gint64 hz;
+// GTK4: GtkGestureClick "released" handler.
+void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  int x;
-  int y;
-  GdkModifierType state;
-  x=event->x;
-  y=event->y;
-  state=event->state;
+  guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
+  int x=(int)ex;
   int moved=x-rx->last_x;
-  switch(event->button) {
-    case 1: // left button
+  if(button==1) {
 #ifdef FT8
       // FT8 TX-offset gesture (Shift+click/drag in DIGU): update the offset from
       // the release point and return — never tune/pan the RX.
@@ -1279,7 +1274,7 @@ gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *eve
         ft8_set_tx_offset_from_x(rx,(double)x);
         rx->last_x=x;
         rx->has_moved=FALSE;
-        return TRUE;
+        return;
       }
 #endif
       if(rx->is_panning) {
@@ -1307,26 +1302,25 @@ gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *eve
         rx->has_moved=FALSE;
     }
   }
-
-  return TRUE;
 }
 
-gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
-  gint x,y;
-  GdkModifierType state;
+// GTK4: GtkEventControllerMotion "motion" handler (state incl. button masks
+// comes from the controller; cursor coords are stashed for the scroll handler).
+void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  long long delta;
-
-  x=event->x;
-  y=event->y;
-  state=event->state;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+  GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
+  int x=(int)ex;
+  int y=(int)ey;
+  rx->cursor_x=x;
+  rx->cursor_y=y;
   int moved=x-rx->last_x;
 #ifdef FT8
   // Shift+drag in DIGU slides the FT8 TX offset live, without tuning the RX.
   if(ft8_tx_offset_gesture(rx,state) && (state & GDK_BUTTON1_MASK)) {
     ft8_set_tx_offset_from_x(rx,(double)x);
     rx->last_x=x;
-    return TRUE;
+    return;
   }
 #endif
   if(rx->is_panning) {
@@ -1347,25 +1341,28 @@ gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *even
         rx->has_moved=TRUE;
       }
     } else {
-      if(event->x>4 && event->x<35) {
-        gdk_window_set_cursor(gtk_widget_get_window(widget),gdk_cursor_new(GDK_DOUBLE_ARROW));
+      if(x>4 && x<35) {
+        gtk_widget_set_cursor_from_name(widget,"ew-resize");
       } else {
-        gdk_window_set_cursor(gtk_widget_get_window(widget),gdk_cursor_new(GDK_CROSSHAIR));
+        gtk_widget_set_cursor_from_name(widget,"crosshair");
       }
     }
   }
-  return TRUE;
 }
 
-gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data) {
+// GTK4: GtkEventControllerScroll "scroll" handler. The signal carries no pointer
+// position, so use the coords the motion handler stashed; dy<0 == scroll up.
+gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  int x=(int)event->x;
-  int y=(int)event->y;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+  int x=rx->cursor_x;
+  int y=rx->cursor_y;
   int half=rx->panadapter_height/2;
+  gboolean up=dy<0;
 
   if(rx->zoom>1 && y>=rx->panadapter_height-20) {
     int pan;
-    if(event->direction==GDK_SCROLL_UP) {
+    if(up) {
       pan=rx->pan+rx->zoom;
     } else {
       pan=rx->pan-rx->zoom;
@@ -1379,7 +1376,7 @@ gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpoi
     rx->pan=pan;
   } else if(!rx->locked) {
     if((x>4 && x<35) && (widget==rx->panadapter)) {
-      if(event->direction==GDK_SCROLL_UP) {
+      if(up) {
         if(y<half) {
           rx->panadapter_high=rx->panadapter_high-5;
         } else {
@@ -1392,7 +1389,7 @@ gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpoi
           rx->panadapter_low=rx->panadapter_low+5;
         }
       }
-    } else if(event->direction==GDK_SCROLL_UP) {
+    } else if(up) {
       if(rx->ctun || rx->freetune) {
         receiver_move(rx,rx->step,TRUE);
       } else {
@@ -1617,21 +1614,12 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
 }
 
 #ifdef FT8
-// Keep the FT8 band waterfall at ~1/3 of the spectrum-row width as the window
-// resizes; the windowless box gives the vpaned the remaining ~2/3.
-static void ft8_wf_box_alloc(GtkWidget *box, GdkRectangle *a, gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  if(rx->ft8_waterfall==NULL) return;
-  int target=a->width/3;
-  int cur=-1, junk=-1;
-  gtk_widget_get_size_request(rx->ft8_waterfall,&cur,&junk);
-  if(cur!=target) gtk_widget_set_size_request(rx->ft8_waterfall,target,-1);
-}
-
 // Add/remove the dedicated FT8 band waterfall to the RIGHT of this receiver's RF
 // spectrum (~1/3 width) while it is in DIGU *and* the FT8 panel is open.  The
-// spectrum lives in a windowless GtkBox (rx->wf_hpaned) so this never disturbs
-// the main panadapter/waterfall rendering.  GTK thread only.
+// spectrum lives in a GtkBox (rx->wf_hpaned).  GTK thread only.
+// GTK4 note: the box no longer re-proportions the 1/3 split live on window
+// resize (the "size-allocate" signal is gone); the ft8 waterfall is sized to
+// 1/3 when opened and rescales its own content to whatever width it gets.
 void receiver_ft8_waterfall_sync(RECEIVER *rx) {
   if(rx==NULL || rx->wf_hpaned==NULL) return;
   gboolean want = (rx->mode_a==DIGU) && radio!=NULL && radio->ft8_panel_open;
@@ -1639,12 +1627,13 @@ void receiver_ft8_waterfall_sync(RECEIVER *rx) {
   if(want==have) return;
   if(want) {
     rx->ft8_waterfall=ft8_waterfall_create();
-    int w=gtk_widget_get_allocated_width(rx->wf_hpaned);
+    int w=gtk_widget_get_width(rx->wf_hpaned);
     if(w>1) gtk_widget_set_size_request(rx->ft8_waterfall,w/3,-1);
-    gtk_box_pack_start(GTK_BOX(rx->wf_hpaned),rx->ft8_waterfall,FALSE,FALSE,0);
-    gtk_widget_show_all(rx->ft8_waterfall);
+    gtk_widget_set_hexpand(rx->ft8_waterfall,FALSE);
+    gtk_box_append(GTK_BOX(rx->wf_hpaned),rx->ft8_waterfall);
   } else {
-    gtk_widget_destroy(rx->ft8_waterfall);      // "destroy" stops its refresh timer
+    // Removing the last ref disposes it, emitting "destroy" (stops its timer).
+    gtk_box_remove(GTK_BOX(rx->wf_hpaned),rx->ft8_waterfall);
     rx->ft8_waterfall=NULL;
   }
 }
@@ -2008,15 +1997,6 @@ void add_iq_samples(RECEIVER *rx,double i_sample,double q_sample) {
   }
 }
 
-static gboolean receiver_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  gint width=gtk_widget_get_allocated_width(widget);
-  gint height=gtk_widget_get_allocated_height(widget);
-  rx->window_width=width;
-  rx->window_height=height;
-  return FALSE;
-}
-
 void set_agc(RECEIVER *rx) {
 
   SetRXAAGCMode(rx->channel, rx->agc);
@@ -2061,19 +2041,20 @@ log_info("receiver_update_title: %s\n",title);
   }
 }
 
-static gboolean enter (GtkWidget *ebox, GdkEventCrossing *event, void *user_data) {
+// GTK4: GtkEventControllerMotion "enter" (x,y,data) / "leave" (data) handlers.
+static void enter (GtkEventControllerMotion *controller, double ex, double ey, gpointer user_data) {
    RECEIVER *rx=(RECEIVER *)user_data;
-   if((event->x>4 && event->x<35) && (ebox==rx->panadapter)) {
-     gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_DOUBLE_ARROW));
+   GtkWidget *ebox=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+   if((ex>4 && ex<35) && (ebox==rx->panadapter)) {
+     gtk_widget_set_cursor_from_name(ebox,"ew-resize");
    } else {
-     gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_CROSSHAIR));
+     gtk_widget_set_cursor_from_name(ebox,"crosshair");
    }
-   return FALSE;
 }
 
-static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event, void *user_data) {
-   gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_ARROW));
-   return FALSE;
+static void leave (GtkEventControllerMotion *controller, gpointer user_data) {
+   GtkWidget *ebox=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+   gtk_widget_set_cursor_from_name(ebox,"default");
 }
 
 static void close_button_cb(GtkWidget *widget, gpointer data) {
@@ -2123,30 +2104,34 @@ static void create_visual(RECEIVER *rx) {
   gtk_widget_set_margin_top(rx->vpaned, 8);
 
   rx->panadapter=create_rx_panadapter(rx);
-  gtk_paned_pack1 (GTK_PANED(rx->vpaned), rx->panadapter,TRUE,TRUE);
-  gtk_widget_add_events (rx->panadapter,GDK_ENTER_NOTIFY_MASK);
-  gtk_widget_add_events (rx->panadapter,GDK_LEAVE_NOTIFY_MASK);
-  g_signal_connect (rx->panadapter, "enter-notify-event", G_CALLBACK (enter), rx);
-  g_signal_connect (rx->panadapter, "leave-notify-event", G_CALLBACK (leave), rx);
+  gtk_paned_set_start_child (GTK_PANED(rx->vpaned), rx->panadapter);
+  gtk_paned_set_resize_start_child (GTK_PANED(rx->vpaned), TRUE);
+  gtk_paned_set_shrink_start_child (GTK_PANED(rx->vpaned), TRUE);
+  // GTK4: enter/leave come from a motion controller (crossing events are gone).
+  GtkEventController *pan_cross=gtk_event_controller_motion_new();
+  g_signal_connect(pan_cross,"enter",G_CALLBACK(enter),rx);
+  g_signal_connect(pan_cross,"leave",G_CALLBACK(leave),rx);
+  gtk_widget_add_controller(rx->panadapter,pan_cross);
 
   rx->waterfall=create_waterfall(rx);
-  gtk_paned_pack2 (GTK_PANED(rx->vpaned), rx->waterfall,TRUE,TRUE);
-  gtk_widget_add_events (rx->waterfall,GDK_ENTER_NOTIFY_MASK);
-  gtk_widget_add_events (rx->waterfall,GDK_LEAVE_NOTIFY_MASK);
-  g_signal_connect (rx->waterfall, "enter-notify-event", G_CALLBACK (enter), rx);
-  g_signal_connect (rx->waterfall, "leave-notify-event", G_CALLBACK (leave), rx);
+  gtk_paned_set_end_child (GTK_PANED(rx->vpaned), rx->waterfall);
+  gtk_paned_set_resize_end_child (GTK_PANED(rx->vpaned), TRUE);
+  gtk_paned_set_shrink_end_child (GTK_PANED(rx->vpaned), TRUE);
+  GtkEventController *wf_cross=gtk_event_controller_motion_new();
+  g_signal_connect(wf_cross,"enter",G_CALLBACK(enter),rx);
+  g_signal_connect(wf_cross,"leave",G_CALLBACK(leave),rx);
+  gtk_widget_add_controller(rx->waterfall,wf_cross);
 
-  // Wrap the RF spectrum in a *windowless* horizontal GtkBox so the FT8 band
-  // waterfall can be added to its right (~1/3) without disturbing the vpaned's
-  // GdkWindow hierarchy — wrapping it in a GtkPaned here blanked the main
-  // waterfall.  ft8_waterfall is added/removed by receiver_ft8_waterfall_sync().
+  // Wrap the RF spectrum in a horizontal GtkBox so the FT8 band waterfall can be
+  // added to its right (~1/3).  (The GTK3 "windowless box" GdkWindow workaround
+  // is moot in GTK4 — widgets have no child GdkWindows — but the box layout is
+  // kept.)  ft8_waterfall is added/removed by receiver_ft8_waterfall_sync().
   rx->wf_hpaned=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   rx->ft8_waterfall=NULL;
-  gtk_box_pack_start(GTK_BOX(rx->wf_hpaned), rx->vpaned, TRUE, TRUE, 0);
+  gtk_box_append(GTK_BOX(rx->wf_hpaned), rx->vpaned);
   gtk_grid_attach(GTK_GRID(rx->table), rx->wf_hpaned, 0, 1, 7, 2);
   gtk_widget_set_hexpand(rx->wf_hpaned, TRUE);
   gtk_widget_set_vexpand(rx->wf_hpaned, TRUE);
-  g_signal_connect(rx->wf_hpaned,"size-allocate",G_CALLBACK(ft8_wf_box_alloc),rx);
 
   gtk_widget_set_size_request(rx->table, -1, 180);
   // Make sure the panel grows to fill the container on window resize (otherwise
@@ -2664,7 +2649,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   if (!rx->show_rx) return rx;
 
   create_visual(rx);
-  gtk_widget_show_all(rx->table);
+  // GTK4: children are visible by default; no gtk_widget_show_all.
   radio->active_receiver=rx;
 #ifdef FT8
   // Mode was applied (receiver_mode_changed) before create_visual built the box,
