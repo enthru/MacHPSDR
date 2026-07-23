@@ -921,20 +921,20 @@ void css_set_theme(int idx) {
                "gtk-application-prefer-dark-theme",themes[idx].dark,NULL);
 
   char *full=g_strconcat(themes[idx].palette,css_body,NULL);
-  gtk_css_provider_load_from_data(css_provider,full,-1,NULL);
+  // GTK4: load_from_data(...,-1,NULL) → load_from_string (null-terminated).
+  gtk_css_provider_load_from_string(css_provider,full);
   g_free(full);
 }
 
 void load_css() {
   GdkDisplay *display;
-  GdkScreen *screen;
 
   log_info("%s\n",__FUNCTION__);
 
   css_provider = gtk_css_provider_new ();
   display = gdk_display_get_default ();
-  screen = gdk_display_get_default_screen (display);
-  gtk_style_context_add_provider_for_screen (screen,
+  // GTK4: providers attach to the display, not a GdkScreen (removed).
+  gtk_style_context_add_provider_for_display (display,
                                              GTK_STYLE_PROVIDER(css_provider),
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 

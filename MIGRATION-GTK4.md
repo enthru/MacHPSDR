@@ -77,12 +77,31 @@ Legend: ⬜ todo · 🟡 in progress · ✅ compiles on gtk4 · ✔️ verified 
 - **GtkCheckButton is no longer a GtkToggleButton in GTK4.** `gtk_toggle_button_get/set_active(GTK_TOGGLE_BUTTON(cb))` on a *check* button now criticals + no-ops. Must become `gtk_check_button_get/set_active(GTK_CHECK_BUTTON(cb))`. Pervasive across every *_dialog.c — do a dedicated grep pass. (Real toggle buttons keep the old API.)
 - Audit `gtk_widget_get_allocated_width/height` left in hot paths (deprecated-but-works; fine for now).
 
-### Menus (GMenu/popover)
-- ⬜ vfo.c (140 sites — biggest) · bookmark_dialog.c · meter.c
+### Handler-body files
+- ✅ receiver.c · wideband.c · transmitter.c (already clean; its gesture cb lives in tx_panadapter.c)
+- ✅ css.c (GdkScreen→display, load_from_data→load_from_string) · button_text.c
 
-### Panels / dialogs (pack/container/show + dialog_run)
-- ⬜ receiver.c (event handlers, cursors, pack) · transmitter.c
-- ⬜ radio.c · all *_dialog.c · ft8_panel.c · sstv_panel.c · wefax_panel.c
+### Menus (GMenu/popover)
+- ✅ meter.c (done in display group)
+- ⬜ vfo.c (**256 errors — the big one**, ~49 gtk_menu_new / 80 menu_item / popup_at_pointer) · bookmark_dialog.c (27)
+
+### Remaining Phase-1 files (accurate compile-error counts)
+vfo.c 256 · radio.c 46 · receiver_dialog.c 32 · bookmark_dialog.c 27 · xvtr_dialog.c 19 · midi_dialog.c 17 · recorder.c 17 · ft8_panel.c 15 · ft8_dialog.c 14 · labels_dialog.c 8 · sstv_panel.c 8 · css.c✅ · configure_dialog.c 6 · wefax_panel.c 5 · pa_dialog.c 4 · tx_info.c 3 · radio_dialog.c 7 · diversity/eer/transmitter/wideband_dialog/reconnect 2ea · oc_dialog/radio_info/error_handler 1ea
+(version.c / cwdaemon.c error only in my standalone syntax check — GIT_* defines come from the Makefile; cwdaemon is Linux-only. Not real.)
+
+### Dominant remaining patterns (mechanical unless noted)
+- **Menus** (vfo.c, bookmark): `gtk_menu_*`→`GtkPopover`/GMenu (the real work)
+- `gtk_entry_get_text`/`set_text` (~86) → `gtk_editable_get_text`/`set_text` (sed-able)
+- `GTK_CONTAINER`/`gtk_container_add`/`remove` (~150) → parent-specific setters
+- `gtk_widget_show_all`/`show` (~78) → drop
+- `GdkEventButton/Scroll/Motion` handlers (~67) → controllers
+- cursor `gdk_window_set_cursor` (~30) → `gtk_widget_set_cursor_from_name`
+- `gtk_widget_destroy` (~30) → `gtk_window_destroy`
+- `gtk_box_pack_start` (~28) → `gtk_box_append`
+- `gtk_radio_button_*` (~25) → `GtkCheckButton` + `gtk_check_button_set_group`
+- `gtk_dialog_run` (10) → async `response`
+- `gtk_file_chooser_get_filename` (15) → `gtk_file_chooser_get_file` (GFile) + async
+- `gtk_event_box_new` (9) → drop, controller on child
 
 ### Phase 2 (deprecated → new)
 - ⬜ ComboBox → GtkDropDown (~318 sites)

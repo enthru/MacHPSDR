@@ -24,12 +24,9 @@ void set_button_text_color(GtkWidget *widget,char *color) {
   gchar tmp[64];
   style_context = gtk_widget_get_style_context(widget);
   gtk_style_context_add_provider(style_context, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  if(gtk_minor_version>=20)  {
-    g_snprintf(tmp, sizeof tmp, "button, label { color: %s; }", color);
-  } else {
-    g_snprintf(tmp, sizeof tmp, "GtkButton, GtkLabel { color: %s; }", color);
-  }
-  gtk_css_provider_load_from_data(GTK_CSS_PROVIDER(provider), tmp, -1, NULL);
+  // GTK4 always uses the CSS3 element selectors.
+  g_snprintf(tmp, sizeof tmp, "button, label { color: %s; }", color);
+  gtk_css_provider_load_from_string(GTK_CSS_PROVIDER(provider), tmp);
   g_object_unref (provider);
 }
 
