@@ -47,7 +47,8 @@
 #include "tx_info_meter.h"
 
 
-static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
+// GTK4: window "close-request" replaces the removed "delete-event".
+static gboolean close_request(GtkWindow *widget, gpointer data) {
   TRANSMITTER *tx = (TRANSMITTER *)data;
   tx->tx_info = NULL;
   return FALSE;
@@ -57,7 +58,7 @@ GtkWidget *create_tx_info(TRANSMITTER *tx) {
   GtkWidget *dialog = gtk_dialog_new();
   
   gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(main_window));
-  g_signal_connect (dialog, "delete_event", G_CALLBACK(delete_event), (gpointer)tx);
+  g_signal_connect (dialog, "close-request", G_CALLBACK(close_request), (gpointer)tx);
   
   GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
 

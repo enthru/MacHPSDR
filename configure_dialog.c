@@ -76,7 +76,11 @@ static void add_page(GtkWidget *child, const char *title) {
   pages[n_pages++]=child;
 }
 
-static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
+// GTK4: GtkWindow emits "close-request" (delete-event was removed). Returning
+// FALSE lets the default handler destroy the window; we must clear the cached
+// radio->dialog (and per-receiver widget pointers) here or configure_cb's
+// "dialog==NULL" guard would block reopening after the first close.
+static gboolean close_request(GtkWindow *self, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int i;
 
@@ -132,7 +136,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_widget_set_name(dialog,"config-dialog");
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));
   gtk_window_set_title(GTK_WINDOW(dialog),title);
-  g_signal_connect (dialog,"delete_event",G_CALLBACK(delete_event),(gpointer)radio);
+  g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
   GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
 
