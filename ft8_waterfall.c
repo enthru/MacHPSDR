@@ -122,10 +122,7 @@ static gboolean tick(gpointer data) {
   return G_SOURCE_CONTINUE;
 }
 
-static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
-  int W = gtk_widget_get_allocated_width(w);
-  int H = gtk_widget_get_allocated_height(w);
-
+static void on_draw(GtkDrawingArea *da, cairo_t *cr, int W, int H, gpointer data) {
   // Background.
   cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
   cairo_rectangle(cr, 0, 0, W, H);
@@ -185,20 +182,21 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
     cairo_move_to(cr, x + 3, 12);
     cairo_show_text(cr, lbl);
   }
-  return FALSE;
 }
 
 // Left-click sets the FT8 TX offset to the clicked audio frequency (clamped to
 // the usable passband), so the operator can drop TX on a clear spot.
-static gboolean on_click(GtkWidget *w, GdkEventButton *ev, gpointer data) {
-  if (ev->button != 1 || radio == NULL) return FALSE;
-  int W = gtk_widget_get_allocated_width(w);
-  int off = (int)(ev->x / (double)W * cur_span);
+// GTK4: GtkGestureClick "pressed" handler (x,y in widget coords).
+static void on_click(GtkGestureClick *gesture, int n_press, double px, double py, gpointer data) {
+  if (radio == NULL || area == NULL) return;
+  if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) != 1) return;
+  int W = gtk_widget_get_width(area);
+  if (W <= 0) return;
+  int off = (int)(px / (double)W * cur_span);
   if (off < 200)  off = 200;
   if (off > 2800) off = 2800;
   radio->ft8_tx_offset = off;
-  gtk_widget_queue_draw(w);
-  return TRUE;
+  gtk_widget_queue_draw(area);
 }
 
 static void on_destroy(GtkWidget *w, gpointer data) {
@@ -214,9 +212,14 @@ GtkWidget *ft8_waterfall_create(void) {
   // A non-zero minimum width so the pane is visible immediately, before the
   // 2/3 : 1/3 split position is applied (see receiver_ft8_waterfall_sync).
   gtk_widget_set_size_request(area, 140, WF_HEIGHT);
-  gtk_widget_add_events(area, GDK_BUTTON_PRESS_MASK);
-  g_signal_connect(area, "draw", G_CALLBACK(on_draw), NULL);
-  g_signal_connect(area, "button-press-event", G_CALLBACK(on_click), NULL);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area), on_draw, NULL, NULL);
+
+  // GTK4: left-click via a gesture controller (button masks are gone).
+  GtkGesture *click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 1);
+  g_signal_connect(click, "pressed", G_CALLBACK(on_click), NULL);
+  gtk_widget_add_controller(area, GTK_EVENT_CONTROLLER(click));
+
   g_signal_connect(area, "destroy", G_CALLBACK(on_destroy), NULL);
   timer = g_timeout_add(WF_INTERVAL, tick, NULL);
   return area;

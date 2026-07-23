@@ -48,41 +48,43 @@ static void txpan_rgb(cairo_t *cr, const char *name, double r, double g, double 
 #include "soapy_protocol.h"
 #endif
 
-static gboolean transmitter_button_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
-  switch(event->button) {
+// GTK4: GtkGestureClick "pressed" handler. The button is read from the gesture.
+static void transmitter_pressed_cb(GtkGestureClick *gesture,int n_press,double x,double y,gpointer data) {
+  guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  switch(button) {
     case 1: // left
       break;
     case 3: // right
       if(radio->transmitter->tx_info  == NULL) {
         if ((radio->can_transmit) && (radio->hl2 != NULL)) {
-          // Only tested with HL2 for now  
+          // Only tested with HL2 for now
           radio->transmitter->tx_info = create_tx_info(radio->transmitter);
         }
       }
       break;
   }
-  return TRUE;
 }
 
 void update_tx_panadapter(RADIO *r);
 
-static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
+static void tx_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->panadapter_width=gtk_widget_get_allocated_width (widget);
-  tx->panadapter_height=gtk_widget_get_allocated_height (widget);
+  tx->panadapter_width=width;
+  tx->panadapter_height=height;
   if(tx->panadapter_width>1 && tx->panadapter_height>1) {
   if(tx->panadapter_surface) {
     cairo_surface_destroy(tx->panadapter_surface);
   }
-  log_info("tx_panadapter_configure_event: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
+  log_info("tx_panadapter_resize: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
   if(radio->discovered->protocol==PROTOCOL_1) {
     tx->pixels=tx->panadapter_width*3;
   } else {
     tx->pixels=tx->panadapter_width*12;
   }
   if(tx->panadapter!=NULL) {
-    tx->panadapter_surface = gdk_window_create_similar_surface (gtk_widget_get_window (tx->panadapter),
-                                       CAIRO_CONTENT_COLOR,
+    // GTK4: off-screen image surface (no GdkWindow to back a similar surface).
+    tx->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
                                        tx->panadapter_width,
                                        tx->panadapter_height);
     cairo_t *cr;
@@ -98,10 +100,10 @@ static gboolean tx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
     update_tx_panadapter(radio);
   }
   }
-  return TRUE;
 }
 
-static gboolean tx_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void tx_panadapter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
   cairo_paint(cr);
@@ -109,7 +111,6 @@ static gboolean tx_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer dat
     cairo_set_source_surface (cr, tx->panadapter_surface, 0.0, 0.0);
     cairo_paint (cr);
   }
-  return TRUE;
 }
 
 GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
@@ -120,12 +121,14 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
   tx->panadapter=gtk_drawing_area_new();
   gtk_widget_set_size_request(tx->panadapter, 300, 120);
 
-  g_signal_connect(tx->panadapter,"configure-event",G_CALLBACK(tx_panadapter_configure_event_cb),(gpointer)tx);
-  g_signal_connect(tx->panadapter,"draw",G_CALLBACK(tx_panadapter_draw_cb),(gpointer)tx);
-  g_signal_connect(tx->panadapter,"button-press-event",G_CALLBACK(transmitter_button_press_event_cb),(gpointer)tx);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx->panadapter),tx_panadapter_draw_cb,(gpointer)tx,NULL);
+  g_signal_connect(tx->panadapter,"resize",G_CALLBACK(tx_panadapter_resize_cb),(gpointer)tx);
 
-  gtk_widget_set_events (tx->panadapter, gtk_widget_get_events (tx->panadapter)
-                     | GDK_BUTTON_PRESS_MASK);
+  // GTK4: click via a gesture controller (button masks are gone).
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),0);
+  g_signal_connect(click,"pressed",G_CALLBACK(transmitter_pressed_cb),(gpointer)tx);
+  gtk_widget_add_controller(tx->panadapter,GTK_EVENT_CONTROLLER(click));
 
   return tx->panadapter;
 }

@@ -36,16 +36,11 @@
 
 static char *title="Microphone Level";
 
-static gboolean mic_level_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
-  return TRUE;
-}
-
 // Draw directly (same style as mic_gain / drive) instead of a cached surface,
 // so the meter looks identical to the other two.
-static gboolean mic_level_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void mic_level_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
   cairo_text_extents_t extents;
-  int width=gtk_widget_get_allocated_width(widget);
-  int height=gtk_widget_get_allocated_height(widget);
   int bar_width=width-10;
 
   double peak=radio->vox_peak*(double)bar_width;
@@ -64,24 +59,23 @@ static gboolean mic_level_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   cairo_text_extents(cr, title, &extents);
   cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
   cairo_show_text(cr,title);
-  return TRUE;
 }
 
-static gboolean mic_level_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
-  int width=gtk_widget_get_allocated_width(widget);
-  double x=event->x;
-  radio->vox_threshold=(x-5.0)/(double)width;
+// GTK4: GtkGestureClick "pressed" handler (x in widget coords).
+static void mic_level_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
+  int width=gtk_widget_get_width(radio->mic_level);
+  radio->vox_threshold=(px-5.0)/(double)width;
   if(radio->vox_threshold<0.0) {
     radio->vox_threshold=0.0;
   } else if(radio->vox_threshold>1.0) {
     radio->vox_threshold=1.0;
   }
   update_mic_level(radio);
-  return TRUE;
 }
 
-static gboolean mic_level_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
-  if(event->direction==GDK_SCROLL_UP) {
+// GTK4: GtkEventControllerScroll "scroll" handler (dy<0 = up).
+static gboolean mic_level_scroll_cb(GtkEventControllerScroll *controller,double dx,double dy,gpointer data) {
+  if(dy<0) {
     radio->vox_threshold+=0.01;
   } else {
     radio->vox_threshold-=0.01;
@@ -92,36 +86,23 @@ static gboolean mic_level_scroll_event_cb(GtkWidget *widget,GdkEventScroll *even
   return TRUE;
 }
 
-static gboolean enter (GtkWidget *ebox, GdkEventCrossing *event) {
-   //gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_DOUBLE_ARROW));
-   gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW));
-   return FALSE;
-}
-
-
-static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event) {
-   gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_ARROW));
-   return FALSE;
-}
-
 GtkWidget *create_mic_level(TRANSMITTER *tx) {
 
   radio->mic_level_surface=NULL;
   radio->mic_level=gtk_drawing_area_new();
   gtk_widget_set_size_request(radio->mic_level, 170, 34);
+  gtk_widget_set_cursor_from_name(radio->mic_level,"ew-resize");
 
-  g_signal_connect(radio->mic_level,"configure-event",G_CALLBACK(mic_level_configure_event_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_level,"draw",G_CALLBACK(mic_level_draw_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_level,"enter-notify-event",G_CALLBACK (enter),NULL);
-  g_signal_connect(radio->mic_level,"leave-notify-event",G_CALLBACK (leave),NULL);
-  g_signal_connect(radio->mic_level,"button-press-event",G_CALLBACK(mic_level_press_event_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_level,"scroll_event",G_CALLBACK(mic_level_scroll_event_cb),(gpointer)tx);
-  gtk_widget_set_events (radio->mic_level, gtk_widget_get_events (radio->mic_level)
-                     | GDK_BUTTON_PRESS_MASK
-                     | GDK_SCROLL_MASK
-                     | GDK_ENTER_NOTIFY_MASK
-                     | GDK_LEAVE_NOTIFY_MASK);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(radio->mic_level),mic_level_draw_cb,(gpointer)tx,NULL);
 
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
+  g_signal_connect(click,"pressed",G_CALLBACK(mic_level_pressed_cb),(gpointer)tx);
+  gtk_widget_add_controller(radio->mic_level,GTK_EVENT_CONTROLLER(click));
+
+  GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+  g_signal_connect(scroll,"scroll",G_CALLBACK(mic_level_scroll_cb),(gpointer)tx);
+  gtk_widget_add_controller(radio->mic_level,scroll);
 
   return radio->mic_level;
 }

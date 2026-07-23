@@ -92,9 +92,10 @@ static gboolean resize_timeout(void *data) {
     rx->panadapter_surface=NULL;
   }
 
-  if(rx->panadapter!=NULL) {
-    rx->panadapter_surface = gdk_window_create_similar_surface (gtk_widget_get_window (rx->panadapter),
-                                       CAIRO_CONTENT_COLOR,
+  if(rx->panadapter!=NULL && rx->panadapter_width>0 && rx->panadapter_height>0) {
+    // GTK4: no GdkWindow to back a similar surface; draw into an off-screen
+    // image surface that the draw-func blits each frame.
+    rx->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
                                        rx->panadapter_width,
                                        rx->panadapter_height);
 
@@ -228,10 +229,9 @@ void rx_panadapter_resize(GtkGLArea *area, gint width, gint height, gpointer dat
   }
 }
 
-static gboolean rx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
+static void rx_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  gint width=gtk_widget_get_allocated_width (widget);
-  gint height=gtk_widget_get_allocated_height (widget);
   if(width!=rx->panadapter_width || height!=rx->panadapter_height) {
     rx->panadapter_resize_width=width;
     rx->panadapter_resize_height=height;
@@ -240,17 +240,16 @@ static gboolean rx_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfi
     }
     rx->panadapter_resize_timer=g_timeout_add(250,resize_timeout,(gpointer)rx);
   }
-  return TRUE;
 }
 
 
-static gboolean rx_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void rx_panadapter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(rx->panadapter_surface!=NULL) {
     cairo_set_source_surface (cr, rx->panadapter_surface, 0.0, 0.0);
     cairo_paint (cr);
   }
-  return TRUE;
 }
 
 GtkWidget *create_rx_panadapter(RECEIVER *rx) {
@@ -276,25 +275,27 @@ GtkWidget *create_rx_panadapter(RECEIVER *rx) {
 #endif
     panadapter = gtk_drawing_area_new ();
 
-    g_signal_connect(panadapter,"configure-event",G_CALLBACK(rx_panadapter_configure_event_cb),(gpointer)rx);
-    g_signal_connect(panadapter,"draw",G_CALLBACK(rx_panadapter_draw_cb),(gpointer)rx);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(panadapter),rx_panadapter_draw_cb,(gpointer)rx,NULL);
+    g_signal_connect(panadapter,"resize",G_CALLBACK(rx_panadapter_resize_cb),(gpointer)rx);
 
 #ifdef OPENGL
   }
 #endif
 
-  g_signal_connect(panadapter,"motion-notify-event",G_CALLBACK(receiver_motion_notify_event_cb),rx);
-  g_signal_connect(panadapter,"button-press-event",G_CALLBACK(receiver_button_press_event_cb),rx);
-  g_signal_connect(panadapter,"button-release-event",G_CALLBACK(receiver_button_release_event_cb),rx);
-  g_signal_connect(panadapter,"scroll_event",G_CALLBACK(receiver_scroll_event_cb),rx);
+  // GTK4: pointer input via event controllers (button masks are gone).
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),0); // any button
+  g_signal_connect(click,"pressed",G_CALLBACK(receiver_pressed_cb),rx);
+  g_signal_connect(click,"released",G_CALLBACK(receiver_released_cb),rx);
+  gtk_widget_add_controller(panadapter,GTK_EVENT_CONTROLLER(click));
 
-  gtk_widget_set_events (panadapter, gtk_widget_get_events (panadapter)
-                                     | GDK_BUTTON_PRESS_MASK
-                                     | GDK_BUTTON_RELEASE_MASK
-                                     | GDK_BUTTON1_MOTION_MASK
-                                     | GDK_SCROLL_MASK
-                                     | GDK_POINTER_MOTION_MASK
-                                     | GDK_POINTER_MOTION_HINT_MASK);
+  GtkEventController *motion=gtk_event_controller_motion_new();
+  g_signal_connect(motion,"motion",G_CALLBACK(receiver_motion_cb),rx);
+  gtk_widget_add_controller(panadapter,motion);
+
+  GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+  g_signal_connect(scroll,"scroll",G_CALLBACK(receiver_scroll_cb),rx);
+  gtk_widget_add_controller(panadapter,scroll);
 
   return panadapter;
 }

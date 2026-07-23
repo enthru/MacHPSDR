@@ -66,11 +66,16 @@ Legend: ⬜ todo · 🟡 in progress · ✅ compiles on gtk4 · ✔️ verified 
 > build == end of Phase 1.
 
 ### Display widgets (draw func + backing surface + event controllers)
-- ⬜ rx_panadapter.c · tx_panadapter.c · waterfall.c
-- ⬜ wideband_panadapter.c · wideband_waterfall.c · wideband.c
-- ⬜ ft8_waterfall.c
-- ⬜ meter.c · tx_info_meter.c · mic_level.c · mic_gain.c · drive_level.c
-- ⬜ puresignal_dialog.c
+- ✅ rx_panadapter.c · tx_panadapter.c · waterfall.c
+- ✅ wideband_panadapter.c · wideband_waterfall.c  (⬜ wideband.c still)
+- ✅ ft8_waterfall.c
+- ✅ meter.c (also GtkMenu→GtkPopover) · tx_info_meter.c · mic_level.c · mic_gain.c · drive_level.c
+- ✅ puresignal_dialog.c
+  - Patterns nailed down here: `gdk_window_create_similar_surface`→`cairo_image_surface_create(CAIRO_FORMAT_RGB24,...)`; `"configure-event"`→DrawingArea `"resize"`; `"draw"` signal→`gtk_drawing_area_set_draw_func` (cb sig `(area,cr,w,h,data)`, returns void); button/motion/scroll→`GtkGestureClick`/`GtkEventControllerMotion`/`GtkEventControllerScroll`; enter/leave cursor→one `gtk_widget_set_cursor_from_name(w,"ew-resize")`; small right-click menu→`GtkPopover` of flat buttons.
+
+### ⚠️ Known Phase-1 runtime fixups (compile clean, wrong at runtime)
+- **GtkCheckButton is no longer a GtkToggleButton in GTK4.** `gtk_toggle_button_get/set_active(GTK_TOGGLE_BUTTON(cb))` on a *check* button now criticals + no-ops. Must become `gtk_check_button_get/set_active(GTK_CHECK_BUTTON(cb))`. Pervasive across every *_dialog.c — do a dedicated grep pass. (Real toggle buttons keep the old API.)
+- Audit `gtk_widget_get_allocated_width/height` left in hot paths (deprecated-but-works; fine for now).
 
 ### Menus (GMenu/popover)
 - ⬜ vfo.c (140 sites — biggest) · bookmark_dialog.c · meter.c

@@ -38,16 +38,11 @@
 
 static char *title="Microphone Gain";
 
-static gboolean mic_gain_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
-  return TRUE;
-}
-
-static gboolean mic_gain_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void mic_gain_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
   cairo_text_extents_t extents;
   char t[32];
 
-  int width=gtk_widget_get_allocated_width(widget);
-  int height=gtk_widget_get_allocated_height(widget);
   double bar_width=(double)width-10;
 
   double v=radio->transmitter->mic_gain+10.0; // move from rabd -10..50 to range 0..60
@@ -69,26 +64,25 @@ static gboolean mic_gain_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
   sprintf(t,"%s (%ddB)",title,(int)radio->transmitter->mic_gain);
   cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
   cairo_show_text(cr,t);
-
-  return TRUE;
 }
 
-static gboolean mic_gain_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
+// GTK4: GtkGestureClick "pressed" handler (x in widget coords).
+static void mic_gain_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  int width=gtk_widget_get_allocated_width(widget)-10;
-  double x=event->x-5.0;
+  int width=gtk_widget_get_width(radio->mic_gain)-10;
+  double x=px-5.0;
   x=((x/(double)width)*60.0)-10.0;
   tx->mic_gain=x;
   if(tx->mic_gain<-10.0) tx->mic_gain=-10.0;
   if(tx->mic_gain>50.0) tx->mic_gain=50.0;
   SetTXAPanelGain1(tx->channel,pow(10.0, tx->mic_gain / 20.0));
   gtk_widget_queue_draw(radio->mic_gain);
-  return TRUE;
 }
 
-static gboolean mic_gain_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event,gpointer data) {
+// GTK4: GtkEventControllerScroll "scroll" handler (dy<0 = up).
+static gboolean mic_gain_scroll_cb(GtkEventControllerScroll *controller,double dx,double dy,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(event->direction==GDK_SCROLL_UP) {
+  if(dy<0) {
     tx->mic_gain+=1.0;
   } else {
     tx->mic_gain-=1.0;
@@ -100,34 +94,23 @@ static gboolean mic_gain_scroll_event_cb(GtkWidget *widget,GdkEventScroll *event
   return TRUE;
 }
 
-static gboolean enter (GtkWidget *ebox, GdkEventCrossing *event) {
-   //gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_DOUBLE_ARROW));
-   gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW));
-   return FALSE;
-}
-
-
-static gboolean leave (GtkWidget *ebox, GdkEventCrossing *event) {
-   gdk_window_set_cursor(gtk_widget_get_window(ebox),gdk_cursor_new(GDK_ARROW));
-   return FALSE;
-}
-
 GtkWidget *create_mic_gain(TRANSMITTER *tx) {
 
   radio->mic_gain=gtk_drawing_area_new();
   gtk_widget_set_size_request(radio->mic_gain, 170, 34);
+  // GTK4: a persistent resize cursor replaces the GTK3 enter/leave dance.
+  gtk_widget_set_cursor_from_name(radio->mic_gain,"ew-resize");
 
-  g_signal_connect(radio->mic_gain,"configure-event",G_CALLBACK(mic_gain_configure_event_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_gain,"draw",G_CALLBACK(mic_gain_draw_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_gain,"enter-notify-event",G_CALLBACK (enter),NULL);
-  g_signal_connect(radio->mic_gain,"leave-notify-event",G_CALLBACK (leave),NULL);
-  g_signal_connect(radio->mic_gain,"button-press-event",G_CALLBACK(mic_gain_press_event_cb),(gpointer)tx);
-  g_signal_connect(radio->mic_gain,"scroll_event",G_CALLBACK(mic_gain_scroll_event_cb),(gpointer)tx);
-  gtk_widget_set_events (radio->mic_gain, gtk_widget_get_events (radio->mic_gain)
-                     | GDK_BUTTON_PRESS_MASK
-                     | GDK_SCROLL_MASK
-                     | GDK_ENTER_NOTIFY_MASK
-                     | GDK_LEAVE_NOTIFY_MASK);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(radio->mic_gain),mic_gain_draw_cb,(gpointer)tx,NULL);
+
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
+  g_signal_connect(click,"pressed",G_CALLBACK(mic_gain_pressed_cb),(gpointer)tx);
+  gtk_widget_add_controller(radio->mic_gain,GTK_EVENT_CONTROLLER(click));
+
+  GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+  g_signal_connect(scroll,"scroll",G_CALLBACK(mic_gain_scroll_cb),(gpointer)tx);
+  gtk_widget_add_controller(radio->mic_gain,scroll);
 
   return radio->mic_gain;
 }

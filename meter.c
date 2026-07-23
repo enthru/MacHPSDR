@@ -40,71 +40,76 @@ typedef struct _choice {
   int selection;
 } CHOICE;
 
-static gboolean meter_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
+// the backing store is an off-screen image surface (no GdkWindow).
+static void meter_resize_cb(GtkDrawingArea *area,int meter_width,int meter_height,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  int meter_width=gtk_widget_get_allocated_width (widget);
-  int meter_height=gtk_widget_get_allocated_height (widget);
-//g_print("meter_configure_event_cb: width=%d height=%d\n",meter_width,meter_height);
   if (rx->meter_surface) {
     cairo_surface_destroy (rx->meter_surface);
+    rx->meter_surface=NULL;
   }
-  rx->meter_surface=gdk_window_create_similar_surface(gtk_widget_get_window(widget),CAIRO_CONTENT_COLOR,meter_width,meter_height);
-  return TRUE;
+  if(meter_width>0 && meter_height>0) {
+    rx->meter_surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,meter_width,meter_height);
+  }
 }
 
 
-static gboolean meter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void meter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  cairo_set_source_surface (cr, rx->meter_surface, 0.0, 0.0);
-  cairo_paint (cr);
-  return TRUE;
+  if(rx->meter_surface!=NULL) {
+    cairo_set_source_surface (cr, rx->meter_surface, 0.0, 0.0);
+    cairo_paint (cr);
+  }
 }
 
-static void meter_cb(GtkWidget *menu_item,gpointer data) {
+// A menu-item button in the choice popover applies its selection and dismisses.
+static void meter_choice_clicked(GtkButton *b,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   choice->rx->smeter=choice->selection;
+  GtkWidget *pop=gtk_widget_get_ancestor(GTK_WIDGET(b),GTK_TYPE_POPOVER);
+  if(pop) gtk_popover_popdown(GTK_POPOVER(pop));
 }
 
-static gboolean meter_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
-  GtkWidget *menu;
-  GtkWidget *menu_item;
-  CHOICE *choice;
+static void meter_add_choice(GtkWidget *box,RECEIVER *rx,const char *label,int sel) {
+  GtkWidget *b=gtk_button_new_with_label(label);
+  gtk_widget_add_css_class(b,"flat");
+  CHOICE *choice=g_new0(CHOICE,1);
+  choice->rx=rx;
+  choice->selection=sel;
+  g_object_set_data_full(G_OBJECT(b),"choice",choice,g_free);
+  g_signal_connect(b,"clicked",G_CALLBACK(meter_choice_clicked),choice);
+  gtk_box_append(GTK_BOX(box),b);
+}
+
+// GTK4: GtkMenu is gone — a small GtkPopover of flat buttons is the context menu.
+static void meter_pressed_cb(GtkGestureClick *gesture,int n_press,double x,double y,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  
-  switch(event->button) {
-    case 1: // LEFT
-      menu=gtk_menu_new();
-      menu_item=gtk_menu_item_new_with_label("S Meter Peak");
-      choice=g_new0(CHOICE,1);
-      choice->rx=rx;
-      choice->selection=RXA_S_PK;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(meter_cb),choice);
-      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-      menu_item=gtk_menu_item_new_with_label("S Meter AVERAGE");
-      choice=g_new0(CHOICE,1);
-      choice->rx=rx;
-      choice->selection=RXA_S_AV;
-      g_signal_connect(menu_item,"activate",G_CALLBACK(meter_cb),choice);
-      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-      gtk_widget_show_all(menu);
-#if GTK_CHECK_VERSION(3,22,0)
-      gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
-#else
-      gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,event->button,event->time);
-#endif
-      break;
-  }
-  return TRUE;
+  if(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture))!=1) return;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+
+  GtkWidget *pop=gtk_popover_new();
+  gtk_widget_set_parent(pop,widget);
+  gtk_popover_set_pointing_to(GTK_POPOVER(pop),&(GdkRectangle){(int)x,(int)y,1,1});
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_popover_set_child(GTK_POPOVER(pop),box);
+  meter_add_choice(box,rx,"S Meter Peak",RXA_S_PK);
+  meter_add_choice(box,rx,"S Meter AVERAGE",RXA_S_AV);
+  g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
+  gtk_popover_popup(GTK_POPOVER(pop));
 }
 
 GtkWidget *create_meter_visual(RECEIVER *rx) {
 
   GtkWidget *meter = gtk_drawing_area_new ();
 
-  g_signal_connect (meter,"configure-event", G_CALLBACK (meter_configure_event_cb), (gpointer)rx);
-  g_signal_connect (meter, "draw", G_CALLBACK (meter_draw_cb), (gpointer)rx);
-  g_signal_connect (meter, "button-press-event", G_CALLBACK (meter_press_event_cb), (gpointer)rx);
-  gtk_widget_set_events (meter, gtk_widget_get_events (meter) | GDK_BUTTON_PRESS_MASK);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(meter),meter_draw_cb,(gpointer)rx,NULL);
+  g_signal_connect (meter,"resize", G_CALLBACK (meter_resize_cb), (gpointer)rx);
+
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
+  g_signal_connect(click,"pressed",G_CALLBACK(meter_pressed_cb),(gpointer)rx);
+  gtk_widget_add_controller(meter,GTK_EVENT_CONTROLLER(click));
 
   return meter;
 

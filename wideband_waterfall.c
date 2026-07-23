@@ -53,10 +53,9 @@ static gboolean resize_timeout(void *data) {
   return FALSE;
 }
 
-static gboolean waterfall_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
+static void waterfall_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
-  gint width=gtk_widget_get_allocated_width (widget);
-  gint height=gtk_widget_get_allocated_height (widget);
   if(width!=w->waterfall_width || height!=w->waterfall_height) {
     w->waterfall_resize_width=width;
     w->waterfall_resize_height=height;
@@ -65,17 +64,16 @@ static gboolean waterfall_configure_event_cb(GtkWidget *widget,GdkEventConfigure
     }
     w->waterfall_resize_timer=g_timeout_add(250,resize_timeout,(gpointer)w);
   }
-  return TRUE;
 }
 
 
-static gboolean waterfall_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void waterfall_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
   if(w->waterfall_pixbuf) {
     gdk_cairo_set_source_pixbuf (cr, w->waterfall_pixbuf, 0, 0);
     cairo_paint (cr);
   }
-  return FALSE;
 }
 
 GtkWidget *create_wideband_waterfall(WIDEBAND *w) {
@@ -89,21 +87,8 @@ GtkWidget *create_wideband_waterfall(WIDEBAND *w) {
   waterfall = gtk_drawing_area_new ();
   //gtk_widget_set_size_request (waterfall, w->width, w->height/3);
 
-  g_signal_connect(waterfall,"configure-event",G_CALLBACK (waterfall_configure_event_cb),(gpointer)w);
-  g_signal_connect(waterfall,"draw",G_CALLBACK (waterfall_draw_cb),(gpointer)w);
-
-  //g_signal_connect(waterfall,"motion-notify-event",G_CALLBACK(receiver_motion_notify_event_cb),w);
-  //g_signal_connect(waterfall,"button-press-event",G_CALLBACK(receiver_button_press_event_cb),w);
-  //g_signal_connect(waterfall,"button-release-event",G_CALLBACK(receiver_button_release_event_cb),w);
-  //g_signal_connect(waterfall,"scroll_event",G_CALLBACK(receiver_scroll_event_cb),w);
-
-  //gtk_widget_set_events (waterfall, gtk_widget_get_events (waterfall)
-  //                   | GDK_BUTTON_PRESS_MASK
-  //                   | GDK_BUTTON_RELEASE_MASK
-  //                   | GDK_BUTTON1_MOTION_MASK
-  //                   | GDK_SCROLL_MASK
-  //                   | GDK_POINTER_MOTION_MASK
-  //                   | GDK_POINTER_MOTION_HINT_MASK);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(waterfall),waterfall_draw_cb,(gpointer)w,NULL);
+  g_signal_connect(waterfall,"resize",G_CALLBACK (waterfall_resize_cb),(gpointer)w);
 
   return waterfall;
 }

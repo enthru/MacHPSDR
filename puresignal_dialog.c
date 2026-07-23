@@ -70,30 +70,31 @@ static void ps_source(cairo_t *cr, const char *name, double fr, double fg, doubl
   cairo_set_source_rgb(cr,r,g,b);
 }
 
-static gboolean ps_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
+// off-screen image surface (no GdkWindow to back a similar surface).
+static void ps_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  gint width=gtk_widget_get_allocated_width(widget);
-  gint height=gtk_widget_get_allocated_height(widget);
   if(tx->ps_surface) {
     cairo_surface_destroy(tx->ps_surface);
+    tx->ps_surface=NULL;
   }
-  tx->ps_surface=gdk_window_create_similar_surface(gtk_widget_get_window(widget),CAIRO_CONTENT_COLOR,width,height);
+  if(width<=0 || height<=0) return;
+  tx->ps_surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,width,height);
 
   cairo_t *cr;
   cr = cairo_create (tx->ps_surface);
   ps_source(cr, "SURFACE", 0.16, 0.16, 0.19); // matches config-dialog theme
   cairo_paint (cr);
   cairo_destroy(cr);
-  return TRUE;
 }
 
-static gboolean ps_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void ps_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   if(tx->ps_surface!=NULL) {
     cairo_set_source_surface(cr,tx->ps_surface,0.0,0.0);
     cairo_paint(cr);
   }
-  return FALSE;
 }
 
 static void update_ps(TRANSMITTER *tx,double pk) {
@@ -279,7 +280,7 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_grid_set_row_homogeneous(GTK_GRID(ps_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(ps_grid),TRUE);
   sui_style_group(ps_grid);
-  gtk_container_add(GTK_CONTAINER(ps_frame),ps_grid);
+  gtk_frame_set_child(GTK_FRAME(ps_frame),ps_grid);
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable PureSignal");
@@ -292,8 +293,8 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_grid_attach(GTK_GRID(ps_grid),twotone_b,1,0,1,1);
 
   tx->ps=gtk_drawing_area_new();
-  g_signal_connect (tx->ps,"configure-event",G_CALLBACK(ps_configure_event_cb),(gpointer)tx);
-  g_signal_connect (tx->ps,"draw",G_CALLBACK(ps_draw_cb),(gpointer)tx);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx->ps),ps_draw_cb,(gpointer)tx,NULL);
+  g_signal_connect (tx->ps,"resize",G_CALLBACK(ps_resize_cb),(gpointer)tx);
   gtk_grid_attach(GTK_GRID(ps_grid),tx->ps,0,1,8,8);
 
   // Honest disclaimer: this PureSignal path is an unfinished prototype.
@@ -302,7 +303,7 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
     "<small><i>Note: PureSignal here is an unfinished prototype — Protocol 1 only, "
     "and its peak calibration is tuned mainly for the Hermes-Lite 2. "
     "It has not been verified on hardware in this fork; use at your own risk.</i></small>");
-  gtk_label_set_line_wrap(GTK_LABEL(note),TRUE);
+  gtk_label_set_wrap(GTK_LABEL(note),TRUE);
   gtk_label_set_xalign(GTK_LABEL(note),0.0);
   gtk_grid_attach(GTK_GRID(grid),note,0,row++,2,1);
 

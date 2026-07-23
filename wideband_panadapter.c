@@ -55,9 +55,9 @@ static gboolean resize_timeout(void *data) {
     cairo_surface_destroy (w->panadapter_surface);
   }
 
-  if(w->panadapter!=NULL) {
-    w->panadapter_surface = gdk_window_create_similar_surface (gtk_widget_get_window (w->panadapter),
-                                       CAIRO_CONTENT_COLOR,
+  if(w->panadapter!=NULL && w->panadapter_width>0 && w->panadapter_height>0) {
+    // GTK4: off-screen image surface (no GdkWindow to back a similar surface).
+    w->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
                                        w->panadapter_width,
                                        w->panadapter_height);
 
@@ -85,10 +85,9 @@ static gboolean resize_timeout(void *data) {
   return FALSE;
 }
 
-static gboolean wideband_panadapter_configure_event_cb(GtkWidget *widget,GdkEventConfigure *event,gpointer data) {
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
+static void wideband_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
-  gint width=gtk_widget_get_allocated_width (widget);
-  gint height=gtk_widget_get_allocated_height (widget);
   if(width!=w->panadapter_width || height!=w->panadapter_height) {
     w->panadapter_resize_width=width;
     w->panadapter_resize_height=height;
@@ -97,16 +96,15 @@ static gboolean wideband_panadapter_configure_event_cb(GtkWidget *widget,GdkEven
     }
     w->panadapter_resize_timer=g_timeout_add(250,resize_timeout,(gpointer)w);
   }
-  return TRUE;
 }
 
-static gboolean wideband_panadapter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void wideband_panadapter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
   if(w->panadapter_surface!=NULL) {
     cairo_set_source_surface (cr, w->panadapter_surface, 0.0, 0.0);
     cairo_paint (cr);
   }
-  return TRUE;
 }
 
 /*
@@ -125,21 +123,23 @@ GtkWidget *create_wideband_panadapter(WIDEBAND *w) {
 
   panadapter = gtk_drawing_area_new ();
 
-  g_signal_connect(panadapter,"configure-event",G_CALLBACK(wideband_panadapter_configure_event_cb),(gpointer)w);
-  g_signal_connect(panadapter,"draw",G_CALLBACK(wideband_panadapter_draw_cb),(gpointer)w);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(panadapter),wideband_panadapter_draw_cb,(gpointer)w,NULL);
+  g_signal_connect(panadapter,"resize",G_CALLBACK(wideband_panadapter_resize_cb),(gpointer)w);
 
-  g_signal_connect(panadapter,"motion-notify-event",G_CALLBACK(wideband_motion_notify_event_cb),w);
-  g_signal_connect(panadapter,"button-press-event",G_CALLBACK(wideband_button_press_event_cb),w);
-  g_signal_connect(panadapter,"button-release-event",G_CALLBACK(wideband_button_release_event_cb),w);
-  g_signal_connect(panadapter,"scroll_event",G_CALLBACK(wideband_scroll_event_cb),w);
+  // GTK4: pointer input via event controllers (button masks are gone).
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),0);
+  g_signal_connect(click,"pressed",G_CALLBACK(wideband_pressed_cb),w);
+  g_signal_connect(click,"released",G_CALLBACK(wideband_released_cb),w);
+  gtk_widget_add_controller(panadapter,GTK_EVENT_CONTROLLER(click));
 
-  gtk_widget_set_events (panadapter, gtk_widget_get_events (panadapter)
-                     | GDK_BUTTON_PRESS_MASK
-                     | GDK_BUTTON_RELEASE_MASK
-                     | GDK_BUTTON1_MOTION_MASK
-                     | GDK_SCROLL_MASK
-                     | GDK_POINTER_MOTION_MASK
-                     | GDK_POINTER_MOTION_HINT_MASK);
+  GtkEventController *motion=gtk_event_controller_motion_new();
+  g_signal_connect(motion,"motion",G_CALLBACK(wideband_motion_cb),w);
+  gtk_widget_add_controller(panadapter,motion);
+
+  GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+  g_signal_connect(scroll,"scroll",G_CALLBACK(wideband_scroll_cb),w);
+  gtk_widget_add_controller(panadapter,scroll);
 
   return panadapter;
 }

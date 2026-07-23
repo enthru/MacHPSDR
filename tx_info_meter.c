@@ -35,47 +35,44 @@
 
 #include "tx_info_meter.h"
 
-static gboolean tx_info_meter_configure_event_cb(GtkWidget *widget, GdkEventConfigure *event, gpointer data) {
-  TXMETER *tx_meter = (TXMETER *)data; 
-  
-  int width = gtk_widget_get_allocated_width(widget);
-  int height = gtk_widget_get_allocated_height(widget);
-  
+// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
+// off-screen image surface (no GdkWindow to back a similar surface).
+static void tx_info_meter_resize_cb(GtkDrawingArea *area, int width, int height, gpointer data) {
+  TXMETER *tx_meter = (TXMETER *)data;
+
   if(tx_meter->tx_info_meter_surface) {
     cairo_surface_destroy(tx_meter->tx_info_meter_surface);
+    tx_meter->tx_info_meter_surface = NULL;
   }
-  
-  if(tx_meter->tx_meter_drawing != NULL) { 
-    tx_meter->tx_info_meter_surface = gdk_window_create_similar_surface(gtk_widget_get_window(widget), CAIRO_CONTENT_COLOR, width, height);    
-    
+
+  if(tx_meter->tx_meter_drawing != NULL && width>0 && height>0) {
+    tx_meter->tx_info_meter_surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+
     cairo_t *cr;
     cr = cairo_create(tx_meter->tx_info_meter_surface);
     SetColour(cr, BACKGROUND);
     cairo_paint (cr);
     cairo_destroy(cr);
-  }  
-  
-  return TRUE;
+  }
 }
 
-static gboolean tx_info_meter_draw_cb(GtkWidget *widget,cairo_t *cr,gpointer data) {
+// GTK4: draw func signature is (area, cr, width, height, data).
+static void tx_info_meter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
   TXMETER *tx_meter = (TXMETER *)data;
-  
+
   if(tx_meter->tx_info_meter_surface != NULL) {
-    cairo_set_source_surface(cr, tx_meter->tx_info_meter_surface, 0.0, 0.0);  
+    cairo_set_source_surface(cr, tx_meter->tx_info_meter_surface, 0.0, 0.0);
     cairo_paint(cr);
   }
-  
-  return TRUE;
 }
 
 GtkWidget *create_tx_meter(TXMETER *tx_meter) {
   tx_meter->tx_meter_drawing = gtk_drawing_area_new();
-  
+
   gtk_widget_set_size_request(tx_meter->tx_meter_drawing, 252, 50);
 
-  g_signal_connect(tx_meter->tx_meter_drawing, "configure-event", G_CALLBACK(tx_info_meter_configure_event_cb), (gpointer)tx_meter);
-  g_signal_connect(tx_meter->tx_meter_drawing, "draw", G_CALLBACK(tx_info_meter_draw_cb), (gpointer)tx_meter);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx_meter->tx_meter_drawing), tx_info_meter_draw_cb, (gpointer)tx_meter, NULL);
+  g_signal_connect(tx_meter->tx_meter_drawing, "resize", G_CALLBACK(tx_info_meter_resize_cb), (gpointer)tx_meter);
 
   return tx_meter->tx_meter_drawing;
 }
