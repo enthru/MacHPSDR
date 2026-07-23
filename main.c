@@ -70,7 +70,7 @@ static GtkWidget *grid;
 static sem_t *wisdom_sem;
 static GThread *wisdom_thread_id;
 
-static GtkListStore *store;
+static GListStore *store;
 static GtkWidget *view;
 static gulong selection_signal_id;
 static GtkWidget *none_found;
@@ -128,87 +128,55 @@ log_info("Creating wisdom file: %s\n", (char *)arg);
   return NULL;
 }
 
-static void tree_selection_changed_cb (GtkTreeSelection *selection, gpointer data) {
-  GtkTreeIter iter;
-  GtkTreeModel *model;
-  gchar *name;
-  gchar *protocol;
-  gchar *version;
-  gchar *ip;
-  gchar *mac;
-  GtkTreeIter temp_iter;
-  gchar *temp_name;
-  gchar *temp_protocol;
-  gchar *temp_version;
-  gchar *temp_ip;
-  gchar *temp_mac;
-  gint i;
+// GTK4: GtkTreeView/GtkListStore are deprecated. The device list is a
+// GtkColumnView over a GListStore of DeviceItem GObjects; each item carries the
+// discovered[] index, so selection maps straight back to the device (no more
+// string-matching to recover the row).
+#define DEVICE_TYPE_ITEM (device_item_get_type())
+G_DECLARE_FINAL_TYPE(DeviceItem, device_item, DEVICE, ITEM, GObject)
+struct _DeviceItem {
+  GObject parent_instance;
+  char *col[N_COLUMNS];   // display strings, indexed by *_COLUMN
+  int index;              // index into discovered[]
+};
+G_DEFINE_TYPE(DeviceItem, device_item, G_TYPE_OBJECT)
+static void device_item_finalize(GObject *o) {
+  DeviceItem *it = DEVICE_ITEM(o);
+  for(int c=0;c<N_COLUMNS;c++) g_free(it->col[c]);
+  G_OBJECT_CLASS(device_item_parent_class)->finalize(o);
+}
+static void device_item_class_init(DeviceItemClass *k){ G_OBJECT_CLASS(k)->finalize = device_item_finalize; }
+static void device_item_init(DeviceItem *it){ }
 
-log_info("tree_selection_changed_cb\n");
-  if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
-    gtk_tree_model_get (model, &iter, NAME_COLUMN, &name, -1);
-    gtk_tree_model_get (model, &iter, PROTOCOL_COLUMN, &protocol, -1);
-    gtk_tree_model_get (model, &iter, VERSION_COLUMN, &version, -1);
-    gtk_tree_model_get (model, &iter, IP_COLUMN, &ip, -1);
-    gtk_tree_model_get (model, &iter, MAC_COLUMN, &mac, -1);
-log_info("tree_selection_changed_cb: selected=%s,%s,%s,%s,%s\n",name,protocol,version,ip,mac);
-    gboolean found=FALSE;
+// One shared setup (a left-aligned label) + a bind that reads the column stored
+// on the factory as object data.
+static void dev_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  GtkWidget *lbl = gtk_label_new(NULL);
+  gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+  gtk_list_item_set_child(li, lbl);
+}
+static void dev_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  int c = GPOINTER_TO_INT(u);
+  DeviceItem *it = gtk_list_item_get_item(li);
+  const char *s = (it && it->col[c]) ? it->col[c] : "";
+  gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), s);
+}
+static GtkColumnViewColumn *dev_col(const char *title, int colid) {
+  GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+  g_signal_connect(f,"setup",G_CALLBACK(dev_setup),NULL);
+  g_signal_connect(f,"bind",G_CALLBACK(dev_bind),GINT_TO_POINTER(colid));
+  return gtk_column_view_column_new(title, f);
+}
 
-    i=0;
+static GtkSingleSelection *dev_selection;   // owns the model; kept for teardown
 
-    if(gtk_tree_model_get_iter_first(model,&temp_iter)) {
-      gtk_tree_model_get (model, &temp_iter, NAME_COLUMN, &temp_name, -1);
-      gtk_tree_model_get (model, &temp_iter, PROTOCOL_COLUMN, &temp_protocol, -1);
-      gtk_tree_model_get (model, &temp_iter, VERSION_COLUMN, &temp_version, -1);
-      gtk_tree_model_get (model, &temp_iter, IP_COLUMN, &temp_ip, -1);
-      gtk_tree_model_get (model, &temp_iter, MAC_COLUMN, &temp_mac, -1);
-
-log_info("tree_selection_changed_cb: first=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
-      if(g_strcmp0(name,temp_name)==0) {
-        if(g_strcmp0(protocol,temp_protocol)==0 &&
-          g_strcmp0(version,temp_version)==0 &&
-          g_strcmp0(ip,temp_ip)==0 &&
-          g_strcmp0(mac,temp_mac)==0) {
-          found=TRUE;
-        }
-      }
-
-
-      if(!found) {
-        while(gtk_tree_model_iter_next(model,&temp_iter) && !found) {
-          i++;
-          gtk_tree_model_get (model, &temp_iter, NAME_COLUMN, &temp_name, -1);
-          gtk_tree_model_get (model, &temp_iter, PROTOCOL_COLUMN, &temp_protocol, -1);
-          gtk_tree_model_get (model, &temp_iter, VERSION_COLUMN, &temp_version, -1);
-          gtk_tree_model_get (model, &temp_iter, IP_COLUMN, &temp_ip, -1);
-          gtk_tree_model_get (model, &temp_iter, MAC_COLUMN, &temp_mac, -1);
-log_info("tree_selection_changed_cb: next=%s,%s,%s,%s,%s\n",temp_name,temp_protocol,temp_version,temp_ip,temp_mac);
-          if(g_strcmp0(protocol,temp_protocol)==0 &&
-            g_strcmp0(version,temp_version)==0 &&
-            g_strcmp0(ip,temp_ip)==0 &&
-            g_strcmp0(mac,temp_mac)==0) {
-            found=TRUE;
-          }
-        }
-      }
-    }
-
-    if(found) {
-      log_info("found %d\n",i);
-      d=&discovered[i];
-      switch(d->status) {
-        case STATE_AVAILABLE:
-          gtk_widget_set_sensitive(start, TRUE);
-          break;
-        case STATE_SENDING:
-          gtk_widget_set_sensitive(start, FALSE);
-          break;
-      }
-    } else {
-      d=NULL;
-      log_info("could not find selection\n");
-    }
-    g_free (ip);
+static void dev_selection_changed(GObject *sel, GParamSpec *ps, gpointer data) {
+  DeviceItem *it = gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(sel));
+  if(it==NULL) { d=NULL; return; }
+  d = &discovered[it->index];
+  switch(d->status) {
+    case STATE_AVAILABLE: gtk_widget_set_sensitive(start, TRUE);  break;
+    case STATE_SENDING:   gtk_widget_set_sensitive(start, FALSE); break;
   }
 }
 
@@ -221,39 +189,23 @@ static int discover(void *data) {
   char ip[32];
   char iface[32];
   gint i;
-  GtkCellRenderer *renderer;
-  GtkTreeIter iter;
-  GtkTreeIter iter0;
 
   discovery();
   log_info("main: discovery found %d devices\n",devices);
 
   if(devices>0) {
-    view=gtk_tree_view_new();
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Device", renderer, "text", NAME_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Protocol", renderer, "text", PROTOCOL_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Version", renderer, "text", VERSION_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "IP", renderer, "text", IP_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "MAC", renderer, "text", MAC_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "IFACE", renderer, "text", INTERFACE_COLUMN, NULL);
-
-    renderer=gtk_cell_renderer_text_new();
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Status", renderer, "text", STATUS_COLUMN, NULL);
-
-
-    store=gtk_list_store_new(N_COLUMNS,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING);
+    store=g_list_store_new(DEVICE_TYPE_ITEM);
+    dev_selection=gtk_single_selection_new(G_LIST_MODEL(store));   // takes the store ref
+    gtk_single_selection_set_autoselect(dev_selection, FALSE);
+    gtk_single_selection_set_can_unselect(dev_selection, TRUE);
+    view=gtk_column_view_new(GTK_SELECTION_MODEL(dev_selection));  // takes the selection ref
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Device",   NAME_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Protocol", PROTOCOL_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Version",  VERSION_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("IP",       IP_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("MAC",      MAC_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("IFACE",    INTERFACE_COLUMN));
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Status",   STATUS_COLUMN));
 
 
     for(i=0;i<devices;i++) {
@@ -300,27 +252,23 @@ log_info("discovered: %d device=%d\n",i,discovered[i].device);
 
 
 log_info("adding %s\n",d->name);
-      gtk_list_store_append(store,i==0?&iter0:&iter);
-      gtk_list_store_set(store,i==0?&iter0:&iter,
-        NAME_COLUMN, d->name,
-        PROTOCOL_COLUMN, protocol,
-        VERSION_COLUMN, d->software_version,
-        IP_COLUMN, ip,
-        MAC_COLUMN, mac,
-        INTERFACE_COLUMN, iface,
-        STATUS_COLUMN, d->status==2?"Idle":"In Use",
-        -1);
+      DeviceItem *it = g_object_new(DEVICE_TYPE_ITEM, NULL);
+      it->index = i;
+      it->col[NAME_COLUMN]      = g_strdup(d->name);
+      it->col[PROTOCOL_COLUMN]  = g_strdup(protocol);
+      it->col[VERSION_COLUMN]   = g_strdup(d->software_version);
+      it->col[IP_COLUMN]        = g_strdup(ip);
+      it->col[MAC_COLUMN]       = g_strdup(mac);
+      it->col[INTERFACE_COLUMN] = g_strdup(iface);
+      it->col[STATUS_COLUMN]    = g_strdup(d->status==2?"Idle":"In Use");
+      g_list_store_append(store, it);
+      g_object_unref(it);   // the store holds the ref
     }
 
-    gtk_tree_view_set_model(GTK_TREE_VIEW(view), GTK_TREE_MODEL(store));
-
     gtk_grid_attach(GTK_GRID(grid), view, 1, 0, 4, 1);
-    GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-
-    selection_signal_id=g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(tree_selection_changed_cb),NULL);
-    gtk_tree_selection_unselect_all(selection);
-    gtk_tree_selection_select_iter(selection,&iter0);
+    selection_signal_id=g_signal_connect(dev_selection,"notify::selected",
+                                         G_CALLBACK(dev_selection_changed),NULL);
+    gtk_single_selection_set_selected(dev_selection, 0);   // preselect the first row
 
   } else {
     gtk_widget_set_sensitive(start, FALSE);
@@ -398,10 +346,10 @@ static int check_wisdom(void *data) {
 gboolean retry_cb(GtkWidget *widget,gpointer data) {
   gtk_widget_set_cursor_from_name(main_window, "wait");
   if(view!=NULL) {
-    GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-    g_signal_handler_disconnect(selection,selection_signal_id);
+    if(dev_selection!=NULL) g_signal_handler_disconnect(dev_selection,selection_signal_id);
     gtk_grid_remove(GTK_GRID(grid),view);
     view=NULL;
+    dev_selection=NULL;
   }
   if(none_found!=NULL) {
     gtk_grid_remove(GTK_GRID(grid),none_found);
