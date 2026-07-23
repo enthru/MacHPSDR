@@ -627,7 +627,7 @@ void mode_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static void mode_b_cb(GtkButton *widget,gpointer user_data) {
+static void mode_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
@@ -659,7 +659,7 @@ void filter_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static void filter_b_cb(GtkButton *widget,gpointer user_data) {
+static void filter_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
