@@ -34,16 +34,38 @@
 #include "ft8_panel.h"
 #include "ft8_waterfall.h"
 
-// Tree store columns.  CALLDE/EXTRA are hidden, kept so a clicked row can be
-// turned back into a QSO answer without a separate backing array.
-enum { COL_UTC, COL_DB, COL_DT, COL_FREQ, COL_MSG, COL_TOME, COL_CQ, COL_B4,
-       COL_BG, COL_BGSET, COL_COUNTRY, COL_CALLDE, COL_EXTRA, N_COLS };
+// GTK4: GtkTreeView/GtkListStore/GtkTreeModelFilter are deprecated. The band-
+// activity list is a GtkColumnView over a GListStore of Ft8Item GObjects, with a
+// GtkFilterListModel for the "CQ only" view. Per-row styling (bold to-me,
+// strikethrough worked-before, green CQ message, gold/blue new-DXCC background)
+// is applied in the cell bind via Pango attributes + CSS classes.
+enum { VCOL_UTC, VCOL_DB, VCOL_DT, VCOL_FREQ, VCOL_MSG };   // visible columns
 
 #define MAX_ROWS 1000   // rolling band-activity cap
 
+#define FT8_TYPE_ITEM (ft8_item_get_type())
+G_DECLARE_FINAL_TYPE(Ft8Item, ft8_item, FT8, ITEM, GObject)
+struct _Ft8Item {
+  GObject parent_instance;
+  char *utc, *dt, *msg, *country, *callde, *extra, *bg;  // bg = NULL / "#rrggbb"
+  int db, freq;
+  gboolean tome, cq, b4;
+};
+G_DEFINE_TYPE(Ft8Item, ft8_item, G_TYPE_OBJECT)
+static void ft8_item_finalize(GObject *o) {
+  Ft8Item *it = FT8_ITEM(o);
+  g_free(it->utc); g_free(it->dt); g_free(it->msg); g_free(it->country);
+  g_free(it->callde); g_free(it->extra); g_free(it->bg);
+  G_OBJECT_CLASS(ft8_item_parent_class)->finalize(o);
+}
+static void ft8_item_class_init(Ft8ItemClass *k){ G_OBJECT_CLASS(k)->finalize = ft8_item_finalize; }
+static void ft8_item_init(Ft8Item *it){ }
+
 // Single live panel instance (only one FT8 panel ever exists at a time).
-static GtkListStore     *store = NULL;
-static GtkTreeModel     *filter = NULL;   // CQ-only view over `store`
+static GListStore        *store = NULL;
+static GtkFilterListModel *filter_model = NULL;
+static GtkFilter         *cq_filter = NULL;
+static GtkSelectionModel *list_sel = NULL;   // no-selection wrapper for the view
 static gboolean          cq_only = FALSE;
 static GtkWidget    *view = NULL;
 static GtkWidget    *status_label = NULL;
@@ -105,18 +127,17 @@ static void auto_toggled(GtkCheckButton *t, gpointer data) {
 static void free_send(GtkWidget *w, gpointer data) {
   if (free_entry) ft8_qso_send_free(gtk_editable_get_text(GTK_EDITABLE(free_entry)));
 }
-static gboolean filter_visible(GtkTreeModel *m, GtkTreeIter *it, gpointer data) {
+// CQ-only filter over the store.
+static gboolean cq_match(gpointer item, gpointer data) {
   if (!cq_only) return TRUE;
-  gboolean cq = FALSE;
-  gtk_tree_model_get(m, it, COL_CQ, &cq, -1);
-  return cq;
+  return ((Ft8Item *)item)->cq;
 }
 static void cqonly_toggled(GtkCheckButton *t, gpointer data) {
   cq_only = gtk_check_button_get_active(t);
-  if (filter) gtk_tree_model_filter_refilter(GTK_TREE_MODEL_FILTER(filter));
+  if (cq_filter) gtk_filter_changed(cq_filter, GTK_FILTER_CHANGE_DIFFERENT);
 }
 static void erase_clicked(GtkButton *b, gpointer data) {
-  if (store) gtk_list_store_clear(store);
+  if (store) g_list_store_remove_all(store);
   // The decoder keeps the last non-empty slot's decodes until a NEW slot decodes
   // (so the compact bottom-bar readout doesn't blank every ~2 s).  If we reset
   // disp_utc to empty here, refresh() would see that retained batch as "new"
@@ -129,45 +150,79 @@ static void erase_clicked(GtkButton *b, gpointer data) {
   snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 }
 
-// Hovering a decode row shows the sender's DXCC country (from cty.dat).
-static gboolean on_query_tooltip(GtkWidget *w, gint x, gint y, gboolean kbd,
-                                 GtkTooltip *tip, gpointer data) {
-  GtkTreeView *tv = GTK_TREE_VIEW(w);
-  GtkTreeModel *model; GtkTreePath *path; GtkTreeIter it;
-  // GTK4: x,y are passed by value (no longer in/out bin-window coords).
-  if (!gtk_tree_view_get_tooltip_context(tv, x, y, kbd, &model, &path, &it))
-    return FALSE;
-  gchar *country = NULL;
-  gtk_tree_model_get(model, &it, COL_COUNTRY, &country, -1);
-  gboolean show = country && country[0];
-  if (show) {
-    gtk_tooltip_set_text(tip, country);
-    gtk_tree_view_set_tooltip_row(tv, tip, path);
-  }
-  gtk_tree_path_free(path);
-  g_free(country);
-  return show;
+// One display-wide provider defining the two new-DXCC cell backgrounds.
+static void ft8_install_css(void) {
+  static gboolean done = FALSE;
+  if (done) return;
+  done = TRUE;
+  GtkCssProvider *p = gtk_css_provider_new();
+  gtk_css_provider_load_from_string(p,
+      ".ft8-gold{background-color:#b8860b;} .ft8-blue{background-color:#2f6fb0;}");
+  gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+      GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_unref(p);
 }
 
-// Double-click a decode row: work that station.
-static void row_activated(GtkTreeView *tv, GtkTreePath *path, GtkTreeViewColumn *col, gpointer data) {
-  GtkTreeModel *model = gtk_tree_view_get_model(tv);   // may be the CQ filter
-  GtkTreeIter iter;
-  if (!gtk_tree_model_get_iter(model, &iter, path)) return;
-  gchar *callde = NULL, *extra = NULL, *utc = NULL;
-  gtk_tree_model_get(model, &iter,
-                     COL_CALLDE, &callde, COL_EXTRA, &extra, COL_UTC, &utc, -1);
-  if (callde && callde[0]) {
+// Cell factory: a left-aligned, cell-filling label; the bind applies the text
+// and the per-row styling (bold/strikethrough/green + gold/blue background).
+static void ft8_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  GtkWidget *lbl = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+  gtk_widget_set_hexpand(lbl, TRUE);
+  gtk_list_item_set_child(li, lbl);
+}
+static void ft8_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  int vc = GPOINTER_TO_INT(u);
+  Ft8Item *it = gtk_list_item_get_item(li);
+  GtkWidget *lbl = gtk_list_item_get_child(li);
+  char buf[64];
+  const char *text = "";
+  switch (vc) {
+    case VCOL_UTC:  text = it->utc ? it->utc : "";                    break;
+    case VCOL_DB:   snprintf(buf, sizeof buf, "%d", it->db);  text = buf; break;
+    case VCOL_DT:   text = it->dt ? it->dt : "";                      break;
+    case VCOL_FREQ: snprintf(buf, sizeof buf, "%d", it->freq); text = buf; break;
+    case VCOL_MSG:  text = it->msg ? it->msg : "";                    break;
+  }
+  gtk_label_set_text(GTK_LABEL(lbl), text);
+
+  // Pango attributes: bold (to-me), strikethrough (worked-before), green CQ msg.
+  PangoAttrList *al = pango_attr_list_new();
+  if (it->tome) pango_attr_list_insert(al, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+  if (it->b4)   pango_attr_list_insert(al, pango_attr_strikethrough_new(TRUE));
+  if (vc == VCOL_MSG && it->cq)
+    pango_attr_list_insert(al, pango_attr_foreground_new(0x3333, 0xaaaa, 0x3333));
+  gtk_label_set_attributes(GTK_LABEL(lbl), al);
+  pango_attr_list_unref(al);
+
+  // New-DXCC background: gold = new entity ever, blue = new on this band.
+  gtk_widget_remove_css_class(lbl, "ft8-gold");
+  gtk_widget_remove_css_class(lbl, "ft8-blue");
+  if (it->bg)
+    gtk_widget_add_css_class(lbl, strcmp(it->bg, "#b8860b") == 0 ? "ft8-gold" : "ft8-blue");
+
+  // Country tooltip (from cty.dat), shown on any cell of the row.
+  gtk_widget_set_tooltip_text(lbl, (it->country && it->country[0]) ? it->country : NULL);
+}
+static GtkColumnViewColumn *ft8_col(const char *title, int vc) {
+  GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+  g_signal_connect(f, "setup", G_CALLBACK(ft8_setup), NULL);
+  g_signal_connect(f, "bind",  G_CALLBACK(ft8_bind), GINT_TO_POINTER(vc));
+  return gtk_column_view_column_new(title, f);
+}
+
+// Double-click a decode row: work that station. pos indexes the view's model.
+static void row_activated(GtkColumnView *cv, guint pos, gpointer data) {
+  Ft8Item *it = g_list_model_get_item(G_LIST_MODEL(list_sel), pos);   // owned
+  if (it != NULL && it->callde && it->callde[0]) {
     FT8_DECODE d;
     memset(&d, 0, sizeof(d));
-    snprintf(d.call_de, sizeof(d.call_de), "%s", callde);
-    snprintf(d.extra, sizeof(d.extra), "%s", extra ? extra : "");
-    snprintf(d.utc, sizeof(d.utc), "%s", utc ? utc : "");
+    snprintf(d.call_de, sizeof(d.call_de), "%s", it->callde);
+    snprintf(d.extra, sizeof(d.extra), "%s", it->extra ? it->extra : "");
+    snprintf(d.utc, sizeof(d.utc), "%s", it->utc ? it->utc : "");
     ft8_qso_answer(&d);
   }
-  g_free(callde);
-  g_free(extra);
-  g_free(utc);
+  if (it) g_object_unref(it);
 }
 
 // ---- periodic refresh ------------------------------------------------------
@@ -182,7 +237,6 @@ static gboolean refresh(gpointer data) {
 
     const char *mycall = radio->station_call;
     long long dial = (radio && radio->active_receiver) ? radio->active_receiver->frequency_a : 0;
-    GtkTreeIter it;
     for (int i = 0; i < n; i++) {
       gboolean tome = mycall[0] && d[i].call_to[0] &&
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
@@ -197,38 +251,30 @@ static gboolean refresh(gpointer data) {
       const char *country = d[i].call_de[0] ? ft8_qso_country(d[i].call_de) : NULL;
       char dt[8];
       snprintf(dt, sizeof(dt), "%+.1f", d[i].dt);
-      gtk_list_store_append(store, &it);
-      gtk_list_store_set(store, &it,
-                         COL_UTC,     d[i].utc,
-                         COL_DB,      (gint)d[i].snr,
-                         COL_DT,      dt,
-                         COL_FREQ,    (gint)d[i].freq,
-                         COL_MSG,     d[i].text,
-                         COL_TOME,    tome,
-                         COL_CQ,      iscq,
-                         COL_B4,      b4,
-                         COL_BG,      bg ? bg : "",
-                         COL_BGSET,   bg != NULL,
-                         COL_COUNTRY, country ? country : "",
-                         COL_CALLDE,  d[i].call_de,
-                         COL_EXTRA,   d[i].extra,
-                         -1);
+      Ft8Item *it = g_object_new(FT8_TYPE_ITEM, NULL);
+      it->utc     = g_strdup(d[i].utc);
+      it->db      = (int)d[i].snr;
+      it->dt      = g_strdup(dt);
+      it->freq    = (int)d[i].freq;
+      it->msg     = g_strdup(d[i].text);
+      it->tome    = tome;
+      it->cq      = iscq;
+      it->b4      = b4;
+      it->bg      = bg ? g_strdup(bg) : NULL;
+      it->country = g_strdup(country ? country : "");
+      it->callde  = g_strdup(d[i].call_de);
+      it->extra   = g_strdup(d[i].extra);
+      g_list_store_append(store, it);
+      g_object_unref(it);
     }
     // Cap the history: drop the oldest rows from the top.
-    int rows = gtk_tree_model_iter_n_children(GTK_TREE_MODEL(store), NULL);
-    while (rows > MAX_ROWS) {
-      GtkTreeIter first;
-      if (!gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &first)) break;
-      gtk_list_store_remove(store, &first);
-      rows--;
-    }
+    while (g_list_model_get_n_items(G_LIST_MODEL(store)) > MAX_ROWS)
+      g_list_store_remove(store, 0);
     // Keep the newest decode in view (count in the model the view shows).
-    int vis = gtk_tree_model_iter_n_children(gtk_tree_view_get_model(GTK_TREE_VIEW(view)), NULL);
-    if (vis > 0) {
-      GtkTreePath *path = gtk_tree_path_new_from_indices(vis - 1, -1);
-      gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(view), path, NULL, FALSE, 0, 0);
-      gtk_tree_path_free(path);
-    }
+    guint vis = g_list_model_get_n_items(G_LIST_MODEL(list_sel));
+    if (vis > 0)
+      gtk_column_view_scroll_to(GTK_COLUMN_VIEW(view), vis - 1, NULL,
+                                GTK_LIST_SCROLL_NONE, NULL);
   }
 
   // Tx1..Tx6 message buttons: labels, availability, and active highlight.
@@ -289,7 +335,8 @@ static gboolean refresh(gpointer data) {
 
 static void on_destroy(GtkWidget *w, gpointer data) {
   if (refresh_id) { g_source_remove(refresh_id); refresh_id = 0; }
-  store = NULL; filter = NULL; view = NULL; status_label = NULL; dx_label = NULL;
+  store = NULL; filter_model = NULL; cq_filter = NULL; list_sel = NULL;
+  view = NULL; status_label = NULL; dx_label = NULL;
   enable_btn = NULL; auto_chk = NULL; offset_spin = NULL; free_entry = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_utc[0] = '\0';
@@ -346,47 +393,19 @@ GtkWidget *ft8_panel_create(void) {
   // in this panel — see receiver_ft8_waterfall_sync().)
 
   // --- decode list ---
-  store = gtk_list_store_new(N_COLS,
-                             G_TYPE_STRING,  /* UTC   */ G_TYPE_INT,     /* dB    */
-                             G_TYPE_STRING,  /* DT    */ G_TYPE_INT,     /* Hz    */
-                             G_TYPE_STRING,  /* Msg   */ G_TYPE_BOOLEAN, /* tome  */
-                             G_TYPE_BOOLEAN, /* cq    */ G_TYPE_BOOLEAN, /* b4    */
-                             G_TYPE_STRING,  /* bg    */ G_TYPE_BOOLEAN, /* bgset */
-                             G_TYPE_STRING,  /* cntry */
-                             G_TYPE_STRING,  /* de    */ G_TYPE_STRING   /* extra */);
-  filter = gtk_tree_model_filter_new(GTK_TREE_MODEL(store), NULL);
-  gtk_tree_model_filter_set_visible_func(GTK_TREE_MODEL_FILTER(filter),
-                                         filter_visible, NULL, NULL);
-  view = gtk_tree_view_new_with_model(filter);
-  g_object_unref(store);
-  g_object_unref(filter);
-  g_signal_connect(view, "row-activated", G_CALLBACK(row_activated), NULL);
-  gtk_widget_set_has_tooltip(view, TRUE);
-  g_signal_connect(view, "query-tooltip", G_CALLBACK(on_query_tooltip), NULL);
+  ft8_install_css();
+  store = g_list_store_new(FT8_TYPE_ITEM);
+  cq_filter = GTK_FILTER(gtk_custom_filter_new(cq_match, NULL, NULL));
+  filter_model = gtk_filter_list_model_new(G_LIST_MODEL(store), cq_filter);  // takes store+filter
+  list_sel = GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(filter_model)));  // takes filter_model
+  view = gtk_column_view_new(list_sel);   // takes list_sel
+  g_signal_connect(view, "activate", G_CALLBACK(row_activated), NULL);
 
-  struct { const char *t; int c; } cols[] = {
-    {"UTC", COL_UTC}, {"dB", COL_DB}, {"DT", COL_DT}, {"Hz", COL_FREQ}, {"Message", COL_MSG}
-  };
-  for (unsigned k = 0; k < G_N_ELEMENTS(cols); k++) {
-    GtkCellRenderer *r = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *c =
-      gtk_tree_view_column_new_with_attributes(cols[k].t, r, "text", cols[k].c, NULL);
-    // Bold the rows addressed to our station; strike out worked-before calls.
-    gtk_tree_view_column_add_attribute(c, r, "weight-set", COL_TOME);
-    g_object_set(r, "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_tree_view_column_add_attribute(c, r, "strikethrough-set", COL_B4);
-    g_object_set(r, "strikethrough", TRUE, NULL);
-    // Highlight new DXCC (gold = new ever, blue = new on this band); the colour
-    // and on/off flag come from the model so both levels share one renderer.
-    gtk_tree_view_column_add_attribute(c, r, "cell-background", COL_BG);
-    gtk_tree_view_column_add_attribute(c, r, "cell-background-set", COL_BGSET);
-    // Colour CQ messages green so they stand out in the band-activity list.
-    if (cols[k].c == COL_MSG) {
-      gtk_tree_view_column_add_attribute(c, r, "foreground-set", COL_CQ);
-      g_object_set(r, "foreground", "#33aa33", NULL);
-    }
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
-  }
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("UTC",     VCOL_UTC));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("dB",      VCOL_DB));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("DT",      VCOL_DT));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("Hz",      VCOL_FREQ));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("Message", VCOL_MSG));
 
   GtkWidget *scroll = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
