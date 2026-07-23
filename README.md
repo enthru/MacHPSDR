@@ -103,7 +103,10 @@ de-emphasis / RDS options.
   redesigned S-meter and frequency display. The waterfall has several selectable
   colour themes of its own, and the panadapter trace colour is chosen from a
   named drop-down (Gradient, Skin Accent, Red, Orange, Yellow, Green, Blue,
-  Violet, Magenta, Cyan) instead of a numeric spin box.
+  Violet, Magenta, Cyan) instead of a numeric spin box. A **Show Panadapter**
+  check box (per receiver, in the receiver settings dialog) turns the
+  spectroscope off entirely — the waterfall then fills the whole spectrum area;
+  the setting is remembered per receiver.
 
 - **Freetune.** A tuning mode where the cursor moves within the visible span;
   exiting keeps the frequency you were on, and the radio retunes automatically

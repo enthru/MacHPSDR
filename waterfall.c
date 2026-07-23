@@ -58,6 +58,21 @@ static gboolean resize_timeout(void *data) {
   }
   rx->waterfall_frequency=0;
   rx->waterfall_sample_rate=0;
+  // When the panadapter (spectroscope) is hidden it no longer drives the
+  // analyzer bin count (rx->pixels), so the waterfall takes over: it spans the
+  // same horizontal extent, so mirror its width into panadapter_width/pixels
+  // and re-init the analyzer. (When the panadapter is visible its own resize
+  // owns this and we leave it alone.)
+  if(!rx->show_panadapter && rx->waterfall_width>0) {
+    g_mutex_lock(&rx->mutex);
+    rx->panadapter_width=rx->waterfall_width;
+    int max_zoom=16384/rx->panadapter_width;
+    if(max_zoom<1) max_zoom=1;
+    if(rx->zoom>max_zoom) rx->zoom=max_zoom;
+    rx->pixels=rx->panadapter_width*rx->zoom;
+    receiver_init_analyzer(rx);
+    g_mutex_unlock(&rx->mutex);
+  }
   rx->waterfall_resize_timer=-1;
   return FALSE;
 }

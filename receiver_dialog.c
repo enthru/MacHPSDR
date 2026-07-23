@@ -353,6 +353,12 @@ static void panadapter_agc_line_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_agc_line=rx->panadapter_agc_line==TRUE?FALSE:TRUE;
 }
 
+static void show_panadapter_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->show_panadapter=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  receiver_apply_panadapter_visibility(rx);
+}
+
 
 // Panadapter trace-colour choices, in combo-box order. The index stored in
 // rx->panadapter_single_color matches the switch() in rx_panadapter.c:
@@ -980,6 +986,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_show(panadapter_single_color_b);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,1,8,1,1);
   g_signal_connect(panadapter_single_color_b,"changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
+
+  // Turn the spectroscope off entirely (waterfall then fills the whole area).
+  GtkWidget *show_panadapter=gtk_check_button_new_with_label("Show Panadapter");
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (show_panadapter), rx->show_panadapter);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),show_panadapter,0,9,2,1);
+  g_signal_connect(show_panadapter,"toggled",G_CALLBACK(show_panadapter_cb),rx);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();

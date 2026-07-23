@@ -195,6 +195,7 @@ typedef struct _receiver {
   gint paned_position;
   double paned_percent;
   gint paned_restore_tries;   // bounded retries in restore_paned_position_cb
+  gboolean show_panadapter;   // FALSE = spectroscope hidden, waterfall full-height
 
   GtkWidget *panadapter;
   gint panadapter_width;
@@ -344,6 +345,7 @@ extern RECEIVER *create_receiver(int channel,int sample_rate, gboolean show_rx);
 extern void receiver_close(RECEIVER *rx);
 extern void receiver_update_title(RECEIVER *rx);
 extern void receiver_init_analyzer(RECEIVER *rx);
+extern void receiver_apply_panadapter_visibility(RECEIVER *rx);
 extern void add_iq_samples(RECEIVER *r,double left,double right);
 extern void full_diviqrx_buffer(RECEIVER *rx);
 

@@ -440,6 +440,10 @@ void receiver_save_state(RECEIVER *rx) {
     }
   }
 
+  sprintf(name,"receiver[%d].show_panadapter",rx->channel);
+  sprintf(value,"%i", rx->show_panadapter);
+  setProperty(name,value);
+
   sprintf(name,"receiver[%d].show_rx",rx->channel);
   sprintf(value,"%i", rx->show_rx);
   setProperty(name,value);
@@ -746,6 +750,10 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].paned_percent",rx->channel);
   value=getProperty(name);
   if(value) rx->paned_percent=atof(value);
+
+  sprintf(name,"receiver[%d].show_panadapter",rx->channel);
+  value=getProperty(name);
+  if(value) rx->show_panadapter=atoi(value);
 
   sprintf(name,"receiver[%d].show_rx",rx->channel);
   value=getProperty(name);
@@ -2255,8 +2263,24 @@ static gboolean restore_paned_position_cb(gpointer data);
 // panel opens/closes and the outer paned re-apportions the height) the old
 // position no longer matches — leaving the panadapter collapsed. Re-run the
 // restore (retries until allocated) so the split re-fits the new height.
+// Show or hide the panadapter (spectroscope) per rx->show_panadapter. When
+// hidden the widget is set invisible so the GtkPaned gives the waterfall the
+// whole height; the waterfall's own resize then drives rx->pixels/analyzer (see
+// waterfall.c resize_timeout) so the spectrum feed keeps working without the
+// panadapter. When shown, re-fit the saved split.
+void receiver_apply_panadapter_visibility(RECEIVER *rx) {
+  if(rx==NULL || rx->panadapter==NULL) return;
+  if(rx->show_panadapter) {
+    gtk_widget_set_visible(rx->panadapter,TRUE);
+    receiver_refit_vpaned(rx);
+  } else {
+    gtk_widget_set_visible(rx->panadapter,FALSE);
+  }
+}
+
 void receiver_refit_vpaned(RECEIVER *rx) {
   if(rx==NULL || rx->vpaned==NULL) return;
+  if(!rx->show_panadapter) return;   // waterfall owns the whole pane
   rx->paned_restore_tries=0;
   // 150 ms so this lands AFTER the outer rx_stack_balance (100 ms) has set the
   // RX area height; restore_paned_position_cb then retries until the vpaned is
@@ -2588,6 +2612,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->paned_position=-1;
   rx->paned_restore_tries=0;
   rx->paned_percent=0.5;
+  rx->show_panadapter=TRUE;
 
   rx->split=SPLIT_OFF;
   rx->duplex=FALSE;
@@ -2727,6 +2752,9 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
     // default, which collapsed the panadapter (spectroscope invisible).
     g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
   }
+  // Honour a saved "spectroscope off": hide the panadapter so the waterfall
+  // takes the whole pane (the restore above no-ops while hidden).
+  receiver_apply_panadapter_visibility(rx);
   update_frequency(rx);
 
   // Poll the display faster than WDSP produces frames (production ~= fps, tied to
