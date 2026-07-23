@@ -8,8 +8,10 @@ GIT_VERSION := $(shell git describe --abbrev=0 --tags 2>/dev/null || echo "unkno
 CC=gcc
 LINK=gcc
 
-GTKINCLUDES=`pkg-config --cflags gtk+-3.0`
-GTKLIBS=`pkg-config --libs gtk+-3.0`
+# GTK4 migration (branch gtk4-migration): this fork targets GTK4 only.
+# The stock upstream builds against gtk+-3.0; here we link gtk4.
+GTKINCLUDES=`pkg-config --cflags gtk4`
+GTKLIBS=`pkg-config --libs gtk4`
 
 #OPENGL_OPTIONS=-D OPENGL
 #OPENGL_INCLUDES=`pkg-config --cflags epoxy`

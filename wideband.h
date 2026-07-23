@@ -82,10 +82,11 @@ typedef struct _wideband {
 extern WIDEBAND *create_wideband(int channel);
 extern void wideband_init_analyzer(WIDEBAND *w);
 extern void add_wideband_sample(WIDEBAND *w,double sample);
-extern gboolean wideband_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean wideband_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean wideband_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data);
-extern gboolean wideband_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data);
+/* GTK4: pointer input via gesture/scroll controllers (see wideband.c). */
+extern void wideband_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
+extern void wideband_released_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
+extern void wideband_motion_cb(GtkEventControllerMotion *controller, double x, double y, gpointer data);
+extern gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
 extern void wideband_save_state(WIDEBAND *w);
 extern void reset_wideband_buffer_index(WIDEBAND *w);
 

@@ -341,7 +341,8 @@ extern void radio_refresh_skin(RADIO *radio);
 extern void delete_wideband(WIDEBAND *w);
 extern void vox_changed(RADIO *r);
 extern void ptt_changed(RADIO *r);
-extern gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
+/* GTK4: pointer input via a GtkGestureClick (see radio.c). */
+extern void radio_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
 extern void set_mox(RADIO *r,gboolean state);
 #ifdef FT8
 extern void radio_ft8_panel_sync(RADIO *r);

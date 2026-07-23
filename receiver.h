@@ -349,12 +349,15 @@ extern void full_diviqrx_buffer(RECEIVER *rx);
 // (and warned once) rather than risking an overrun.
 extern void analyzer_feed(int channel, double *iq, int nsamples);
 
-extern gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean receiver_button_release_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean receiver_motion_notify_event_cb(GtkWidget *widget, GdkEventMotion *event, gpointer data);
-extern gboolean receiver_key_press_event(GtkWidget *widget, GdkEventKey *event, gpointer data);
-extern gboolean receiver_key_release_event(GtkWidget *widget, GdkEventKey *event, gpointer data);
-extern gboolean receiver_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data);
+/* GTK4: RX panadapter pointer input comes from gesture/motion controllers
+ * (see receiver.c create_visual). These are the controller signal handlers. */
+extern void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
+extern void receiver_released_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
+extern void receiver_motion_cb(GtkEventControllerMotion *controller, double x, double y, gpointer data);
+/* GTK4: driven by a GtkEventControllerKey on the main window (see main.c). */
+extern gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data);
+extern void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data);
+extern gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
 
 extern void receiver_filter_changed(RECEIVER *rx,int filter);
 extern void receiver_mode_changed(RECEIVER *rx,int mode);

@@ -76,8 +76,7 @@ static gulong selection_signal_id;
 static GtkWidget *none_found;
 static GtkWidget *start;
 static GtkWidget *retry;
-static GtkWidget *image_event_box;
-static GtkWidget *image;
+static GtkWidget *image;   // splash image (GTK4: no wrapping event box needed)
 
 static DISCOVERED *d=NULL;
 
@@ -329,21 +328,18 @@ log_info("adding %s\n",d->name);
     gtk_grid_attach(GTK_GRID(grid), none_found, 1, 0, 4, 1);
   }
 
-  //gtk_widget_show_all(grid);
-
-  // --faker: skip the device-selection dialog entirely. Realize (but don't yet
-  // map) the window so start_cb's cursor calls have a valid GdkWindow, build the
-  // fake radio straight into the grid (default selection = the only row, the
-  // faker), then reveal the fully-built radio window — the selection UI is never
-  // shown.  Non-faker runs show the selection window as before.
+  // --faker: skip the device-selection dialog entirely. Realize the window,
+  // build the fake radio straight into the grid (default selection = the only
+  // row, the faker), then reveal the fully-built radio window — the selection
+  // UI is never shown.  Non-faker runs show the selection window as before.
   if(enable_fake && devices>0) {
     gtk_widget_realize(main_window);
     start_cb(NULL,NULL);
   }
 
-  gtk_widget_show_all(main_window);
+  gtk_widget_set_visible(main_window, TRUE);
 
-  gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_ARROW));
+  gtk_widget_set_cursor_from_name(main_window, "default");
 
   return 0;
 }
@@ -373,10 +369,9 @@ static int check_wisdom(void *data) {
         exit( -1 );
       }
 
-      dialog=gtk_dialog_new();
-      g_signal_connect (dialog, "delete-event", G_CALLBACK (wisdom_delete), NULL);
+      dialog=gtk_window_new();
+      g_signal_connect (dialog, "close-request", G_CALLBACK (wisdom_delete), NULL);
       gtk_window_set_title(GTK_WINDOW(dialog),"MacHPSDR: Creating FFTW3 wisdom file");
-      GtkWidget *content=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
       GtkWidget *grid=gtk_grid_new();
       gtk_grid_set_row_spacing(GTK_GRID(grid),10);
       GtkWidget *info=gtk_label_new("               Optimizing FFT sizes through 262145:               ");
@@ -385,31 +380,31 @@ static int check_wisdom(void *data) {
       gtk_grid_attach(GTK_GRID(grid),text,0,1,1,1);
       GtkWidget *patient=gtk_label_new("(Please be patient. This will take several minutes.)");
       gtk_grid_attach(GTK_GRID(grid),patient,0,2,1,1);
-      gtk_container_add(GTK_CONTAINER(content),grid);
-      gtk_widget_show_all(dialog);
+      gtk_window_set_child(GTK_WINDOW(dialog),grid);
+      gtk_widget_set_visible(dialog, TRUE);
       while(sem_trywait(wisdom_sem)<0) {
         sprintf(label,"          %s          ",wisdom_get_status());
         gtk_label_set_label(GTK_LABEL(text),label);
-        while (gtk_events_pending ())
-          gtk_main_iteration ();
+        while (g_main_context_pending(NULL))
+          g_main_context_iteration(NULL, FALSE);
         usleep(100000); // 100ms
       }
-      gtk_widget_destroy(dialog);
+      gtk_window_destroy(GTK_WINDOW(dialog));
   }
   g_idle_add(discover,NULL);
   return 0;
 }
 
 gboolean retry_cb(GtkWidget *widget,gpointer data) {
-  gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_WATCH));
+  gtk_widget_set_cursor_from_name(main_window, "wait");
   if(view!=NULL) {
     GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
     g_signal_handler_disconnect(selection,selection_signal_id);
-    gtk_container_remove(GTK_CONTAINER(grid),view);
+    gtk_grid_remove(GTK_GRID(grid),view);
     view=NULL;
   }
   if(none_found!=NULL) {
-    gtk_container_remove(GTK_CONTAINER(grid),none_found);
+    gtk_grid_remove(GTK_GRID(grid),none_found);
     none_found=NULL;
   }
   g_idle_add(discover,NULL);
@@ -469,16 +464,16 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
       iface);
 
     log_info("starting %s\n",title);
-    gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_WATCH));
+    gtk_widget_set_cursor_from_name(main_window, "wait");
     gtk_widget_set_name(main_window,"receiver-window");
     gtk_window_set_title(GTK_WINDOW (main_window),title);
-    while(gtk_events_pending()) gtk_main_iteration();
+    while(g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
 
     radio=create_radio(d);
-    gtk_container_remove(GTK_CONTAINER(grid),view);
-    gtk_container_remove(GTK_CONTAINER(grid),start);
-    gtk_container_remove(GTK_CONTAINER(grid),retry);
-    gtk_container_remove(GTK_CONTAINER(grid),image_event_box);
+    gtk_grid_remove(GTK_GRID(grid),view);
+    gtk_grid_remove(GTK_GRID(grid),start);
+    gtk_grid_remove(GTK_GRID(grid),retry);
+    gtk_grid_remove(GTK_GRID(grid),image);
     gtk_grid_attach(GTK_GRID(grid), radio->visual, 0, 0, 5, 1);
     // Breathing room between the window titlebar and the first VFO button row.
     gtk_widget_set_margin_top(radio->rx_container, 8);
@@ -489,12 +484,11 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     // gradient separator inside the bottom bar).
     GtkWidget *rx_bottom_sep=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
     gtk_widget_set_name(rx_bottom_sep,"rx-bottom-sep");
-    gtk_box_pack_start(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,0);
-    gtk_box_pack_start(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+    gtk_box_append(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
     gtk_grid_attach(GTK_GRID(grid), rx_bottom_sep, 0, 2, 5, 1);
 
     gtk_grid_attach(GTK_GRID(grid), radio->bottom_bar, 0, 3, 5, 1);
-    gtk_widget_show_all(grid);
 
 #ifdef FT8
     // If the radio restored a receiver already in DIGU, show the FT8 panel now
@@ -504,15 +498,14 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
 
     //launch_rigctl(radio);
 
+    // GTK4 removed client-side window positioning (gtk_window_move): the
+    // compositor owns placement, so radio.x/radio.y can no longer be restored.
+    // (void) them to keep the persisted values harmless.
     value=getProperty("radio.x");
     if(value!=NULL) x=atoi(value);
     value=getProperty("radio.y");
     if(value!=NULL) y=atoi(value);
-log_info("x=%d y=%d\n",x,y);
-    if(x!=-1 && y!=-1) {
-log_info("moving main_window to x=%d y=%d\n",x,y);
-      gtk_window_move(GTK_WINDOW(main_window),x,y);
-    }
+    (void)x; (void)y;
 
     int win_w=-1, win_h=-1;
     value=getProperty("radio.width");
@@ -520,10 +513,10 @@ log_info("moving main_window to x=%d y=%d\n",x,y);
     value=getProperty("radio.height");
     if(value!=NULL) win_h=atoi(value);
     if(win_w>0 && win_h>0) {
-      gtk_window_resize(GTK_WINDOW(main_window),win_w,win_h);
+      gtk_window_set_default_size(GTK_WINDOW(main_window),win_w,win_h);
     }
 
-    gdk_window_set_cursor(gtk_widget_get_window(main_window),gdk_cursor_new(GDK_ARROW));
+    gtk_widget_set_cursor_from_name(main_window, "default");
 
   }
   return TRUE;
@@ -535,7 +528,7 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   char png_path[256];
 
   log_info("Build: %s %s\n",build_date,version);
-  log_info("GTK+ version %d.%d.%d\n", gtk_major_version, gtk_minor_version, gtk_micro_version);
+  log_info("GTK version %d.%d.%d\n", gtk_get_major_version(), gtk_get_minor_version(), gtk_get_micro_version());
   uname(&unameData);
   log_info("sysname: %s\n",unameData.sysname);
   log_info("nodename: %s\n",unameData.nodename);
@@ -545,9 +538,9 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 
   load_css();
 
-  GdkScreen *screen=gdk_screen_get_default();
-  if(screen==NULL) {
-    log_info("HPSDR: no default screen!\n");
+  GdkDisplay *display=gdk_display_get_default();
+  if(display==NULL) {
+    log_info("HPSDR: no default display!\n");
     _exit(0);
   }
 
@@ -555,7 +548,8 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   GtkWidget *opengl_widget=gtk_gl_area_new();
   opengl=opengl_widget!=NULL;
   if(opengl_widget!=NULL) {
-    gtk_widget_destroy(opengl_widget);
+    g_object_ref_sink(opengl_widget);
+    g_object_unref(opengl_widget);
   }
 #endif
   log_info("opengl: %d\n",opengl);
@@ -592,30 +586,32 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   snprintf(title,sizeof(title),"MacHPSDR (%s, %s)",version,build_date);
   gtk_window_set_title (GTK_WINDOW (main_window), title);
   gtk_window_set_resizable(GTK_WINDOW(main_window), TRUE);
-  GError *error = NULL;
-  if(!gtk_window_set_icon_from_file (GTK_WINDOW(main_window), png_path, &error)) {
-    log_info("Warning: failed to set icon for main_window: %s\n",png_path);
-    if(error!=NULL) {
-      log_info("%s\n",error->message);
-    }
-  }
-  g_signal_connect (main_window, "delete-event", G_CALLBACK (main_delete), NULL);
-  g_signal_connect (main_window, "key-press-event", G_CALLBACK (receiver_key_press_event), NULL);
-  g_signal_connect (main_window, "key-release-event", G_CALLBACK (receiver_key_release_event), NULL);
+  // GTK4 removed gtk_window_set_icon_from_file (icons come from the icon theme).
+  // The .app bundle carries the dock icon; the themed name below is a best-effort
+  // fallback for a window icon and harmlessly no-ops if the theme lacks it.
+  (void)png_path;
+  gtk_window_set_icon_name(GTK_WINDOW(main_window), "machpsdr");
+
+  g_signal_connect (main_window, "close-request", G_CALLBACK (main_delete), NULL);
+
+  // GTK4: key events come from a controller attached to the window, not from
+  // "key-press-event"/"key-release-event" signals (removed).
+  GtkEventController *keys=gtk_event_controller_key_new();
+  g_signal_connect(keys, "key-pressed",  G_CALLBACK(receiver_key_pressed),  NULL);
+  g_signal_connect(keys, "key-released", G_CALLBACK(receiver_key_released), NULL);
+  gtk_widget_add_controller(main_window, keys);
 
   grid = gtk_grid_new();
   //gtk_widget_set_size_request(grid, 800, 480);
   //gtk_grid_set_row_homogeneous(GTK_GRID(grid),TRUE);
   //gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
 
-  image_event_box=gtk_event_box_new();
+  // Splash image (GTK4: GtkPicture renders a file at natural size; GtkImage
+  // would clamp it to icon size. No GtkEventBox — it caught no events here.)
+  image=gtk_picture_new_for_filename(png_path);
+  gtk_grid_attach(GTK_GRID(grid), image, 0, 0, 1, 1);
 
-  image=gtk_image_new_from_file(png_path);
-  gtk_container_add(GTK_CONTAINER(image_event_box),image);
-  gtk_grid_attach(GTK_GRID(grid), image_event_box, 0, 0, 1, 1);
-  gtk_widget_set_events(image_event_box, gtk_widget_get_events(image_event_box)|GDK_BUTTON_PRESS_MASK);
-
-  gtk_container_add (GTK_CONTAINER (main_window), grid);
+  gtk_window_set_child (GTK_WINDOW (main_window), grid);
 
   retry=gtk_button_new_with_label("Retry Discovery");
   g_signal_connect(retry,"clicked",G_CALLBACK(retry_cb),NULL);
