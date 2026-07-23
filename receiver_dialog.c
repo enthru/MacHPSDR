@@ -310,6 +310,12 @@ static void tx_cb(GtkWidget *widget, gpointer data) {
   transmitter_set_mode(radio->transmitter,rx->mode_a);
 }
 
+static void meter_smoothing_value_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->meter_smoothing=(int)gtk_range_get_value(GTK_RANGE(widget));
+  rx->meter_needle_init=0;   // reseed so the needle snaps to the live reading
+}
+
 static void fps_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->fps=gtk_range_get_value(GTK_RANGE(widget));
@@ -997,6 +1003,17 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_check_button_set_active (GTK_CHECK_BUTTON (show_panadapter), rx->show_panadapter);
   gtk_grid_attach(GTK_GRID(panadapter_grid),show_panadapter,0,9,2,1);
   g_signal_connect(show_panadapter,"toggled",G_CALLBACK(show_panadapter_cb),rx);
+
+  // S-meter needle ballistics (0 = instant, 100 = heaviest damping).
+  GtkWidget *meter_smoothing_label=gtk_label_new("Meter smoothing:");
+  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_label,0,10,1,1);
+
+  GtkWidget *meter_smoothing_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->meter_smoothing, 0.0, 100.0, 1.0, 10.0, 1.0));
+  gtk_widget_set_size_request(meter_smoothing_scale,200,30);
+  sui_scale_show_value(meter_smoothing_scale,0);
+  gtk_widget_set_visible(meter_smoothing_scale, TRUE);
+  g_signal_connect(G_OBJECT(meter_smoothing_scale),"value_changed",G_CALLBACK(meter_smoothing_value_changed_cb),rx);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_scale,1,10,1,1);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();

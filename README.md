@@ -108,7 +108,10 @@ you've dialled in.
   Violet, Magenta, Cyan) instead of a numeric spin box. A **Show Panadapter**
   check box (per receiver, in the receiver settings dialog) turns the
   spectroscope off entirely — the waterfall then fills the whole spectrum area;
-  the setting is remembered per receiver.
+  the setting is remembered per receiver. A **Meter smoothing** slider (also per
+  receiver, in the receiver settings dialog) sets the S-meter needle ballistics —
+  0 makes it track instantly, higher values damp it like a mechanical meter
+  (fast attack, slower decay); the default is 50 and it is remembered per receiver.
 
 - **Freetune.** A tuning mode where the cursor moves within the visible span;
   exiting keeps the frequency you were on, and the radio retunes automatically

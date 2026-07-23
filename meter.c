@@ -139,14 +139,24 @@ void update_meter(RECEIVER *rx) {
 
   // --- Analog-meter ballistics -------------------------------------------
   // Ease the needle toward the measured level instead of snapping to it each
-  // frame, so it moves like a mechanical S-meter. Fast attack (rising signal
-  // catches up quickly) and a slower decay (peaks linger, then settle). The
-  // per-frame coefficients are derived from time constants so the feel stays
-  // consistent regardless of the receiver's display fps.
-  {
+  // frame, so it moves like a mechanical S-meter. The strength is the per-RX
+  // "Meter smoothing" setting (0 = off/instant .. 100 = max); it scales the
+  // decay time constant (0..0.5 s), with a fast attack kept at 1/5 of decay so
+  // rising signals catch up quickly while peaks linger and settle. The
+  // per-frame coefficients are derived from those time constants so the feel
+  // stays consistent regardless of the receiver's display fps.
+  double needle_level;
+  int smoothing = rx->meter_smoothing;
+  if(smoothing < 0)   smoothing = 0;
+  if(smoothing > 100) smoothing = 100;
+  if(smoothing == 0) {
+    rx->meter_needle_db = level;     // no smoothing: track exactly
+    rx->meter_needle_init = 1;
+    needle_level = level;
+  } else {
     int fps = rx->fps > 0 ? rx->fps : 20;
-    const double t_attack = 0.050;   // seconds to ~63% on a rising reading
-    const double t_decay  = 0.250;   // seconds to ~63% on a falling reading
+    double t_decay  = 0.5 * ((double)smoothing / 100.0);  // seconds to ~63% falling
+    double t_attack = t_decay / 5.0;                       // faster rise
     double a_attack = 1.0 - exp(-1.0 / ((double)fps * t_attack));
     double a_decay  = 1.0 - exp(-1.0 / ((double)fps * t_decay));
     if(!rx->meter_needle_init) {
@@ -156,8 +166,8 @@ void update_meter(RECEIVER *rx) {
       double a = (level > rx->meter_needle_db) ? a_attack : a_decay;
       rx->meter_needle_db += (level - rx->meter_needle_db) * a;
     }
+    needle_level = rx->meter_needle_db;
   }
-  double needle_level = rx->meter_needle_db;
 
   double offset=210.0;
   int i;

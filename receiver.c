@@ -126,6 +126,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].fps",rx->channel);
   sprintf(value,"%d",rx->fps);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].meter_smoothing",rx->channel);
+  sprintf(value,"%d",rx->meter_smoothing);
+  setProperty(name,value);
 
   sprintf(name,"receiver[%d].display_average_time",rx->channel);
   sprintf(value,"%f",rx->display_average_time);
@@ -671,6 +674,10 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].fps",rx->channel);
   value=getProperty(name);
   if(value) rx->fps=atoi(value);
+
+  sprintf(name,"receiver[%d].meter_smoothing",rx->channel);
+  value=getProperty(name);
+  if(value) rx->meter_smoothing=atoi(value);
 
   sprintf(name,"receiver[%d].display_average_time",rx->channel);
   value=getProperty(name);
@@ -2512,6 +2519,7 @@ log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->output_started=FALSE;
 
   rx->fps=25;
+  rx->meter_smoothing=50;   // half-strength S-meter needle ballistics by default
   rx->display_average_time=40.0;
 
   // Must equal buffer_size for wideband receivers so in_size==dsp_insize for the

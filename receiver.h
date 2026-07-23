@@ -185,6 +185,7 @@ typedef struct _receiver {
 
   gint smeter;
   double meter_db;
+  int    meter_smoothing;   // S-meter needle ballistics, 0 = off (instant) .. 100 = max
   double meter_needle_db;   // smoothed value driving the analog needle (ballistics)
   int    meter_needle_init; // 0 until the needle has been seeded to the first reading
 
