@@ -117,7 +117,9 @@ static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer dat
   else if(strncmp("OC",text,2)==0) {
     update_oc_dialog(radio);
   }
-  g_free(text);
+  // gtk_stack_page_get_title() returns a GTK-owned (transfer-none) string —
+  // do NOT free it (freeing it crashed with "pointer being freed was not
+  // allocated" on every page navigation).
 }
 
 GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
