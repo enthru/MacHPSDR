@@ -1590,7 +1590,8 @@ void calculate_display_average(RECEIVER *rx) {
 
 void receiver_fps_changed(RECEIVER *rx) {
   g_source_remove(rx->update_timer_id);
-  rx->update_timer_id=g_timeout_add(1000/rx->fps,update_timer_cb,(gpointer)rx);
+  int poll_ms=1000/(3*rx->fps); if(poll_ms<8) poll_ms=8;   // oversample vs frame production
+  rx->update_timer_id=g_timeout_add(poll_ms,update_timer_cb,(gpointer)rx);
   calculate_display_average(rx);
 }
 
@@ -2701,7 +2702,13 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   }
   update_frequency(rx);
 
-  rx->update_timer_id=g_timeout_add(1000/rx->fps,update_timer_cb,(gpointer)rx);
+  // Poll the display faster than WDSP produces frames (production ~= fps, tied to
+  // the analyzer overlap). Polling AT fps aliased against the ~fps production and
+  // caught new frames at irregular 40/80 ms intervals -> the waterfall juddered
+  // unevenly. Oversampling (3x) catches each frame promptly, so the scroll
+  // advances at the production cadence (regular, since the RX feed is real-time).
+  int poll_ms=1000/(3*rx->fps); if(poll_ms<8) poll_ms=8;
+  rx->update_timer_id=g_timeout_add(poll_ms,update_timer_cb,(gpointer)rx);
 
 
   if(rx->local_audio) {
