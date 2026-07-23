@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MacHPSDR is a GTK3-based SDR (Software Defined Radio) control application for HPSDR hardware, written in C. It is a personal fork of [LinHPSDR](https://github.com/g0orx/linhpsdr) by John Melton (G0ORX/N6LYT), with a primary focus on macOS compatibility and several feature additions (freetune mode, waterfall themes, ppm correction, att10/att20 filter control, etc.). Licensed under the GNU GPL (v2 or later); see `LICENSE` and `NOTICE`.
+MacHPSDR is a GTK4-based SDR (Software Defined Radio) control application for HPSDR hardware, written in C. It is a personal fork of [LinHPSDR](https://github.com/g0orx/linhpsdr) by John Melton (G0ORX/N6LYT), with a primary focus on macOS compatibility and several feature additions (freetune mode, waterfall themes, ppm correction, att10/att20 filter control, etc.). Licensed under the GNU GPL (v2 or later); see `LICENSE` and `NOTICE`.
 
 The binary, install paths and config directory use the lowercase name `machpsdr`; the display name (window title, About dialog, `.app` bundle) is `MacHPSDR`.
 
@@ -37,12 +37,12 @@ skipped and the fake radio starts straight up, so it can be launched headless
 
 ### macOS (via Homebrew)
 ```bash
-brew install fftw gtk+3 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
+brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
 ```
 
 ### Linux (via apt)
 ```bash
-sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev libasound2-dev libgtk-3-dev libsoapysdr-dev
+sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev libasound2-dev libgtk-4-dev libsoapysdr-dev
 ```
 
 ### WDSP (vendored — do NOT install upstream)

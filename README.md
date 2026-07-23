@@ -2,7 +2,7 @@
 
 # MacHPSDR
 
-**A GTK3 SDR control application for HPSDR hardware — a macOS-focused fork of [LinHPSDR](https://github.com/g0orx/linhpsdr).**
+**A GTK4 SDR control application for HPSDR hardware — a macOS-focused fork of [LinHPSDR](https://github.com/g0orx/linhpsdr).**
 
 *Single-window UI · colour skins · Broadcast FM + RDS · FT8/FT4 decode & QSO · SoapySDR RX/TX · I/Q recorder*
 
@@ -353,7 +353,7 @@ Development and testing has been run on macOS Sierra 10.12.6 and High Sierra
 10.13.6. Prerequisites are installed with [Homebrew](https://brew.sh/).
 
 ```bash
-brew install fftw gtk+3 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
+brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
 ```
 
 ```bash
@@ -436,12 +436,12 @@ cmake --build SoapySDRPlay3/build -j$(sysctl -n hw.ncpu) && cmake --install Soap
 
 ### Linux
 
-Development and testing has been run on Ubuntu and Arch Linux. On very early GTK
-versions there may be an issue with `gtk_menu_popup_at_pointer` in `vfo.c`.
+Development and testing has been run on Ubuntu and Arch Linux. The build now
+requires **GTK 4** (`libgtk-4-dev` / `gtk4`); GTK 3 is no longer supported.
 
 ```bash
 sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev \
-                     libasound2-dev libgtk-3-dev libsoapysdr-dev
+                     libasound2-dev libgtk-4-dev libsoapysdr-dev
 ```
 
 ```bash
