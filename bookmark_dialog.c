@@ -59,11 +59,56 @@ enum {
   N_COLUMNS
 };
 
-static GtkListStore *store;
+// GTK4: GtkTreeView/GtkListStore are deprecated. The bookmark list is a
+// GtkColumnView over a GListStore of BookmarkItem GObjects; each item carries a
+// BOOKMARK* so selection/edit/delete/activate map straight to the bookmark (no
+// string re-matching against bookmark_head). Column sorting uses a per-column
+// GtkCustomSorter (g_utf8_collate on the display string), same as the old
+// compare_func.
+enum { N_BM_COLS = N_COLUMNS };
+#define BM_TYPE_ITEM (bm_item_get_type())
+G_DECLARE_FINAL_TYPE(BmItem, bm_item, BM, ITEM, GObject)
+struct _BmItem { GObject parent_instance; char *col[N_BM_COLS]; BOOKMARK *bmk; };
+G_DEFINE_TYPE(BmItem, bm_item, G_TYPE_OBJECT)
+static void bm_item_finalize(GObject *o) {
+  BmItem *it = BM_ITEM(o);
+  for(int c=0;c<N_BM_COLS;c++) g_free(it->col[c]);
+  G_OBJECT_CLASS(bm_item_parent_class)->finalize(o);
+}
+static void bm_item_class_init(BmItemClass *k){ G_OBJECT_CLASS(k)->finalize = bm_item_finalize; }
+static void bm_item_init(BmItem *it){ }
+
+static GListStore *store;
 static GtkWidget *view;
-static GtkCellRenderer *renderer;
-static GtkTreeIter iter;
-static GtkTreeSortable *sortable;
+static GtkSingleSelection *bm_selection;   // over the sorted model
+
+static void bm_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  GtkWidget *lbl = gtk_label_new(NULL);
+  gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+  gtk_list_item_set_child(li, lbl);
+}
+static void bm_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  int c = GPOINTER_TO_INT(u);
+  BmItem *it = gtk_list_item_get_item(li);
+  const char *s = (it && it->col[c]) ? it->col[c] : "";
+  gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), s);
+}
+static int bm_sort(const void *a, const void *b, gpointer u) {
+  int c = GPOINTER_TO_INT(u);
+  const char *as = ((BmItem*)a)->col[c], *bs = ((BmItem*)b)->col[c];
+  if(as==NULL || bs==NULL) return (as==bs) ? 0 : (as==NULL ? -1 : 1);
+  return g_utf8_collate(as, bs);
+}
+static GtkColumnViewColumn *bm_col(const char *title, int colid) {
+  GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+  g_signal_connect(f,"setup",G_CALLBACK(bm_setup),NULL);
+  g_signal_connect(f,"bind",G_CALLBACK(bm_bind),GINT_TO_POINTER(colid));
+  GtkColumnViewColumn *col = gtk_column_view_column_new(title, f);
+  GtkSorter *s = GTK_SORTER(gtk_custom_sorter_new(bm_sort, GINT_TO_POINTER(colid), NULL));
+  gtk_column_view_column_set_sorter(col, s);
+  g_object_unref(s);
+  return col;
+}
 
 static char *split_char[] = {"OFF","SPLIT","SAT","RSAT"};
 
@@ -224,130 +269,44 @@ static gboolean update_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
-static void tree_selection_changed_cb (GtkTreeSelection *selection, gpointer data) {
-  GtkTreeIter iter;
-  GtkTreeModel *model;
-  gchar *name;
-  gchar *frequency_a;
-  gchar *frequency_b;
-  gchar *ctun_frequency;
-  gchar *ctun;
-  gchar *mode;
-  gchar *filter;
-  gchar *split;
-
-  if (gtk_tree_selection_get_selected(selection,&model,&iter)) {
-    gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_A_COLUMN, &frequency_a, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_B_COLUMN, &frequency_b, -1);
-    gtk_tree_model_get(model,&iter, CTUN_FREQUENCY_COLUMN, &ctun_frequency, -1);
-    gtk_tree_model_get(model,&iter, CTUN_COLUMN, &ctun, -1);
-    gtk_tree_model_get(model,&iter, MODE_COLUMN, &mode, -1);
-    gtk_tree_model_get(model,&iter, FILTER_COLUMN, &filter, -1);
-    gtk_tree_model_get(model,&iter, SPLIT_COLUMN, &split, -1);
-    BOOKMARK *bookmark=bookmark_head;
-    while(bookmark!=NULL) {
-      if(g_strcmp0(name,bookmark->name)==0) {
-        break;
-      }
-      bookmark=(BOOKMARK *)bookmark->next;
-    }
-    g_free (name);
-  }
+// The currently-selected bookmark, or NULL.
+static BOOKMARK *bm_selected(void) {
+  if(bm_selection==NULL) return NULL;
+  BmItem *it = gtk_single_selection_get_selected_item(bm_selection);
+  return it ? it->bmk : NULL;
 }
 
 void edit_cb(GtkWidget *menuitem,gpointer data) {
-  GtkTreeSelection *selection;
-  GtkTreeModel *model;
-  GtkTreeIter   iter;
-  gchar *name;
-  gchar *frequency_a;
-  gchar *frequency_b;
-  gchar *ctun_frequency;
-  gchar *ctun;
-  gchar *mode;
-  gchar *filter;
-  gchar *split;
   RECEIVER *rx=(RECEIVER *)data;
-  BOOKMARK *bookmark=bookmark_head;
-
-  model = gtk_tree_view_get_model(GTK_TREE_VIEW(view));
-  selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-  if (gtk_tree_selection_get_selected(selection,&model,&iter)) {
-    gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_A_COLUMN, &frequency_a, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_B_COLUMN, &frequency_b, -1);
-    gtk_tree_model_get(model,&iter, CTUN_FREQUENCY_COLUMN, &ctun_frequency, -1);
-    gtk_tree_model_get(model,&iter, CTUN_COLUMN, &ctun, -1);
-    gtk_tree_model_get(model,&iter, MODE_COLUMN, &mode, -1);
-    gtk_tree_model_get(model,&iter, FILTER_COLUMN, &filter, -1);
-    gtk_tree_model_get(model,&iter, SPLIT_COLUMN, &split, -1);
-    while(bookmark!=NULL) {
-      if(g_strcmp0(name,bookmark->name)==0) {
-        break;
-      }
-      bookmark=(BOOKMARK *)bookmark->next;
-    }
-    //g_free (name);
-    if(bookmark!=NULL) {
-      // edit this one
-      gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
-      rx->bookmark_dialog=create_bookmark_dialog(rx,EDIT_BOOKMARK,bookmark);
-    }
+  BOOKMARK *bookmark=bm_selected();
+  if(bookmark!=NULL) {
+    // edit this one
+    gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
+    rx->bookmark_dialog=create_bookmark_dialog(rx,EDIT_BOOKMARK,bookmark);
   }
-
 }
 
 void delete_cb(GtkWidget *menuitem,gpointer data) {
-  GtkTreeSelection *selection;
-  GtkTreeModel *model;
-  GtkTreeIter   iter;
-  gchar *name;
-  gchar *frequency_a;
-  gchar *frequency_b;
-  gchar *ctun_frequency;
-  gchar *ctun;
-  gchar *mode;
-  gchar *filter;
-  gchar *split;
-
-  model = gtk_tree_view_get_model(GTK_TREE_VIEW(view));
-  selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-  if (gtk_tree_selection_get_selected(selection,&model,&iter)) {
-    gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_A_COLUMN, &frequency_a, -1);
-    gtk_tree_model_get(model,&iter, FREQUENCY_B_COLUMN, &frequency_b, -1);
-    gtk_tree_model_get(model,&iter, CTUN_FREQUENCY_COLUMN, &ctun_frequency, -1);
-    gtk_tree_model_get(model,&iter, CTUN_COLUMN, &ctun, -1);
-    gtk_tree_model_get(model,&iter, MODE_COLUMN, &mode, -1);
-    gtk_tree_model_get(model,&iter, FILTER_COLUMN, &filter, -1);
-    gtk_tree_model_get(model,&iter, SPLIT_COLUMN, &split, -1);
-    BOOKMARK *bookmark=bookmark_head;
-    while(bookmark!=NULL) {
-      if(g_strcmp0(name,bookmark->name)==0) {
-        break;
-      }
-      bookmark=(BOOKMARK *)bookmark->next;
+  BmItem *it = bm_selection ? gtk_single_selection_get_selected_item(bm_selection) : NULL;
+  BOOKMARK *bookmark = it ? it->bmk : NULL;
+  if(bookmark!=NULL) {
+    // unlink from the bookmark list
+    if(bookmark->previous==NULL) {
+      bookmark_head=bookmark->next;
+    } else {
+      BOOKMARK *p=(BOOKMARK *)bookmark->previous;
+      p->next=bookmark->next;
     }
-    g_free (name);
-    if(bookmark!=NULL) {
-      // delete this one
-      if(bookmark->previous==NULL) {
-        // first in list
-        bookmark_head=bookmark->next;
-      } else {
-        BOOKMARK *p=(BOOKMARK *)bookmark->previous;
-        p->next=bookmark->next;
-      }
-      if(bookmark->next==NULL) {
-        bookmark_tail=bookmark->previous;
-      } else {
-        BOOKMARK *n=(BOOKMARK *)bookmark->next;
-        n->previous=bookmark->previous;
-      }
-      gtk_list_store_remove(GTK_LIST_STORE(model), &iter);
-      save_bookmarks();
+    if(bookmark->next==NULL) {
+      bookmark_tail=bookmark->previous;
+    } else {
+      BOOKMARK *n=(BOOKMARK *)bookmark->next;
+      n->previous=bookmark->previous;
     }
+    // remove the row from the store (found by identity)
+    guint pos;
+    if(g_list_store_find(store, it, &pos)) g_list_store_remove(store, pos);
+    save_bookmarks();
   }
 }
 
@@ -370,12 +329,9 @@ void bookmark_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double p
   RECEIVER *rx=(RECEIVER *)data;
   if(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture))!=3) return;
   GtkWidget *view=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-  GtkTreeModel *model=gtk_tree_view_get_model(GTK_TREE_VIEW(view));
-  GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-  GtkTreeIter iter;
-  if(!gtk_tree_selection_get_selected(selection,&model,&iter)) return;
-  gchar *name=NULL;
-  gtk_tree_model_get(model,&iter, NAME_COLUMN, &name, -1);
+  BOOKMARK *bookmark=bm_selected();
+  if(bookmark==NULL) return;
+  const char *name=bookmark->name;
   char label[128];
 
   GtkWidget *pop=gtk_popover_new();
@@ -392,40 +348,15 @@ void bookmark_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double p
 
   g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
   gtk_popover_popup(GTK_POPOVER(pop));
-  g_free(name);
 }
 
-void tree_selection_activated_cb(GtkTreeView *treeview,GtkTreePath *path,GtkTreeViewColumn *col,gpointer data) {
-  GtkTreeModel *model;
-  GtkTreeIter   iter;
-  gchar *name;
-  gchar *frequency_a;
-  gchar *frequency_b;
-  gchar *ctun_frequency;
-  gchar *ctun;
-  gchar *mode;
-  gchar *filter;
-  gchar *split;
+// GtkColumnView "activate" (double-click): pos indexes the (sorted) model.
+void tree_selection_activated_cb(GtkColumnView *cv,guint pos,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-
-  model = gtk_tree_view_get_model(treeview);
-  if (gtk_tree_model_get_iter(model, &iter, path)) {
-    gtk_tree_model_get(model,&iter,NAME_COLUMN,&name, -1);
-    gtk_tree_model_get(model,&iter,FREQUENCY_A_COLUMN,&frequency_a, -1);
-    gtk_tree_model_get(model,&iter,FREQUENCY_B_COLUMN,&frequency_b, -1);
-    gtk_tree_model_get(model,&iter,CTUN_FREQUENCY_COLUMN,&ctun_frequency, -1);
-    gtk_tree_model_get(model,&iter,CTUN_COLUMN,&ctun, -1);
-    gtk_tree_model_get(model,&iter,MODE_COLUMN,&mode, -1);
-    gtk_tree_model_get(model,&iter,FILTER_COLUMN,&filter, -1);
-    gtk_tree_model_get(model,&iter,SPLIT_COLUMN,&split, -1);
-    BOOKMARK *bookmark=bookmark_head;
-    while(bookmark!=NULL) {
-      if(g_strcmp0(name,bookmark->name)==0) {
-        break;
-      }
-      bookmark=(BOOKMARK *)bookmark->next;
-    }
-    g_free (name);
+  BmItem *it = g_list_model_get_item(G_LIST_MODEL(bm_selection), pos);   // owned
+  if(it != NULL) {
+    BOOKMARK *bookmark = it->bmk;
+    g_object_unref(it);
     if(bookmark!=NULL) {
       rx->frequency_a=bookmark->frequency_a;
       rx->frequency_b=bookmark->frequency_b;
@@ -449,28 +380,6 @@ void tree_selection_activated_cb(GtkTreeView *treeview,GtkTreePath *path,GtkTree
       }
     }
   }
-}
-
-static gint compare_func(GtkTreeModel *model,GtkTreeIter *a,GtkTreeIter *b,gpointer data) {
-  gint col=GPOINTER_TO_INT(data);
-  gchar *astring, *bstring;
-  gint result=0;
-
-  gtk_tree_model_get(model, a, col, &astring, -1);
-  gtk_tree_model_get(model, b, col, &bstring, -1);
-
-  if (astring == NULL || bstring == NULL) {
-    if (astring == NULL && bstring == NULL) {
-      result=0;
-    } else {
-      result = (astring == NULL) ? -1 : 1;
-    }
-  } else {
-    result = g_utf8_collate(astring,bstring);
-  }
-  g_free(astring);
-  g_free(bstring);
-  return result;
 }
 
 GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark) {
@@ -581,64 +490,51 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
       g_snprintf((gchar *)&temp,sizeof(temp),"Linux HPSDR: RX-%d: Bookmarks",rx->channel);
       gtk_window_set_title(GTK_WINDOW(dialog),temp);
 
-      store=gtk_list_store_new(N_COLUMNS,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING);
-      sortable=GTK_TREE_SORTABLE(store);
-
-      gtk_tree_sortable_set_sort_func(sortable,NAME_COLUMN,compare_func,GINT_TO_POINTER(NAME_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,FREQUENCY_A_COLUMN,compare_func,GINT_TO_POINTER(FREQUENCY_A_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,FREQUENCY_B_COLUMN,compare_func,GINT_TO_POINTER(FREQUENCY_B_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,CTUN_FREQUENCY_COLUMN,compare_func,GINT_TO_POINTER(CTUN_FREQUENCY_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,CTUN_COLUMN,compare_func,GINT_TO_POINTER(CTUN_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,MODE_COLUMN,compare_func,GINT_TO_POINTER(MODE_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,FILTER_COLUMN,compare_func,GINT_TO_POINTER(FILTER_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_func(sortable,SPLIT_COLUMN,compare_func,GINT_TO_POINTER(SPLIT_COLUMN),NULL);
-      gtk_tree_sortable_set_sort_column_id(sortable, NAME_COLUMN, GTK_SORT_ASCENDING);
-
-      view=gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Name", renderer, "text", NAME_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Frequency A", renderer, "text", FREQUENCY_A_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Frequency B", renderer, "text", FREQUENCY_B_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "CTUN Frequency", renderer, "text", CTUN_FREQUENCY_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "CTUN", renderer, "text", CTUN_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Mode", renderer, "text", MODE_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Filter", renderer, "text", FILTER_COLUMN, NULL);
-      renderer=gtk_cell_renderer_text_new();
-      gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Split", renderer, "text", SPLIT_COLUMN, NULL);
+      store=g_list_store_new(BM_TYPE_ITEM);
       BOOKMARK *bmk=bookmark_head;
       while(bmk!=NULL) {
         FILTER* band_filters=filters[bmk->mode];
-        //FILTER* band_filter=&band_filters[bmk->filter]; // TO REMOVE
         g_snprintf((gchar *)&temp_a,sizeof(temp),"%4lld.%03lld.%03lld",bmk->frequency_a/(long int)1000000,(bmk->frequency_a%(long int)1000000)/(long int)1000,bmk->frequency_a%(long int)1000);
         g_snprintf((gchar *)&temp_b,sizeof(temp),"%4lld.%03lld.%03lld",bmk->frequency_b/(long int)1000000,(bmk->frequency_b%(long int)1000000)/(long int)1000,bmk->frequency_b%(long int)1000);
         g_snprintf((gchar *)&temp_ctun_frequency,sizeof(temp_ctun_frequency),"%4lld.%03lld.%03lld",bmk->ctun_frequency/(long int)1000000,(bmk->ctun_frequency%(long int)1000000)/(long int)1000,bmk->ctun_frequency%(long int)1000);
         g_snprintf((gchar *)&temp_ctun,sizeof(temp_ctun),"%d",bmk->ctun);
 
-        gtk_list_store_append(store,&iter);
-        gtk_list_store_set(store,&iter,
-                           NAME_COLUMN, bmk->name,
-                           FREQUENCY_A_COLUMN, temp_a,
-                           FREQUENCY_B_COLUMN, temp_b,
-                           CTUN_FREQUENCY_COLUMN, temp_ctun_frequency,
-                           CTUN_COLUMN, temp_ctun,
-                           MODE_COLUMN, mode_string[bmk->mode],
-                           FILTER_COLUMN, band_filters[bmk->filter].title,
-                           SPLIT_COLUMN, split_char[bmk->split],
-                           -1);
+        BmItem *it = g_object_new(BM_TYPE_ITEM, NULL);
+        it->bmk = bmk;
+        it->col[NAME_COLUMN]           = g_strdup(bmk->name);
+        it->col[FREQUENCY_A_COLUMN]    = g_strdup(temp_a);
+        it->col[FREQUENCY_B_COLUMN]    = g_strdup(temp_b);
+        it->col[CTUN_FREQUENCY_COLUMN] = g_strdup(temp_ctun_frequency);
+        it->col[CTUN_COLUMN]           = g_strdup(temp_ctun);
+        it->col[MODE_COLUMN]           = g_strdup(mode_string[bmk->mode]);
+        it->col[FILTER_COLUMN]         = g_strdup(band_filters[bmk->filter].title);
+        it->col[SPLIT_COLUMN]          = g_strdup(split_char[bmk->split]);
+        g_list_store_append(store, it);
+        g_object_unref(it);
         bmk=(BOOKMARK *)bmk->next;
       }
-      gtk_tree_view_set_headers_clickable(GTK_TREE_VIEW(view),TRUE);
+
+      // sorted model driven by the column view's own sorter, single selection
+      GtkSortListModel *sort_model=gtk_sort_list_model_new(G_LIST_MODEL(store),NULL);
+      bm_selection=gtk_single_selection_new(G_LIST_MODEL(sort_model));  // takes sort_model ref
+      gtk_single_selection_set_autoselect(bm_selection,FALSE);
+      gtk_single_selection_set_can_unselect(bm_selection,TRUE);
+      view=gtk_column_view_new(GTK_SELECTION_MODEL(bm_selection));      // takes selection ref
+      gtk_sort_list_model_set_sorter(sort_model, gtk_column_view_get_sorter(GTK_COLUMN_VIEW(view)));
+
+      GtkColumnViewColumn *name_col=bm_col("Name",NAME_COLUMN);
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), name_col);
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("Frequency A",FREQUENCY_A_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("Frequency B",FREQUENCY_B_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("CTUN Frequency",CTUN_FREQUENCY_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("CTUN",CTUN_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("Mode",MODE_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("Filter",FILTER_COLUMN));
+      gtk_column_view_append_column(GTK_COLUMN_VIEW(view), bm_col("Split",SPLIT_COLUMN));
+      gtk_column_view_sort_by_column(GTK_COLUMN_VIEW(view), name_col, GTK_SORT_ASCENDING);
+
       gtk_grid_attach(GTK_GRID(grid), view, 0, 0, 4, 1);
-      GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-      gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-      g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(tree_selection_changed_cb),rx);
-      g_signal_connect(view,"row-activated", G_CALLBACK(tree_selection_activated_cb), rx);
+      g_signal_connect(view,"activate", G_CALLBACK(tree_selection_activated_cb), rx);
       // GTK4: right-click via a gesture controller (button-press-event is gone).
       GtkGesture *bm_click=gtk_gesture_click_new();
       gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(bm_click),3);
