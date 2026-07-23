@@ -410,17 +410,27 @@ void receiver_save_state(RECEIVER *rx) {
     setProperty(name,value);
   }
 
-  rx->paned_position=gtk_paned_get_position(GTK_PANED(rx->vpaned));
-  sprintf(name,"receiver[%d].paned_position",rx->channel);
-  sprintf(value,"%d",rx->paned_position);
-  setProperty(name,value);
-
-  gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
-  double paned_percent=(double)rx->paned_position/(double)paned_height;
-
-  sprintf(name,"receiver[%d].paned_percent",rx->channel);
-  sprintf(value,"%f",paned_percent);
-  setProperty(name,value);
+  {
+    gint position=gtk_paned_get_position(GTK_PANED(rx->vpaned));
+    gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
+    // Persist the panadapter/waterfall split only when it is sane. Saving a 0
+    // (panadapter collapsed, or the vpaned not yet allocated so height<=1)
+    // poisons paned_percent and collapses the spectroscope on the next launch
+    // — and, once saved, self-perpetuates. Leave the previous good value be.
+    if(paned_height>1 && position>0) {
+      rx->paned_position=position;
+      double paned_percent=(double)position/(double)paned_height;
+      sprintf(name,"receiver[%d].paned_position",rx->channel);
+      sprintf(value,"%d",rx->paned_position);
+      setProperty(name,value);
+      sprintf(name,"receiver[%d].paned_percent",rx->channel);
+      sprintf(value,"%f",paned_percent);
+      setProperty(name,value);
+      log_info("receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
+    } else {
+      log_info("receiver_save_sate: skip degenerate paned (pos=%d height=%d)\n",position,paned_height);
+    }
+  }
 
   sprintf(name,"receiver[%d].show_rx",rx->channel);
   sprintf(value,"%i", rx->show_rx);
@@ -434,8 +444,6 @@ void receiver_save_state(RECEIVER *rx) {
   // settings are retained but the receiver is not auto-recreated on start-up.
   sprintf(name,"receiver[%d].active",rx->channel);
   setProperty(name,"1");
-
-log_info("receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
 }
 
 void receiver_restore_state(RECEIVER *rx) {
@@ -2226,7 +2234,12 @@ static gboolean restore_paned_position_cb(gpointer data) {
   if(rx->vpaned==NULL) return FALSE;
   gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
   if(paned_height<=1) return TRUE;  // not allocated yet, keep waiting
-  gint position=(gint)((double)paned_height*rx->paned_percent);
+  // Guard a degenerate saved split: 0 collapses the panadapter (spectroscope
+  // invisible), 1 collapses the waterfall, and NaN fails every comparison —
+  // fall back to an even split so the spectrum is always visible.
+  double pct=rx->paned_percent;
+  if(!(pct>0.05 && pct<0.95)) pct=0.5;
+  gint position=(gint)((double)paned_height*pct);
   gtk_paned_set_position(GTK_PANED(rx->vpaned),position);
   return FALSE;  // done, stop the timeout
 }
@@ -2656,8 +2669,12 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   // so sync the FT8 waterfall now (it appears only if DIGU + panel already open).
   receiver_ft8_waterfall_sync(rx);
 #endif
-  if(rx->vpaned!=NULL && rx->paned_position!=-1 && rx->paned_percent>0.0) {
-    // Defer until the vpaned actually has a height (see restore_paned_position_cb).
+  if(rx->vpaned!=NULL) {
+    // Always position the panadapter/waterfall split once the vpaned has a real
+    // height (see restore_paned_position_cb): it uses the saved fraction, or an
+    // even 0.5 fallback when that is missing/degenerate. Gating this on a
+    // positive saved percent (as before) left a 0 / never-saved split at GTK4's
+    // default, which collapsed the panadapter (spectroscope invisible).
     g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
   }
   update_frequency(rx);
