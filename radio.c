@@ -409,13 +409,15 @@ log_info("radio_save_state: %s\n",filename);
   midi_save_state();
 #endif
 
-  gtk_window_get_position(GTK_WINDOW(main_window),&x,&y);
+  // GTK4: no client-side window position; persist -1 (ignored on restore).
+  x=-1; y=-1;
   sprintf(value,"%d",x);
   setProperty("radio.x",value);
   sprintf(value,"%d",y);
   setProperty("radio.y",value);
 
-  gtk_window_get_size(GTK_WINDOW(main_window),&width,&height);
+  width=gtk_widget_get_width(main_window);
+  height=gtk_widget_get_height(main_window);
   sprintf(value,"%d",width);
   setProperty("radio.width",value);
   sprintf(value,"%d",height);
@@ -424,9 +426,8 @@ log_info("radio_save_state: %s\n",filename);
   // Save inter-receiver GtkPaned divider positions as fractions of each pane's
   // height, so they restore sensibly even if the window is a different size.
   if(radio->rx_container!=NULL) {
-    GList *children=gtk_container_get_children(GTK_CONTAINER(radio->rx_container));
-    GtkWidget *w=(children!=NULL)?GTK_WIDGET(children->data):NULL;
-    g_list_free(children);
+    // GTK4: iterate children directly (gtk_container_get_children is gone).
+    GtkWidget *w=gtk_widget_get_first_child(radio->rx_container);
     int k=0;
     while(w!=NULL && GTK_IS_PANED(w)) {
       int ph=gtk_widget_get_allocated_height(w);
@@ -435,7 +436,7 @@ log_info("radio_save_state: %s\n",filename);
       sprintf(value,"%f",frac);
       setProperty(name,value);
       k++;
-      w=gtk_paned_get_child2(GTK_PANED(w));
+      w=gtk_paned_get_end_child(GTK_PANED(w));
     }
   }
 
@@ -645,9 +646,11 @@ void radio_restore_state(RADIO *radio) {
   bandRestoreState();
 }
 
-gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+// GTK4: GtkGestureClick "pressed" handler (button read from the gesture).
+void radio_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
   log_info("%s\n",__FUNCTION__);
-  switch(event->button) {
+  guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  switch(button) {
     case 1: // left button
       break;
     case 3: // right button
@@ -657,7 +660,6 @@ gboolean radio_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, g
       }
       break;
   }
-  return TRUE;
 }
 
 void radio_change_region(RADIO *r) {
@@ -1272,9 +1274,7 @@ static gboolean rx_stack_balance(gpointer data) {
   }
   if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
 
-  GList *children=gtk_container_get_children(GTK_CONTAINER(r->rx_container));
-  GtkWidget *w=(children!=NULL)?GTK_WIDGET(children->data):NULL;
-  g_list_free(children);
+  GtkWidget *w=gtk_widget_get_first_child(r->rx_container);
 
   // On the first balance after startup, restore saved divider positions (stored
   // as fractions of each pane's height); afterwards, and for a fresh config,
@@ -1298,9 +1298,26 @@ static gboolean rx_stack_balance(gpointer data) {
     gtk_paned_set_position(GTK_PANED(w),slot);
     remaining-=slot;
     k++;
-    w=gtk_paned_get_child2(GTK_PANED(w));
+    w=gtk_paned_get_end_child(GTK_PANED(w));
   }
   return FALSE;
+}
+
+// GTK4: there is no generic gtk_container_remove — detach a child from whatever
+// container currently parents it (Box / Paned handled; else low-level unparent).
+static void child_remove_from_parent(GtkWidget *child) {
+  GtkWidget *parent=gtk_widget_get_parent(child);
+  if(parent==NULL) return;
+  if(GTK_IS_PANED(parent)) {
+    if(gtk_paned_get_start_child(GTK_PANED(parent))==child)
+      gtk_paned_set_start_child(GTK_PANED(parent),NULL);
+    else
+      gtk_paned_set_end_child(GTK_PANED(parent),NULL);
+  } else if(GTK_IS_BOX(parent)) {
+    gtk_box_remove(GTK_BOX(parent),child);
+  } else {
+    gtk_widget_unparent(child);
+  }
 }
 
 // Rebuild the vertical stack of receiver panels in radio->rx_container. Visible
@@ -1322,7 +1339,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
       GtkWidget *t=rx->table;
       g_object_ref(t);
       GtkWidget *parent=gtk_widget_get_parent(t);
-      if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),t);
+      child_remove_from_parent(t);
       tables[n++]=t;
     }
   }
@@ -1331,7 +1348,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
   if(r->ft8_panel!=NULL) {
     g_object_ref(r->ft8_panel);
     GtkWidget *parent=gtk_widget_get_parent(r->ft8_panel);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->ft8_panel);
+    child_remove_from_parent(r->ft8_panel);
     tables[n++]=r->ft8_panel;
   }
   // The SSTV image panel is mutually exclusive with the FT8 panel (different
@@ -1339,7 +1356,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
   if(r->sstv_panel!=NULL) {
     g_object_ref(r->sstv_panel);
     GtkWidget *parent=gtk_widget_get_parent(r->sstv_panel);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->sstv_panel);
+    child_remove_from_parent(r->sstv_panel);
     tables[n++]=r->sstv_panel;
   }
   // The WEFAX image panel is likewise mutually exclusive with the FT8/SSTV panels
@@ -1347,18 +1364,18 @@ void radio_rebuild_rx_stack(RADIO *r) {
   if(r->wefax_panel!=NULL) {
     g_object_ref(r->wefax_panel);
     GtkWidget *parent=gtk_widget_get_parent(r->wefax_panel);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),r->wefax_panel);
+    child_remove_from_parent(r->wefax_panel);
     tables[n++]=r->wefax_panel;
   }
 
   // Destroy whatever remains in the container: the old paned skeleton plus any
   // orphaned panel (e.g. a receiver that was just closed). Live panels were
   // unparented above so they survive this.
-  GList *children=gtk_container_get_children(GTK_CONTAINER(r->rx_container));
-  for(GList *l=children;l!=NULL;l=l->next) {
-    gtk_widget_destroy(GTK_WIDGET(l->data));
+  // GTK4: removing a box child drops the last ref and finalizes it.
+  GtkWidget *leftover;
+  while((leftover=gtk_widget_get_first_child(r->rx_container))!=NULL) {
+    gtk_box_remove(GTK_BOX(r->rx_container),leftover);
   }
-  g_list_free(children);
 
   // Build the new layout.
   if(n==1) {
@@ -1368,12 +1385,16 @@ void radio_rebuild_rx_stack(RADIO *r) {
     GtkWidget *paned=gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     GtkWidget *top=paned;
     for(int k=0;k<n-1;k++) {
-      gtk_paned_pack1(GTK_PANED(paned),tables[k],TRUE,TRUE);
+      gtk_paned_set_start_child(GTK_PANED(paned),tables[k]); gtk_paned_set_resize_start_child(GTK_PANED(paned),TRUE); gtk_paned_set_shrink_start_child(GTK_PANED(paned),TRUE);
       if(k==n-2) {
-        gtk_paned_pack2(GTK_PANED(paned),tables[k+1],TRUE,TRUE);
+        gtk_paned_set_end_child(GTK_PANED(paned),tables[k+1]);
+        gtk_paned_set_resize_end_child(GTK_PANED(paned),TRUE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned),TRUE);
       } else {
         GtkWidget *next=gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-        gtk_paned_pack2(GTK_PANED(paned),next,TRUE,TRUE);
+        gtk_paned_set_end_child(GTK_PANED(paned),next);
+        gtk_paned_set_resize_end_child(GTK_PANED(paned),TRUE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned),TRUE);
         paned=next;
       }
     }
@@ -1417,7 +1438,7 @@ void radio_ft8_panel_sync(RADIO *r) {
     GtkWidget *p=r->ft8_panel;
     r->ft8_panel=NULL;                         // hide from the rebuild below
     GtkWidget *parent=gtk_widget_get_parent(p);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),p);
+    child_remove_from_parent(p);
     g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
     radio_rebuild_rx_stack(r);
   }
@@ -1572,7 +1593,7 @@ void radio_sstv_panel_sync(RADIO *r) {
     GtkWidget *p=r->sstv_panel;
     r->sstv_panel=NULL;                        // hide from the rebuild below
     GtkWidget *parent=gtk_widget_get_parent(p);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),p);
+    child_remove_from_parent(p);
     g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
     radio_rebuild_rx_stack(r);
   }
@@ -1611,7 +1632,7 @@ void radio_wefax_panel_sync(RADIO *r) {
     GtkWidget *p=r->wefax_panel;
     r->wefax_panel=NULL;                        // hide from the rebuild below
     GtkWidget *parent=gtk_widget_get_parent(p);
-    if(parent!=NULL) gtk_container_remove(GTK_CONTAINER(parent),p);
+    child_remove_from_parent(p);
     g_object_unref(p);                          // finalize -> "destroy" -> stops its timer
     radio_rebuild_rx_stack(r);
   }
@@ -1830,7 +1851,7 @@ static GtkWidget *bar_module_ex(const char *title, GtkWidget *content, GtkWidget
   // content takes the remaining height and is vertically centred within it,
   // so short columns (e.g. the transmit buttons) don't hug the top.
   gtk_widget_set_valign(content,GTK_ALIGN_CENTER);
-  gtk_box_pack_start(GTK_BOX(box),content,TRUE,FALSE,0);
+  gtk_box_append(GTK_BOX(box),content); gtk_widget_set_vexpand(content,TRUE);
   if(out_label!=NULL) *out_label=lbl;
   return box;
 }
@@ -2145,8 +2166,8 @@ static void create_visual(RADIO *r) {
 
   if(r->can_transmit) {
     // Module: TX MONITOR - the small transmit panadapter.
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                       bar_module("TX MONITOR",r->transmitter->panadapter),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),
+                       bar_module("TX MONITOR",r->transmitter->panadapter));
     gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
 
     // Module: MIC & DRIVE - three stacked meters.
@@ -2157,8 +2178,8 @@ static void create_visual(RADIO *r) {
     gtk_box_append(GTK_BOX(slider_col),r->mic_gain);
     r->drive_level=create_drive_level(radio->transmitter);
     gtk_box_append(GTK_BOX(slider_col),r->drive_level);
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                       bar_module("MIC & DRIVE",slider_col),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),
+                       bar_module("MIC & DRIVE",slider_col));
     gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
 
     // Module: TRANSMIT - MOX / VOX / Tune.
@@ -2178,8 +2199,8 @@ static void create_visual(RADIO *r) {
     g_signal_connect(r->tune_button,"toggled",G_CALLBACK(tune_cb),(gpointer)r);
     gtk_box_append(GTK_BOX(tx_btn_col),r->tune_button);
 
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                       bar_module("TRANSMIT",tx_btn_col),FALSE,FALSE,0);
+    gtk_box_append(GTK_BOX(r->bottom_bar),
+                       bar_module("TRANSMIT",tx_btn_col));
     gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
   }
 
@@ -2206,8 +2227,8 @@ static void create_visual(RADIO *r) {
   gtk_box_append(GTK_BOX(adc_col),att20_button);
   r->att20_button=att20_button;
 
-  gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                     bar_module("RX FRONT-END",adc_col),FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(r->bottom_bar),
+                     bar_module("RX FRONT-END",adc_col));
 
   // Module: RDS - a 3-line decoder readout (identity / RadioText / now-playing +
   // clock + AF). Its own block, attached to the left cluster and separated by a
@@ -2304,8 +2325,9 @@ static void create_visual(RADIO *r) {
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
   {
     gboolean wfm = r->active_receiver!=NULL && r->active_receiver->mode_a==WFM;
-    gtk_box_pack_start(GTK_BOX(r->bottom_bar),
-                       bar_module_ex(wfm?"RDS":"Decode",decode_row,&r->rds_title),TRUE,TRUE,0);
+    GtkWidget *decode_mod=bar_module_ex(wfm?"RDS":"Decode",decode_row,&r->rds_title);
+    gtk_box_append(GTK_BOX(r->bottom_bar),decode_mod);
+    gtk_widget_set_hexpand(decode_mod,TRUE);
   }
   g_timeout_add(500,rds_update_cb,(gpointer)r);
 
@@ -2350,9 +2372,10 @@ static void create_visual(RADIO *r) {
 #endif
 
   // Setup module pinned to the right edge, teal accent rail to its left.
-  // pack_end order: Setup first -> far right; rail next -> immediately left of it.
-  gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col),FALSE,FALSE,0);
+  // GTK4 has no gtk_box_pack_end; append the rail first, then SETUP, so SETUP
+  // ends up rightmost with the rail immediately to its left.
   gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(TRUE));
+  gtk_box_append(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col));
 
   gtk_widget_set_visible(r->visual, TRUE);
 
