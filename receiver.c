@@ -2158,7 +2158,14 @@ void receiver_init_analyzer(RECEIVER *rx) {
     int fft_size = 8192;
     int window_type = 4;
     double kaiser_pi = 14.0;
-    int overlap = 2048;
+    // WDSP advances (fft_size - overlap) samples per spectrum frame, so the
+    // display frame rate is sample_rate/(fft_size-overlap). A hardcoded overlap
+    // (was 2048) made that rate depend on the sample rate — e.g. only ~15 fps at
+    // 96 kHz — which the fps-rate GetPixels poll then aliased into a jerky
+    // waterfall. Tie overlap to sample_rate/fps (the canonical linhpsdr formula)
+    // so a new frame lands every 1/fps s and the waterfall scrolls smoothly.
+    int overlap = (int)fmax(0.0, ceil((double)fft_size - (double)rx->sample_rate / (double)rx->fps));
+    if(overlap >= fft_size) overlap = fft_size - 1;
     int clip = 0;
     int span_clip_l = 0;
     int span_clip_h = 0;
