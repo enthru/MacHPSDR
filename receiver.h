@@ -185,6 +185,8 @@ typedef struct _receiver {
 
   gint smeter;
   double meter_db;
+  double meter_needle_db;   // smoothed value driving the analog needle (ballistics)
+  int    meter_needle_init; // 0 until the needle has been seeded to the first reading
 
   gint window_x;
   gint window_y;

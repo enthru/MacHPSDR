@@ -137,6 +137,28 @@ void update_meter(RECEIVER *rx) {
 
   double level=rx->meter_db+attenuation;
 
+  // --- Analog-meter ballistics -------------------------------------------
+  // Ease the needle toward the measured level instead of snapping to it each
+  // frame, so it moves like a mechanical S-meter. Fast attack (rising signal
+  // catches up quickly) and a slower decay (peaks linger, then settle). The
+  // per-frame coefficients are derived from time constants so the feel stays
+  // consistent regardless of the receiver's display fps.
+  {
+    int fps = rx->fps > 0 ? rx->fps : 20;
+    const double t_attack = 0.050;   // seconds to ~63% on a rising reading
+    const double t_decay  = 0.250;   // seconds to ~63% on a falling reading
+    double a_attack = 1.0 - exp(-1.0 / ((double)fps * t_attack));
+    double a_decay  = 1.0 - exp(-1.0 / ((double)fps * t_decay));
+    if(!rx->meter_needle_init) {
+      rx->meter_needle_db = level;   // seed on first draw: no wild sweep from 0
+      rx->meter_needle_init = 1;
+    } else {
+      double a = (level > rx->meter_needle_db) ? a_attack : a_decay;
+      rx->meter_needle_db += (level - rx->meter_needle_db) * a;
+    }
+  }
+  double needle_level = rx->meter_needle_db;
+
   double offset=210.0;
   int i;
   double x;
@@ -211,7 +233,7 @@ void update_meter(RECEIVER *rx) {
   cairo_set_line_width(cr, 2.0);
   SetColour(cr, TEXT_B);   // themed accent needle
 
-  angle=level+127.0+offset;
+  angle=needle_level+127.0+offset;
   radians=angle*M_PI/180.0;
   cairo_arc(cr, cx, cy, radius+8, radians, radians);
   cairo_line_to(cr, cx, cy);
