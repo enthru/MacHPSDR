@@ -37,6 +37,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "ext.h"
 #include "settings_ui.h"
 #include "midi.h"
 #include "alsa_midi.h"
@@ -281,6 +282,14 @@ static void clear_cb(GtkWidget *widget,gpointer user_data) {
   gtk_list_store_clear(store);
 }
 
+// GTK4: gtk_file_chooser_get_filename is gone — read the GFile's local path.
+static char *chooser_path(GtkFileChooser *c) {
+  GFile *f=gtk_file_chooser_get_file(c);
+  char *p=f?g_file_get_path(f):NULL;
+  if(f) g_object_unref(f);
+  return p;
+}
+
 static void save_cb(GtkWidget *widget,gpointer user_data) {
   RADIO *r=(RADIO *)user_data;
   GtkWidget *dialog;
@@ -299,7 +308,6 @@ static void save_cb(GtkWidget *widget,gpointer user_data) {
                                       GTK_RESPONSE_ACCEPT,
                                       NULL);
   chooser = GTK_FILE_CHOOSER (dialog);
-  gtk_file_chooser_set_do_overwrite_confirmation (chooser, TRUE);
   if(midi_device_name==NULL) {
     filename=g_new(gchar,10);
     sprintf(filename,"midi.midi");
@@ -308,9 +316,9 @@ static void save_cb(GtkWidget *widget,gpointer user_data) {
     sprintf(filename,"%s.midi",midi_device_name);
   }
   gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk_dialog_run (GTK_DIALOG (dialog));
+  res = gtk4_dialog_run(dialog);
   if(res==GTK_RESPONSE_ACCEPT) {
-    char *savefilename=gtk_file_chooser_get_filename(chooser);
+    char *savefilename=chooser_path(chooser);
     initProperties();
     midi_save_state();
     saveProperties(savefilename);
@@ -346,9 +354,9 @@ static void load_cb(GtkWidget *widget,gpointer user_data) {
     sprintf(filename,"%s.midi",midi_device_name);
   }
   gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk_dialog_run (GTK_DIALOG (dialog));
+  res = gtk4_dialog_run(dialog);
   if(res==GTK_RESPONSE_ACCEPT) {
-    char *loadfilename=gtk_file_chooser_get_filename(chooser);
+    char *loadfilename=chooser_path(chooser);
     clear_cb(NULL,NULL);
     initProperties();
     loadProperties(loadfilename);
@@ -381,9 +389,9 @@ static void load_original_cb(GtkWidget *widget,gpointer user_data) {
   filename=g_new(gchar,strlen(midi_device_name)+6);
   sprintf(filename,"%s.midi",midi_device_name);
   gtk_file_chooser_set_current_name(chooser,filename);
-  res = gtk_dialog_run (GTK_DIALOG (dialog));
+  res = gtk4_dialog_run(dialog);
   if(res==GTK_RESPONSE_ACCEPT) {
-    char *loadfilename=gtk_file_chooser_get_filename(chooser);
+    char *loadfilename=chooser_path(chooser);
     clear_cb(NULL,NULL);
     MIDIstartup(loadfilename);
     load_store();
@@ -717,7 +725,6 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   newMax=gtk_label_new("");
   gtk_grid_attach(GTK_GRID(map_grid),newMax,6,1,1,1);
   newAction=gtk_combo_box_text_new();
-  gtk_combo_box_set_wrap_width(GTK_COMBO_BOX(newAction),5);
   gtk_grid_attach(GTK_GRID(map_grid),newAction,7,1,1,1);
 
   add_b=gtk_button_new_with_label("Add");
@@ -755,7 +762,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(table_grid),load_original_b,3,0,1,1);
   g_signal_connect(load_original_b,"clicked",G_CALLBACK(load_original_cb),r);
 
-  scrolled_window=gtk_scrolled_window_new (NULL, NULL);
+  scrolled_window=gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_ALWAYS);
   gtk_widget_set_size_request(scrolled_window,400,400);
   gtk_widget_set_hexpand(scrolled_window,TRUE);
@@ -784,7 +791,7 @@ GtkWidget *create_midi_dialog(RADIO *r) {
 
   gtk_tree_view_set_model(GTK_TREE_VIEW(view), GTK_TREE_MODEL(store));
 
-  gtk_container_add(GTK_CONTAINER(scrolled_window),view);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window),view);
 
   gtk_grid_attach(GTK_GRID(table_grid), scrolled_window, 0, 1, 4, 1);
 

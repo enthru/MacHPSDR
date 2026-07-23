@@ -20,6 +20,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "ext.h"
 #include "main.h"
 #include "settings_ui.h"
 
@@ -166,19 +167,27 @@ static void rec_dir_cb(GtkWidget *w, gpointer data) {
 
 static void rec_browse_cb(GtkWidget *w, gpointer data) {
   GtkWidget *entry=(GtkWidget *)data;
-  GtkWidget *top=gtk_widget_get_toplevel(w);
+  // GTK4: gtk_widget_get_toplevel → gtk_widget_get_root.
+  GtkRoot *root=gtk_widget_get_root(w);
   GtkWidget *d=gtk_file_chooser_dialog_new(
       "Choose recording folder",
-      GTK_IS_WINDOW(top)?GTK_WINDOW(top):NULL,
+      root?GTK_WINDOW(root):NULL,
       GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
       "Cancel", GTK_RESPONSE_CANCEL, "Select", GTK_RESPONSE_ACCEPT, NULL);
   const char *cur=gtk_editable_get_text(GTK_EDITABLE(entry));
-  if(cur && cur[0]) gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(d), cur);
-  if(gtk_dialog_run(GTK_DIALOG(d))==GTK_RESPONSE_ACCEPT) {
-    char *dir=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d));
+  if(cur && cur[0]) {
+    // GTK4: set_current_folder takes a GFile (+GError**), not a path string.
+    GFile *cf=g_file_new_for_path(cur);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(d), cf, NULL);
+    g_object_unref(cf);
+  }
+  if(gtk4_dialog_run(d)==GTK_RESPONSE_ACCEPT) {
+    GFile *gf=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(d));
+    char *dir=gf?g_file_get_path(gf):NULL;
+    if(gf) g_object_unref(gf);
     if(dir) { gtk_editable_set_text(GTK_EDITABLE(entry), dir); g_free(dir); }
   }
-  gtk_widget_destroy(d);
+  gtk_window_destroy(GTK_WINDOW(d));
 }
 
 static void rec_iq_cb(GtkWidget *w, gpointer data) {
@@ -196,7 +205,7 @@ GtkWidget *create_recording_dialog(struct _radio *rp) {
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
   gtk_grid_set_row_spacing(GTK_GRID(grid),5);
   sui_style_group(grid);
-  gtk_container_add(GTK_CONTAINER(frame),grid);
+  gtk_frame_set_child(GTK_FRAME(frame),grid);
 
   GtkWidget *info=gtk_label_new(
       "The Record button (bottom bar, SETUP) writes the active receiver's\n"

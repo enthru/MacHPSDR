@@ -56,14 +56,12 @@ typedef struct {
 
 // Draw the (tall, scrolling) image scaled to fit the drawing area width,
 // bottom-anchored so the newest lines are always visible.
-static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
+static void on_draw(GtkDrawingArea *da, cairo_t *cr, int aw, int ah, gpointer data) {
   WefaxPanel *p = data;
-  int aw = gtk_widget_get_allocated_width(w);
-  int ah = gtk_widget_get_allocated_height(w);
   cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
   cairo_paint(cr);
   p->draw_ox = 0; p->draw_w = aw;
-  if (p->pb == NULL) return FALSE;
+  if (p->pb == NULL) return;
   int iw = gdk_pixbuf_get_width(p->pb);
   int ih = gdk_pixbuf_get_height(p->pb);
   double s = (double)aw / iw;            // fit to width
@@ -79,17 +77,16 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
   cairo_paint(cr);
   cairo_restore(cr);
-  return FALSE;
 }
 
 // Click on the image → set that column as the left margin (manual phasing).
-static gboolean on_click(GtkWidget *w, GdkEventButton *ev, gpointer data) {
+// GTK4: GtkGestureClick "pressed" (x,y in widget coords).
+static void on_click(GtkGestureClick *gesture, int n_press, double px, double py, gpointer data) {
   WefaxPanel *p = data;
-  if (p->draw_w <= 0) return FALSE;
-  double frac = (ev->x - p->draw_ox) / (double)p->draw_w;
+  if (p->draw_w <= 0) return;
+  double frac = (px - p->draw_ox) / (double)p->draw_w;
   if (frac < 0.0) frac = 0.0; if (frac > 1.0) frac = 1.0;
   wefax_decoder_nudge_phase(frac);
-  return TRUE;
 }
 
 static gboolean tick(gpointer data) {
@@ -220,7 +217,7 @@ GtkWidget *wefax_panel_create(void) {
   wefax_decoder_set_denoise(den0);
   wefax_decoder_set_invert(inv0);
 
-  gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("LPM:"), FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),gtk_label_new("LPM:"));
   GtkWidget *lpm = gtk_combo_box_text_new();
   int lpm_idx = 2;
   for (int i = 0; i < N_LPM; i++) {
@@ -230,9 +227,9 @@ GtkWidget *wefax_panel_create(void) {
   }
   gtk_combo_box_set_active(GTK_COMBO_BOX(lpm), lpm_idx);
   g_signal_connect(lpm, "changed", G_CALLBACK(lpm_changed), p);
-  gtk_box_pack_start(GTK_BOX(bar), lpm, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),lpm);
 
-  gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("IOC:"), FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),gtk_label_new("IOC:"));
   GtkWidget *ioc = gtk_combo_box_text_new();
   int ioc_idx = 0;
   for (int i = 0; i < N_IOC; i++) {
@@ -242,39 +239,39 @@ GtkWidget *wefax_panel_create(void) {
   }
   gtk_combo_box_set_active(GTK_COMBO_BOX(ioc), ioc_idx);
   g_signal_connect(ioc, "changed", G_CALLBACK(ioc_changed), p);
-  gtk_box_pack_start(GTK_BOX(bar), ioc, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),ioc);
 
   GtkWidget *autob = gtk_check_button_new_with_label("Auto-start");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(autob), auto0);
   g_signal_connect(autob, "toggled", G_CALLBACK(autostart_toggled), p);
-  gtk_box_pack_start(GTK_BOX(bar), autob, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),autob);
 
   GtkWidget *phaseb = gtk_check_button_new_with_label("Auto-phase");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(phaseb), phase0);
   g_signal_connect(phaseb, "toggled", G_CALLBACK(autophase_toggled), p);
-  gtk_box_pack_start(GTK_BOX(bar), phaseb, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),phaseb);
 
   GtkWidget *denb = gtk_check_button_new_with_label("Denoise");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(denb), den0);
   g_signal_connect(denb, "toggled", G_CALLBACK(denoise_toggled), p);
-  gtk_box_pack_start(GTK_BOX(bar), denb, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),denb);
 
   GtkWidget *invb = gtk_check_button_new_with_label("Invert");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(invb), inv0);
   g_signal_connect(invb, "toggled", G_CALLBACK(invert_toggled), p);
-  gtk_box_pack_start(GTK_BOX(bar), invb, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),invb);
 
   GtkWidget *startb = gtk_button_new_with_label("Start");
   g_signal_connect(startb, "clicked", G_CALLBACK(start_clicked), p);
-  gtk_box_pack_start(GTK_BOX(bar), startb, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),startb);
 
   GtkWidget *clr = gtk_button_new_with_label("Clear");
   GtkWidget *save = gtk_button_new_with_label("Save");
   g_signal_connect(clr, "clicked", G_CALLBACK(clear_clicked), p);
   g_signal_connect(save, "clicked", G_CALLBACK(save_clicked), p);
-  gtk_box_pack_end(GTK_BOX(bar), clr, FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(bar), save, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(box), bar, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),clr);
+  gtk_box_append(GTK_BOX(bar),save);
+  gtk_box_append(GTK_BOX(box),bar);
 
   // Slant row.
   GtkWidget *sbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
@@ -283,27 +280,31 @@ GtkWidget *wefax_panel_create(void) {
   p->slant_lbl = gtk_label_new("slant +0 ppm");
   g_signal_connect(sm, "clicked", G_CALLBACK(slant_minus), p);
   g_signal_connect(sp, "clicked", G_CALLBACK(slant_plus), p);
-  gtk_box_pack_start(GTK_BOX(sbar), sm, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(sbar), p->slant_lbl, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(sbar), sp, FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(sbar),
-                   gtk_label_new("(click image to set left margin)"), FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(box), sbar, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(sbar),sm);
+  gtk_box_append(GTK_BOX(sbar),p->slant_lbl);
+  gtk_box_append(GTK_BOX(sbar),sp);
+  GtkWidget *hint=gtk_label_new("(click image to set left margin)");
+  gtk_widget_set_hexpand(hint,TRUE);
+  gtk_widget_set_halign(hint,GTK_ALIGN_END);
+  gtk_box_append(GTK_BOX(sbar),hint);
+  gtk_box_append(GTK_BOX(box),sbar);
 
   // Image area (click sets the phase / left margin).
   p->area = gtk_drawing_area_new();
   gtk_widget_set_size_request(p->area, 400, 300);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
-  gtk_widget_add_events(p->area, GDK_BUTTON_PRESS_MASK);
-  g_signal_connect(p->area, "draw", G_CALLBACK(on_draw), p);
-  g_signal_connect(p->area, "button-press-event", G_CALLBACK(on_click), p);
-  gtk_box_pack_start(GTK_BOX(box), p->area, TRUE, TRUE, 0);
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(p->area), on_draw, p, NULL);
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
+  g_signal_connect(click, "pressed", G_CALLBACK(on_click), p);
+  gtk_widget_add_controller(p->area, GTK_EVENT_CONTROLLER(click));
+  gtk_box_append(GTK_BOX(box),p->area);
 
   // Status line.
   p->status = gtk_label_new("Waiting for WEFAX…");
   gtk_widget_set_halign(p->status, GTK_ALIGN_START);
-  gtk_box_pack_start(GTK_BOX(box), p->status, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(box),p->status);
 
   p->last_status[0] = '\0';
   p->last_line = -1;

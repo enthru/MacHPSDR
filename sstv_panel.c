@@ -26,6 +26,10 @@
 #include "sstv_encoder.h"
 #include "log.h"
 
+// GTK4 gtk_dialog_run() shim (defined in ext.c). Declared locally to avoid
+// pulling ext.h's RECEIVER/RADIO type dependencies into this panel.
+extern int gtk4_dialog_run(GtkWidget *dialog);
+
 #define REFRESH_MS 200          // ~5 fps
 
 // Mode combo entries → VIS codes (index-aligned with the combo appends below).
@@ -170,7 +174,8 @@ static void save_clicked(GtkButton *b, gpointer data) {
 // encode time).
 static void load_clicked(GtkButton *b, gpointer data) {
   SstvPanel *p = data;
-  GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(b));
+  // GTK4: gtk_widget_get_toplevel → gtk_widget_get_root (returns the GtkRoot/window).
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
   GtkWidget *dlg = gtk_file_chooser_dialog_new(
       "Load image to transmit", GTK_WINDOW(top), GTK_FILE_CHOOSER_ACTION_OPEN,
       "_Cancel", GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, NULL);
@@ -178,8 +183,11 @@ static void load_clicked(GtkButton *b, gpointer data) {
   gtk_file_filter_set_name(filt, "Images");
   gtk_file_filter_add_pixbuf_formats(filt);
   gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), filt);
-  if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-    char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
+  if (gtk4_dialog_run(dlg) == GTK_RESPONSE_ACCEPT) {
+    // GTK4: gtk_file_chooser_get_filename → get_file (GFile) + g_file_get_path.
+    GFile *gf = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+    char *path = gf ? g_file_get_path(gf) : NULL;
+    if (gf) g_object_unref(gf);
     GError *err = NULL;
     GdkPixbuf *pb = gdk_pixbuf_new_from_file(path, &err);
     if (pb != NULL) {
@@ -243,53 +251,53 @@ GtkWidget *sstv_panel_create(void) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(mode), MODE_ENTRIES[i].name);
   gtk_combo_box_set_active(GTK_COMBO_BOX(mode), 0);
   g_signal_connect(mode, "changed", G_CALLBACK(mode_changed), p);
-  gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("Mode:"), FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), mode, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),gtk_label_new("Mode:"));
+  gtk_box_append(GTK_BOX(bar),mode);
 
   GtkWidget *sm = gtk_button_new_with_label("Slant −");
   GtkWidget *sp = gtk_button_new_with_label("Slant +");
   p->slant_lbl = gtk_label_new("slant +0 ppm");
   g_signal_connect(sm, "clicked", G_CALLBACK(slant_minus), p);
   g_signal_connect(sp, "clicked", G_CALLBACK(slant_plus), p);
-  gtk_box_pack_start(GTK_BOX(bar), sm, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), p->slant_lbl, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(bar), sp, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),sm);
+  gtk_box_append(GTK_BOX(bar),p->slant_lbl);
+  gtk_box_append(GTK_BOX(bar),sp);
 
   GtkWidget *save = gtk_button_new_with_label("Save");
   GtkWidget *clr  = gtk_button_new_with_label("Clear");
   g_signal_connect(save, "clicked", G_CALLBACK(save_clicked), p);
   g_signal_connect(clr,  "clicked", G_CALLBACK(clear_clicked), p);
-  gtk_box_pack_end(GTK_BOX(bar), clr,  FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(bar), save, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(box), bar, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(bar),clr);
+  gtk_box_append(GTK_BOX(bar),save);
+  gtk_box_append(GTK_BOX(box),bar);
 
   // Transmit row: mode picker (concrete modes only), image loader, Send/Stop,
   // and a progress bar.
   GtkWidget *txbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-  gtk_box_pack_start(GTK_BOX(txbar), gtk_label_new("Tx:"), FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),gtk_label_new("Tx:"));
   p->tx_mode = gtk_combo_box_text_new();
   for (int i = 1; i < N_MODE_ENTRIES; i++)   // skip "Auto" — TX needs a real mode
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->tx_mode), MODE_ENTRIES[i].name);
   gtk_combo_box_set_active(GTK_COMBO_BOX(p->tx_mode), 0);
-  gtk_box_pack_start(GTK_BOX(txbar), p->tx_mode, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),p->tx_mode);
 
   GtkWidget *load = gtk_button_new_with_label("Load…");
   g_signal_connect(load, "clicked", G_CALLBACK(load_clicked), p);
-  gtk_box_pack_start(GTK_BOX(txbar), load, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),load);
 
   p->tx_file_lbl = gtk_label_new("(no image)");
   gtk_label_set_ellipsize(GTK_LABEL(p->tx_file_lbl), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_box_pack_start(GTK_BOX(txbar), p->tx_file_lbl, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),p->tx_file_lbl);
 
   p->tx_send = gtk_button_new_with_label("Send");
   gtk_widget_set_sensitive(p->tx_send, FALSE);   // enabled once an image loads
   g_signal_connect(p->tx_send, "clicked", G_CALLBACK(send_clicked), p);
-  gtk_box_pack_end(GTK_BOX(txbar), p->tx_send, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),p->tx_send);
 
   p->tx_progress = gtk_progress_bar_new();
   gtk_widget_set_valign(p->tx_progress, GTK_ALIGN_CENTER);
-  gtk_box_pack_end(GTK_BOX(txbar), p->tx_progress, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(box), txbar, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(txbar),p->tx_progress); gtk_widget_set_hexpand(p->tx_progress,TRUE); gtk_widget_set_vexpand(p->tx_progress,TRUE);
+  gtk_box_append(GTK_BOX(box),txbar);
 
   // Image area.
   p->area = gtk_drawing_area_new();
@@ -297,12 +305,12 @@ GtkWidget *sstv_panel_create(void) {
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
   g_signal_connect(p->area, "draw", G_CALLBACK(on_draw), p);
-  gtk_box_pack_start(GTK_BOX(box), p->area, TRUE, TRUE, 0);
+  gtk_box_append(GTK_BOX(box),p->area); gtk_widget_set_hexpand(p->area,TRUE); gtk_widget_set_vexpand(p->area,TRUE);
 
   // Status line.
   p->status = gtk_label_new("Waiting for SSTV…");
   gtk_widget_set_halign(p->status, GTK_ALIGN_START);
-  gtk_box_pack_start(GTK_BOX(box), p->status, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(box),p->status);
 
   p->last_status[0] = '\0';
   p->last_line = -1;

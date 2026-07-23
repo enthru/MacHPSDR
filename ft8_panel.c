@@ -134,7 +134,8 @@ static gboolean on_query_tooltip(GtkWidget *w, gint x, gint y, gboolean kbd,
                                  GtkTooltip *tip, gpointer data) {
   GtkTreeView *tv = GTK_TREE_VIEW(w);
   GtkTreeModel *model; GtkTreePath *path; GtkTreeIter it;
-  if (!gtk_tree_view_get_tooltip_context(tv, &x, &y, kbd, &model, &path, &it))
+  // GTK4: x,y are passed by value (no longer in/out bin-window coords).
+  if (!gtk_tree_view_get_tooltip_context(tv, x, y, kbd, &model, &path, &it))
     return FALSE;
   gchar *country = NULL;
   gtk_tree_model_get(model, &it, COL_COUNTRY, &country, -1);
@@ -316,37 +317,37 @@ GtkWidget *ft8_panel_create(void) {
   gtk_combo_box_set_active(GTK_COMBO_BOX(mode), radio->ft8_proto ? 1 : 0);
   gtk_widget_set_tooltip_text(mode, "Digital protocol: FT8 (15 s) or FT4 (7.5 s)");
   g_signal_connect(mode, "changed", G_CALLBACK(proto_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), mode, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),mode);
 
-  gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("Tx Hz"), FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),gtk_label_new("Tx Hz"));
   offset_spin = gtk_spin_button_new_with_range(200, 2800, 1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(offset_spin), radio->ft8_tx_offset);
   g_signal_connect(offset_spin, "value-changed", G_CALLBACK(offset_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), offset_spin, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),offset_spin);
 
   GtkWidget *slot = gtk_combo_box_text_new();
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(slot), "Even");
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(slot), "Odd");
   gtk_combo_box_set_active(GTK_COMBO_BOX(slot), radio->ft8_tx_even ? 0 : 1);
   g_signal_connect(slot, "changed", G_CALLBACK(slot_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), slot, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),slot);
 
   // Directed CQ: blank = plain CQ, or pick/type a region (DX/EU/NA/…) or 3 digits.
-  gtk_box_pack_start(GTK_BOX(cfg), gtk_label_new("CQ"), FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),gtk_label_new("CQ"));
   GtkWidget *cqdir = gtk_combo_box_text_new_with_entry();
   const char *dirs[] = { "", "DX", "EU", "NA", "SA", "AS", "AF", "OC" };
   for (unsigned i = 0; i < G_N_ELEMENTS(dirs); i++)
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(cqdir), dirs[i]);
-  GtkWidget *cqentry = gtk_bin_get_child(GTK_BIN(cqdir));
+  GtkWidget *cqentry = gtk_combo_box_get_child(GTK_COMBO_BOX(cqdir));
   gtk_editable_set_width_chars(GTK_EDITABLE(cqentry), 4);
   gtk_entry_set_max_length(GTK_ENTRY(cqentry), sizeof(radio->ft8_cq_dir) - 1);
   gtk_editable_set_text(GTK_EDITABLE(cqentry), radio->ft8_cq_dir);
   gtk_widget_set_tooltip_text(cqdir,
       "Directed CQ: blank = CQ; a region (DX/EU/NA/SA/AS/AF/OC) or 3 digits");
   g_signal_connect(cqdir, "changed", G_CALLBACK(cq_dir_changed), NULL);
-  gtk_box_pack_start(GTK_BOX(cfg), cqdir, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(cfg),cqdir);
 
-  gtk_box_pack_start(GTK_BOX(box), cfg, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(box),cfg);
 
   // (The FT8 band waterfall is placed to the RIGHT of the main RX spectrum, not
   // in this panel — see receiver_ft8_waterfall_sync().)
@@ -394,25 +395,25 @@ GtkWidget *ft8_panel_create(void) {
     gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
   }
 
-  GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+  GtkWidget *scroll = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-  gtk_container_add(GTK_CONTAINER(scroll), view);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), view);
 
   // --- Tx1..Tx6 message buttons (double-click a decode fills the DX call) ---
   GtkWidget *txbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
   for (int i = 0; i < 6; i++) {
     txbtn[i] = gtk_button_new_with_label("—");
-    gtk_widget_set_halign(gtk_bin_get_child(GTK_BIN(txbtn[i])), GTK_ALIGN_START);
+    gtk_widget_set_halign(gtk_button_get_child(GTK_BUTTON(txbtn[i])), GTK_ALIGN_START);
     g_signal_connect(txbtn[i], "clicked", G_CALLBACK(tx_clicked), GINT_TO_POINTER(i + 1));
-    gtk_box_pack_start(GTK_BOX(txbox), txbtn[i], FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(txbox),txbtn[i]);
   }
 
   // --- main row: Tx message column on the left, band-activity list on the right ---
   GtkWidget *mainrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-  gtk_box_pack_start(GTK_BOX(mainrow), txbox, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(mainrow), scroll, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(box), mainrow, TRUE, TRUE, 0);
+  gtk_box_append(GTK_BOX(mainrow),txbox);
+  gtk_box_append(GTK_BOX(mainrow),scroll); gtk_widget_set_hexpand(scroll,TRUE); gtk_widget_set_vexpand(scroll,TRUE);
+  gtk_box_append(GTK_BOX(box),mainrow); gtk_widget_set_hexpand(mainrow,TRUE); gtk_widget_set_vexpand(mainrow,TRUE);
 
   // --- TX controls + status ---
   GtkWidget *ctl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
@@ -420,23 +421,23 @@ GtkWidget *ft8_panel_create(void) {
   // The red "destructive-action" class is applied only while Tx is armed (see
   // refresh()); off, it stays a neutral grey toggle.
   g_signal_connect(enable_btn, "toggled", G_CALLBACK(enable_toggled), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), enable_btn, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),enable_btn);
   auto_chk = gtk_check_button_new_with_label("Auto Seq");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_chk), ft8_qso_auto());
   g_signal_connect(auto_chk, "toggled", G_CALLBACK(auto_toggled), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), auto_chk, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),auto_chk);
   GtkWidget *cqchk = gtk_check_button_new_with_label("CQ only");
   g_signal_connect(cqchk, "toggled", G_CALLBACK(cqonly_toggled), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), cqchk, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),cqchk);
   GtkWidget *erase = gtk_button_new_with_label("Erase");
   g_signal_connect(erase, "clicked", G_CALLBACK(erase_clicked), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), erase, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),erase);
   GtkWidget *halt = gtk_button_new_with_label("Halt Tx");
   g_signal_connect(halt, "clicked", G_CALLBACK(halt_clicked), NULL);
-  gtk_box_pack_start(GTK_BOX(ctl), halt, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),halt);
   dx_label = gtk_label_new("DX: —");
-  gtk_box_pack_start(GTK_BOX(ctl), dx_label, FALSE, FALSE, 6);
-  gtk_box_pack_start(GTK_BOX(box), ctl, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(ctl),dx_label);
+  gtk_box_append(GTK_BOX(box),ctl);
 
   // --- free-text message row ---
   GtkWidget *frow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
@@ -444,15 +445,15 @@ GtkWidget *ft8_panel_create(void) {
   gtk_entry_set_max_length(GTK_ENTRY(free_entry), 13);
   gtk_entry_set_placeholder_text(GTK_ENTRY(free_entry), "free text (≤13)");
   g_signal_connect(free_entry, "activate", G_CALLBACK(free_send), NULL);
-  gtk_box_pack_start(GTK_BOX(frow), free_entry, TRUE, TRUE, 0);
+  gtk_box_append(GTK_BOX(frow),free_entry); gtk_widget_set_hexpand(free_entry,TRUE); gtk_widget_set_vexpand(free_entry,TRUE);
   GtkWidget *freebtn = gtk_button_new_with_label("Send Free");
   g_signal_connect(freebtn, "clicked", G_CALLBACK(free_send), NULL);
-  gtk_box_pack_start(GTK_BOX(frow), freebtn, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(box), frow, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(frow),freebtn);
+  gtk_box_append(GTK_BOX(box),frow);
 
   status_label = gtk_label_new("Status: Idle");
   gtk_widget_set_halign(status_label, GTK_ALIGN_START);
-  gtk_box_pack_start(GTK_BOX(box), status_label, FALSE, FALSE, 0);
+  gtk_box_append(GTK_BOX(box),status_label);
 
   g_signal_connect(box, "destroy", G_CALLBACK(on_destroy), NULL);
   refresh_id = g_timeout_add(500, refresh, NULL);

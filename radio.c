@@ -1362,7 +1362,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
 
   // Build the new layout.
   if(n==1) {
-    gtk_box_pack_start(GTK_BOX(r->rx_container),tables[0],TRUE,TRUE,0);
+    gtk_box_append(GTK_BOX(r->rx_container),tables[0]); gtk_widget_set_hexpand(tables[0],TRUE); gtk_widget_set_vexpand(tables[0],TRUE);
   } else if(n>1) {
     // Right-leaning chain of vertical panes: P0(t0, P1(t1, P2(t2, ... t_{n-1}))).
     GtkWidget *paned=gtk_paned_new(GTK_ORIENTATION_VERTICAL);
@@ -1377,7 +1377,7 @@ void radio_rebuild_rx_stack(RADIO *r) {
         paned=next;
       }
     }
-    gtk_box_pack_start(GTK_BOX(r->rx_container),top,TRUE,TRUE,0);
+    gtk_box_append(GTK_BOX(r->rx_container),top); gtk_widget_set_hexpand(top,TRUE); gtk_widget_set_vexpand(top,TRUE);
   }
 
   // Panels are now owned by their new parents; drop the temporary refs.
@@ -2239,7 +2239,7 @@ static void create_visual(RADIO *r) {
   gtk_label_set_xalign(GTK_LABEL(r->ft8_label),0.0);
   gtk_label_set_yalign(GTK_LABEL(r->ft8_label),0.0);
   gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),PANGO_ELLIPSIZE_END);
-  gtk_box_pack_start(GTK_BOX(rds_col),r->ft8_label,TRUE,TRUE,0);
+  gtk_box_append(GTK_BOX(rds_col),r->ft8_label); gtk_widget_set_hexpand(r->ft8_label,TRUE); gtk_widget_set_vexpand(r->ft8_label,TRUE);
 
   // Right-aligned decoder controls, top-aligned so they neither stretch nor
   // steal vertical room from the decode rows. Stacked: the decoder SELECTOR on
@@ -2297,8 +2297,8 @@ static void create_visual(RADIO *r) {
 
   // Decode block content: the text column (expands) with the controls on the right.
   GtkWidget *decode_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
-  gtk_box_pack_start(GTK_BOX(decode_row),rds_col,TRUE,TRUE,0);
-  gtk_box_pack_end(GTK_BOX(decode_row),dec_ctl,FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(decode_row),rds_col); gtk_widget_set_hexpand(rds_col,TRUE); gtk_widget_set_vexpand(rds_col,TRUE);
+  gtk_box_append(GTK_BOX(decode_row),dec_ctl);
 
   // Title is "RDS" only in WFM mode; for every other mode the block defaults to
   // "Decode". rds_update_cb keeps it in sync as the active receiver's mode changes.
@@ -2352,7 +2352,7 @@ static void create_visual(RADIO *r) {
   // Setup module pinned to the right edge, teal accent rail to its left.
   // pack_end order: Setup first -> far right; rail next -> immediately left of it.
   gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col),FALSE,FALSE,0);
-  gtk_box_pack_end(GTK_BOX(r->bottom_bar),bar_rail(TRUE),FALSE,FALSE,0);
+  gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(TRUE));
 
   gtk_widget_set_visible(r->visual, TRUE);
 
