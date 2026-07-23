@@ -277,10 +277,19 @@ log_info("adding %s\n",d->name);
   }
 
   // --faker: skip the device-selection dialog entirely. Realize the window,
-  // build the fake radio straight into the grid (default selection = the only
-  // row, the faker), then reveal the fully-built radio window — the selection
-  // UI is never shown.  Non-faker runs show the selection window as before.
+  // build the fake radio straight into the grid, then reveal the fully-built
+  // radio window — the selection UI is never shown.  The faker is appended
+  // last in discovered[] (see fake_discovery), so when real devices are also
+  // present it is NOT row 0; explicitly select the PROTOCOL_FAKE row rather
+  // than opening whatever happened to be discovered first.  Non-faker runs
+  // show the selection window as before.
   if(enable_fake && devices>0) {
+    for(i=0;i<devices;i++) {
+      if(discovered[i].protocol==PROTOCOL_FAKE) {
+        gtk_single_selection_set_selected(dev_selection, i);
+        break;
+      }
+    }
     gtk_widget_realize(main_window);
     start_cb(NULL,NULL);
   }
