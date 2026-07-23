@@ -126,18 +126,18 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     BAND *band=band_get_band(i);
 
     GtkWidget *band_label=gtk_label_new(band->title);
-    gtk_widget_show(band_label);
+    gtk_widget_set_visible(band_label, TRUE);
     gtk_grid_attach(GTK_GRID(pa_grid),band_label,(i%3)*3,i/3,1,1);
 
     GtkWidget *pa_disable_b = gtk_check_button_new();
     gtk_check_button_set_active(GTK_CHECK_BUTTON(pa_disable_b), band->disablePA);
-    gtk_widget_show(pa_disable_b);   
+    gtk_widget_set_visible(pa_disable_b, TRUE);   
     gtk_grid_attach(GTK_GRID(pa_grid), pa_disable_b, ((i%3)*3)+1,i/3,1,1);
     g_signal_connect(pa_disable_b,"toggled",G_CALLBACK(pa_disable_changed_cb), band); 
     
     GtkWidget *pa_r=gtk_spin_button_new_with_range(38.8,100.0,0.1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_r),(double)band->pa_calibration);
-    gtk_widget_show(pa_r);
+    gtk_widget_set_visible(pa_r, TRUE);
     gtk_grid_attach(GTK_GRID(pa_grid),pa_r,((i%3)*3)+2,i/3,1,1);
     g_signal_connect(pa_r,"value_changed",G_CALLBACK(pa_value_changed_cb),band);
   }
@@ -168,7 +168,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     // a caution to make sure user thinks about what they are doing
     GtkWidget *enable_bias_b = gtk_check_button_new();
     gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_bias_b), r->hl2->mrf101_bias_enable);
-    gtk_widget_show(enable_bias_b);
+    gtk_widget_set_visible(enable_bias_b, TRUE);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), enable_bias_b, x, y, 1, 1);
     g_signal_connect(enable_bias_b,"toggled",G_CALLBACK(enable_bias_cb), r->hl2); 
     
@@ -176,14 +176,14 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     
     GtkWidget *enable_bias_label = gtk_label_new("Enable bias adjustment");
     gtk_label_set_xalign(GTK_LABEL(enable_bias_label), 0.0);    
-    gtk_widget_show(enable_bias_label);
+    gtk_widget_set_visible(enable_bias_label, TRUE);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), enable_bias_label, x, y++, 1, 1);
     x = 0;
     
     // Bias slider
     bias_label = gtk_label_new("Bias:");
     gtk_label_set_xalign(GTK_LABEL(bias_label), 0.0);
-    gtk_widget_show(bias_label);
+    gtk_widget_set_visible(bias_label, TRUE);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), bias_label, x, y, 1, 1);
 
     x++;    
@@ -192,7 +192,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     gtk_widget_set_size_request (hl2mrf_scale, 300, 25);
     gtk_range_set_value(GTK_RANGE(hl2mrf_scale), r->hl2->mrf101_bias_value);
     sui_scale_show_value(hl2mrf_scale,0);
-    gtk_widget_show(hl2mrf_scale);
+    gtk_widget_set_visible(hl2mrf_scale, TRUE);
     gtk_grid_attach(GTK_GRID(hl2mrf_grid), hl2mrf_scale, x, y, 1, 1);
     g_signal_connect(G_OBJECT(hl2mrf_scale), "value_changed", G_CALLBACK(hl2mrf_bias_changed_cb), r->hl2);
 

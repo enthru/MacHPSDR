@@ -111,54 +111,54 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
 
   GtkWidget *gain_coarse_label=gtk_label_new("Gain (dB, coarse):");
   gtk_label_set_xalign(GTK_LABEL(gain_coarse_label), 0.0);
-  gtk_widget_show(gain_coarse_label);
+  gtk_widget_set_visible(gain_coarse_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid),gain_coarse_label,0,1,1,1);
   
   GtkWidget* gain_coarse_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-25.0,+25.0,0.5);
   gtk_widget_set_size_request (gain_coarse_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(gain_coarse_scale),dmix->gain);
   sui_scale_show_value(gain_coarse_scale,1);
-  gtk_widget_show(gain_coarse_scale);
+  gtk_widget_set_visible(gain_coarse_scale, TRUE);
   gtk_grid_attach(GTK_GRID(grid),gain_coarse_scale,1,1,1,1);
   g_signal_connect(G_OBJECT(gain_coarse_scale),"value_changed",G_CALLBACK(gain_coarse_changed_cb),dmix);
 
   GtkWidget *phase_coarse_label=gtk_label_new("Phase (coarse):");
   gtk_label_set_xalign(GTK_LABEL(phase_coarse_label), 0.0);
-  gtk_widget_show(phase_coarse_label);
+  gtk_widget_set_visible(phase_coarse_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid),phase_coarse_label,2,1,1,1);
 
   GtkWidget* phase_coarse_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-180.0,180.0,1.0);
   gtk_widget_set_size_request (phase_coarse_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(phase_coarse_scale),dmix->phase);
   sui_scale_show_value(phase_coarse_scale,0);
-  gtk_widget_show(phase_coarse_scale);
+  gtk_widget_set_visible(phase_coarse_scale, TRUE);
   gtk_grid_attach(GTK_GRID(grid),phase_coarse_scale,3,1,1,1);
   g_signal_connect(G_OBJECT(phase_coarse_scale),"value_changed",G_CALLBACK(phase_coarse_changed_cb),dmix);
 
   // Fine tuning of phase/gain
   GtkWidget *gain_fine_label=gtk_label_new("Gain (dB, fine):");
   gtk_label_set_xalign(GTK_LABEL(gain_fine_label), 0.0);
-  gtk_widget_show(gain_fine_label);
+  gtk_widget_set_visible(gain_fine_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid),gain_fine_label,0,2,1,1);
   
   GtkWidget* gain_fine_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-2.0,+2.0,0.05);
   gtk_widget_set_size_request (gain_fine_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(gain_fine_scale), dmix->gain_fine);
   sui_scale_show_value(gain_fine_scale,2);
-  gtk_widget_show(gain_coarse_scale);
+  gtk_widget_set_visible(gain_coarse_scale, TRUE);
   gtk_grid_attach(GTK_GRID(grid),gain_fine_scale,1,2,1,1);
   g_signal_connect(G_OBJECT(gain_fine_scale),"value_changed",G_CALLBACK(gain_fine_changed_cb),dmix);
 
   GtkWidget *phase_fine_label=gtk_label_new("Phase (fine):");
   gtk_label_set_xalign(GTK_LABEL(phase_fine_label), 0.0);
-  gtk_widget_show(phase_fine_label);
+  gtk_widget_set_visible(phase_fine_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid),phase_fine_label,2,2,1,1);
 
   GtkWidget* phase_fine_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-2.0,2.0,0.05);
   gtk_widget_set_size_request (phase_fine_scale, 300, 25);
   gtk_range_set_value(GTK_RANGE(phase_fine_scale),dmix->phase_fine);
   sui_scale_show_value(phase_fine_scale,2);
-  gtk_widget_show(phase_fine_scale);
+  gtk_widget_set_visible(phase_fine_scale, TRUE);
   gtk_grid_attach(GTK_GRID(grid),phase_fine_scale,3,2,1,1);
   g_signal_connect(G_OBJECT(phase_fine_scale),"value_changed",G_CALLBACK(phase_fine_changed_cb),dmix);
 
@@ -174,12 +174,12 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   // Calibrate gain
   GtkWidget *calibrate_gain_label = gtk_label_new("Calibrate gain:");
   gtk_label_set_xalign(GTK_LABEL(calibrate_gain_label), 0.0);    
-  gtk_widget_show(calibrate_gain_label);
+  gtk_widget_set_visible(calibrate_gain_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid), calibrate_gain_label, 0, 4, 1, 1);
   
   GtkWidget *calibrate_gain_b = gtk_check_button_new();
   gtk_check_button_set_active(GTK_CHECK_BUTTON(calibrate_gain_b), dmix->calibrate_gain);
-  gtk_widget_show(calibrate_gain_b);
+  gtk_widget_set_visible(calibrate_gain_b, TRUE);
   gtk_grid_attach(GTK_GRID(grid), calibrate_gain_b, 1, 4, 1, 1);
   g_signal_connect(calibrate_gain_b,"toggled",G_CALLBACK(calibrate_gain_cb), dmix); 
 
@@ -187,12 +187,12 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   // 180 deg flip on phase
   GtkWidget *dir_flip_label = gtk_label_new("Flip:");
   gtk_label_set_xalign(GTK_LABEL(dir_flip_label), 0.0);    
-  gtk_widget_show(dir_flip_label);
+  gtk_widget_set_visible(dir_flip_label, TRUE);
   gtk_grid_attach(GTK_GRID(grid), dir_flip_label, 0, 5, 1, 1);
   
   GtkWidget *dir_flip_b = gtk_check_button_new();
   gtk_check_button_set_active(GTK_CHECK_BUTTON(dir_flip_b), dmix->flip);
-  gtk_widget_show(dir_flip_b);
+  gtk_widget_set_visible(dir_flip_b, TRUE);
   gtk_grid_attach(GTK_GRID(grid), dir_flip_b, 1, 5, 1, 1);
   g_signal_connect(dir_flip_b,"toggled",G_CALLBACK(dir_flip_cb), dmix); 
 

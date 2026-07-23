@@ -109,7 +109,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_widget_set_size_request(panadapter_high_scale,200,30);
   gtk_range_set_value (GTK_RANGE(panadapter_high_scale),w->panadapter_high);
   sui_scale_show_value(panadapter_high_scale,0);
-  gtk_widget_show(panadapter_high_scale);
+  gtk_widget_set_visible(panadapter_high_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_high_scale),"value_changed",G_CALLBACK(panadapter_high_value_changed_cb),w);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_high_scale,1,1,1,1);
 
@@ -120,7 +120,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_widget_set_size_request(panadapter_low_scale,200,30);
   gtk_range_set_value (GTK_RANGE(panadapter_low_scale),w->panadapter_low);
   sui_scale_show_value(panadapter_low_scale,0);
-  gtk_widget_show(panadapter_low_scale);
+  gtk_widget_set_visible(panadapter_low_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),w);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,2,1,1);
 
@@ -139,7 +139,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_widget_set_size_request(waterfall_high_scale,200,30);
   gtk_range_set_value (GTK_RANGE(waterfall_high_scale),w->waterfall_high);
   sui_scale_show_value(waterfall_high_scale,0);
-  gtk_widget_show(waterfall_high_scale);
+  gtk_widget_set_visible(waterfall_high_scale, TRUE);
   g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),w);
   gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_scale,1,0,1,1);
 
@@ -150,7 +150,7 @@ GtkWidget *create_wideband_dialog(WIDEBAND *w) {
   gtk_widget_set_size_request(waterfall_low_scale,200,30);
   gtk_range_set_value (GTK_RANGE(waterfall_low_scale),w->waterfall_low);
   sui_scale_show_value(waterfall_low_scale,0);
-  gtk_widget_show(waterfall_low_scale);
+  gtk_widget_set_visible(waterfall_low_scale, TRUE);
   g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),w);
   gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
 

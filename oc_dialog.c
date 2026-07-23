@@ -142,25 +142,25 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   gtk_grid_set_column_spacing (GTK_GRID(grid),10);
 
   GtkWidget *band_title=gtk_label_new("Band");
-  gtk_widget_show(band_title);
+  gtk_widget_set_visible(band_title, TRUE);
   gtk_grid_attach(GTK_GRID(grid),band_title,0,1,1,1);
 
   GtkWidget *rx_title=gtk_label_new("Rx");
-  gtk_widget_show(rx_title);
+  gtk_widget_set_visible(rx_title, TRUE);
   gtk_grid_attach(GTK_GRID(grid),rx_title,4,1,1,1);
 
   GtkWidget *tx_title=gtk_label_new("Tx");
-  gtk_widget_show(tx_title);
+  gtk_widget_set_visible(tx_title, TRUE);
   gtk_grid_attach(GTK_GRID(grid),tx_title,11,1,1,1);
 
   for(i=1;i<8;i++) {
     char oc_id[8];
     sprintf(oc_id,"%d",i);
     GtkWidget *oc_rx_title=gtk_label_new(oc_id);
-    gtk_widget_show(oc_rx_title);
+    gtk_widget_set_visible(oc_rx_title, TRUE);
     gtk_grid_attach(GTK_GRID(grid),oc_rx_title,i,2,1,1);
     GtkWidget *oc_tx_title=gtk_label_new(oc_id);
-    gtk_widget_show(oc_tx_title);
+    gtk_widget_set_visible(oc_tx_title, TRUE);
     gtk_grid_attach(GTK_GRID(grid),oc_tx_title,i+7,2,1,1);
   }
 
@@ -179,7 +179,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
     BAND *band=band_get_band(i);
     if(strlen(band->title)>0) {
       GtkWidget *band_label=gtk_label_new(band->title);
-      gtk_widget_show(band_label);
+      gtk_widget_set_visible(band_label, TRUE);
       gtk_grid_attach(GTK_GRID(grid),band_label,0,dr,1,1);
 
       int mask;
@@ -189,7 +189,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
         mask=0x01<<(j-1);
         radio->oc_rx_b[band_idx] = gtk_check_button_new();
         gtk_check_button_set_active (GTK_CHECK_BUTTON (radio->oc_rx_b[band_idx]), (band->OCrx&mask)==mask);
-        gtk_widget_show(radio->oc_rx_b[band_idx]);
+        gtk_widget_set_visible(radio->oc_rx_b[band_idx], TRUE);
         gtk_grid_attach(GTK_GRID(grid),radio->oc_rx_b[band_idx],j,dr,1,1);
         data=g_new0(DATA,1);
         data->radio=radio;
@@ -199,7 +199,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
 
         radio->oc_tx_b[band_idx] = gtk_check_button_new();
         gtk_check_button_set_active (GTK_CHECK_BUTTON (radio->oc_tx_b[band_idx]), (band->OCtx&mask)==mask);
-        gtk_widget_show(radio->oc_tx_b[band_idx]);
+        gtk_widget_set_visible(radio->oc_tx_b[band_idx], TRUE);
         gtk_grid_attach(GTK_GRID(grid),radio->oc_tx_b[band_idx],j+7,dr,1,1);
         data->radio=radio;
         data->band=i;

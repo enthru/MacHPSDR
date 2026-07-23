@@ -135,8 +135,8 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
 
 void update_tx_panadapter(RADIO *r) {
   TRANSMITTER *tx=r->transmitter;
-  int width=gtk_widget_get_allocated_width(tx->panadapter);
-  int height=gtk_widget_get_allocated_height(tx->panadapter);
+  int width=gtk_widget_get_width(tx->panadapter);
+  int height=gtk_widget_get_height(tx->panadapter);
   float *samples=tx->pixel_samples;
   double hz_per_pixel=(double)tx->iq_output_rate/(double)tx->pixels;
   char text[32];

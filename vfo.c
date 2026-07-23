@@ -1474,7 +1474,7 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_a_text)/rx->vfo_a_digits);
     long long step=0LL;
     if(digit<13) {
       step=ll_step[digit];
@@ -1499,7 +1499,7 @@ static gboolean frequency_a_motion_notify_event_cb(GtkEventControllerMotion *ctr
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_a_text)/rx->vfo_a_digits);
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
@@ -1524,7 +1524,7 @@ static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_b_text)/rx->vfo_b_digits);
     long long step=0LL;
     if(digit<13) {
       step=ll_step[digit];
@@ -1555,7 +1555,7 @@ static gboolean frequency_b_motion_notify_event_cb(GtkEventControllerMotion *ctr
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_allocated_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_b_text)/rx->vfo_b_digits);
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
@@ -2001,11 +2001,11 @@ void update_vfo(RECEIVER *rx) {
   if(rx->mode_a==FMN) {
     gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
     gtk_label_set_text(GTK_LABEL(v->squelch_label),"SQL");
-    gtk_widget_show(v->squelch_scale);
+    gtk_widget_set_visible(v->squelch_scale, TRUE);
   }
   else {
       gtk_label_set_text(GTK_LABEL(v->squelch_label),"");
-      gtk_widget_hide(v->squelch_scale);
+      gtk_widget_set_visible(v->squelch_scale, FALSE);
   }
   // update Lock button
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),rx->locked);

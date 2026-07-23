@@ -101,8 +101,8 @@ void update_tx_info_meter(TXMETER *meter, gdouble value, gdouble peak) {
     cairo_t *cr;
     cr = cairo_create(meter->tx_info_meter_surface);
 
-    int width = gtk_widget_get_allocated_width(meter->tx_meter_drawing);
-    int height = gtk_widget_get_allocated_height(meter->tx_meter_drawing);
+    int width = gtk_widget_get_width(meter->tx_meter_drawing);
+    int height = gtk_widget_get_height(meter->tx_meter_drawing);
     
     int bar_width = width-10;
 

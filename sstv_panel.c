@@ -63,8 +63,8 @@ typedef struct {
 // Draw the image scaled to fit the drawing area, preserving 4:3, letterboxed.
 static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   SstvPanel *p = data;
-  int aw = gtk_widget_get_allocated_width(w);
-  int ah = gtk_widget_get_allocated_height(w);
+  int aw = gtk_widget_get_width(w);
+  int ah = gtk_widget_get_height(w);
   cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
   cairo_paint(cr);
   // Show the decoded image normally, but preview the loaded TX image while

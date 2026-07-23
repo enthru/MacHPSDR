@@ -240,9 +240,8 @@ static gboolean refresh(gpointer data) {
     snprintf(lbl, sizeof(lbl), "Tx%d  %s", i + 1, msgs[i][0] ? msgs[i] : "—");
     gtk_button_set_label(GTK_BUTTON(txbtn[i]), lbl);
     gtk_widget_set_sensitive(txbtn[i], msgs[i][0] != '\0');
-    GtkStyleContext *sc = gtk_widget_get_style_context(txbtn[i]);
-    if (i + 1 == active) gtk_style_context_add_class(sc, "suggested-action");
-    else                 gtk_style_context_remove_class(sc, "suggested-action");
+    if (i + 1 == active) gtk_widget_add_css_class(txbtn[i], "suggested-action");
+    else                 gtk_widget_remove_css_class(txbtn[i], "suggested-action");
   }
 
   // Sync the toggles from the engine without re-entering their handlers.
@@ -259,9 +258,8 @@ static gboolean refresh(gpointer data) {
     g_signal_handlers_unblock_by_func(enable_btn, (gpointer)enable_toggled, NULL);
     // Red only while armed; a plain grey button when Tx is off, so the state
     // is obvious at a glance.
-    GtkStyleContext *sc = gtk_widget_get_style_context(enable_btn);
-    if (en) gtk_style_context_add_class(sc, "destructive-action");
-    else    gtk_style_context_remove_class(sc, "destructive-action");
+    if (en) gtk_widget_add_css_class(enable_btn, "destructive-action");
+    else    gtk_widget_remove_css_class(enable_btn, "destructive-action");
   }
   if (auto_chk) {
     g_signal_handlers_block_by_func(auto_chk, (gpointer)auto_toggled, NULL);

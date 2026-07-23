@@ -151,7 +151,7 @@ void update_wideband_panadapter(WIDEBAND *w) {
   gdouble hz_per_pixel;
   gdouble x;
 
-  int display_height=gtk_widget_get_allocated_height (w->panadapter);
+  int display_height=gtk_widget_get_height (w->panadapter);
 
   if(display_height<=1) return;
 

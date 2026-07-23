@@ -119,8 +119,8 @@ void update_meter(RECEIVER *rx) {
   char sf[32];
   cairo_t *cr;
 
-  int meter_width=gtk_widget_get_allocated_width (rx->meter);
-  int meter_height=gtk_widget_get_allocated_height (rx->meter);
+  int meter_width=gtk_widget_get_width (rx->meter);
+  int meter_height=gtk_widget_get_height (rx->meter);
 
   cr = cairo_create (rx->meter_surface);
 

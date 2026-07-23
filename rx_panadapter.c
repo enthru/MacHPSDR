@@ -313,8 +313,8 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   cairo_text_extents_t extents;
   char temp[32];
 
-  int display_width=gtk_widget_get_allocated_width (rx->panadapter);
-  int display_height=gtk_widget_get_allocated_height (rx->panadapter);
+  int display_width=gtk_widget_get_width (rx->panadapter);
+  int display_height=gtk_widget_get_height (rx->panadapter);
   //int offset=((rx->zoom-1)/2)*display_width;
   int offset=rx->pan;
   samples=rx->pixel_samples;

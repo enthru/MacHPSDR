@@ -18,15 +18,43 @@
 */
 #include <gtk/gtk.h>
 
-void set_button_text_color(GtkWidget *widget,char *color) {
-  GtkStyleContext *style_context;
-  GtkCssProvider *provider = gtk_css_provider_new ();
-  gchar tmp[64];
-  style_context = gtk_widget_get_style_context(widget);
-  gtk_style_context_add_provider(style_context, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  // GTK4 always uses the CSS3 element selectors.
-  g_snprintf(tmp, sizeof tmp, "button, label { color: %s; }", color);
-  gtk_css_provider_load_from_string(GTK_CSS_PROVIDER(provider), tmp);
-  g_object_unref (provider);
+// GTK4: per-widget style providers (gtk_style_context_add_provider) are gone.
+// Instead we install ONE display-wide provider that defines a CSS class per
+// distinct colour ever requested, and swap that class onto the widget. This
+// keeps the per-widget semantics without leaking a provider on every call
+// (previously every mox toggle added a fresh provider to the widget context).
+void set_button_text_color(GtkWidget *widget, char *color) {
+  static GtkCssProvider *provider = NULL;
+  static GHashTable *colors = NULL;   // colour string -> class name
+  static GString *css = NULL;
+  static guint next_id = 0;
+
+  if (provider == NULL) {
+    provider = gtk_css_provider_new();
+    colors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    css = g_string_new("");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+        GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  }
+
+  // Ensure a class exists for this colour, defining it once on first use.
+  char *cls = g_hash_table_lookup(colors, color);
+  if (cls == NULL) {
+    cls = g_strdup_printf("btntext-%u", next_id++);
+    g_hash_table_insert(colors, g_strdup(color), cls);
+    // GTK4 always uses the CSS3 element selectors.
+    g_string_append_printf(css, ".%s, .%s button, .%s label { color: %s; }\n",
+                           cls, cls, cls, color);
+    gtk_css_provider_load_from_string(provider, css->str);
+  }
+
+  // Drop any previously-applied btntext-* class, then add the new one.
+  char **existing = gtk_widget_get_css_classes(widget);
+  for (int i = 0; existing && existing[i]; i++) {
+    if (g_str_has_prefix(existing[i], "btntext-"))
+      gtk_widget_remove_css_class(widget, existing[i]);
+  }
+  g_strfreev(existing);
+  gtk_widget_add_css_class(widget, cls);
 }
 

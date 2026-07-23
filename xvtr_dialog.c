@@ -327,7 +327,7 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
     if (radio->hl2 != NULL) {
       pa_calibration[i] = gtk_spin_button_new_with_range(38.8,100.0,0.1);
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_calibration[i]),(double)xvtr->pa_calibration);
-      gtk_widget_show(pa_calibration[i]);    
+      gtk_widget_set_visible(pa_calibration[i], TRUE);    
       gtk_grid_attach(GTK_GRID(grid),pa_calibration[i],col++,row,1,1);
       g_signal_connect(pa_calibration[i],"changed",G_CALLBACK(pa_xvtr_value_changed_cb),GINT_TO_POINTER(i));
 

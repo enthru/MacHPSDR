@@ -920,7 +920,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *fps_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->fps, 1.0, 50.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(fps_scale,200,30);
   sui_scale_show_value(fps_scale,0);
-  gtk_widget_show(fps_scale);
+  gtk_widget_set_visible(fps_scale, TRUE);
   g_signal_connect(G_OBJECT(fps_scale),"value_changed",G_CALLBACK(fps_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),fps_scale,1,0,1,1);
 
@@ -930,7 +930,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *average_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->display_average_time,1.0, 500.0, 1.00, 1.0, 1.0));
   gtk_widget_set_size_request(average_scale,200,30);
   sui_scale_show_value(average_scale,0);
-  gtk_widget_show(average_scale);
+  gtk_widget_set_visible(average_scale, TRUE);
   g_signal_connect(G_OBJECT(average_scale),"value_changed",G_CALLBACK(panadapter_average_time_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),average_scale,1,1,1,1);
 
@@ -940,7 +940,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_high,-200.0, 20.0, 1.00, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_high_scale,200,30);
   sui_scale_show_value(panadapter_high_scale,0);
-  gtk_widget_show(panadapter_high_scale);
+  gtk_widget_set_visible(panadapter_high_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_high_scale),"value_changed",G_CALLBACK(panadapter_high_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_high_scale,1,2,1,1);
 
@@ -950,7 +950,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_low,-200.0, 20.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_low_scale,200,30);
   sui_scale_show_value(panadapter_low_scale,0);
-  gtk_widget_show(panadapter_low_scale);
+  gtk_widget_set_visible(panadapter_low_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,3,1,1);
 
@@ -960,7 +960,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_step_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_step,1.0, 40.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_step_scale,200,30);
   sui_scale_show_value(panadapter_step_scale,0);
-  gtk_widget_show(panadapter_step_scale);
+  gtk_widget_set_visible(panadapter_step_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_step_scale),"value_changed",G_CALLBACK(panadapter_step_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_step_scale,1,4,1,1);
 
@@ -980,7 +980,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   g_signal_connect(panadapter_agc_line,"toggled",G_CALLBACK(panadapter_agc_line_changed_cb),rx);
 
   GtkWidget *panadapter_single_color_label=gtk_label_new("Panadapter Color:");
-  gtk_widget_show(panadapter_single_color_label);
+  gtk_widget_set_visible(panadapter_single_color_label, TRUE);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,0,8,1,1);
 
   GtkWidget *panadapter_single_color_b=gtk_combo_box_text_new();
@@ -988,7 +988,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(panadapter_single_color_b),NULL,panadapter_color_names[i]);
   }
   gtk_combo_box_set_active(GTK_COMBO_BOX(panadapter_single_color_b),rx->panadapter_single_color);
-  gtk_widget_show(panadapter_single_color_b);
+  gtk_widget_set_visible(panadapter_single_color_b, TRUE);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,1,8,1,1);
   g_signal_connect(panadapter_single_color_b,"changed",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
@@ -1013,7 +1013,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *waterfall_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_high,-200.0, 20.0, 1.0, 1.0, 1.0));
     gtk_widget_set_size_request(waterfall_high_scale,200,30);
     sui_scale_show_value(waterfall_high_scale,0);
-    gtk_widget_show(waterfall_high_scale);
+    gtk_widget_set_visible(waterfall_high_scale, TRUE);
     g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),rx);
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_scale,1,0,1,1);
 
@@ -1023,7 +1023,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *waterfall_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_low,-200.0, 20.0, 1.0, 1.0, 1.0));
     gtk_widget_set_size_request(waterfall_low_scale,200,30);
     sui_scale_show_value(waterfall_low_scale,0);
-    gtk_widget_show(waterfall_low_scale);
+    gtk_widget_set_visible(waterfall_low_scale, TRUE);
     g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),rx);
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_scale,1,1,1,1);
 
@@ -1073,7 +1073,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *rigctl_port_spinner =gtk_spin_button_new_with_range(18000,21000,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(rigctl_port_spinner),(double)rx->rigctl_port);
-  gtk_widget_show(rigctl_port_spinner);
+  gtk_widget_set_visible(rigctl_port_spinner, TRUE);
   gtk_grid_attach(GTK_GRID(cat_grid),rigctl_port_spinner,0,2,2,1);
   g_signal_connect(rigctl_port_spinner,"value_changed",G_CALLBACK(rigctl_value_changed_cb),rx);
 
@@ -1090,7 +1090,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   rx->serial_port_entry=gtk_entry_new();
   gtk_editable_set_text(GTK_EDITABLE(rx->serial_port_entry),rx->rigctl_serial_port);
-  gtk_widget_show(rx->serial_port_entry);
+  gtk_widget_set_visible(rx->serial_port_entry, TRUE);
   gtk_grid_attach(GTK_GRID(cat_grid),rx->serial_port_entry,1,5,2,1);
   g_signal_connect(rx->serial_port_entry,"activate",G_CALLBACK(cat_serial_port_cb),rx);
 

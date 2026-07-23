@@ -430,7 +430,7 @@ log_info("radio_save_state: %s\n",filename);
     GtkWidget *w=gtk_widget_get_first_child(radio->rx_container);
     int k=0;
     while(w!=NULL && GTK_IS_PANED(w)) {
-      int ph=gtk_widget_get_allocated_height(w);
+      int ph=gtk_widget_get_height(w);
       double frac=(ph>0)?((double)gtk_paned_get_position(GTK_PANED(w))/(double)ph):0.5;
       sprintf(name,"radio.rx_paned[%d]",k);
       sprintf(value,"%f",frac);
@@ -1265,7 +1265,7 @@ log_info("add_diversity_mixer: no diversity mixers available\n");
 static gboolean rx_stack_balance(gpointer data) {
   RADIO *r=(RADIO *)data;
   if(r->rx_container==NULL) return FALSE;
-  int total=gtk_widget_get_allocated_height(r->rx_container);
+  int total=gtk_widget_get_height(r->rx_container);
   if(total<=1) return TRUE;  // not allocated yet; retry on next timeout
 
   // Count panes exactly as radio_rebuild_rx_stack does: live receivers PLUS the

@@ -349,14 +349,14 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),tune_frame,col,row++,1,1);
 
   GtkWidget *tune_label=gtk_label_new("Tune Percent:");
-  gtk_widget_show(tune_label);
+  gtk_widget_set_visible(tune_label, TRUE);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_label,0,1,1,1);
 
   GtkWidget *tune_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0.0,100.0,1.00);
   gtk_widget_set_size_request (tune_scale, 300, 32);
   gtk_range_set_value (GTK_RANGE(tune_scale),tx->tune_percent);
   sui_scale_show_value(tune_scale,0);
-  gtk_widget_show(tune_scale);
+  gtk_widget_set_visible(tune_scale, TRUE);
   g_signal_connect(G_OBJECT(tune_scale),"value_changed",G_CALLBACK(tune_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_scale,1,1,1,1);
 
@@ -380,7 +380,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   g_signal_connect(use_rx_filter,"toggled",G_CALLBACK(use_rx_filter_cb),tx);
 
   GtkWidget *low_label=gtk_label_new("Low:");
-  gtk_widget_show(low_label);
+  gtk_widget_set_visible(low_label, TRUE);
   gtk_grid_attach(GTK_GRID(filter_grid),low_label,0,1,1,1);
 
   tx_spin_low=gtk_spin_button_new_with_range(0.0,8000.0,1.0);
@@ -389,7 +389,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   g_signal_connect(tx_spin_low,"value-changed",G_CALLBACK(tx_spin_low_cb),tx);
 
   GtkWidget *high_label=gtk_label_new("High:");
-  gtk_widget_show(high_label);
+  gtk_widget_set_visible(high_label, TRUE);
   gtk_grid_attach(GTK_GRID(filter_grid),high_label,2,1,1,1);
 
   tx_spin_high=gtk_spin_button_new_with_range(0.0,8000.0,1.0);
@@ -411,7 +411,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   GtkWidget *emp_b=gtk_check_button_new_with_label("FM TX Pre-emphasize before limiting");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (emp_b), tx->pre_emphasize);
-  gtk_widget_show(emp_b);
+  gtk_widget_set_visible(emp_b, TRUE);
   gtk_grid_attach(GTK_GRID(fm_grid),emp_b,0,0,1,1);
   g_signal_connect(emp_b,"toggled",G_CALLBACK(emp_cb),tx);
 
@@ -428,11 +428,11 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
 #ifdef GTK316
   gtk_label_set_xalign(GTK_LABEL(am_carrier_level_label),0);
 #endif
-  gtk_widget_show(am_carrier_level_label);
+  gtk_widget_set_visible(am_carrier_level_label, TRUE);
   gtk_grid_attach(GTK_GRID(am_grid),am_carrier_level_label,0,0,1,1);
   GtkWidget *am_carrier_level=gtk_spin_button_new_with_range(0.0,1.0,0.1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(am_carrier_level),(double)tx->am_carrier_level);
-  gtk_widget_show(am_carrier_level);
+  gtk_widget_set_visible(am_carrier_level, TRUE);
   gtk_grid_attach(GTK_GRID(am_grid),am_carrier_level,1,0,1,1);
   g_signal_connect(am_carrier_level,"value_changed",G_CALLBACK(am_carrier_level_value_changed_cb),tx);
 
@@ -476,7 +476,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_widget_set_size_request(fps_scale,200,30);
   gtk_range_set_value (GTK_RANGE(fps_scale),tx->fps);
   sui_scale_show_value(fps_scale,0);
-  gtk_widget_show(fps_scale);
+  gtk_widget_set_visible(fps_scale, TRUE);
   g_signal_connect(G_OBJECT(fps_scale),"value_changed",G_CALLBACK(fps_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),fps_scale,1,0,1,1);
 
@@ -487,7 +487,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_widget_set_size_request(panadapter_high_scale,200,30);
   gtk_range_set_value (GTK_RANGE(panadapter_high_scale),tx->panadapter_high);
   sui_scale_show_value(panadapter_high_scale,0);
-  gtk_widget_show(panadapter_high_scale);
+  gtk_widget_set_visible(panadapter_high_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_high_scale),"value_changed",G_CALLBACK(panadapter_high_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_high_scale,1,1,1,1);
 
@@ -498,7 +498,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_widget_set_size_request(panadapter_low_scale,200,30);
   gtk_range_set_value (GTK_RANGE(panadapter_low_scale),tx->panadapter_low);
   sui_scale_show_value(panadapter_low_scale,0);
-  gtk_widget_show(panadapter_low_scale);
+  gtk_widget_set_visible(panadapter_low_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,2,1,1);
 
@@ -617,7 +617,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_attach(GTK_GRID(grid),latency_frame,col,row++,1,1);
 
   GtkWidget *fifo_label=gtk_label_new("Size (ms):");
-  gtk_widget_show(fifo_label);
+  gtk_widget_set_visible(fifo_label, TRUE);
   gtk_grid_attach(GTK_GRID(latency_grid),fifo_label,1,1,1,1);
 
   tx_latency = gtk_spin_button_new_with_range(10, 60,1.0);
@@ -650,14 +650,14 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   g_signal_connect(enable_leveler, "toggled", G_CALLBACK(tx_leveler_cb), tx);
   
   GtkWidget *comp_label=gtk_label_new("Compression (dB):");
-  gtk_widget_show(comp_label);
+  gtk_widget_set_visible(comp_label, TRUE);
   gtk_grid_attach(GTK_GRID(compressor_grid), comp_label,0,1,1,1);
 
   GtkWidget *comp_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0 ,20 ,1);
   gtk_widget_set_size_request(comp_scale, 150, 32);
   gtk_range_set_value (GTK_RANGE(comp_scale), tx->compressor_level);
   sui_scale_show_value(comp_scale,0);
-  gtk_widget_show(comp_scale);
+  gtk_widget_set_visible(comp_scale, TRUE);
   g_signal_connect(G_OBJECT(comp_scale),"value_changed",G_CALLBACK(comp_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(compressor_grid),comp_scale,1,1,1,1);
 

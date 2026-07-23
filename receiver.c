@@ -420,7 +420,7 @@ void receiver_save_state(RECEIVER *rx) {
 
   {
     gint position=gtk_paned_get_position(GTK_PANED(rx->vpaned));
-    gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
+    gint paned_height=gtk_widget_get_height(rx->vpaned);
     // Persist the panadapter/waterfall split only when it is sane. Saving a 0
     // (panadapter collapsed, or the vpaned not yet allocated so height<=1)
     // poisons paned_percent and collapses the spectroscope on the next launch
@@ -2254,7 +2254,7 @@ log_info("%s: %d\n",__FUNCTION__,zoom);
 // Restore the saved panadapter/waterfall split. Must run only once the vpaned
 // has a real allocated height - at create_receiver time the panel is not yet in
 // a sized window (it gets re-parented into the RX stack and the window resized
-// afterwards), so gtk_widget_get_allocated_height() would return ~1 and the
+// afterwards), so gtk_widget_get_height() would return ~1 and the
 // saved proportion would be lost. Poll on a timeout until allocated, then apply.
 static gboolean restore_paned_position_cb(gpointer data);
 
@@ -2291,7 +2291,7 @@ void receiver_refit_vpaned(RECEIVER *rx) {
 static gboolean restore_paned_position_cb(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   if(rx->vpaned==NULL) return FALSE;
-  gint paned_height=gtk_widget_get_allocated_height(rx->vpaned);
+  gint paned_height=gtk_widget_get_height(rx->vpaned);
   // Keep waiting until the pane is allocated a usable height. A tiny but >1
   // height (mid-allocation) would otherwise compute a sliver position and stop
   // for good, opening the spectroscope collapsed — the bug this guards against.
