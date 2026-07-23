@@ -738,10 +738,10 @@ static const char css_body[]=
 "    background-color: @BACKGROUND;\n"
 "    padding: 12px 16px;\n"
 "    }\n"
+/* GTK4: GtkFrame draws its border on the "frame" node itself — the GTK3
+   "border" subnode is gone, so the old `frame > border` rule matched nothing
+   and `frame { border-style: none }` silently removed the group outlines. */
 "  #config-dialog frame {\n"
-"    border-style: none;\n"
-"    }\n"
-"  #config-dialog frame > border {\n"
 "    border-style: solid;\n"
 "    border-width: 1px;\n"
 "    border-color: @BORDER;\n"
