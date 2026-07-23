@@ -132,30 +132,34 @@ static void restore_bookmarks() {
     bookmark->next=NULL;
     bookmark->name=g_new0(gchar,strlen(value)+1);
     strcpy(bookmark->name,value);
+    // Only the .name key is used as the end-of-list sentinel above; every other
+    // key may be missing on a truncated or hand-edited bookmarks file, in which
+    // case getProperty() returns NULL. atoll(NULL)/atoi(NULL) is a NULL deref,
+    // so default each missing field to 0 instead of crashing at start-up.
     sprintf(name,"bookmark[%d].frequency_a",i);
     value=getProperty(name);
-    bookmark->frequency_a=atoll(value);
+    bookmark->frequency_a=value?atoll(value):0;
     sprintf(name,"bookmark[%d].frequency_b",i);
     value=getProperty(name);
-    bookmark->frequency_b=atoll(value);
+    bookmark->frequency_b=value?atoll(value):0;
     sprintf(name,"bookmark[%d].ctun_frequency",i);
     value=getProperty(name);
-    bookmark->ctun_frequency=atoll(value);
+    bookmark->ctun_frequency=value?atoll(value):0;
     sprintf(name,"bookmark[%d].ctun",i);
     value=getProperty(name);
-    bookmark->ctun=atoi(value);
+    bookmark->ctun=value?atoi(value):0;
     sprintf(name,"bookmark[%d].band",i);
     value=getProperty(name);
-    bookmark->band=atoi(value);;
+    bookmark->band=value?atoi(value):0;
     sprintf(name,"bookmark[%d].mode",i);
     value=getProperty(name);
-    bookmark->mode=atoi(value);
+    bookmark->mode=value?atoi(value):0;
     sprintf(name,"bookmark[%d].filter",i);
     value=getProperty(name);
-    bookmark->filter=atoi(value);
+    bookmark->filter=value?atoi(value):0;
     sprintf(name,"bookmark[%d].split",i);
     value=getProperty(name);
-    bookmark->split=atoi(value);
+    bookmark->split=value?atoi(value):0;
 
     if(bookmark_tail==NULL) {
       bookmark_head=bookmark;
