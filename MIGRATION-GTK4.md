@@ -5,6 +5,45 @@ This branch is **GTK4-only** (no dual-build): the API changes (pack_start
 signature, removed menus/EventBox, drawing model) are too pervasive to `#ifdef`.
 `master` stays on GTK3.
 
+---
+## ▶ RESUME HERE (state as of commit 63a3e02)
+
+**Where we are:** Phase 1 done — the tree builds, links, and launches on GTK 4.22.
+Branch `gtk4-migration`, working tree clean. Requires `brew install gtk4` (4.22
+installed). Build/run to confirm:
+
+```bash
+make                                   # clean arm64 machpsdr against gtk4
+./machpsdr --faker ft4.wav --usb-only  # launches end-to-end (no hardware)
+```
+
+**TODO, in priority order:**
+1. **Runtime check-button fix** (biggest functional gap — dialogs' checkboxes
+   silently don't work). Replace `gtk_toggle_button_get/set_active(GTK_TOGGLE_BUTTON(cb))`
+   with `gtk_check_button_get/set_active(GTK_CHECK_BUTTON(cb))` for every widget
+   that is actually a `GtkCheckButton` (made with `gtk_check_button_new*`). Find:
+   `grep -rn 'gtk_toggle_button_.*_active' *.c`. Real `GtkToggleButton`
+   (`gtk_toggle_button_new*`) keeps the old API — check each site's widget type.
+2. **Grouped radio→check "pressed"** in receiver_dialog.c / radio_dialog.c: change
+   `g_signal_connect(btn,"pressed",...)` → `"toggled"` and have the cb guard on
+   `gtk_check_button_get_active()` (only act when becoming active).
+3. Sanity-drive the GUI (VFO menus/popovers, sliders, right-click config,
+   bookmark menu, file choosers) — only faker *launch* is verified so far.
+4. **Phase 2**: ComboBox→GtkDropDown (~318), TreeView/ListStore→GtkColumnView (~184).
+5. **Phase 3**: Makefile `app` target (gtk-3.0→gtk-4.0 bundle paths, drop im
+   modules) + optional GtkSnapshot/GdkTexture GPU waterfalls.
+
+**Also revisit (deliberate Phase-1 simplifications):** vfo band right-click menu
+flattened to headers (no submenus); ft8 waterfall not re-split live on resize;
+window position not restored (gtk_window_move gone).
+
+**Key infra added this migration (reuse these):** `gtk4_dialog_run()` shim in
+ext.c (removed gtk_dialog_run); `child_remove_from_parent()` in radio.c (no
+generic gtk_container_remove); vfo.c popover-menu macro shim + `vfo_attach_ctl()`
+(EventBox replacement). Reusable GTK3→GTK4 replacement table is below.
+
+---
+
 ## ✅ PHASE 1 COMPLETE — builds, links, and launches on GTK 4.22
 
 `make` produces a clean `machpsdr` arm64 binary against `pkg-config gtk4`, and it
