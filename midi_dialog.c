@@ -55,12 +55,45 @@ enum {
 
 static GtkWidget *midi_enable_b;
 
-static GtkListStore *store;
+// GTK4: GtkTreeView/GtkListStore are deprecated. The mapping table is a
+// GtkColumnView over a GListStore of MidiItem GObjects (5 display strings,
+// indexed by *_COLUMN). The store mirrors MidiCommandsTable, so edits/deletes
+// mutate that table and rebuild via load_store().
+#define MIDI_TYPE_ITEM (midi_item_get_type())
+G_DECLARE_FINAL_TYPE(MidiItem, midi_item, MIDI, ITEM, GObject)
+struct _MidiItem { GObject parent_instance; char *col[N_COLUMNS]; };
+G_DEFINE_TYPE(MidiItem, midi_item, G_TYPE_OBJECT)
+static void midi_item_finalize(GObject *o) {
+  MidiItem *it = MIDI_ITEM(o);
+  for(int c=0;c<N_COLUMNS;c++) g_free(it->col[c]);
+  G_OBJECT_CLASS(midi_item_parent_class)->finalize(o);
+}
+static void midi_item_class_init(MidiItemClass *k){ G_OBJECT_CLASS(k)->finalize = midi_item_finalize; }
+static void midi_item_init(MidiItem *it){ }
+
+static void midi_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  GtkWidget *lbl = gtk_label_new(NULL);
+  gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+  gtk_list_item_set_child(li, lbl);
+}
+static void midi_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  int c = GPOINTER_TO_INT(u);
+  MidiItem *it = gtk_list_item_get_item(li);
+  const char *s = (it && it->col[c]) ? it->col[c] : "";
+  gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), s);
+}
+static GtkColumnViewColumn *midi_col(const char *title, int colid) {
+  GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+  g_signal_connect(f,"setup",G_CALLBACK(midi_setup),NULL);
+  g_signal_connect(f,"bind",G_CALLBACK(midi_bind),GINT_TO_POINTER(colid));
+  return gtk_column_view_column_new(title, f);
+}
+
+static GListStore *store;
 static GtkWidget *view;
 static GtkWidget *scrolled_window=NULL;
 static gulong selection_signal_id;
-static GtkTreeModel *model;
-static GtkTreeIter iter;
+static GtkSingleSelection *midi_selection;
 struct desc *current_cmd;
 
 static GtkWidget *filename;
@@ -195,29 +228,16 @@ static void type_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
   }
 }
 
-static void row_inserted_cb(GtkTreeModel *tree_model,GtkTreePath *path, GtkTreeIter *iter,gpointer user_data) {
-  //g_print("%s\n",__FUNCTION__);
-  gtk_tree_view_set_cursor(GTK_TREE_VIEW(view),path,NULL,false);
-}
 
 
-static void tree_selection_changed_cb (GtkTreeSelection *selection, gpointer data) {
-  char *str_event;
-  char *str_channel;
-  char *str_note;
-  char *str_type;
-  char *str_action;
-
-  //g_print("%s\n",__FUNCTION__);
-  //if(gtk_check_button_get_active(GTK_CHECK_BUTTON(configure_b))) {
-    if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
-      gtk_tree_model_get(model, &iter, EVENT_COLUMN, &str_event, -1);
-      gtk_tree_model_get(model, &iter, CHANNEL_COLUMN, &str_channel, -1);
-      gtk_tree_model_get(model, &iter, NOTE_COLUMN, &str_note, -1);
-      gtk_tree_model_get(model, &iter, TYPE_COLUMN, &str_type, -1);
-      gtk_tree_model_get(model, &iter, ACTION_COLUMN, &str_action, -1);
-
-      //g_print("%s: %s %s %s %s %s\n",__FUNCTION__,str_event,str_channel,str_note,str_type,str_action);
+static void tree_selection_changed_cb (GObject *sel, GParamSpec *ps, gpointer data) {
+    MidiItem *it = gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(sel));
+    if(it != NULL) {
+      const char *str_event   = it->col[EVENT_COLUMN];
+      const char *str_channel = it->col[CHANNEL_COLUMN];
+      const char *str_note    = it->col[NOTE_COLUMN];
+      const char *str_type    = it->col[TYPE_COLUMN];
+      const char *str_action  = it->col[ACTION_COLUMN];
 
       if(str_event!=NULL && str_channel!=NULL && str_note!=NULL && str_type!=NULL && str_action!=NULL) {
 
@@ -285,7 +305,7 @@ static void clear_cb(GtkWidget *widget,gpointer user_data) {
     }
     MidiCommandsTable.desc[i]=NULL;
   }
-  gtk_list_store_clear(store);
+  g_list_store_remove_all(store);
 }
 
 // GTK4: GtkFileChooserDialog is deprecated; GtkFileDialog is async — the accept
@@ -401,14 +421,14 @@ static void add_store(int key,struct desc *cmd) {
       break;
   }
   strcpy(str_action,ActionTable[cmd->action].str);
-  gtk_list_store_prepend(store,&iter);
-  gtk_list_store_set(store,&iter,
-      EVENT_COLUMN,str_event,
-      CHANNEL_COLUMN,str_channel,
-      NOTE_COLUMN,str_note,
-      TYPE_COLUMN,str_type,
-      ACTION_COLUMN,str_action,
-      -1);
+  MidiItem *it = g_object_new(MIDI_TYPE_ITEM, NULL);
+  it->col[EVENT_COLUMN]   = g_strdup(str_event);
+  it->col[CHANNEL_COLUMN] = g_strdup(str_channel);
+  it->col[NOTE_COLUMN]    = g_strdup(str_note);
+  it->col[TYPE_COLUMN]    = g_strdup(str_type);
+  it->col[ACTION_COLUMN]  = g_strdup(str_action);
+  g_list_store_insert(store, 0, it);   // prepend (newest first)
+  g_object_unref(it);
 
   if(scrolled_window!=NULL) {
     GtkAdjustment *adjustment=gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW(scrolled_window));
@@ -421,7 +441,7 @@ static void add_store(int key,struct desc *cmd) {
 
 static void load_store() {
   struct desc *cmd;
-  gtk_list_store_clear(store);
+  g_list_store_remove_all(store);
   for(int i=0;i<128;i++) {
     cmd=MidiCommandsTable.desc[i];
     while(cmd!=NULL) {
@@ -507,11 +527,7 @@ static void add_cb(GtkButton *widget,gpointer user_data) {
 }
 
 static void update_cb(GtkButton *widget,gpointer user_data) {
-  char str_event[16];
-  char str_channel[16];
-  char str_note[16];
   int i;
-
 
   const gchar *str_type=md_selected_text(newType);
   const gchar *str_action=md_selected_text(newAction);
@@ -542,42 +558,15 @@ static void update_cb(GtkButton *widget,gpointer user_data) {
   current_cmd->type=thisType;
   current_cmd->action=thisAction;
 
-  switch(current_cmd->event) {
-    case EVENT_NONE:
-      strcpy(str_event,"NONE");
-      break;
-    case MIDI_NOTE:
-      strcpy(str_event,"NOTE");
-      break;
-    case MIDI_CTRL:
-      strcpy(str_event,"CTRL");
-      break;
-    case MIDI_PITCH:
-      strcpy(str_event,"PITCH");
-      break;
-  }
-  sprintf(str_channel,"%d",current_cmd->channel);
-  sprintf(str_note,"%d",thisNote);
-
-  //g_print("%s: event=%s channel=%s note=%s type=%s action=%s\n",
-  //        __FUNCTION__,str_event,str_channel,str_note,str_type,str_action);
-  gtk_list_store_set(store,&iter,
-      EVENT_COLUMN,str_event,
-      CHANNEL_COLUMN,str_channel,
-      NOTE_COLUMN,str_note,
-      TYPE_COLUMN,str_type,
-      ACTION_COLUMN,str_action,
-      -1);
+  // The store mirrors MidiCommandsTable; rebuild it from the (now edited) data.
+  load_store();
 }
 
 static void delete_cb(GtkButton *widget,gpointer user_data) {
   struct desc *previous_cmd;
   struct desc *next_cmd;
-  GtkTreeIter saved_iter;
 
   //g_print("%s\n",__FUNCTION__);
-  saved_iter=iter;
-
 
   // remove from MidiCommandsTable
   if(MidiCommandsTable.desc[thisNote]==current_cmd) {
@@ -596,8 +585,8 @@ static void delete_cb(GtkButton *widget,gpointer user_data) {
     }
   }
 
-  // remove from list store
-  gtk_list_store_remove(store,&saved_iter);
+  // remove from list store (rebuild from the table)
+  load_store();
 
   gtk_widget_set_sensitive(add_b,true);
   gtk_widget_set_sensitive(update_b,false);
@@ -606,7 +595,6 @@ static void delete_cb(GtkButton *widget,gpointer user_data) {
 }
 
 GtkWidget *create_midi_dialog(RADIO *r) {
-  GtkCellRenderer *renderer;
 
   GtkWidget *page=gtk_grid_new();
   sui_style_page(page);
@@ -730,40 +718,26 @@ GtkWidget *create_midi_dialog(RADIO *r) {
   gtk_widget_set_hexpand(scrolled_window,TRUE);
   gtk_widget_set_vexpand(scrolled_window,TRUE);
 
-  view=gtk_tree_view_new();
-
-  renderer=gtk_cell_renderer_text_new();
-  gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "Event", renderer, "text", EVENT_COLUMN, NULL);
-
-  renderer=gtk_cell_renderer_text_new();
-  gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "CHANNEL", renderer, "text", CHANNEL_COLUMN, NULL);
-
-  renderer=gtk_cell_renderer_text_new();
-  gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "NOTE", renderer, "text", NOTE_COLUMN, NULL);
-
-  renderer=gtk_cell_renderer_text_new();
-  gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "TYPE", renderer, "text", TYPE_COLUMN, NULL);
-
-  renderer=gtk_cell_renderer_text_new();
-  gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(view), -1, "ACTION", renderer, "text", ACTION_COLUMN, NULL);
-
-  store=gtk_list_store_new(N_COLUMNS,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING);
+  store=g_list_store_new(MIDI_TYPE_ITEM);
+  midi_selection=gtk_single_selection_new(G_LIST_MODEL(store));   // takes the store ref
+  gtk_single_selection_set_autoselect(midi_selection, FALSE);
+  gtk_single_selection_set_can_unselect(midi_selection, TRUE);
+  view=gtk_column_view_new(GTK_SELECTION_MODEL(midi_selection));  // takes the selection ref
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), midi_col("Event",   EVENT_COLUMN));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), midi_col("CHANNEL", CHANNEL_COLUMN));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), midi_col("NOTE",    NOTE_COLUMN));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), midi_col("TYPE",    TYPE_COLUMN));
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), midi_col("ACTION",  ACTION_COLUMN));
 
   load_store();
-
-  gtk_tree_view_set_model(GTK_TREE_VIEW(view), GTK_TREE_MODEL(store));
 
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window),view);
 
   gtk_grid_attach(GTK_GRID(table_grid), scrolled_window, 0, 1, 4, 1);
 
-  model=gtk_tree_view_get_model(GTK_TREE_VIEW(view));
-  g_signal_connect(model,"row-inserted",G_CALLBACK(row_inserted_cb),NULL);
-
-  GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
-  gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-
-  selection_signal_id=g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(tree_selection_changed_cb),NULL);
+  gtk_single_selection_set_selected(midi_selection, GTK_INVALID_LIST_POSITION);   // start unselected
+  selection_signal_id=g_signal_connect(midi_selection,"notify::selected",
+                                       G_CALLBACK(tree_selection_changed_cb),NULL);
 
   return page;
 }
@@ -902,12 +876,11 @@ static int update(void *data) {
 
 void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val) {
 
-  gboolean valid;
-  char *str_event;
-  char *str_channel;
-  char *str_note;
-  char *str_type;
-  char *str_action;
+  const char *str_event;
+  const char *str_channel;
+  const char *str_note;
+  const char *str_type;
+  const char *str_action;
 
   gint tree_event;
   gint tree_channel;
@@ -932,16 +905,15 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
     thisType=TYPE_NONE;
     thisAction=ACTION_NONE;
 
-    // search tree to see if it is existing event
-    valid=gtk_tree_model_get_iter_first(model,&iter);
-    while(valid) {
-      gtk_tree_model_get(model, &iter, EVENT_COLUMN, &str_event, -1);
-      gtk_tree_model_get(model, &iter, CHANNEL_COLUMN, &str_channel, -1);
-      gtk_tree_model_get(model, &iter, NOTE_COLUMN, &str_note, -1);
-      gtk_tree_model_get(model, &iter, TYPE_COLUMN, &str_type, -1);
-      gtk_tree_model_get(model, &iter, ACTION_COLUMN, &str_action, -1);
-
-      //g_print("%s: %s %s %s %s %s\n",__FUNCTION__,str_event,str_channel,str_note,str_type,str_action);
+    // search the list to see if it is an existing event
+    guint n_rows = g_list_model_get_n_items(G_LIST_MODEL(store));
+    for(guint row=0; row<n_rows; row++) {
+      MidiItem *it = g_list_model_get_item(G_LIST_MODEL(store), row);   // owned
+      str_event   = it->col[EVENT_COLUMN];
+      str_channel = it->col[CHANNEL_COLUMN];
+      str_note    = it->col[NOTE_COLUMN];
+      str_type    = it->col[TYPE_COLUMN];
+      str_action  = it->col[ACTION_COLUMN];
 
       if(str_event!=NULL && str_channel!=NULL && str_note!=NULL && str_type!=NULL && str_action!=NULL) {
         if(strcmp(str_event,"CTRL")==0) {
@@ -978,15 +950,15 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
             }
             i++;
           }
-	  gtk_tree_view_set_cursor(GTK_TREE_VIEW(view),gtk_tree_model_get_path(model,&iter),NULL,false);
+	  if(midi_selection!=NULL) gtk_single_selection_set_selected(midi_selection, row);
+          g_object_unref(it);
           g_idle_add(update,GINT_TO_POINTER(UPDATE_EXISTING));
           return;
 	}
       }
-
-      valid=gtk_tree_model_iter_next(model,&iter);
+      g_object_unref(it);
     }
-    
+
     g_idle_add(update,GINT_TO_POINTER(UPDATE_NEW));
   }
 }
