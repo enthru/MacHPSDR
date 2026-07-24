@@ -1441,8 +1441,87 @@ void band_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
+// Set an absolute tune frequency (Hz), respecting the current tuning mode: in
+// ctun/freetune the moved value is ctun_frequency (+hz) and for a normal VFO it
+// is frequency_a (-hz); VFO B always adds. Reuses receiver_move[_b] so the
+// [0, 6 GHz] guards apply. Computes the delta from the currently displayed value.
+static void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b) {
+  if(rx==NULL || rx->locked) return;
+  if(is_b) {
+    long long want=target-rx->frequency_b;
+    receiver_move_b(rx,want,FALSE,FALSE);
+    frequency_changed(rx);
+  } else {
+    long long f=(rx->ctun || rx->freetune)?rx->ctun_frequency:rx->frequency_a;
+    long long want=target-f;
+    if(rx->ctun || rx->freetune) receiver_move(rx,want,FALSE);
+    else                         receiver_move(rx,-want,FALSE);
+  }
+  update_vfo(rx);
+}
+
+// Parse a typed frequency in MHz into Hz. Accepts '.' or ',' as the decimal
+// point and tolerates the VFO's grouped "14.074.000" style (only the first
+// separator is treated as the decimal point; later ones are dropped but their
+// digits kept, so "14.074.000" -> 14.074 MHz). Returns -1 on no usable number.
+static long long vfo_parse_freq(const char *s) {
+  char buf[64]; int j=0; gboolean have_dot=FALSE;
+  for(int i=0; s[i] && j<63; i++) {
+    char c=s[i];
+    if(c=='.' || c==',') { if(!have_dot){ buf[j++]='.'; have_dot=TRUE; } }
+    else if(c>='0' && c<='9') buf[j++]=c;
+    /* skip spaces and any other characters */
+  }
+  buf[j]='\0';
+  if(j==0) return -1;
+  double mhz=g_ascii_strtod(buf,NULL);
+  if(mhz<=0.0) return -1;
+  return (long long)(mhz*1e6 + 0.5);
+}
+
+// GtkEntry "activate" (Enter): apply the typed frequency and close the popover.
+static void freq_entry_activate_cb(GtkEntry *entry, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)g_object_get_data(G_OBJECT(entry),"rx");
+  GtkWidget *pop=(GtkWidget *)g_object_get_data(G_OBJECT(entry),"pop");
+  gboolean is_b=GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry),"is_b"));
+  long long hz=vfo_parse_freq(gtk_editable_get_text(GTK_EDITABLE(entry)));
+  if(hz>0) vfo_apply_frequency(rx,hz,is_b);
+  if(pop) gtk_popover_popdown(GTK_POPOVER(pop));
+}
+
+// Small pop-up panel over a VFO frequency label: a text field (pre-focused) to
+// type a full frequency in MHz, applied on Enter. The popover is modal, so it
+// grabs the keyboard, closes on Esc / click-outside, and unparents itself.
+static void vfo_show_freq_entry(RECEIVER *rx, GtkWidget *relto, gboolean is_b) {
+  GtkWidget *pop=gtk_popover_new();
+  gtk_widget_set_parent(pop,relto);
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+  gtk_widget_set_margin_start(box,6);  gtk_widget_set_margin_end(box,6);
+  gtk_widget_set_margin_top(box,6);    gtk_widget_set_margin_bottom(box,6);
+  GtkWidget *entry=gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(entry),"14.074");
+  gtk_editable_set_max_width_chars(GTK_EDITABLE(entry),12);
+  gtk_entry_set_input_purpose(GTK_ENTRY(entry),GTK_INPUT_PURPOSE_NUMBER);
+  gtk_box_append(GTK_BOX(box),entry);
+  gtk_box_append(GTK_BOX(box),gtk_label_new("MHz"));
+  gtk_popover_set_child(GTK_POPOVER(pop),box);
+  g_object_set_data(G_OBJECT(entry),"rx",rx);
+  g_object_set_data(G_OBJECT(entry),"pop",pop);
+  g_object_set_data(G_OBJECT(entry),"is_b",GINT_TO_POINTER(is_b));
+  g_signal_connect(entry,"activate",G_CALLBACK(freq_entry_activate_cb),NULL);
+  g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
+  gtk_popover_popup(GTK_POPOVER(pop));
+  gtk_widget_grab_focus(entry);
+}
+
 static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
+  // Primary click opens the type-in frequency panel; the band-stack menu moves
+  // to the secondary (right) button.
+  if(button==GDK_BUTTON_PRIMARY) {
+    if(!rx->locked) vfo_show_freq_entry(rx,widget,FALSE);
+    return TRUE;
+  }
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *band_menu;
   GtkWidget *menu_item;
@@ -1553,6 +1632,10 @@ static void frequency_leave_cb(GtkEventControllerMotion *ctrl,gpointer data) {
 }
 
 static gboolean frequency_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
+  RECEIVER *rx=(RECEIVER *)user_data;
+  if(button==GDK_BUTTON_PRIMARY && !rx->locked) {
+    vfo_show_freq_entry(rx,widget,TRUE);
+  }
   return TRUE;
 }
 
