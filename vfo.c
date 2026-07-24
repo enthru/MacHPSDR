@@ -1502,6 +1502,21 @@ static void vfo_show_freq_entry(RECEIVER *rx, GtkWidget *relto, gboolean is_b) {
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry),"14.074");
   gtk_editable_set_max_width_chars(GTK_EDITABLE(entry),12);
   gtk_entry_set_input_purpose(GTK_ENTRY(entry),GTK_INPUT_PURPOSE_NUMBER);
+
+  // Pre-fill with the current frequency (MHz), matching what the VFO shows:
+  // ctun_frequency in ctun/freetune, frequency_a otherwise, frequency_b for B.
+  // Trim trailing zeros (and a bare trailing dot) for a clean "14.074".
+  long long cur = is_b ? rx->frequency_b
+                       : ((rx->ctun || rx->freetune) ? rx->ctun_frequency
+                                                     : rx->frequency_a);
+  char txt[32];
+  snprintf(txt,sizeof(txt),"%.6f",(double)cur/1e6);
+  { int e=(int)strlen(txt);
+    while(e>0 && txt[e-1]=='0') e--;
+    if(e>0 && txt[e-1]=='.') e--;
+    txt[e]='\0'; }
+  gtk_editable_set_text(GTK_EDITABLE(entry),txt);
+
   gtk_box_append(GTK_BOX(box),entry);
   gtk_box_append(GTK_BOX(box),gtk_label_new("MHz"));
   gtk_popover_set_child(GTK_POPOVER(pop),box);
@@ -1512,6 +1527,7 @@ static void vfo_show_freq_entry(RECEIVER *rx, GtkWidget *relto, gboolean is_b) {
   g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
   gtk_popover_popup(GTK_POPOVER(pop));
   gtk_widget_grab_focus(entry);
+  gtk_editable_select_region(GTK_EDITABLE(entry),0,-1);  // typing replaces it
 }
 
 static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;

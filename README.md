@@ -118,6 +118,24 @@ you've dialled in.
   when the cursor reaches a span edge. Changing the bandwidth re-centres the span
   on the frequency you are listening to, and zooming keeps that frequency centred.
 
+- **VFO tuning.** Several ways to set the frequency on the VFO display:
+  - **Mouse wheel** over a digit tunes by that digit's place value — wheel up
+    tunes up, wheel down tunes down (consistent for VFO A/B and in
+    ctun/freetune). The digit under the pointer is found by hit-testing the
+    actual text, so it lands on exactly the digit you are hovering.
+  - **Type a single digit** (SDR#-style): hover a digit and press a number key
+    to overwrite that digit in place; the cursor then advances one digit to the
+    right, so you can fill a frequency left-to-right by hovering the first digit
+    and typing.
+  - **Type the whole frequency:** a **left-click** on the VFO frequency opens a
+    small pop-up field pre-filled with the current frequency (in MHz); edit or
+    retype it (`.` or `,` decimal, and the grouped `14.074.000` style are both
+    accepted) and press Enter to jump there, Esc to cancel. The **band-stack
+    menu** is on the **right-click**.
+  - Tuning is clamped to **0 – 6 GHz** (or the radio's own upper limit if it is
+    lower, e.g. ~61 MHz for classic HPSDR), so a stray edit can't run the VFO
+    off to a nonsense frequency.
+
 ### Modes & decoding
 
 - **Broadcast FM (WFM).** FM broadcast reception on SoapySDR devices (HackRF,
