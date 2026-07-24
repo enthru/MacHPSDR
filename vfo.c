@@ -144,6 +144,13 @@ static gboolean has_moved=FALSE;
 // handler stashes the hover x here for the scroll handler's digit-under-cursor.
 static double freq_hover_x=0;
 
+// SDR#-style digit typing: the freq-label motion handlers also record which
+// receiver / VFO / digit the cursor is over, so a numeric key press from the
+// global key handler can overwrite that exact digit. Cleared on pointer leave.
+static RECEIVER *freq_hover_rx=NULL;
+static int       freq_hover_digit=-1;   // digit index under cursor, -1 = none
+static gboolean  freq_hover_is_b=FALSE; // FALSE = VFO A, TRUE = VFO B
+
 static int get_step(gint64 step) {
   int i;
   for(i=0;i<STEPS;i++) {
@@ -1482,10 +1489,9 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
     if(digit<13) {
       step=ll_step[digit];
     }
-    if((dy>0.0) && rx->ctun) {
-      step=-step;
-    }
-    if((dy<0.0) && !rx->ctun) {
+    // Wheel up (dy<0) tunes up, wheel down (dy>0) tunes down — same for ctun
+    // and non-ctun (matches VFO B).
+    if(dy>0.0) {
       step=-step;
     }
 //g_print("%s: digit=%d step=%lld\n",__FUNCTION__,digit,step);
@@ -1503,6 +1509,8 @@ static gboolean frequency_a_motion_notify_event_cb(GtkEventControllerMotion *ctr
 
   if(!rx->locked) {
     digit=freq_hover_x/(gtk_widget_get_width(v->frequency_a_text)/rx->vfo_a_digits);
+    freq_hover_rx=rx; freq_hover_is_b=FALSE;
+    freq_hover_digit=(digit>=0 && digit<13)?digit:-1;
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
@@ -1515,6 +1523,13 @@ static gboolean frequency_a_motion_notify_event_cb(GtkEventControllerMotion *ctr
     }
  }
  return TRUE;
+}
+
+// Pointer left a frequency label: forget the hover so a stray digit key press
+// doesn't retarget the last-hovered digit.
+static void frequency_leave_cb(GtkEventControllerMotion *ctrl,gpointer data) {
+  freq_hover_rx=NULL;
+  freq_hover_digit=-1;
 }
 
 static gboolean frequency_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
@@ -1559,6 +1574,8 @@ static gboolean frequency_b_motion_notify_event_cb(GtkEventControllerMotion *ctr
 
   if(!rx->locked) {
     digit=freq_hover_x/(gtk_widget_get_width(v->frequency_b_text)/rx->vfo_b_digits);
+    freq_hover_rx=rx; freq_hover_is_b=TRUE;
+    freq_hover_digit=(digit>=0 && digit<13)?digit:-1;
     if(digit>=0 && digit<13) {
       long long step=ll_step[digit];
       if(step==0LL) {
@@ -1571,6 +1588,50 @@ static gboolean frequency_b_motion_notify_event_cb(GtkEventControllerMotion *ctr
     }
  }
  return TRUE;
+}
+
+// SDR#-style digit entry: if a numeric key is pressed while the cursor hovers a
+// VFO digit, overwrite that digit in place and advance the "cursor" one digit to
+// the right so consecutive keystrokes fill left-to-right. Returns TRUE if the
+// key was consumed. Called from the global key handler (receiver_key_pressed).
+gboolean vfo_type_digit(guint keyval) {
+  int n;
+  if(keyval>=GDK_KEY_0 && keyval<=GDK_KEY_9)        n=(int)(keyval-GDK_KEY_0);
+  else if(keyval>=GDK_KEY_KP_0 && keyval<=GDK_KEY_KP_9) n=(int)(keyval-GDK_KEY_KP_0);
+  else return FALSE;
+
+  RECEIVER *rx=freq_hover_rx;
+  int digit=freq_hover_digit;
+  if(rx==NULL || rx->locked || digit<0 || digit>=13) return FALSE;
+
+  long long place=ll_step[digit];
+  if(place==0LL) return FALSE;   // cursor is over a '.' separator
+
+  // Current displayed value for the hovered VFO (mirrors update_vfo()).
+  long long f;
+  if(freq_hover_is_b) {
+    f=rx->frequency_b;
+  } else {
+    f=(rx->ctun || rx->freetune)?rx->ctun_frequency:rx->frequency_a;
+  }
+
+  long long cur=(f/place)%10;
+  long long delta=((long long)n-cur)*place;
+
+  if(freq_hover_is_b) {
+    receiver_move_b(rx,delta,FALSE,FALSE);
+    frequency_changed(rx);
+  } else {
+    receiver_move(rx,delta,FALSE);
+  }
+
+  // Advance to the next editable digit on the right (skip '.' separators).
+  int nd=digit+1;
+  while(nd<13 && ll_step[nd]==0LL) nd++;
+  if(nd<13) freq_hover_digit=nd;
+
+  update_vfo(rx);
+  return TRUE;
 }
 
 GtkWidget *create_vfo(RECEIVER *rx) {
@@ -1674,6 +1735,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_a_text);
   vfo_attach_ctl(v->frequency_a_text, rx, G_CALLBACK(frequency_a_press_cb), NULL,
                  G_CALLBACK(frequency_a_motion_notify_event_cb), G_CALLBACK(frequency_a_scroll_event_cb));
+  { GtkEventController *lm=gtk_event_controller_motion_new();
+    g_signal_connect(lm,"leave",G_CALLBACK(frequency_leave_cb),rx);
+    gtk_widget_add_controller(v->frequency_a_text,lm); }
 
   long long bf=rx->frequency_b;
   sprintf(temp,"%05lld.%03lld.%03lld",bf/(long long)1000000,(bf%(long long)1000000)/(long long)1000,bf%(long long)1000);
@@ -1685,6 +1749,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_b_text);
   vfo_attach_ctl(v->frequency_b_text, rx, G_CALLBACK(frequency_b_press_cb), NULL,
                  G_CALLBACK(frequency_b_motion_notify_event_cb), G_CALLBACK(frequency_b_scroll_event_cb));
+  { GtkEventController *lm=gtk_event_controller_motion_new();
+    g_signal_connect(lm,"leave",G_CALLBACK(frequency_leave_cb),rx);
+    gtk_widget_add_controller(v->frequency_b_text,lm); }
 
   v->subrx_b=gtk_toggle_button_new_with_label("SUBRX");
   gtk_widget_set_name(v->subrx_b,"vfo-toggle");

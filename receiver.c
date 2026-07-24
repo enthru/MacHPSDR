@@ -1285,6 +1285,11 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
     main_delete(NULL);
     return TRUE;
   }
+  // SDR#-style digit entry: a number key while hovering a VFO digit overwrites
+  // that digit in place. Only consumes the key when the cursor is over a digit.
+  if(vfo_type_digit(keyval)) {
+    return TRUE;
+  }
   switch(keyval) {
     case GDK_KEY_space:
         set_mox(radio,TRUE);

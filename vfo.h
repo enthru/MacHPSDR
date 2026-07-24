@@ -19,6 +19,7 @@
 
 extern GtkWidget *create_vfo(RECEIVER *rx);
 extern void update_vfo(RECEIVER *r);
+extern gboolean vfo_type_digit(guint keyval);
 
 
 
