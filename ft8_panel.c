@@ -163,12 +163,35 @@ static void ft8_install_css(void) {
   g_object_unref(p);
 }
 
-// Cell factory: a left-aligned, cell-filling label; the bind applies the text
-// and the per-row styling (bold/strikethrough/green + gold/blue background).
+// Minimum width (in characters) reserved for each numeric column, sized to the
+// worst case so a wider-than-current value never gets squeezed/clipped:
+// UTC "123845" (6), dB "-24" (3), DT "+9,9" (4), Hz "3000" (4) — plus a char of
+// padding. Message returns 0: it is the only expanding column (see ft8_col).
+static int ft8_col_min_chars(int vc) {
+  switch (vc) {
+    case VCOL_UTC:  return 7;
+    case VCOL_DB:   return 4;
+    case VCOL_DT:   return 5;
+    case VCOL_FREQ: return 5;
+    default:        return 0;   // VCOL_MSG
+  }
+}
+
+// Cell factory: a left-aligned label. Numeric columns reserve a fixed minimum
+// width so they never squeeze; only the Message cell expands to take the slack
+// (previously every cell had hexpand, so all columns shared width evenly and
+// the narrow numeric columns clipped when the panel was tight or a value grew).
+// The bind applies the text and per-row styling (bold/strikethrough/green +
+// gold/blue background).
 static void ft8_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
+  int vc = GPOINTER_TO_INT(u);
   GtkWidget *lbl = gtk_label_new(NULL);
   gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-  gtk_widget_set_hexpand(lbl, TRUE);
+  if (vc == VCOL_MSG) {
+    gtk_widget_set_hexpand(lbl, TRUE);
+  } else {
+    gtk_label_set_width_chars(GTK_LABEL(lbl), ft8_col_min_chars(vc));
+  }
   gtk_list_item_set_child(li, lbl);
 }
 static void ft8_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
@@ -206,9 +229,13 @@ static void ft8_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
 }
 static GtkColumnViewColumn *ft8_col(const char *title, int vc) {
   GtkListItemFactory *f = gtk_signal_list_item_factory_new();
-  g_signal_connect(f, "setup", G_CALLBACK(ft8_setup), NULL);
+  g_signal_connect(f, "setup", G_CALLBACK(ft8_setup), GINT_TO_POINTER(vc));
   g_signal_connect(f, "bind",  G_CALLBACK(ft8_bind), GINT_TO_POINTER(vc));
-  return gtk_column_view_column_new(title, f);
+  GtkColumnViewColumn *col = gtk_column_view_column_new(title, f);
+  // Only the Message column expands to absorb slack; the numeric columns keep
+  // their fixed minimum width (set per-cell in ft8_setup) so they never squeeze.
+  if (vc == VCOL_MSG) gtk_column_view_column_set_expand(col, TRUE);
+  return col;
 }
 
 // Double-click a decode row: work that station. pos indexes the view's model.
