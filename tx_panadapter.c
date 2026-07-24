@@ -39,13 +39,6 @@
 #include "css.h"
 #include "main.h"
 
-/* Fixed TX-monitor span (Hz). The WDSP analyzer covers the full iq_output_rate,
-   but the display crops to this span around the carrier so the view is the same
-   width regardless of protocol/sample-rate (16 kHz was the old, protocol-derived
-   default). This tap is the post-DSP TX I/Q — a clean modulated signal — so the
-   span is just for context around the carrier, not for viewing PA linearity. */
-#define TX_MONITOR_SPAN_HZ 24000.0
-
 // Set the Cairo source to a skin palette color (fallback if the name is absent).
 static void txpan_rgb(cairo_t *cr, const char *name, double r, double g, double b) {
   css_rgb(name,&r,&g,&b);
@@ -84,11 +77,11 @@ static void tx_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gp
     cairo_surface_destroy(tx->panadapter_surface);
   }
   log_info("tx_panadapter_resize: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
-  if(radio->discovered->protocol==PROTOCOL_1) {
-    tx->pixels=tx->panadapter_width*3;
-  } else {
-    tx->pixels=tx->panadapter_width*12;
-  }
+  /* The analyzer is zoomed onto the TX_MONITOR_SPAN_HZ window (see
+     transmitter_init_analyzer), so one pixel per screen column suffices — the
+     whole pixel budget lands inside the visible window. (Previously pixels was
+     width*3/width*12 across the full span and the draw cropped the centre.) */
+  tx->pixels=tx->panadapter_width;
   if(tx->panadapter!=NULL) {
     // GTK4: off-screen image surface (no GdkWindow to back a similar surface).
     tx->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
@@ -223,26 +216,23 @@ void update_tx_panadapter(RADIO *r) {
          `width` screen columns (decimating when crop > width). This makes the
          visible span a fixed 24 kHz on every protocol instead of the old
          protocol-derived 16 kHz center crop. */
-      int crop=(int)lround((double)tx->pixels*TX_MONITOR_SPAN_HZ/(double)tx->iq_output_rate);
-      if(crop<2) crop=2;
-      if(crop>tx->pixels) crop=tx->pixels;
-      int start=(tx->pixels-crop)/2;
+      /* The analyzer already produced tx->pixels bins spanning exactly the
+         TX_MONITOR_SPAN_HZ window (carrier-centred), so map the pixel array
+         straight onto the screen columns. Linearly interpolate the fractional
+         position so it stays smooth even if the widget was resized since the
+         analyzer was last configured (tx->pixels != width). */
+      int np=tx->pixels;
+      if(np<2) np=2;
       /* Tie the trace ends to the graph floor (cosmetic, as before). */
-      samples[start]=-200.0;
-      samples[start+crop-1]=-200.0;
+      samples[0]=-200.0;
+      samples[np-1]=-200.0;
 
-      /* Map each screen column to a fractional bin position and LINEARLY
-         INTERPOLATE between adjacent bins. When the span covers fewer bins than
-         columns (crop < width, e.g. wideband Soapy) nearest-neighbour sampling
-         would hold each bin flat across several columns and draw as stairsteps;
-         interpolation keeps the trace smooth in both the zoom (crop < width) and
-         decimate (crop > width) cases. */
       double span_den=(width>1)?(double)(width-1):1.0;
       for(i=0;i<width;i++) {
-        double fidx=(double)start+(double)i*(double)(crop-1)/span_den;
+        double fidx=(double)i*(double)(np-1)/span_den;
         int i0=(int)floor(fidx);
         if(i0<0) i0=0;
-        if(i0>tx->pixels-2) i0=tx->pixels-2;
+        if(i0>np-2) i0=np-2;
         double frac=fidx-(double)i0;
         double v=(double)samples[i0]*(1.0-frac)+(double)samples[i0+1]*frac;
         double y=floor((tx->panadapter_high - v)
