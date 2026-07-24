@@ -31,13 +31,6 @@
 #define CTCSS_FREQUENCIES 38
 extern double ctcss_frequencies[CTCSS_FREQUENCIES];
 
-/* Fixed TX-monitor span (Hz), centred on the carrier. The analyzer is zoomed
-   onto this window (see transmitter_init_analyzer) and the panadapter draws it,
-   so the view is the same width on every protocol regardless of iq_output_rate.
-   This tap is post-DSP TX I/Q — a clean modulated signal — so the span is only
-   for context around the carrier, not for viewing PA linearity. */
-#define TX_MONITOR_SPAN_HZ 24000.0
-
 typedef struct _transmitter {
   gint channel; // WDSP channel
 

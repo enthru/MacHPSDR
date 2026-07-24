@@ -1587,39 +1587,20 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
     int n_pixout=1;
     int spur_elimination_ffts = 1;
     int data_type = 1;
+    int fft_size = 8192;
     int window_type = 4;
     double kaiser_pi = 14.0;
     int overlap = 2048;
     int clip = 0;
+    int span_clip_l = 0;
+    int span_clip_h = 0;
     int pixels=tx->pixels;
     int stitches = 1;
     int calibration_data_set = 0;
-    double span_min_freq = 0.0;   // calibration frequency mapping (unused: full-band cal)
+    double span_min_freq = 0.0;
     double span_max_freq = 0.0;
 
-    /* The TX monitor shows a fixed TX_MONITOR_SPAN_HZ window centred on the
-       carrier. Rather than analyze the whole iq_output_rate and crop pixels
-       afterwards (which wastes the pixel/bin budget and, on wideband devices,
-       leaves only a handful of bins in-window), zoom the analyzer itself by
-       clipping the FFT bins outside the window (WDSP's span_clip_l/h). The
-       whole pixel budget then lands inside the window, so resolution is set by
-       how many FFT bins fall in-window: bins_in_window = SPAN*fft_size/iq_rate.
-       Pick an FFT big enough to reach one bin per output pixel where feasible,
-       capped to bound CPU and FFTW planning time (buffers allow up to the
-       XCreateAnalyzer max_size = WDSP_ANALYZER_MAX_SIZE). */
-    int fft_size = 8192;
-    const int fft_size_cap = 32768;
-    double need_fft = (double)pixels * (double)tx->iq_output_rate / TX_MONITOR_SPAN_HZ;
-    while(fft_size < need_fft && fft_size < fft_size_cap) fft_size <<= 1;
-
-    int window_bins = (int)lround(TX_MONITOR_SPAN_HZ * (double)fft_size / (double)tx->iq_output_rate);
-    if(window_bins < 2) window_bins = 2;
-    if(window_bins > fft_size) window_bins = fft_size;
-    int span_clip_l = (fft_size - window_bins) / 2;
-    int span_clip_h = fft_size - window_bins - span_clip_l;
-
-    log_info("transmitter_init_analyzer: width=%d pixels=%d fft_size=%d window_bins=%d\n",
-             tx->panadapter_width,tx->pixels,fft_size,window_bins);
+    log_info("transmitter_init_analyzer: width=%d pixels=%d\n",tx->panadapter_width,tx->pixels);
 
     if(tx->pixel_samples!=NULL) {
       g_free(tx->pixel_samples);
