@@ -1565,7 +1565,10 @@ static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
     if(digit>=0 && digit<13) {
       step=ll_step[digit];
     }
-    if((dy>0.0)) {
+    // receiver_move_b ADDS its argument (VFO A's receiver_move subtracts), so
+    // to move the same way as VFO A for a given wheel direction the sign is
+    // flipped on the opposite dy: wheel-up tunes up, wheel-down tunes down.
+    if((dy<0.0)) {
       step=-step;
     }
     switch(rx->split) {
@@ -1634,13 +1637,15 @@ gboolean vfo_type_digit(guint keyval) {
   }
 
   long long cur=(f/place)%10;
-  long long delta=((long long)n-cur)*place;
+  long long want=((long long)n-cur)*place;  // desired change in displayed freq
 
+  // receiver_move (VFO A) SUBTRACTS its hz argument, while receiver_move_b
+  // (VFO B) ADDS it — so the sign passed to move the frequency by +want differs.
   if(freq_hover_is_b) {
-    receiver_move_b(rx,delta,FALSE,FALSE);
+    receiver_move_b(rx,want,FALSE,FALSE);
     frequency_changed(rx);
   } else {
-    receiver_move(rx,delta,FALSE);
+    receiver_move(rx,-want,FALSE);
   }
 
   // Advance to the next editable digit on the right (skip '.' separators).
