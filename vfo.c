@@ -151,6 +151,24 @@ static RECEIVER *freq_hover_rx=NULL;
 static int       freq_hover_digit=-1;   // digit index under cursor, -1 = none
 static gboolean  freq_hover_is_b=FALSE; // FALSE = VFO A, TRUE = VFO B
 
+// Map a pointer x (widget coords) to the digit index under it, by hit-testing
+// the label's actual Pango layout rather than assuming the text fills the whole
+// widget with uniform character cells. This stays accurate regardless of label
+// alignment/padding or proportional glyph widths. The frequency string is pure
+// ASCII ("00014.074.000") so the returned byte index is also the digit index.
+// Returns -1 when the pointer is outside the drawn text.
+static int freq_digit_at(GtkWidget *label, double x) {
+  PangoLayout *layout=gtk_label_get_layout(GTK_LABEL(label));
+  if(layout==NULL) return -1;
+  int lx=0,ly=0;
+  gtk_label_get_layout_offsets(GTK_LABEL(label),&lx,&ly);
+  int index=0,trailing=0;
+  int px=(int)((x-(double)lx)*PANGO_SCALE);
+  gboolean inside=pango_layout_xy_to_index(layout,px,0,&index,&trailing);
+  if(!inside) return -1;   // in the padding to the left/right of the text
+  return index;
+}
+
 static int get_step(gint64 step) {
   int i;
   for(i=0;i<STEPS;i++) {
@@ -1484,9 +1502,9 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_digit_at(v->frequency_a_text,freq_hover_x);
     long long step=0LL;
-    if(digit<13) {
+    if(digit>=0 && digit<13) {
       step=ll_step[digit];
     }
     // Wheel up (dy<0) tunes up, wheel down (dy>0) tunes down — same for ctun
@@ -1508,7 +1526,7 @@ static gboolean frequency_a_motion_notify_event_cb(GtkEventControllerMotion *ctr
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_a_text)/rx->vfo_a_digits);
+    digit=freq_digit_at(v->frequency_a_text,freq_hover_x);
     freq_hover_rx=rx; freq_hover_is_b=FALSE;
     freq_hover_digit=(digit>=0 && digit<13)?digit:-1;
     if(digit>=0 && digit<13) {
@@ -1542,9 +1560,9 @@ static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_digit_at(v->frequency_b_text,freq_hover_x);
     long long step=0LL;
-    if(digit<13) {
+    if(digit>=0 && digit<13) {
       step=ll_step[digit];
     }
     if((dy>0.0)) {
@@ -1573,7 +1591,7 @@ static gboolean frequency_b_motion_notify_event_cb(GtkEventControllerMotion *ctr
   int digit;
 
   if(!rx->locked) {
-    digit=freq_hover_x/(gtk_widget_get_width(v->frequency_b_text)/rx->vfo_b_digits);
+    digit=freq_digit_at(v->frequency_b_text,freq_hover_x);
     freq_hover_rx=rx; freq_hover_is_b=TRUE;
     freq_hover_digit=(digit>=0 && digit<13)?digit:-1;
     if(digit>=0 && digit<13) {
