@@ -227,24 +227,29 @@ void update_tx_panadapter(RADIO *r) {
       if(crop<2) crop=2;
       if(crop>tx->pixels) crop=tx->pixels;
       int start=(tx->pixels-crop)/2;
-      double s1,s2;
       /* Tie the trace ends to the graph floor (cosmetic, as before). */
       samples[start]=-200.0;
       samples[start+crop-1]=-200.0;
 
-      s1=(double)samples[start];
-      s1 = floor((tx->panadapter_high - s1)
+      /* Map each screen column to a fractional bin position and LINEARLY
+         INTERPOLATE between adjacent bins. When the span covers fewer bins than
+         columns (crop < width, e.g. wideband Soapy) nearest-neighbour sampling
+         would hold each bin flat across several columns and draw as stairsteps;
+         interpolation keeps the trace smooth in both the zoom (crop < width) and
+         decimate (crop > width) cases. */
+      double span_den=(width>1)?(double)(width-1):1.0;
+      for(i=0;i<width;i++) {
+        double fidx=(double)start+(double)i*(double)(crop-1)/span_den;
+        int i0=(int)floor(fidx);
+        if(i0<0) i0=0;
+        if(i0>tx->pixels-2) i0=tx->pixels-2;
+        double frac=fidx-(double)i0;
+        double v=(double)samples[i0]*(1.0-frac)+(double)samples[i0+1]*frac;
+        double y=floor((tx->panadapter_high - v)
                             * (double)height
                             / (tx->panadapter_high - tx->panadapter_low));
-      cairo_move_to(cr, 0.0, s1);
-      for(i=1;i<width;i++) {
-        int idx=start+(int)((double)i*(double)crop/(double)width);
-        if(idx>=tx->pixels) idx=tx->pixels-1;
-        s2=(double)samples[idx];
-        s2 = floor((tx->panadapter_high - s2)
-                                * (double)height
-                                / (tx->panadapter_high - tx->panadapter_low));
-        cairo_line_to(cr, (double)i, s2);
+        if(i==0) cairo_move_to(cr, 0.0, y);
+        else     cairo_line_to(cr, (double)i, y);
       }
 
       /*
