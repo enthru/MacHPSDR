@@ -64,18 +64,18 @@ feature additions.
 waterfall, S-meter and frequency display, and the bottom toolbar (TX Monitor,
 Mic & Drive, Transmit, RX Front-end, decoder block, Setup).
 
-![Main window](./main.jpg)
+![Main window](./doc/main.jpg)
 
 **FT8 panel** — the opt-in QSO panel with the rolling band-activity list (CQ rows
 in green), Tx1–Tx6 messages, FT8/FT4 protocol selector and TX offset, alongside
 the dedicated FT8 band waterfall on the right.
 
-![FT8 panel](./ft8.jpg)
+![FT8 panel](./doc/ft8.jpg)
 
 **SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: the mode is
 auto-detected and the picture is painted line-by-line beside the receiver.
 
-![SSTV image panel](./sstv.jpg)
+![SSTV image panel](./doc/sstv.jpg)
 
 **Settings** — Configure → Misc: colour-skin selection (applied immediately and
 remembered per radio), custom attenuator-button labels, and Broadcast FM
@@ -83,7 +83,7 @@ de-emphasis / RDS options. Every slider in the settings dialogs shows its
 current numeric value beside the control, so you can read off the exact figure
 you've dialled in.
 
-![Settings — appearance & skin selection](./settings.jpg)
+![Settings — appearance & skin selection](./doc/settings.jpg)
 
 ---
 

@@ -555,13 +555,20 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
     }
   }
   if (png_path[0] == '\0' || access(png_path, F_OK) != 0) {
-    strcpy(png_path, "machpsdr.png");   // local fallback (running from the repo)
+    // Local fallback when running ./machpsdr straight from the repo: the icon
+    // lives in assets/. Keep the bare cwd name too for older layouts.
+    if (access("assets/machpsdr.png", F_OK) == 0)
+      strcpy(png_path, "assets/machpsdr.png");
+    else
+      strcpy(png_path, "machpsdr.png");
   }
   log_info("PNG path (macOS): %s\n", png_path);
 #else
   // Prefer an icon next to the binary / in the working directory; fall back to
   // an installed copy under /usr/share only if there is no local one.
-  if (access("machpsdr.png", F_OK) == 0) {
+  if (access("assets/machpsdr.png", F_OK) == 0) {
+    strcpy(png_path, "assets/machpsdr.png");
+  } else if (access("machpsdr.png", F_OK) == 0) {
     strcpy(png_path, "machpsdr.png");
   } else {
     strcpy(png_path, "/usr/share/machpsdr/machpsdr.png");

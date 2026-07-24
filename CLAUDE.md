@@ -80,8 +80,13 @@ To toggle, comment/uncomment the `*_INCLUDE=*` lines near the top of the Makefil
 
 ## Source Layout
 
-The ~90 first-party `.c/.h` live under `src/<subsystem>/` (the repo root holds
-only the Makefile, docs, images and data like `cty.dat`):
+The ~90 first-party `.c/.h` live under `src/<subsystem>/`; the repo root holds
+only the Makefile, `README`/`LICENSE`/`NOTICE`/`CLAUDE.md`, `mac-setup.sh` and
+`machpsdr.desktop`. Program resources live in **`assets/`** (the PNG icons +
+`cty.dat`) and screenshots/migration notes join the user manuals in **`doc/`**. The runtime lookups
+that used to read `machpsdr.png` / `cty.dat` from the cwd now try `assets/`
+first (see `main.c` icon path and `ft8_dxcc.c:open_cty`), and `make app` copies
+them from `assets/`; the bare-cwd fallbacks are kept for older layouts.
 
 | Dir | Contents |
 |-----|----------|

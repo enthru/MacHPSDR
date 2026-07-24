@@ -155,7 +155,9 @@ static FILE *open_cty(void) {
   }
 #endif
 
-  // Repo/cwd (running straight from the source tree).
+  // Repo/cwd (running straight from the source tree): assets/ first, then a
+  // bare cwd copy for older layouts.
+  { FILE *f = try_open("assets/cty.dat"); if (f) return f; }
   { FILE *f = try_open("cty.dat"); if (f) return f; }
 
   // Per-user data dir, then a system install location.

@@ -596,31 +596,31 @@ app: $(PROGRAM)
 	@echo "Copying application resources..."
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources/share/machpsdr
 	@for png in machpsdr.png machpsdr_icon.png machpsdr_small.png; do \
-		if [ -f "$$png" ]; then \
-			cp "$$png" $(APP_BUNDLE)/Contents/Resources/; \
-			cp "$$png" $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
-			cp "$$png" $(APP_BUNDLE)/Contents/MacOS/; \
+		if [ -f "assets/$$png" ]; then \
+			cp "assets/$$png" $(APP_BUNDLE)/Contents/Resources/; \
+			cp "assets/$$png" $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
+			cp "assets/$$png" $(APP_BUNDLE)/Contents/MacOS/; \
 		fi; \
 	done
 	@# Bundle the FT8 DXCC country file (loaded from ../Resources/cty.dat).
-	@if [ -f cty.dat ]; then \
-		cp cty.dat $(APP_BUNDLE)/Contents/Resources/; \
-		cp cty.dat $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
+	@if [ -f assets/cty.dat ]; then \
+		cp assets/cty.dat $(APP_BUNDLE)/Contents/Resources/; \
+		cp assets/cty.dat $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
 	fi
 
 	@# Create app icon
 	@echo "Creating app icon..."
-	@if [ -f "machpsdr_icon.png" ]; then \
+	@if [ -f "assets/machpsdr_icon.png" ]; then \
 		mkdir -p $(APP_NAME).iconset; \
-		sips -z 16 16     machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16.png >/dev/null 2>&1; \
-		sips -z 32 32     machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16@2x.png >/dev/null 2>&1; \
-		sips -z 32 32     machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32.png >/dev/null 2>&1; \
-		sips -z 64 64     machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32@2x.png >/dev/null 2>&1; \
-		sips -z 128 128   machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128.png >/dev/null 2>&1; \
-		sips -z 256 256   machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128@2x.png >/dev/null 2>&1; \
-		sips -z 256 256   machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
-		sips -z 512 512   machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
-		sips -z 512 512   machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
+		sips -z 16 16 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16.png >/dev/null 2>&1; \
+		sips -z 32 32 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_16x16@2x.png >/dev/null 2>&1; \
+		sips -z 32 32 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32.png >/dev/null 2>&1; \
+		sips -z 64 64 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_32x32@2x.png >/dev/null 2>&1; \
+		sips -z 128 128 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128.png >/dev/null 2>&1; \
+		sips -z 256 256 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_128x128@2x.png >/dev/null 2>&1; \
+		sips -z 256 256 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
+		sips -z 512 512 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
+		sips -z 512 512 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
 		sips -z 1024 1024 machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
 		iconutil -c icns $(APP_NAME).iconset -o $(APP_BUNDLE)/Contents/Resources/$(APP_NAME).icns 2>/dev/null || true; \
 		rm -rf $(APP_NAME).iconset; \
