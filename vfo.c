@@ -1507,9 +1507,11 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
     if(digit>=0 && digit<13) {
       step=ll_step[digit];
     }
-    // Wheel up (dy<0) tunes up, wheel down (dy>0) tunes down — same for ctun
-    // and non-ctun (matches VFO B).
-    if(dy>0.0) {
+    // Wheel up (dy<0) tunes up, wheel down (dy>0) tunes down. receiver_move
+    // SUBTRACTS its argument for a normal VFO but ADDS it in ctun/freetune, so
+    // the sign to negate depends on the mode to keep the direction consistent.
+    gboolean adds = rx->ctun || rx->freetune;
+    if((dy>0.0 && !adds) || (dy<0.0 && adds)) {
       step=-step;
     }
 //g_print("%s: digit=%d step=%lld\n",__FUNCTION__,digit,step);
@@ -1639,11 +1641,15 @@ gboolean vfo_type_digit(guint keyval) {
   long long cur=(f/place)%10;
   long long want=((long long)n-cur)*place;  // desired change in displayed freq
 
-  // receiver_move (VFO A) SUBTRACTS its hz argument, while receiver_move_b
-  // (VFO B) ADDS it — so the sign passed to move the frequency by +want differs.
+  // Sign to pass depends on how the mover applies its argument:
+  //   receiver_move_b (VFO B) ADDS hz
+  //   receiver_move   (VFO A) SUBTRACTS hz for a normal VFO, but ADDS it in
+  //                   ctun/freetune (it moves ctun_frequency there).
   if(freq_hover_is_b) {
     receiver_move_b(rx,want,FALSE,FALSE);
     frequency_changed(rx);
+  } else if(rx->ctun || rx->freetune) {
+    receiver_move(rx,want,FALSE);
   } else {
     receiver_move(rx,-want,FALSE);
   }

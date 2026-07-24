@@ -1004,11 +1004,19 @@ void update_frequency(RECEIVER *rx) {
 long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
   long long delta = 0LL;
   if(!rx->locked) {
-    /* Stop scroll to negative number */
-    if(rx->frequency_a - hz < 0) return 0;
-
     /* freetune forces ctun-like behaviour but clamps to span */
     gboolean use_ctun = rx->ctun || rx->freetune;
+
+    /* Stop the frequency going negative. The value that actually moves is
+       ctun_frequency (+hz) in ctun/freetune, and frequency_a (-hz) otherwise —
+       guard whichever one is about to change so a ctun move can't silently push
+       the tune frequency negative (and so a normal move isn't wrongly blocked
+       by the ctun offset). */
+    if(use_ctun) {
+      if(rx->ctun_frequency + hz < 0) return 0;
+    } else {
+      if(rx->frequency_a - hz < 0) return 0;
+    }
 
     if(use_ctun) {
       delta = rx->ctun_frequency;
