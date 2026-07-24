@@ -148,8 +148,8 @@ void update_tx_panadapter(RADIO *r) {
   int width=gtk_widget_get_width(tx->panadapter);
   int height=gtk_widget_get_height(tx->panadapter);
   float *samples=tx->pixel_samples;
-  /* Screen scale follows the fixed monitor span, not the analyzer's full span,
-     so the filter overlay/grid stay consistent with the cropped signal below. */
+  /* Screen scale follows the fixed monitor span (the analyzer is zoomed onto it),
+     so the filter overlay/grid stay consistent with the signal trace below. */
   double hz_per_pixel=TX_MONITOR_SPAN_HZ/(double)(width>0?width:1);
   char text[32];
   int i;
@@ -221,11 +221,6 @@ void update_tx_panadapter(RADIO *r) {
         offset=(tx->pixels/24)*11;
       }
 */
-      /* The analyzer produces tx->pixels bins across the full iq_output_rate.
-         Crop the central TX_MONITOR_SPAN_HZ worth of bins and map them onto the
-         `width` screen columns (decimating when crop > width). This makes the
-         visible span a fixed 24 kHz on every protocol instead of the old
-         protocol-derived 16 kHz center crop. */
       /* The analyzer already produced tx->pixels bins spanning exactly the
          TX_MONITOR_SPAN_HZ window (carrier-centred), so map the pixel array
          straight onto the screen columns. Linearly interpolate the fractional
