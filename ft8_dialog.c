@@ -87,12 +87,55 @@ static void dxcc_status_text(char *buf, size_t n) {
     snprintf(buf, n, "cty.dat not found. Put it next to the app, in\n"
                      "~/.local/share/machpsdr/, or set $MACHPSDR_CTY, then Reload.");
 }
-static void dxcc_reload_cb(GtkWidget *w, gpointer data) {
-  (void)w;
-  ft8_dxcc_reload();
+// Reload cty.dat with a bit of visible progress feedback. The parse itself is
+// synchronous and near-instant, so there is nothing real to measure; instead we
+// disable the button, show a pulsing progress bar, and run the reload one idle
+// tick later (so the "Reloading…" state actually paints before the GTK thread
+// blocks on the parse). When done the bar is hidden and replaced, in the same
+// spot, by a coloured result label (green "✓ Loaded N entities" on success,
+// red "✗ cty.dat not found" on failure) that stays until the next reload.
+typedef struct { GtkWidget *button, *bar, *result, *status; guint pulse_id; } dxcc_reload_ctx;
+
+static gboolean dxcc_reload_pulse(gpointer p) {
+  gtk_progress_bar_pulse(GTK_PROGRESS_BAR(((dxcc_reload_ctx *)p)->bar));
+  return G_SOURCE_CONTINUE;
+}
+
+static gboolean dxcc_reload_run(gpointer p) {
+  dxcc_reload_ctx *c = p;
+  int n = ft8_dxcc_reload();
+  if (c->pulse_id) { g_source_remove(c->pulse_id); c->pulse_id = 0; }
+  gtk_widget_set_visible(c->bar, FALSE);
+
+  // Inline result in place of the progress bar: green tick / red cross, using
+  // the same Pango-markup colouring style the rest of the app uses.
+  char m[128];
+  if (n > 0)
+    snprintf(m, sizeof(m),
+             "<span foreground=\"#33aa33\">✓ Loaded %d entities</span>", n);
+  else
+    snprintf(m, sizeof(m),
+             "<span foreground=\"#D94545\">✗ cty.dat not found</span>");
+  gtk_label_set_markup(GTK_LABEL(c->result), m);
+  gtk_widget_set_visible(c->result, TRUE);
+
   char buf[1200];
   dxcc_status_text(buf, sizeof(buf));
-  gtk_label_set_text(GTK_LABEL(data), buf);
+  gtk_label_set_text(GTK_LABEL(c->status), buf);
+  gtk_widget_set_sensitive(c->button, TRUE);
+  return G_SOURCE_REMOVE;
+}
+
+static void dxcc_reload_cb(GtkWidget *w, gpointer data) {
+  dxcc_reload_ctx *c = data;
+  c->button = w;
+  gtk_widget_set_sensitive(w, FALSE);
+  gtk_widget_set_visible(c->result, FALSE);
+  gtk_widget_set_visible(c->bar, TRUE);
+  gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(c->bar), 0.0);
+  gtk_progress_bar_pulse(GTK_PROGRESS_BAR(c->bar));
+  if (!c->pulse_id) c->pulse_id = g_timeout_add(80, dxcc_reload_pulse, c);
+  g_idle_add(dxcc_reload_run, c);
 }
 
 GtkWidget *create_ft8_dialog(RADIO *r) {
@@ -154,7 +197,31 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   GtkWidget *dreload=gtk_button_new_with_label("Reload cty.dat");
   gtk_widget_set_halign(dreload,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(dgrid),dreload,0,2,1,1);
-  g_signal_connect(dreload,"clicked",G_CALLBACK(dxcc_reload_cb),dstatus);
+
+  // Progress bar and the post-reload result label share the cell next to the
+  // button: the bar shows while reloading, then hides and the result appears.
+  GtkWidget *dfeedback=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+  gtk_widget_set_hexpand(dfeedback,TRUE);
+  gtk_widget_set_valign(dfeedback,GTK_ALIGN_CENTER);
+  gtk_grid_attach(GTK_GRID(dgrid),dfeedback,1,2,1,1);
+
+  GtkWidget *dbar=gtk_progress_bar_new();
+  gtk_widget_set_valign(dbar,GTK_ALIGN_CENTER);
+  gtk_widget_set_hexpand(dbar,TRUE);
+  gtk_widget_set_visible(dbar,FALSE);
+  gtk_box_append(GTK_BOX(dfeedback),dbar);
+
+  GtkWidget *dresult=gtk_label_new(NULL);
+  gtk_widget_set_halign(dresult,GTK_ALIGN_START);
+  gtk_widget_set_valign(dresult,GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_start(dresult,4);
+  gtk_widget_set_visible(dresult,FALSE);
+  gtk_box_append(GTK_BOX(dfeedback),dresult);
+
+  dxcc_reload_ctx *dctx=g_new0(dxcc_reload_ctx,1);
+  dctx->bar=dbar; dctx->result=dresult; dctx->status=dstatus; dctx->button=dreload;
+  g_signal_connect_data(dreload,"clicked",G_CALLBACK(dxcc_reload_cb),dctx,
+                        (GClosureNotify)g_free,0);
 
   // ---- Network logging (WSJT-X/JTDX UDP) ----
   GtkWidget *lframe=gtk_frame_new("Network Logging");
