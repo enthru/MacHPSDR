@@ -1001,21 +1001,37 @@ void update_frequency(RECEIVER *rx) {
   }
 }
 
+/* Upper tuning limit: a hard 6 GHz ceiling (HackRF's top end, and a sanity cap
+   that keeps a runaway edit from producing a garbage frequency), lowered to the
+   discovered device's own maximum when that is narrower (e.g. ~61 MHz for the
+   classic HPSDR radios). */
+static long long receiver_max_frequency(void) {
+  long long cap = 6000000000LL;
+  if(radio != NULL && radio->discovered != NULL) {
+    long long dev = (long long)radio->discovered->frequency_max;
+    if(dev > 0 && dev < cap) cap = dev;
+  }
+  return cap;
+}
+
 long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
   long long delta = 0LL;
   if(!rx->locked) {
     /* freetune forces ctun-like behaviour but clamps to span */
     gboolean use_ctun = rx->ctun || rx->freetune;
+    long long fmax = receiver_max_frequency();
 
-    /* Stop the frequency going negative. The value that actually moves is
+    /* Keep the frequency inside [0, fmax]. The value that actually moves is
        ctun_frequency (+hz) in ctun/freetune, and frequency_a (-hz) otherwise —
        guard whichever one is about to change so a ctun move can't silently push
-       the tune frequency negative (and so a normal move isn't wrongly blocked
-       by the ctun offset). */
+       the tune frequency out of range (and so a normal move isn't wrongly
+       blocked by the ctun offset). */
     if(use_ctun) {
-      if(rx->ctun_frequency + hz < 0) return 0;
+      long long nf = rx->ctun_frequency + hz;
+      if(nf < 0 || nf > fmax) return 0;
     } else {
-      if(rx->frequency_a - hz < 0) return 0;
+      long long nf = rx->frequency_a - hz;
+      if(nf < 0 || nf > fmax) return 0;
     }
 
     if(use_ctun) {
@@ -1063,8 +1079,9 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
 
 void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
   if(!rx->locked) {
-    // Stop scroll to negative number
-    if ((rx->frequency_b + hz) <= 0) return;
+    // Keep VFO B inside [0, fmax] (6 GHz / device max).
+    long long nf = rx->frequency_b + hz;
+    if (nf <= 0 || nf > receiver_max_frequency()) return;
     long long f=rx->frequency_b;
     switch(rx->split) {
       case SPLIT_OFF:
