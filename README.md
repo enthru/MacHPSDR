@@ -99,6 +99,11 @@ you've dialled in.
   slider that silences its audio without losing the volume setting; the mute
   state is remembered between sessions.
 
+- **Per-mode filter & AGC memory.** Each mode keeps its own receive filter
+  width *and* AGC speed (Off/Long/Slow/Medium/Fast): narrowing AM no longer
+  narrows SSB, and switching, say, from SSB to CW restores the AGC setting that
+  mode had last. Both are remembered per receiver between sessions.
+
 - **Colour skins.** A dark interface with five selectable colour schemes
   (Charcoal, Solarized Dark, Solarized Light, Nord, Gruvbox), chosen in
   **Configure → Misc → Appearance** and remembered per radio. Includes a

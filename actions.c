@@ -293,6 +293,7 @@ int switch_action(void * data) {
       } else {
 	 rx->agc++;
       }
+      if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_agc[rx->mode_a]=rx->agc;
       set_agc(rx);
       update_vfo(rx);
       break;

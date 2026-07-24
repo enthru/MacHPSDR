@@ -1167,6 +1167,7 @@ void agc_cb(GtkWidget *menu_item,gpointer data) {
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)choice->rx->vfo,"vfo_data");
 
   choice->rx->agc=choice->selection;
+  if(choice->rx->mode_a>=0 && choice->rx->mode_a<MODES) choice->rx->mode_agc[choice->rx->mode_a]=choice->rx->agc;
   set_agc(choice->rx);
   switch(choice->selection) {
     case AGC_OFF:

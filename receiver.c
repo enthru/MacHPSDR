@@ -206,6 +206,11 @@ void receiver_save_state(RECEIVER *rx) {
     sprintf(value,"%d",rx->mode_filter[i]);
     setProperty(name,value);
   }
+  for(int i=0;i<MODES;i++) {
+    sprintf(name,"receiver[%d].mode_agc[%d]",rx->channel,i);
+    sprintf(value,"%d",rx->mode_agc[i]);
+    setProperty(name,value);
+  }
   sprintf(name,"receiver[%d].filter_low_a",rx->channel);
   sprintf(value,"%d",rx->filter_low_a);
   setProperty(name,value);
@@ -520,6 +525,11 @@ void receiver_restore_state(RECEIVER *rx) {
   // Older configs saved only filter_a; make sure the current mode's remembered
   // filter agrees with it so the first mode switch doesn't reset the bandwidth.
   if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_filter[rx->mode_a]=rx->filter_a;
+  for(int i=0;i<MODES;i++) {
+    sprintf(name,"receiver[%d].mode_agc[%d]",rx->channel,i);
+    value=getProperty(name);
+    if(value) rx->mode_agc[i]=atoi(value);
+  }
   sprintf(name,"receiver[%d].filter_low_a",rx->channel);
   value=getProperty(name);
   if(value) rx->filter_low_a=atoi(value);
@@ -651,6 +661,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].agc",rx->channel);
   value=getProperty(name);
   if(value) rx->agc=atoi(value);
+  // Older configs saved only agc; keep the current mode's remembered AGC in step
+  // so the first mode switch doesn't clobber it.
+  if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_agc[rx->mode_a]=rx->agc;
   sprintf(name,"receiver[%d].agc_gain",rx->channel);
   value=getProperty(name);
   if(value) rx->agc_gain=atof(value);
@@ -1721,9 +1734,17 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // Remember the filter selected for the mode we are leaving, then restore the
   // one this mode used last time, so each mode keeps its own bandwidth
   // independently (changing the AM filter must not move the SSB filter).
-  if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_filter[rx->mode_a]=rx->filter_a;
+  if(rx->mode_a>=0 && rx->mode_a<MODES) {
+    rx->mode_filter[rx->mode_a]=rx->filter_a;
+    rx->mode_agc[rx->mode_a]=rx->agc;
+  }
   set_mode(rx,mode);
-  if(mode>=0 && mode<MODES) rx->filter_a=rx->mode_filter[mode];
+  if(mode>=0 && mode<MODES) {
+    rx->filter_a=rx->mode_filter[mode];
+    // Restore this mode's remembered AGC speed and push it to WDSP.
+    rx->agc=rx->mode_agc[mode];
+    if(rx->channel>=0) set_agc(rx);
+  }
   log_info("mode_changed: %d\n",mode);
   if(mode != 5) {
     rx->squelch_enable = FALSE;
@@ -2525,6 +2546,7 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->volume=0.05;
   rx->mute=FALSE;
   rx->agc=AGC_OFF;
+  for(int i=0;i<MODES;i++) rx->mode_agc[i]=AGC_OFF;
   rx->agc_gain=80.0;
   rx->agc_slope=35.0;
   rx->agc_hang_threshold=0.0;

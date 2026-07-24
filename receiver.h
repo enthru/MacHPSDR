@@ -110,6 +110,11 @@ typedef struct _receiver {
   // versa.  filter_a always mirrors mode_filter[mode_a]; this array preserves
   // the other modes' selections across a mode switch.
   gint mode_filter[MODES];
+  // The AGC speed (OFF/LONG/SLOW/MEDIUM/FAST) is likewise remembered per mode:
+  // e.g. SSB wants a slow AGC while a fast/off setting suits CW or data, and
+  // switching mode should restore whatever that mode used last.  agc always
+  // mirrors mode_agc[mode_a]; this array preserves the other modes' choices.
+  gint mode_agc[MODES];
   gint64 offset;
   gint bandstack;
 
