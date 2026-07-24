@@ -51,6 +51,16 @@ static void txpan_rgb(cairo_t *cr, const char *name, double r, double g, double 
   css_rgb(name,&r,&g,&b);
   cairo_set_source_rgb(cr,r,g,b);
 }
+
+// Draw text so its RIGHT edge sits at right_x (baseline at y). Used for the
+// W/SWR/ALC readouts so an extra digit (e.g. ALC >= 10 dB) grows the text
+// leftward instead of pushing the trailing "dB" off the right edge of the pane.
+static void txpan_text_right(cairo_t *cr, double right_x, double y, const char *s) {
+  cairo_text_extents_t ext;
+  cairo_text_extents(cr, s, &ext);
+  cairo_move_to(cr, right_x - ext.width - ext.x_bearing, y);
+  cairo_show_text(cr, s);
+}
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
 #endif
@@ -271,11 +281,13 @@ void update_tx_panadapter(RADIO *r) {
       cairo_stroke(cr);
       
       cairo_set_font_size(cr, 16);
+      // Right-align the readouts to the pane edge so a wider value (e.g. two
+      // digits of W, SWR or ALC) grows leftward instead of clipping on the right.
+      double readout_right=(double)width-4.0;
 
       SetColour(cr, TEXT_A);
       sprintf(text,"%.1f W",tx->fwd);
-      cairo_move_to(cr, 206, 34);
-      cairo_show_text(cr, text);
+      txpan_text_right(cr, readout_right, 34, text);
   
       // Won't show SWR if power out is less than
       // 100 mW, potentially improve this in the future?
@@ -295,14 +307,12 @@ void update_tx_panadapter(RADIO *r) {
         tx->swr = (alpha * this_swr) + (1 - alpha) * tx->swr;
         
         sprintf(text,"SWR: %1.1f:1", tx->swr);
-        cairo_move_to(cr, 206, 56);
-        cairo_show_text(cr, text);
+        txpan_text_right(cr, readout_right, 56, text);
       }
   
       if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
         sprintf(text,"ALC: %2.1f dB",tx->alc);
-        cairo_move_to(cr, 206, 80);
-        cairo_show_text(cr, text);
+        txpan_text_right(cr, readout_right, 80, text);
       }
     }
 
@@ -324,7 +334,11 @@ void update_tx_panadapter(RADIO *r) {
         }
       }
       cairo_set_font_size(cr, 21);   // frequency
-      cairo_move_to(cr,((double)width/2.0)+2.0,15.0);
+      // Place the baseline at the font ascent (+1 px) so the tall digits aren't
+      // clipped by the top edge (a fixed baseline of 15 cut the ascenders off).
+      cairo_font_extents_t ffe;
+      cairo_font_extents(cr, &ffe);
+      cairo_move_to(cr,((double)width/2.0)+2.0, ffe.ascent+1.0);
       cairo_show_text(cr, temp);
     }
     
