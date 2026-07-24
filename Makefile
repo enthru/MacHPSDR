@@ -191,7 +191,17 @@ WDSP_INCLUDE=-I$(WDSP_DIR)
 RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
 endif
 
-INCLUDES=$(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES)
+# Source tree layout: the ~90 first-party .c/.h live under src/<subsystem>/ to
+# keep the repo root uncluttered. The build stays path-agnostic: VPATH lets make
+# resolve the bare foo.c names in OBJS/SOURCES from any of these dirs, and each
+# dir is on the -I path so the flat `#include "radio.h"` style (all header
+# basenames are unique) keeps working with no per-file edits. Objects still land
+# in the root (gitignored *.o/*.d), so OBJS entries stay bare `foo.o` names.
+SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
+VPATH= $(SRCDIRS)
+SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
+
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 

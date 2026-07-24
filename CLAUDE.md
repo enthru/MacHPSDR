@@ -78,6 +78,32 @@ Platform is detected via `uname -s` in the Makefile (`Darwin` vs `Linux`).
 To toggle, comment/uncomment the `*_INCLUDE=*` lines near the top of the Makefile.
 `DECODERS` = `defined(FT8) || defined(SSTV)` gates the shared decoder-tap machinery.
 
+## Source Layout
+
+The ~90 first-party `.c/.h` live under `src/<subsystem>/` (the repo root holds
+only the Makefile, docs, images and data like `cty.dat`):
+
+| Dir | Contents |
+|-----|----------|
+| `src/core/` | app lifecycle + central state + fundamentals: `main`, `radio`, `receiver`, `transmitter`, `subrx`, `ext`, `error_handler`, `log`, `version`, `property`, `actions`, `vox`, `mode`, `filter`, `band`, `frequency`, `ringbuffer`, and the pure headers (`agc.h`, `adc.h`, `dac.h`, `alex.h`, `bandstack.h`, `channel.h`) |
+| `src/proto/` | hardware comms + discovery: `protocol1/2`, `*_discovery`, `soapy_*`, `fake_protocol`, `discovery`, `discovered`, `reconnect`, `hl2`, `rigctl`, `puresignal`, `cwdaemon` |
+| `src/dsp/` | `bpsk`, `diversity_mixer`, `peak_detect`, `ppm_cal` |
+| `src/audio/` | `audio`, `recorder` |
+| `src/midi/` | `midi2/3`, `midi_dialog`, `mac_midi`, `alsa_midi`, `midi.h` |
+| `src/ui/` | all widgets/dialogs/spectrum: `*_dialog`, `*_panadapter`, `waterfall*`, `wideband*`, `vfo`, `meter`, `level_meter`, `tx_info*`, `radio_info`, `mic_*`, `drive_level`, `button_text`, `settings_ui`, `bookmark_dialog`, `css`, `gpu_image`, `waterfall_theme` |
+| `src/decode/` | `ft8_*`, `sstv_*`, `wefax_*` (decoders/encoders/panels) |
+
+Vendored trees (`wdsp/`, `ft8_lib/`) are untouched at the repo root.
+
+**Build mechanism:** the Makefile stays path-agnostic. `VPATH` (set to `$(SRCDIRS)`)
+lets `make` resolve the bare `foo.c` names in `OBJS`/`SOURCES` from any subsystem
+dir, and every dir is on the `-I` path (`SRC_INCLUDES`), so the flat
+`#include "radio.h"` style keeps working with no per-file edits (all header
+basenames are unique). Objects still build into the repo root as gitignored
+`*.o`/`*.d`, so `OBJS` entries remain bare `foo.o` names. To add a new source,
+drop it in the right `src/` dir and add its bare `foo.o` to `OBJS` (or the
+relevant feature `*_OBJS`) as before — no path prefix.
+
 ## Architecture
 
 ### Application State
