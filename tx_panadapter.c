@@ -39,6 +39,13 @@
 #include "css.h"
 #include "main.h"
 
+/* Fixed TX-monitor span (Hz). The WDSP analyzer covers the full iq_output_rate,
+   but the display crops to this span around the carrier so the view is the same
+   width regardless of protocol/sample-rate (16 kHz was the old, protocol-derived
+   default). This tap is the post-DSP TX I/Q — a clean modulated signal — so the
+   span is just for context around the carrier, not for viewing PA linearity. */
+#define TX_MONITOR_SPAN_HZ 24000.0
+
 // Set the Cairo source to a skin palette color (fallback if the name is absent).
 static void txpan_rgb(cairo_t *cr, const char *name, double r, double g, double b) {
   css_rgb(name,&r,&g,&b);
@@ -138,7 +145,9 @@ void update_tx_panadapter(RADIO *r) {
   int width=gtk_widget_get_width(tx->panadapter);
   int height=gtk_widget_get_height(tx->panadapter);
   float *samples=tx->pixel_samples;
-  double hz_per_pixel=(double)tx->iq_output_rate/(double)tx->pixels;
+  /* Screen scale follows the fixed monitor span, not the analyzer's full span,
+     so the filter overlay/grid stay consistent with the cropped signal below. */
+  double hz_per_pixel=TX_MONITOR_SPAN_HZ/(double)(width>0?width:1);
   char text[32];
   int i;
 
@@ -209,18 +218,29 @@ void update_tx_panadapter(RADIO *r) {
         offset=(tx->pixels/24)*11;
       }
 */
-      int offset=(tx->pixels/2)-(width/2);
+      /* The analyzer produces tx->pixels bins across the full iq_output_rate.
+         Crop the central TX_MONITOR_SPAN_HZ worth of bins and map them onto the
+         `width` screen columns (decimating when crop > width). This makes the
+         visible span a fixed 24 kHz on every protocol instead of the old
+         protocol-derived 16 kHz center crop. */
+      int crop=(int)lround((double)tx->pixels*TX_MONITOR_SPAN_HZ/(double)tx->iq_output_rate);
+      if(crop<2) crop=2;
+      if(crop>tx->pixels) crop=tx->pixels;
+      int start=(tx->pixels-crop)/2;
       double s1,s2;
-      samples[offset]=-200.0;
-      samples[(offset+width)-1]=-200.0;
+      /* Tie the trace ends to the graph floor (cosmetic, as before). */
+      samples[start]=-200.0;
+      samples[start+crop-1]=-200.0;
 
-      s1=(double)samples[offset];
+      s1=(double)samples[start];
       s1 = floor((tx->panadapter_high - s1)
                             * (double)height
                             / (tx->panadapter_high - tx->panadapter_low));
       cairo_move_to(cr, 0.0, s1);
       for(i=1;i<width;i++) {
-        s2=(double)samples[i+offset];
+        int idx=start+(int)((double)i*(double)crop/(double)width);
+        if(idx>=tx->pixels) idx=tx->pixels-1;
+        s2=(double)samples[idx];
         s2 = floor((tx->panadapter_high - s2)
                                 * (double)height
                                 / (tx->panadapter_high - tx->panadapter_low));
