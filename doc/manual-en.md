@@ -53,6 +53,19 @@ own VFO, panadapter and waterfall.
 
 - **Click / drag** on the panadapter or waterfall to tune; the scroll wheel
   steps in the current tuning step.
+- **Tuning on the VFO display itself** — three ways:
+  - **Mouse wheel** over a digit steps by that digit's place value: up tunes up,
+    down tunes down (consistent for VFO A/B and in ctun/freetune; the digit under
+    the pointer is hit-tested from the text, so it is exact).
+  - **Hover a digit and press a number key** to overwrite that digit in place;
+    the cursor then advances one digit to the right (SDR#-style), so you can fill
+    a frequency left-to-right.
+  - **Left-click** the frequency to open a small entry field pre-filled with the
+    current frequency in MHz — edit or retype it (`.` or `,` decimal, and the
+    grouped `14.074.000` style are both accepted) and press Enter, Esc to cancel.
+    The **band-stack menu** is on the **right-click**.
+  - Tuning is clamped to **0 – 6 GHz** (or the device's own upper limit if
+    lower), so a stray edit can't run the VFO off to a nonsense frequency.
 - **VFO A / B**, split, and A↔B swap are on the VFO widget and bottom bar.
 - **Zoom** — the panadapter can be zoomed to inspect narrow signals (quick jumps
   to ×10/×12/×16/×32 from the VFO zoom menu). The practical maximum depends on
