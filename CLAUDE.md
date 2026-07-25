@@ -36,8 +36,19 @@ The fake device advertises `supported_receivers = 2` and its feed loop drives
 every allocated receiver, so it can also exercise the **diversity** UI (normally
 Protocol-1-only): the VFO `DIV` button is shown for `PROTOCOL_FAKE` too, and the
 feed loop feeds a diversity *hidden* receiver (`show_rx=FALSE`) so the mix
-completes — otherwise the visible RX would freeze. There is no real diversity
-gain (both RX read the same recording); it is only for viewing/driving the UI.
+completes — otherwise the visible RX would freeze. The hidden RX is fed the
+**same** I/Q as its visual partner (a small replay buffer in `fake_protocol.c`
+stashes the visual channel's block and replays it for the hidden), so the two
+diversity streams are coherent/identical rather than two independent file reads.
+It is only for viewing/driving the UI (no real diversity gain).
+
+**`create_receiver` hidden-RX invariant:** a receiver the caller asks to be
+hidden (`show_rx=FALSE` — a diversity hidden RX or a PureSignal feedback RX) is
+force-kept hidden after `receiver_restore_state`, because a stale persisted
+`receiver[N].show_rx=1` (from a session where that slot was a normal shown RX)
+would otherwise give it a full visual + update timer that `delete_receiver` does
+not tear down — leaving the timer firing on freed widgets (`GTK_IS_WIDGET`
+criticals / frozen UI) when diversity is switched off.
 
 ## Dependencies
 

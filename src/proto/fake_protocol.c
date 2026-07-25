@@ -54,6 +54,15 @@ static double  iq_offset = 0.0;    // recorded carrier offset from centre (Hz)
 static double  iq_pos[8] = {0};    // per-receiver fractional read cursor (loops)
 static double  mix_phase[8] = {0}; // per-receiver de-rotation phase (centres station)
 
+// Diversity replay: a diversity hidden RX is fed the SAME I/Q as its visual
+// partner (so the two streams are coherent/identical, not two independent reads
+// of the file). The most-recently-fed channel's samples are stashed here and
+// replayed for a hidden RX whose visual partner is that channel.
+static double *fake_replay = NULL;
+static int     fake_replay_cap = 0;   // capacity in complex samples
+static int     fake_replay_n = 0;     // valid complex samples stashed
+static int     fake_replay_ch = -1;   // WDSP channel that produced them
+
 static volatile int fake_running = 0;
 static GThread *fake_thread_id = NULL;
 
@@ -246,10 +255,32 @@ static gpointer fake_thread_fn(gpointer data) {
       n_ref = n;
       sr_ref = sr;
 
+      // If this is a diversity hidden RX and we have the visual partner's just-
+      // fed block, replay it verbatim so both receivers see identical I/Q.
+      gboolean replay = FALSE;
+      if(is_div_hidden) {
+        DIVMIXER *dm = r->divmixer[rx->dmix_id];
+        if(dm != NULL && dm->rx_visual != NULL &&
+           fake_replay != NULL && fake_replay_n == n &&
+           fake_replay_ch == dm->rx_visual->channel) {
+          replay = TRUE;
+        }
+      }
+      // Otherwise stash this channel's samples so a later hidden partner in the
+      // same pass can replay them.
+      gboolean store = !replay;
+      if(store && fake_replay_cap < n) {
+        fake_replay = g_realloc(fake_replay, 2*n*sizeof(double));
+        fake_replay_cap = n;
+      }
+
       for(int s = 0; s < n; s++) {
         double i_sample, q_sample;
 
-        if(iq_data) {
+        if(replay) {
+          i_sample = fake_replay[s*2];
+          q_sample = fake_replay[s*2+1];
+        } else if(iq_data) {
           // Stream the recorded I/Q, resampling file_rate -> sr by cubic
           // interpolation and looping back to the start at end-of-file. Each
           // receiver keeps its own cursor so they don't consume the file twice.
@@ -306,8 +337,10 @@ static gpointer fake_thread_fn(gpointer data) {
           }
         }
 
+        if(store) { fake_replay[s*2] = i_sample; fake_replay[s*2+1] = q_sample; }
         add_iq_samples(rx, i_sample, q_sample);
       }
+      if(store) { fake_replay_ch = rx->channel; fake_replay_n = n; }
 
       // While keyed, feed the TX DSP a synthetic mic tone so tx_panadapter
       // shows a signal. Only for the receiver bound to the transmitter, paced

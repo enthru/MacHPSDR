@@ -2753,6 +2753,14 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   receiver_restore_state(rx);
 
+  // A receiver the caller asked to be hidden (a diversity *hidden* RX, or a
+  // PureSignal feedback RX) must stay hidden even if this slot was persisted
+  // with show_rx=1 from a session where it was a normal shown receiver.
+  // Otherwise it builds a full visual + update timer that delete_receiver does
+  // not tear down, leaving the timer firing on freed widgets (GTK_IS_WIDGET
+  // criticals / frozen UI) when diversity is switched off.
+  if(!show_rx) rx->show_rx = FALSE;
+
   if(radio->discovered->protocol==PROTOCOL_1) {
     if(rx->sample_rate!=sample_rate) {
       rx->sample_rate=sample_rate;
