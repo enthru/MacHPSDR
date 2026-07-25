@@ -99,10 +99,11 @@ own VFO, panadapter and waterfall.
   on/off state and the mix position are remembered across restarts.
 - **Diversity** *(experimental — needs testing on real hardware).* Combines two
   coherent ADC streams with adjustable gain/phase to null a local interferer or
-  fight fading. Turned on with the **DIV** button on the VFO: it adds a hidden
-  second receiver and creates the mixer, after which a **DMIX-0** page with the
-  gain/phase controls and a disclaimer appears in Configure. Protocol 1 only,
-  needs a radio with two receivers/ADCs; not yet verified on hardware in this fork.
+  fight fading. It lives on the **Configure → Diversity** page: an **Enable
+  diversity** checkbox (greyed out on devices that can't do it) turns it on —
+  adding a hidden second receiver and the mixer — next to the gain/phase controls
+  and a disclaimer. Protocol 1 only, needs a radio with two receivers/ADCs; not
+  yet verified on hardware in this fork.
 
 ---
 

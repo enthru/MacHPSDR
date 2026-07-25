@@ -589,36 +589,6 @@ static void subrx_b_cb(GtkToggleButton *widget,gpointer user_data) {
   update_vfo(rx);
 }
 
-static void div_b_cb(GtkToggleButton *widget,gpointer user_data) {
-  RECEIVER *rx=(RECEIVER *)user_data;
-
-  log_info("Diversity rx %d\n", rx->diversity);
-  if(rx->diversity) {
-    //Delete receiver
-    int this_mixer = rx->dmix_id;
-    delete_diversity_mixer(radio->divmixer[this_mixer]);
-    rx->diversity = FALSE;
-  } else {
-    log_info("Add new rx\n");
-    int new_hidden_rx = add_receiver(radio, FALSE);
-    if (new_hidden_rx > 0) {
-      log_info("-----------Hidden RX added %d\n", new_hidden_rx);
-      int dmix_num = add_diversity_mixer(radio, rx, radio->receiver[new_hidden_rx]);
-      if (dmix_num > -1) {
-        log_info("Vis mix chan %d\n", rx->dmix_id);
-        log_info("Hid mix chan %d\n", radio->receiver[new_hidden_rx]->dmix_id);
-        log_info("channel %d\n", radio->divmixer[dmix_num]->rx_hidden->channel);
-        rx->diversity = TRUE;
-      }
-    } else {
-      log_info("Failed to add new rx\n");
-    }
-  }
-  log_info("Diversity rx %d\n", rx->diversity);
-}
-
-
-
 
 static void lock_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
@@ -2092,19 +2062,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(bmk_b_pressed_cb),rx); gtk_widget_add_controller(v->bmk_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->bmk_b);
 
-  // Diversity is wired for Classic HPSDR (Protocol 1). The fake device also
-  // exposes it (it can spin up a second receiver) so the diversity UI — the DIV
-  // toggle, the added hidden RX and the DMIX config page — can be exercised
-  // without P1 hardware. (The faker feeds both RX from the same recording, so
-  // there is no real diversity gain; this is for looking at the interface.)
-  if(radio->discovered->protocol == PROTOCOL_1 ||
-     radio->discovered->protocol == PROTOCOL_FAKE) {
-    v->div_b=gtk_toggle_button_new_with_label("DIV");
-    gtk_widget_set_name(v->div_b,"vfo-toggle");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b),rx->diversity);
-    g_signal_connect(v->div_b, "toggled", G_CALLBACK(div_b_cb),rx);
-    gtk_box_append(GTK_BOX(vfo_row_ctl),v->div_b);
-  }
+  // Diversity on/off lives in Configure -> Diversity now (a checkbox), not on the
+  // VFO — you open settings to tune its gain/phase anyway. See diversity_dialog.c.
 
   gtk_widget_set_visible(v->vfo, TRUE);
 
@@ -2350,11 +2309,4 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_block_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),rx->subrx!=NULL);
   g_signal_handlers_unblock_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
-
-  // Diversity mixer
-  if(radio->discovered->protocol == PROTOCOL_1) {
-    g_signal_handlers_block_by_func(v->div_b, G_CALLBACK(div_b_cb), rx);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b), rx->diversity);
-    g_signal_handlers_unblock_by_func(v->div_b, G_CALLBACK(div_b_cb), rx);
-  }
 }

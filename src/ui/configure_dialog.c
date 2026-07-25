@@ -115,9 +115,6 @@ static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer dat
   else if(strncmp("TX",text,2)==0) {
     update_transmitter_dialog(radio->transmitter);
   }
-  else if(strncmp("DMIX",text,4)==0) {
-    update_transmitter_dialog(radio->transmitter);
-  }
   else if(strncmp("OC",text,2)==0) {
     update_oc_dialog(radio);
   }
@@ -163,12 +160,9 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
     }
   }
 
-  for(i=0; i < MAX_DIVERSITY_MIXERS; i++) {
-    if(radio->divmixer[i]!=NULL) {
-      g_snprintf((gchar *)&title,sizeof(title),"DMIX-%d",radio->divmixer[i]->id );
-      add_page(create_diversity_dialog(radio->divmixer[i]),title);
-    }
-  }
+  // The Diversity page is always present; it carries its own on/off checkbox
+  // (greyed when the device can't do diversity) and the gain/phase controls.
+  add_page(create_diversity_dialog(radio),"Diversity");
 
   if(radio->can_transmit) {
     add_page(create_transmitter_dialog(radio->transmitter),"TX");

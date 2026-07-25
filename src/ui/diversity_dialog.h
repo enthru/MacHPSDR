@@ -17,4 +17,4 @@
 *
 */
 
-extern GtkWidget *create_diversity_dialog(DIVMIXER *dmix);
+extern GtkWidget *create_diversity_dialog(RADIO *radio);

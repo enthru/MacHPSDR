@@ -332,12 +332,12 @@ you've dialled in.
   restarts.
 - **Diversity reception** *(experimental — needs testing on real hardware).*
   Combines two coherent ADC streams with adjustable gain/phase to null a local
-  interferer or fight fading. Turn it on with the **DIV** button on the VFO: it
-  adds a hidden second receiver and creates the mixer, after which a **DMIX-0**
-  page with the gain/phase controls (and a hardware-untested disclaimer) appears
-  in the Configure dialog. Like PureSignal it is Protocol 1 only and has not yet
-  been verified on hardware in this fork; it requires a radio with two
-  receivers/ADCs.
+  interferer or fight fading. It lives on the **Configure → Diversity** page: an
+  **Enable diversity** checkbox (greyed out on devices that can't do it) turns it
+  on — adding a hidden second receiver and the mixer — alongside the gain/phase
+  controls and a hardware-untested disclaimer. Like PureSignal it is Protocol 1
+  only and has not yet been verified on hardware in this fork; it requires a radio
+  with two receivers/ADCs.
 
 ### HPSDR hardware
 
