@@ -284,9 +284,9 @@ you've dialled in.
   argument it falls back to `iq.wav`. The recording's sample rate is resampled to
   the receiver's rate and its carrier auto-centred to baseband, then looped. A
   6th-order Butterworth low-pass band-limits the resampled stream so the
-  panadapter shows the file's own bandwidth rather than resampling images. Add
-  `--revert-iq` to swap I and Q (mirrors the spectrum) when the sideband is
-  inverted.
+  panadapter shows the file's own bandwidth rather than resampling images. If the
+  sideband is inverted, tick **Swap I & Q** in the radio dialog to mirror the
+  spectrum live.
 
 ### Reliability & performance
 

@@ -151,16 +151,7 @@ static int fake_load_iq(const char *path) {
   fclose(f);
   iq_data = (float *)malloc((size_t)frames * 2 * sizeof(float));
   if(!iq_data) { free(raw); return 0; }
-  if(fake_revert_iq) {
-    // Swap I and Q (mirrors the spectrum) for inverted-sideband recordings.
-    for(long i=0;i<frames;i++) {
-      iq_data[i*2]   = (float)raw[i*2+1] / 32768.0f;
-      iq_data[i*2+1] = (float)raw[i*2]   / 32768.0f;
-    }
-    log_info("fake: --revert-iq active (I/Q swapped)\n");
-  } else {
-    for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
-  }
+  for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
   free(raw);
   iq_frames = frames;
   iq_rate = (double)rate;
@@ -189,7 +180,6 @@ static int fake_load_iq(const char *path) {
 /* Only the --faker command-line flag (parsed in main()) turns this on. */
 int enable_fake = 0;
 const char *fake_iq_file = NULL;
-int fake_revert_iq = 0;
 
 void fake_discovery(void) {
   if(!enable_fake) return;
@@ -264,6 +254,10 @@ static gpointer fake_thread_fn(gpointer data) {
           long ip2 = i0 + 2; if(ip2 >= iq_frames) ip2 -= iq_frames;
           double ii = cubic4(iq_data[im1*2],   iq_data[i0*2],   iq_data[ip1*2],   iq_data[ip2*2],   t);
           double qq = cubic4(iq_data[im1*2+1], iq_data[i0*2+1], iq_data[ip1*2+1], iq_data[ip2*2+1], t);
+          // Live "Swap I & Q" (mirrors the spectrum) for inverted-sideband
+          // recordings — driven by the radio-dialog checkbox (radio->iqswap),
+          // so it can be toggled while playing.
+          if(r->iqswap) { double tmp = ii; ii = qq; qq = tmp; }
           // Band-limit to the recording's own bandwidth: kills the resampling
           // images (the "mirror") so the panadapter shows the file's spectrum.
           if(aa_fs != sr) aa_design(0.49*(iq_rate<sr?iq_rate:sr), sr);

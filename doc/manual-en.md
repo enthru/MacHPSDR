@@ -264,6 +264,7 @@ bookmark dialog; bookmarks can also appear as markers on the panadapter.
 `--faker` starts a synthetic SDR that loops a 16-bit stereo I/Q WAV through the
 full RX/decoder chain. Pass a file (`--faker ft8.wav`) or set `MACHPSDR_FAKE_IQ`;
 with no file it falls back to `iq.wav`. The recording is resampled to the
-receiver rate and auto-centred to baseband, then looped. Add `--revert-iq` to
-swap I and Q if the sideband is inverted. This is the recommended way to try FT8
-decoding, the recorder replay, and the UI without a radio.
+receiver rate and auto-centred to baseband, then looped. If the sideband is
+inverted, tick **Swap I & Q** in the radio dialog to mirror the spectrum live.
+This is the recommended way to try FT8 decoding, the recorder replay, and the UI
+without a radio.
