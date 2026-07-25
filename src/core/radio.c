@@ -941,7 +941,12 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
   }
 
   gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->sstv_panel==NULL && radio->wefax_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
-  if(radio->dialog) {
+  // Only tear the Configure dialog down when a *visible* receiver is deleted: its
+  // per-RX page goes stale. A hidden receiver (diversity hidden RX, PureSignal
+  // feedback RX) has no page, so deleting it — e.g. unticking "Enable diversity"
+  // on the Diversity page — must leave the settings window open, mirroring the
+  // add_receiver path.
+  if(rx->show_rx && radio->dialog) {
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
