@@ -207,8 +207,13 @@ void fake_discovery(void) {
   d->supported_receivers = 2;
   d->supported_transmitters = 1;
   d->adcs = 1;
+  // The fake device's "frequency" is purely cosmetic — the recorded I/Q is
+  // streamed at baseband regardless of the dial — so give it a wide, VHF-capable
+  // range (0..200 MHz) instead of the classic-HPSDR 61.44 MHz ceiling. That lets
+  // the dial sit where the content actually lives (e.g. 145.8 MHz for an ISS
+  // SSTV recording) rather than being clamped down into HF.
   d->frequency_min = 0.0;
-  d->frequency_max = 61440000.0;
+  d->frequency_max = 200000000.0;
 
   unsigned char mac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01};
   memcpy(d->info.network.mac_address, mac, 6);

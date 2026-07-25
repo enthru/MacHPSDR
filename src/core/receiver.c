@@ -2477,6 +2477,15 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
       rx->mode_a=USB;
       rx->bandstack=1;
       break;
+    case PROTOCOL_FAKE:
+      // The faker's frequency is cosmetic; start centred at 100 MHz on the
+      // general-coverage band so the dial can roam its full 0..200 MHz range
+      // (VHF content included) instead of being pinned to an HF ham band.
+      rx->frequency_a=100000000;
+      rx->band_a=bandGen;
+      rx->mode_a=USB;
+      rx->bandstack=1;
+      break;
 #ifdef IIO
     case PROTOCOL_IIO:
       rx->frequency_a=2400000000;
