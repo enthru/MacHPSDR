@@ -255,12 +255,17 @@ static gpointer fake_thread_fn(gpointer data) {
       n_ref = n;
       sr_ref = sr;
 
-      // If this is a diversity hidden RX and we have the visual partner's just-
-      // fed block, replay it verbatim so both receivers see identical I/Q.
+      // Replay applies ONLY to the diversity *hidden* partner: feed it the
+      // visual partner's just-fed block verbatim so both see identical I/Q.
+      // NB: is_div_hidden is true for BOTH participants (they share dmix_id), so
+      // this must additionally check rx == dm->rx_hidden — otherwise the VISUAL
+      // receiver also matches and, after storing its first block, keeps replaying
+      // that same stale block instead of streaming fresh samples (the whole mix
+      // then freezes on the first buffer -> waterfall repeats the last values).
       gboolean replay = FALSE;
       if(is_div_hidden) {
         DIVMIXER *dm = r->divmixer[rx->dmix_id];
-        if(dm != NULL && dm->rx_visual != NULL &&
+        if(dm != NULL && rx == dm->rx_hidden && dm->rx_visual != NULL &&
            fake_replay != NULL && fake_replay_n == n &&
            fake_replay_ch == dm->rx_visual->channel) {
           replay = TRUE;
