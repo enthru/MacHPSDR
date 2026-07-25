@@ -91,7 +91,18 @@ own VFO, panadapter and waterfall.
 - **Noise handling** — NR / NR2 (noise reduction), NB / NB2 (noise blanker), ANF
   (automatic notch filter).
 - **Volume / mute / squelch** — audible-output level and squelch per receiver.
-- **Sub-receiver** — a second demodulator inside one receiver slice.
+- **Sub-receiver (SUBRX)** — a second demodulator inside one receiver slice,
+  switched on with the **SUBRX** button on the VFO; it has its own frequency
+  (VFO B), mode, filter and AGC. The main RX plays on the left channel and the
+  sub on the right; a **Sub-RX mix (split↔mono)** slider in the receiver settings
+  crossfades from that channel split to an equal mono blend in both ears. Its
+  on/off state and the mix position are remembered across restarts.
+- **Diversity** *(experimental — needs testing on real hardware).* Combines two
+  coherent ADC streams with adjustable gain/phase to null a local interferer or
+  fight fading. Turned on with the **DIV** button on the VFO: it adds a hidden
+  second receiver and creates the mixer, after which a **DMIX-0** page with the
+  gain/phase controls and a disclaimer appears in Configure. Protocol 1 only,
+  needs a radio with two receivers/ADCs; not yet verified on hardware in this fork.
 
 ---
 
