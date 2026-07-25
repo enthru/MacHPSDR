@@ -227,7 +227,15 @@ static gpointer fake_thread_fn(gpointer data) {
     for(int ch = 0; ch < r->discovered->supported_receivers && ch < 8; ch++) {
       g_mutex_lock(&r->delete_rx_mutex);
       RECEIVER *rx = r->receiver[ch];
-      if(rx == NULL || !rx->show_rx) {
+      // Normally we only feed receivers that have a visual panel. A diversity
+      // *hidden* receiver has show_rx=FALSE but must still be fed, otherwise its
+      // buffer never fills, the diversity mix (triggered when the hidden buffer
+      // completes) never runs, and the visible RX freezes. So also feed a
+      // receiver that is participating in a diversity mixer.
+      gboolean is_div_hidden = (rx != NULL &&
+                                rx->dmix_id >= 0 && rx->dmix_id < MAX_DIVERSITY_MIXERS &&
+                                r->divmixer[rx->dmix_id] != NULL);
+      if(rx == NULL || (!rx->show_rx && !is_div_hidden)) {
         g_mutex_unlock(&r->delete_rx_mutex);
         continue;
       }

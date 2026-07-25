@@ -32,6 +32,12 @@ hardware-free smoke testing there is a synthetic **fake device**: run
 through the full RX/decoder chain. With `--faker` the device-selection dialog is
 skipped and the fake radio starts straight up, so it can be launched headless
 (e.g. under lldb). See `fake_protocol.c` and the flag parsing in `main.c`.
+The fake device advertises `supported_receivers = 2` and its feed loop drives
+every allocated receiver, so it can also exercise the **diversity** UI (normally
+Protocol-1-only): the VFO `DIV` button is shown for `PROTOCOL_FAKE` too, and the
+feed loop feeds a diversity *hidden* receiver (`show_rx=FALSE`) so the mix
+completes — otherwise the visible RX would freeze. There is no real diversity
+gain (both RX read the same recording); it is only for viewing/driving the UI.
 
 ## Dependencies
 

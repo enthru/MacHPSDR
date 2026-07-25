@@ -2092,7 +2092,13 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(bmk_b_pressed_cb),rx); gtk_widget_add_controller(v->bmk_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->bmk_b);
 
-  if(radio->discovered->protocol == PROTOCOL_1) {
+  // Diversity is wired for Classic HPSDR (Protocol 1). The fake device also
+  // exposes it (it can spin up a second receiver) so the diversity UI — the DIV
+  // toggle, the added hidden RX and the DMIX config page — can be exercised
+  // without P1 hardware. (The faker feeds both RX from the same recording, so
+  // there is no real diversity gain; this is for looking at the interface.)
+  if(radio->discovered->protocol == PROTOCOL_1 ||
+     radio->discovered->protocol == PROTOCOL_FAKE) {
     v->div_b=gtk_toggle_button_new_with_label("DIV");
     gtk_widget_set_name(v->div_b,"vfo-toggle");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->div_b),rx->diversity);
