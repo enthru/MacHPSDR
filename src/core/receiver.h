@@ -250,6 +250,10 @@ typedef struct _receiver {
   gboolean is_panning;
   gboolean has_moved;
   gint last_x;
+  // x at button-press: drag vs. click is decided by cumulative distance from
+  // here, since last_x is rewritten every motion event (per-event delta stays
+  // tiny on a slow drag and would never trip has_moved).
+  gint press_x;
   // GTK4: the scroll controller's "scroll" signal carries no pointer position,
   // so the motion controller stashes the latest cursor coords here for it.
   gint cursor_x;
@@ -306,7 +310,9 @@ typedef struct _receiver {
   void *bpsk;
 
   gboolean subrx_enable;
+  gboolean subrx_restore_pending; // persisted "on" state, applied after the WDSP channel exists (see create_receiver)
   void *subrx;
+  gint subrx_mix; // 0=hard L/R split (main left, sub right) .. 100=mono (both in both ears)
 
   int resample_step;
 

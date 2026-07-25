@@ -131,16 +131,15 @@ static void clear_clicked(GtkButton *b, gpointer data) {
   sstv_decoder_reset();
 }
 
-static void save_clicked(GtkButton *b, gpointer data) {
+// GTK4: GtkFileDialog is async — the chosen path arrives in this finish
+// callback (mirrors the Load flow).
+static void save_done(GObject *src, GAsyncResult *res, gpointer data) {
   SstvPanel *p = data;
-  if (p->pb == NULL) return;
-  char dir[512], path[600];
-  g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/sstv", g_get_home_dir());
-  g_mkdir_with_parents(dir, 0755);
-  time_t now = time(NULL);
-  struct tm tmv; gmtime_r(&now, &tmv);
-  char ts[32]; strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
-  g_snprintf(path, sizeof(path), "%s/sstv_%s.png", dir, ts);
+  GFile *gf = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf == NULL) return;   // cancelled / error
+  if (p->pb == NULL) { g_object_unref(gf); return; }
+  char *path = g_file_get_path(gf);
+  g_object_unref(gf);
   GError *err = NULL;
   if (gdk_pixbuf_save(p->pb, path, "png", &err, NULL)) {
     log_info("SSTV: saved %s\n", path);
@@ -148,6 +147,39 @@ static void save_clicked(GtkButton *b, gpointer data) {
     log_error("SSTV: save failed: %s\n", err ? err->message : "?");
     if (err) g_error_free(err);
   }
+  g_free(path);
+}
+
+static void save_clicked(GtkButton *b, gpointer data) {
+  SstvPanel *p = data;
+  if (p->pb == NULL) return;
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  // Suggested filename + default folder (created if missing).
+  char dir[512];
+  g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/sstv", g_get_home_dir());
+  g_mkdir_with_parents(dir, 0755);
+  time_t now = time(NULL);
+  struct tm tmv; gmtime_r(&now, &tmv);
+  char ts[32]; strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+  char name[64];
+  g_snprintf(name, sizeof(name), "sstv_%s.png", ts);
+
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Save SSTV image");
+  gtk_file_dialog_set_initial_name(dlg, name);
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  GtkFileFilter *filt = gtk_file_filter_new();
+  gtk_file_filter_set_name(filt, "PNG image");
+  gtk_file_filter_add_mime_type(filt, "image/png");
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filt);
+  g_object_unref(filt);
+  gtk_file_dialog_set_filters(dlg, G_LIST_MODEL(filters));
+  g_object_unref(filters);
+  gtk_file_dialog_save(dlg, GTK_WINDOW(top), NULL, save_done, p);
+  g_object_unref(dlg);
 }
 
 // --- transmit ---------------------------------------------------------------
@@ -286,7 +318,9 @@ GtkWidget *sstv_panel_create(void) {
 
   p->tx_progress = gtk_progress_bar_new();
   gtk_widget_set_valign(p->tx_progress, GTK_ALIGN_CENTER);
-  gtk_box_append(GTK_BOX(txbar),p->tx_progress); gtk_widget_set_hexpand(p->tx_progress,TRUE); gtk_widget_set_vexpand(p->tx_progress,TRUE);
+  // hexpand only: a vexpand here made the whole Tx row grow vertically and
+  // stretched every button in the row to that height (GTK4 default valign=FILL).
+  gtk_box_append(GTK_BOX(txbar),p->tx_progress); gtk_widget_set_hexpand(p->tx_progress,TRUE);
   gtk_box_append(GTK_BOX(box),txbar);
 
   // Image area. Small min height (was 256) so the GTK4 paned can shrink the

@@ -320,6 +320,23 @@ you've dialled in.
   low-latency ring; only genuinely wide spans pay for the deeper ring. The
   transmitter always uses depth 2.
 
+### Dual receive & diversity
+
+- **Sub-receiver (SUBRX).** A second demodulator inside the same slice of
+  spectrum — toggled with the **SUBRX** button — lets you listen to two signals
+  in one passband at once (its own VFO-B frequency, mode, filter, AGC and noise
+  reduction). The main RX plays on the left channel and the sub on the right; a
+  new **Sub-RX mix (split↔mono)** slider in the receiver settings crossfades from
+  that hard L/R split all the way to an equal mono blend audible in both ears.
+  Whether the sub-RX was on (and the mix setting) is now remembered across
+  restarts.
+- **Diversity reception** *(experimental — needs testing on real hardware).*
+  Combines two coherent ADC streams with adjustable gain/phase to null a local
+  interferer or fight fading. Like PureSignal it is Protocol 1 only and has not
+  yet been verified on hardware in this fork; it requires a radio with two
+  receivers/ADCs. The controls live in **Configure → Diversity** and carry an
+  in-app note to that effect.
+
 ### HPSDR hardware
 
 - **PPM frequency correction with automatic calibration.** Corrects the

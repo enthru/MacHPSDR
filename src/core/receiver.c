@@ -308,6 +308,12 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].audio_channels",rx->channel);
   sprintf(value,"%d",rx->audio_channels);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].subrx_enable",rx->channel);
+  sprintf(value,"%d",rx->subrx_enable);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].subrx_mix",rx->channel);
+  sprintf(value,"%d",rx->subrx_mix);
+  setProperty(name,value);
 
 
   sprintf(name,"receiver[%d].step",rx->channel);
@@ -620,6 +626,17 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].audio_channels",rx->channel);
   value=getProperty(name);
   if(value) rx->audio_channels=atoi(value);
+  // Sub-RX: remember whether it was on and its L/R-mix. The WDSP sub-channel is
+  // (re)created at the end of create_receiver (it needs the main channel open),
+  // so the restored "on" state is parked in subrx_restore_pending — NOT in
+  // subrx_enable, which frequency_changed()/process_rx_buffer() act on and which
+  // would dereference the still-NULL rx->subrx during the rest of startup.
+  sprintf(name,"receiver[%d].subrx_enable",rx->channel);
+  value=getProperty(name);
+  if(value) rx->subrx_restore_pending=atoi(value);
+  sprintf(name,"receiver[%d].subrx_mix",rx->channel);
+  value=getProperty(name);
+  if(value) rx->subrx_mix=atoi(value);
 
   sprintf(name,"receiver[%d].step",rx->channel);
   value=getProperty(name);
@@ -980,6 +997,7 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
 #endif
       //if(!rx->locked) {
         rx->last_x=(int)ex;
+        rx->press_x=(int)ex;
         rx->has_moved=FALSE;
         if(rx->zoom>1 && ey>=rx->panadapter_height-20) {
           rx->is_panning=TRUE;
@@ -1428,7 +1446,10 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
       //receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),FALSE);
       receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),TRUE);
       rx->last_x=x;
-      if (moved > 1 || moved < -1) {
+      // Decide drag-vs-click from the cumulative distance since the press, not
+      // this event's delta: on a slow drag the per-event delta stays within
+      // ±1px and would never trip this, so release would wrongly re-centre.
+      if (x-rx->press_x > 2 || x-rx->press_x < -2) {
         rx->has_moved=TRUE;
       }
     } else {
@@ -1850,10 +1871,15 @@ static void process_rx_buffer(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
 
   for (int i=0;i<rx->output_samples;i++) {
-    // if subrx is enabled left channel is main and right channel is sub
+    // Sub-RX: main on the left channel, sub on the right, with an adjustable
+    // crossfeed (rx->subrx_mix 0..100). mix=0 keeps the hard L/R split; mix=100
+    // (m=0.5) collapses both to an equal mono blend audible in both ears.
     if(rx->subrx_enable) {
-      left_sample=rx->audio_output_buffer[i*2];
-      right_sample=subrx->audio_output_buffer[i*2];
+      gdouble main_sample=rx->audio_output_buffer[i*2];
+      gdouble sub_sample=subrx->audio_output_buffer[i*2];
+      gdouble m=rx->subrx_mix*0.005; // 0 .. 0.5
+      left_sample = main_sample*(1.0-m) + sub_sample*m;
+      right_sample = sub_sample*(1.0-m) + main_sample*m;
     } else {
       // Rx option for left channel only, right only, or both channels
       switch (rx->audio_channels) {
@@ -2715,7 +2741,9 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->vfo=NULL;
   rx->subrx_enable=FALSE;
+  rx->subrx_restore_pending=FALSE;
   rx->subrx=NULL;
+  rx->subrx_mix=0;
 
   rx->diversity = FALSE;
   rx->diversity_hidden_rx = -1;
@@ -2871,6 +2899,16 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
     rx->bpsk=create_bpsk(BPSK_CHANNEL,rx->band_a);
   }
 
+  // Sub-RX was persisted on: its WDSP sub-channel needs the main channel open,
+  // so (re)create it now that OpenChannel above (and frequency_changed/
+  // receiver_mode_changed) have run with subrx_enable still FALSE. Only now is
+  // it safe to open the sub-channel and flip the live flag on.
+  if(rx->subrx_restore_pending && rx->subrx==NULL) {
+    rx->subrx_restore_pending=FALSE;
+    if(rx->mode_b<0 || rx->mode_b>=MODES) rx->mode_b=rx->mode_a;
+    create_subrx(rx);        // sets rx->subrx
+    rx->subrx_enable=TRUE;
+  }
 
   if(rx->rigctl_enable) {
     launch_rigctl(rx);

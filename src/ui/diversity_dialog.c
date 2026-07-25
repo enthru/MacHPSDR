@@ -192,8 +192,20 @@ GtkWidget *create_diversity_dialog(DIVMIXER *dmix) {
   gtk_check_button_set_active(GTK_CHECK_BUTTON(dir_flip_b), dmix->flip);
   gtk_widget_set_visible(dir_flip_b, TRUE);
   gtk_grid_attach(GTK_GRID(grid), dir_flip_b, 1, 5, 1, 1);
-  g_signal_connect(dir_flip_b,"toggled",G_CALLBACK(dir_flip_cb), dmix); 
+  g_signal_connect(dir_flip_b,"toggled",G_CALLBACK(dir_flip_cb), dmix);
 
+  // Honest disclaimer (mirrors the PureSignal note): the diversity path needs
+  // two coherent ADC streams and has not been verified on hardware in this fork.
+  GtkWidget *note=gtk_label_new(NULL);
+  gtk_label_set_markup(GTK_LABEL(note),
+    "<small><i>Note: diversity reception combines two coherent ADC streams to null "
+    "interference / fight fading. Like PureSignal it is Protocol 1 only and has NOT "
+    "been verified on hardware in this fork — it needs a radio with two receivers/ADCs. "
+    "Requires testing on real hardware; use at your own risk.</i></small>");
+  gtk_label_set_wrap(GTK_LABEL(note),TRUE);
+  gtk_label_set_xalign(GTK_LABEL(note),0.0);
+  gtk_widget_set_size_request(note,600,-1);
+  gtk_grid_attach(GTK_GRID(grid),note,0,6,4,1);
 
   return grid;
 }

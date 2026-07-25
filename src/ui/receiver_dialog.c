@@ -446,6 +446,13 @@ static void audio_channels_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data
   rx->audio_channels = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 }
 
+// Sub-RX crossfeed: 0 = hard split (main left / sub right), 100 = mono blend in
+// both ears. Read live by process_rx_buffer(), so no extra WDSP call is needed.
+static void subrx_mix_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->subrx_mix=(int)gtk_range_get_value(GTK_RANGE(widget));
+}
+
 static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   int i;
@@ -801,6 +808,17 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_check_button_set_active(GTK_CHECK_BUTTON(tx_mute_b), rx->mute_while_transmitting);
     gtk_grid_attach(GTK_GRID(audio_grid),tx_mute_b,0,3,1,1);
     g_signal_connect(tx_mute_b,"toggled",G_CALLBACK(mute_while_tx_cb),rx);
+
+    // Sub-RX audio balance: split (main L / sub R) .. mono (both in both ears).
+    GtkWidget *subrx_mix_label=gtk_label_new("Sub-RX mix (split↔mono):");
+    gtk_label_set_xalign(GTK_LABEL(subrx_mix_label),0.0);
+    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_label,0,4,1,1);
+    GtkWidget *subrx_mix_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,
+        gtk_adjustment_new(rx->subrx_mix,0.0,100.0,1.0,10.0,0.0));
+    gtk_widget_set_size_request(subrx_mix_scale,160,25);
+    sui_scale_show_value(subrx_mix_scale,0);
+    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_scale,1,4,1,1);
+    g_signal_connect(G_OBJECT(subrx_mix_scale),"value_changed",G_CALLBACK(subrx_mix_changed_cb),rx);
   }
 
   GtkWidget *equalizer_frame=gtk_frame_new("Equalizer");
