@@ -154,7 +154,10 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(create_xvtr_dialog(radio),"XVTR");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {
-    if(radio->receiver[i]!=NULL) {
+    // Skip hidden receivers (show_rx==FALSE): a diversity hidden RX or a
+    // PureSignal feedback RX has no visual and must not appear as a settings
+    // page — it isn't a receiver the operator tunes.
+    if(radio->receiver[i]!=NULL && radio->receiver[i]->show_rx) {
       g_snprintf((gchar *)&title,sizeof(title),"RX-%d",radio->receiver[i]->channel);
       add_page(create_receiver_dialog(radio->receiver[i]),title);
     }

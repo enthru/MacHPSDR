@@ -1226,7 +1226,12 @@ log_info("add_receiver: no receivers available\n");
     gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
   }
 
-  if(radio->dialog) {
+  // Only tear the Configure dialog down when a *visible* receiver was added: its
+  // per-RX pages become stale and must be rebuilt. A hidden receiver (diversity
+  // hidden RX, PureSignal feedback RX) adds no page, and closing the dialog here
+  // would slam the settings window shut the instant the user ticks "Enable
+  // diversity" on the Diversity page — so leave it open for the hidden case.
+  if(show_rx && radio->dialog) {
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
