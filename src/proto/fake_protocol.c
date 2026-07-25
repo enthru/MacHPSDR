@@ -166,24 +166,23 @@ static int fake_load_iq(const char *path) {
   iq_rate = (double)rate;
   for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
 
-  // Estimate the recorded carrier offset (mean instantaneous frequency of the
-  // dominant signal) so playback can shift the station to baseband 0. An
-  // off-centre station is otherwise clipped asymmetrically by the RX filter on
-  // loud deviation peaks -> distortion.
+  // Carrier de-rotation offset. By default we do NOT shift the recording: an
+  // SDR I/Q capture already has the signal of interest at (or very near) DC,
+  // where the radio was tuned, so playback shows it centred — which is what you
+  // want. An earlier version tried to auto-centre by estimating the recording's
+  // mean/centroid frequency and de-rotating to null it, but that centres the
+  // *energy centroid*, not your signal: on a wide multi-signal capture (this
+  // 1.024 MHz SSTV file has energy spread across the band) the centroid sits
+  // hundreds of kHz off the DC signal, so the "fix" shoved the already-centred
+  // station right off to the side. Opt in with MACHPSDR_FAKE_OFFSET=<Hz> to
+  // manually de-rotate a genuinely off-centre single-signal recording.
+  iq_offset = 0.0;
   {
-    long s0 = (frames > 600000) ? frames/2 : 0;
-    long s1 = (s0 + 300000 < frames) ? s0 + 300000 : frames - 1;
-    double pi_ = iq_data[s0*2], pj = iq_data[s0*2+1], sum = 0.0;
-    long cnt = 0;
-    for(long k = s0+1; k < s1; k++) {
-      double I = iq_data[k*2], Q = iq_data[k*2+1];
-      double re = I*pi_ + Q*pj, im = Q*pi_ - I*pj;
-      pi_ = I; pj = Q;
-      if(!(re == 0.0 && im == 0.0)) { sum += atan2(im, re); cnt++; }
-    }
-    iq_offset = (cnt > 0) ? (sum/(double)cnt) * iq_rate / (2.0*M_PI) : 0.0;
+    const char *env = getenv("MACHPSDR_FAKE_OFFSET");
+    if(env && env[0]) iq_offset = atof(env);
   }
-  log_info("fake: iq.wav carrier offset %.0f Hz -> auto-centering to baseband 0\n", iq_offset);
+  if(iq_offset != 0.0)
+    log_info("fake: iq.wav manual de-rotation %.0f Hz (MACHPSDR_FAKE_OFFSET)\n", iq_offset);
   return 1;
 }
 
