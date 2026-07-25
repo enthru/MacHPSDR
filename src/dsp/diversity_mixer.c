@@ -57,19 +57,19 @@
 
 #include "diversity_mixer.h"
 
-void diversity_add_buffer(DIVMIXER *dmix) { 
-  memcpy(dmix->iq_input[0], dmix->rx_visual->iq_input_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));    
+void diversity_add_buffer(DIVMIXER *dmix) {
+  memcpy(dmix->iq_input[0], dmix->rx_visual->iq_input_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));
 }
 
 void diversity_mix_full_buffers(DIVMIXER *dmix) {
   // Mix the iq streams
-  memcpy(dmix->iq_input[1], dmix->rx_hidden->iq_input_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));   
-  
+  memcpy(dmix->iq_input[1], dmix->rx_hidden->iq_input_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));
+
   xdivEXT(dmix->id, dmix->iq_buffer_size, dmix->iq_input, dmix->iq_output_buffer);
-  
+
   // Copy the output from the diversity mixer to our rx that we have visuals display for
-  memcpy(dmix->rx_visual->diviq_input_buffer, dmix->iq_output_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));   
-    
+  memcpy(dmix->rx_visual->diviq_input_buffer, dmix->iq_output_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));
+
   // Now proceed as normal for a receiver
   full_diviqrx_buffer(dmix->rx_visual);
 }

@@ -1230,7 +1230,13 @@ log_info("add_receiver: no receivers available\n");
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
-  if(i>=0) radio_rebuild_rx_stack(r);
+  // Only rebuild the visible RX stack when a *visible* receiver was added. A
+  // hidden receiver (diversity hidden RX, PureSignal feedback RX) has no table
+  // and never appears in the stack, so rebuilding would pointlessly tear down
+  // and reparent the existing receiver's live panadapter/waterfall widgets —
+  // which blanks the whole display (the render node collapses). Enabling
+  // diversity added a hidden RX and hit exactly this.
+  if(i>=0 && show_rx) radio_rebuild_rx_stack(r);
   return i;
 }
 
