@@ -1038,14 +1038,14 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
        ctun_frequency (+hz) in ctun/freetune, and frequency_a (-hz) otherwise —
        guard whichever one is about to change so a ctun move can't silently push
        the tune frequency out of range (and so a normal move isn't wrongly
-       blocked by the ctun offset). */
-    if(use_ctun) {
-      long long nf = rx->ctun_frequency + hz;
-      if(nf < 0 || nf > fmax) return 0;
-    } else {
-      long long nf = rx->frequency_a - hz;
-      if(nf < 0 || nf > fmax) return 0;
-    }
+       blocked by the ctun offset). Reject only moves that push *further* out of
+       range: if the current value is already outside [0, fmax] (e.g. a saved
+       config or xvtr frequency above the device max), a move back toward the
+       valid range must still be allowed, or tuning gets stuck forever. */
+    long long cur = use_ctun ? rx->ctun_frequency : rx->frequency_a;
+    long long nf  = use_ctun ? (cur + hz) : (cur - hz);
+    if((nf < 0    && nf < cur) ||
+       (nf > fmax && nf > cur)) return 0;
 
     if(use_ctun) {
       delta = rx->ctun_frequency;
@@ -1092,9 +1092,13 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
 
 void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
   if(!rx->locked) {
-    // Keep VFO B inside [0, fmax] (6 GHz / device max).
+    // Keep VFO B inside [0, fmax] (6 GHz / device max). As with VFO A, reject
+    // only moves that push further out of range so a frequency already above the
+    // device max can still be tuned back down.
+    long long fmax = receiver_max_frequency();
     long long nf = rx->frequency_b + hz;
-    if (nf <= 0 || nf > receiver_max_frequency()) return;
+    if ((nf <= 0   && nf < rx->frequency_b) ||
+        (nf > fmax && nf > rx->frequency_b)) return;
     long long f=rx->frequency_b;
     switch(rx->split) {
       case SPLIT_OFF:
