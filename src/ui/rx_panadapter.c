@@ -479,8 +479,10 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
 #ifdef FT8
     // FT8 TX audio-offset marker: a green vertical line where our transmission
-    // will land (dial + tx offset, USB), shown while this receiver is in DIGU.
-    if(rx->mode_a==DIGU) {
+    // will land (dial + tx offset, USB). Only meaningful while the FT8 panel is
+    // open (radio->ft8_panel != NULL) — showing it in plain DIGU without the
+    // panel is just clutter.
+    if(rx->mode_a==DIGU && radio->ft8_panel!=NULL) {
       double tx_x=((double)(frequency + (long long)radio->ft8_tx_offset)
                    - (double)min_display)/rx->hz_per_pixel;
       cairo_set_source_rgba(cr, 0.2, 0.9, 0.2, 0.9);

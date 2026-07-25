@@ -130,8 +130,13 @@ DIVMIXER *create_diversity_mixer(int id, RECEIVER *rxa, RECEIVER *rxb) {
 
 log_info("create_diversity_mixer: id=%d\n", id);
   dmix->id=id;
-  dmix->num_streams = 2;  
-  dmix->iq_buffer_size = 1024;
+  dmix->num_streams = 2;
+  // Must match the receivers' actual buffer size: the mix copies/processes
+  // exactly iq_buffer_size samples and the result is handed to
+  // full_diviqrx_buffer(), which reads rx->buffer_size. Classic HPSDR (P1) uses
+  // 1024, but the fake device (and any other rate) uses a different size (5120
+  // at 192k), so hardcoding 1024 left 4/5 of each block stale -> broken stream.
+  dmix->iq_buffer_size = rxa->buffer_size;
 
   dmix->gain = 0;
   dmix->phase = 0;
