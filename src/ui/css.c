@@ -831,6 +831,18 @@ static const char css_body[]=
 "  #config-dialog separator {\n"
 "    background-color: @BORDER;\n"
 "    }\n"
+/* The explicit colours above apply in every widget state, so they cancel GTK's
+   default dimming of insensitive controls — a disabled scale/checkbox/dropdown
+   would otherwise look fully active even though it ignores input. Restore a
+   visible \"greyed out\" look for the disabled state (e.g. the Diversity page's
+   gain/phase controls while diversity is off). */
+"  #config-dialog scale:disabled,\n"
+"  #config-dialog checkbutton:disabled,\n"
+"  #config-dialog dropdown:disabled,\n"
+"  #config-dialog combobox:disabled,\n"
+"  #config-dialog label:disabled {\n"
+"    opacity: 0.4;\n"
+"    }\n"
 ;
 
 // ---- Runtime ----

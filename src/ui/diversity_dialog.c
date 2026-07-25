@@ -55,6 +55,10 @@ typedef struct _divpage {
   GtkWidget *adc_combo;
   GtkWidget *calibrate_b;
   GtkWidget *flip_b;
+  // The row labels are greyed alongside their controls when diversity is off, so
+  // the whole page reads as inactive (not just the sliders/checkboxes).
+  GtkWidget *labels[7];
+  int n_labels;
 } DIVPAGE;
 
 // Does this device support diversity at all? It combines two coherent ADC
@@ -88,6 +92,8 @@ static void div_page_sync(DIVPAGE *dp) {
   gtk_widget_set_sensitive(dp->adc_combo, on);
   gtk_widget_set_sensitive(dp->calibrate_b, on);
   gtk_widget_set_sensitive(dp->flip_b, on);
+  for(int i = 0; i < dp->n_labels; i++)
+    gtk_widget_set_sensitive(dp->labels[i], on);
   gtk_range_set_value(GTK_RANGE(dp->gain_coarse),  d ? d->gain      : 0.0);
   gtk_range_set_value(GTK_RANGE(dp->phase_coarse), d ? d->phase     : 0.0);
   gtk_range_set_value(GTK_RANGE(dp->gain_fine),    d ? d->gain_fine : 0.0);
@@ -205,6 +211,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *gain_coarse_label = gtk_label_new("Gain (dB, coarse):");
   gtk_label_set_xalign(GTK_LABEL(gain_coarse_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), gain_coarse_label, 0, 1, 1, 1);
+  dp->labels[dp->n_labels++] = gain_coarse_label;
 
   dp->gain_coarse = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -25.0, +25.0, 0.5);
   gtk_widget_set_size_request(dp->gain_coarse, 300, 25);
@@ -215,6 +222,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *phase_coarse_label = gtk_label_new("Phase (coarse):");
   gtk_label_set_xalign(GTK_LABEL(phase_coarse_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), phase_coarse_label, 2, 1, 1, 1);
+  dp->labels[dp->n_labels++] = phase_coarse_label;
 
   dp->phase_coarse = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -180.0, 180.0, 1.0);
   gtk_widget_set_size_request(dp->phase_coarse, 300, 25);
@@ -225,6 +233,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *gain_fine_label = gtk_label_new("Gain (dB, fine):");
   gtk_label_set_xalign(GTK_LABEL(gain_fine_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), gain_fine_label, 0, 2, 1, 1);
+  dp->labels[dp->n_labels++] = gain_fine_label;
 
   dp->gain_fine = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -2.0, +2.0, 0.05);
   gtk_widget_set_size_request(dp->gain_fine, 300, 25);
@@ -235,6 +244,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *phase_fine_label = gtk_label_new("Phase (fine):");
   gtk_label_set_xalign(GTK_LABEL(phase_fine_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), phase_fine_label, 2, 2, 1, 1);
+  dp->labels[dp->n_labels++] = phase_fine_label;
 
   dp->phase_fine = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -2.0, 2.0, 0.05);
   gtk_widget_set_size_request(dp->phase_fine, 300, 25);
@@ -251,6 +261,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *calibrate_gain_label = gtk_label_new("Calibrate gain:");
   gtk_label_set_xalign(GTK_LABEL(calibrate_gain_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), calibrate_gain_label, 0, 4, 1, 1);
+  dp->labels[dp->n_labels++] = calibrate_gain_label;
 
   dp->calibrate_b = gtk_check_button_new();
   gtk_grid_attach(GTK_GRID(grid), dp->calibrate_b, 1, 4, 1, 1);
@@ -260,6 +271,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   GtkWidget *dir_flip_label = gtk_label_new("Flip:");
   gtk_label_set_xalign(GTK_LABEL(dir_flip_label), 0.0);
   gtk_grid_attach(GTK_GRID(grid), dir_flip_label, 0, 5, 1, 1);
+  dp->labels[dp->n_labels++] = dir_flip_label;
 
   dp->flip_b = gtk_check_button_new();
   gtk_grid_attach(GTK_GRID(grid), dp->flip_b, 1, 5, 1, 1);
