@@ -157,7 +157,13 @@ static void ft8_install_css(void) {
   done = TRUE;
   GtkCssProvider *p = gtk_css_provider_new();
   gtk_css_provider_load_from_string(p,
-      ".ft8-gold{background-color:#b8860b;} .ft8-blue{background-color:#2f6fb0;}");
+      ".ft8-gold{background-color:#b8860b;} .ft8-blue{background-color:#2f6fb0;}"
+      // Compact the activity list: GTK4's theme gives columnview rows/cells a
+      // tall min-height + padding, which spreads the decoded-station rows far
+      // apart. Scope tight metrics to this view only via the .ft8-activity class.
+      " columnview.ft8-activity row{min-height:0;}"
+      " columnview.ft8-activity cell{min-height:0;padding-top:0px;padding-bottom:0px;}"
+      " columnview.ft8-activity label{margin-top:0px;margin-bottom:0px;}");
   gtk_style_context_add_provider_for_display(gdk_display_get_default(),
       GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(p);
@@ -399,6 +405,7 @@ GtkWidget *ft8_panel_create(void) {
   filter_model = gtk_filter_list_model_new(G_LIST_MODEL(store), cq_filter);  // takes store+filter
   list_sel = GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(filter_model)));  // takes filter_model
   view = gtk_column_view_new(list_sel);   // takes list_sel
+  gtk_widget_add_css_class(view, "ft8-activity");  // scope the compact-row CSS
   g_signal_connect(view, "activate", G_CALLBACK(row_activated), NULL);
 
   gtk_column_view_append_column(GTK_COLUMN_VIEW(view), ft8_col("UTC",     VCOL_UTC));
