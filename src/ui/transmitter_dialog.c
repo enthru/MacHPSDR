@@ -434,6 +434,11 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   GtkWidget *am_carrier_level=gtk_spin_button_new_with_range(0.0,1.0,0.1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(am_carrier_level),(double)tx->am_carrier_level);
   gtk_widget_set_visible(am_carrier_level, TRUE);
+  // The AM frame is a single-row group sharing an outer-grid row with the tall
+  // "Speech Processing" frame (column 1), so that row is stretched tall. GTK4
+  // widgets default to GTK_ALIGN_FILL, which made the spin button balloon to the
+  // full row height; keep it at its natural height, vertically centred.
+  gtk_widget_set_valign(am_carrier_level,GTK_ALIGN_CENTER);
   gtk_grid_attach(GTK_GRID(am_grid),am_carrier_level,1,0,1,1);
   g_signal_connect(am_carrier_level,"value_changed",G_CALLBACK(am_carrier_level_value_changed_cb),tx);
 
