@@ -62,6 +62,8 @@ static void init_bins(void) {
 #define SQ_OPEN             10.0    // open the squelch when the keying modulation depth (sig_hi/floor) exceeds this
 #define SQ_CLOSE            3.0     // ...and re-squelch below this (hysteresis) — CW keying swing vs flat noise
 #define SIG_HI_DECAY        (BLOCK_MS / 1500.0)   // ~1.5 s: sig_hi holds the mark level across inter-element gaps
+#define E_PEAK_DECAY        (BLOCK_MS / 10000.0)  // ~10 s: slow reference of the strongest recent energy
+#define E_PEAK_FRAC         0.10    // signal must reach this fraction of the recent peak (rejects silence crumbs)
 #define TONE_EMA_ALPHA      0.02    // slow: which bin is "the" CW tone
 #define FLOOR_RISE_ALPHA    (BLOCK_MS / 4000.0)   // ~4 s time constant
 #define PEAK_DECAY_ALPHA    (BLOCK_MS / 2500.0)   // ~2.5 s time constant
@@ -123,6 +125,7 @@ static double tracked_freq = 600.0;
 static double floor_env = 0.0;
 static double peak_env  = 0.0;
 static double sig_hi    = 0.0;    // fast-attack/slow-decay envelope peak, for the modulation-depth squelch
+static double e_peak    = 0.0;    // slow-decaying reference of the strongest recent energy (silence guard)
 static gboolean env_seeded = FALSE;
 static gboolean peak_locked = FALSE;   // TRUE once a real mark has ever been confirmed
 #define BOOTSTRAP_MULT 6.0             // pre-lock squelch margin over the floor
@@ -287,7 +290,7 @@ static void do_reset(void) {
   for (int i = 0; i < N_BINS; i++) slow_energy[i] = 0.0;
   dominant_bin = 0;
   tracked_freq = (F_LO + F_HI) * 0.5;
-  floor_env = peak_env = sig_hi = 0.0;
+  floor_env = peak_env = sig_hi = e_peak = 0.0;
   env_seeded = FALSE;
   peak_locked = FALSE;
   warmup_left = WARMUP_BLOCKS;
@@ -386,9 +389,18 @@ static void process_block(void) {
   // noise emits nothing. Hysteresis: SQ_OPEN to open, SQ_CLOSE to re-squelch.
   if (p > sig_hi) sig_hi = p;
   else sig_hi += SIG_HI_DECAY * (p - sig_hi);
+  // Slow-decaying reference of the strongest energy seen. In genuine silence the
+  // noise floor collapses toward zero, so a bare sig_hi/floor ratio explodes and
+  // opens the squelch on quantisation crumbs (observed: floor~3e-11). Guard that
+  // by ALSO requiring the current signal to be a meaningful fraction of the
+  // recent peak energy — silence crumbs are orders of magnitude below it.
+  if (p > e_peak) e_peak = p;
+  else e_peak += E_PEAK_DECAY * (p - e_peak);
+
   double depth = sig_hi / (floor_env + 1e-9);
-  if (!squelch_open && depth >= SQ_OPEN)      squelch_open = TRUE;
-  else if (squelch_open && depth <  SQ_CLOSE) squelch_open = FALSE;
+  gboolean loud_enough = sig_hi >= E_PEAK_FRAC * e_peak;
+  if (!squelch_open && depth >= SQ_OPEN && loud_enough) squelch_open = TRUE;
+  else if (squelch_open && (depth < SQ_CLOSE || !loud_enough)) squelch_open = FALSE;
 
   // Before any mark has ever been confirmed, require a strict margin over the
   // floor (a real keyed tone comfortably clears the noise floor by several
