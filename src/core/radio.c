@@ -285,6 +285,10 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.cw_keyer_hang_time",value);
   sprintf(value,"%d",radio->cw_breakin);
   setProperty("radio.cw_breakin",value);
+  for(i=0;i<CW_N_MEMORIES;i++) {
+    sprintf(name,"radio.cw_memory[%d]",i);
+    setProperty(name,radio->cw_memory[i]);
+  }
   #ifdef CWDAEMON
   sprintf(value,"%d",radio->cwd_port);
   setProperty("radio.cwd_port",value);
@@ -525,6 +529,21 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->cw_keyer_hang_time=atoi(value);
   value=getProperty("radio.cw_breakin");
   if(value!=NULL) radio->cw_breakin=atoi(value);
+  gboolean cw_mem_found=FALSE;
+  for(int i=0;i<CW_N_MEMORIES;i++) {
+    sprintf(name,"radio.cw_memory[%d]",i);
+    value=getProperty(name);
+    if(value!=NULL) { cw_mem_found=TRUE; g_strlcpy(radio->cw_memory[i],value,sizeof(radio->cw_memory[i])); }
+  }
+  // Seed sensible defaults ONLY on a genuine first run (no cw_memory keys in the
+  // props at all). Once the config has been saved, a memory the operator cleared
+  // to "" persists as an empty key and is never re-seeded (memories 4-7 empty).
+  if(!cw_mem_found) {
+    g_strlcpy(radio->cw_memory[0],"CQ CQ CQ DE %C %C K",sizeof(radio->cw_memory[0]));
+    g_strlcpy(radio->cw_memory[1],"%C",sizeof(radio->cw_memory[1]));
+    g_strlcpy(radio->cw_memory[2],"73 TU",sizeof(radio->cw_memory[2]));
+    g_strlcpy(radio->cw_memory[3],"R R73",sizeof(radio->cw_memory[3]));
+  }
   #ifdef CWDAEMON
   value=getProperty("radio.cwd_sidetone");
   if(value!=NULL) radio->cwd_sidetone=atoi(value);

@@ -486,6 +486,13 @@ static void cw_keys_reversed_cb(GtkWidget *widget, gpointer data) {
   radio->cw_keys_reversed=radio->cw_keys_reversed==1?0:1;
 }
 
+static void cw_memory_changed_cb(GtkEditable *editable, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int idx=GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable),"cw-mem-index"));
+  if(idx<0 || idx>=CW_N_MEMORIES) return;
+  g_strlcpy(radio->cw_memory[idx],gtk_editable_get_text(GTK_EDITABLE(editable)),sizeof(radio->cw_memory[idx]));
+}
+
 static void cw_keyer_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->cw_keyer_mode=(int)gtk_drop_down_get_selected(widget);
@@ -1432,6 +1439,39 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_widget_set_visible(cw_keyer_hang_time_b, TRUE);
   gtk_grid_attach(GTK_GRID(cw_grid),cw_keyer_hang_time_b,x++,y,1,1);
   g_signal_connect(cw_keyer_hang_time_b,"value_changed",G_CALLBACK(cw_keyer_hang_time_value_changed_cb),radio);
+
+  // CW message memories (Phase 4.4a): M1..M8 free-text entries, 2 per row,
+  // edited straight into radio->cw_memory[] (picked up live by cw_panel.c's
+  // memory buttons the next time that panel is (re)built).
+  x=0;
+  y++;
+
+  GtkWidget *cw_mem_title=gtk_label_new("CW Memories:");
+  gtk_widget_set_halign(cw_mem_title, GTK_ALIGN_START);
+  gtk_widget_set_visible(cw_mem_title, TRUE);
+  gtk_grid_attach(GTK_GRID(cw_grid),cw_mem_title,0,y,4,1);
+  y++;
+
+  int cw_mem_row0=y;
+  for(int i=0;i<CW_N_MEMORIES;i++) {
+    int mrow=cw_mem_row0+i/2;
+    int mcol=(i%2)*2;
+    char mlbl[8];
+    g_snprintf(mlbl,sizeof(mlbl),"M%d:",i+1);
+    GtkWidget *cw_mem_label=gtk_label_new(mlbl);
+    gtk_widget_set_visible(cw_mem_label, TRUE);
+    gtk_grid_attach(GTK_GRID(cw_grid),cw_mem_label,mcol,mrow,1,1);
+
+    GtkWidget *cw_mem_entry=gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(cw_mem_entry),CW_MSG_LEN-1);
+    gtk_editable_set_text(GTK_EDITABLE(cw_mem_entry),radio->cw_memory[i]);
+    gtk_widget_set_hexpand(cw_mem_entry, TRUE);
+    gtk_widget_set_visible(cw_mem_entry, TRUE);
+    g_object_set_data(G_OBJECT(cw_mem_entry),"cw-mem-index",GINT_TO_POINTER(i));
+    g_signal_connect(cw_mem_entry,"changed",G_CALLBACK(cw_memory_changed_cb),radio);
+    gtk_grid_attach(GTK_GRID(cw_grid),cw_mem_entry,mcol+1,mrow,1,1);
+  }
+  y=cw_mem_row0+(CW_N_MEMORIES+1)/2;
 
   x=0;
   y=0;

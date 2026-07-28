@@ -23,6 +23,11 @@
  * scrolling monospace text view of the decoded characters, a Clear button and
  * a status line (WPM / tracked tone). Its own refresh timer polls the
  * decoder; torn down on "destroy".
+ *
+ * Also hosts a TX operating row (Phase 4.4a): message-memory buttons (M1..M8,
+ * skipping empty ones) for radio->cw_memory[], a free-text entry + Send/Stop
+ * driving cw_encoder.c's cw_tx_send_text()/cw_tx_abort(), and a live WPM spin
+ * button bound to radio->cw_keyer_speed.
  */
 
 #ifndef _CW_PANEL_H

@@ -51,7 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
-| **CW decoder** | Decode Morse to text in CWL/CWU: auto tone-lock, adaptive WPM, a scrolling text panel with a live WPM/tone readout — no external program. |
+| **CW decoder + sender** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **and send CW** from eight editable message memories or free text with `%C` callsign macro — no external program *(sending built + round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
@@ -318,6 +318,14 @@ you've dialled in.
   program. *(Decoder verified on synthetic Morse audio; end-to-end off-air
   decode not yet confirmed on hardware. Works best on a single well-tuned signal
   in a narrow filter — heavy QRM garbles the text.)*
+  The Show-CW panel also has a **TX row**: eight **message memories**
+  (M1…M8, edited in **Configure → CW**, with a `%C` = your callsign macro) plus a
+  **free-text** field, **Send**/**Stop** buttons and a live **WPM** control. It
+  turns your text into a keyed sidetone at the configured speed/weight/pitch and
+  feeds it into the CWL/CWU transmit chain (MOX keyed automatically, dropped when
+  the message ends). *(The encoder is proven by an encode→decode round-trip test;
+  the actual on-air signal is **not yet verified — there is no transmit hardware
+  in this fork**. A paddle-driven iambic keyer is still to come.)*
 
 - **DX cluster + spot overlay.** Connect to a telnet DX cluster from
   **Configure → Cluster** (host / port / login call; a live status line). Incoming

@@ -200,6 +200,16 @@ is automatic — no external program is needed. (It works best on a single,
 well-tuned CW signal in a fairly narrow filter; heavy QRM or several
 overlapping signals will garble the text.)
 
+The Show-CW panel also lets you **send** CW. Its TX row has eight **message
+memories** (buttons M1…M8), a **free-text** field, **Send** and **Stop**
+buttons and a **WPM** control. Edit the memories in **Configure → CW**; the
+token `%C` expands to your station callsign. Sending turns the text into a
+keyed sidetone at the configured speed, weight and pitch, keys the transmitter
+in CWL/CWU automatically, and un-keys it when the message finishes. *(The
+encoder is verified by an internal encode-then-decode round-trip; the on-air
+signal itself is not yet confirmed — this fork has no transmit hardware. A
+paddle-driven iambic keyer is planned.)*
+
 ---
 
 ## 8. SSTV and WEFAX — images and weather fax

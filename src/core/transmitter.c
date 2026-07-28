@@ -62,6 +62,7 @@
 #endif
 #ifdef SSTV
 #include "sstv_encoder.h"
+#include "cw_encoder.h"
 #endif
 
 double ctcss_frequencies[CTCSS_FREQUENCIES]= {
@@ -1490,7 +1491,20 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
   if(tx->rx!=NULL) {
     mode= transmitter_get_mode(tx);
 
-    if(mode==CWL || mode==CWU || radio->tune) {
+    if(mode==CWL || mode==CWU) {
+#ifdef SSTV
+      if(cw_tx_active()) {
+        // CW TX: substitute the synthesized keyed-sidetone waveform for the mic
+        // input so the CWL/CWU TX chain modulates it up to the dial frequency.
+        // Checked before radio->tune so a Tune pressed mid-message can't freeze
+        // the feed and trip the encoder's stall watchdog.
+        mic_sample_double=(double)cw_tx_next_sample();
+      } else
+#endif
+      {
+        mic_sample_double=0.0;
+      }
+    } else if(radio->tune) {
       mic_sample_double=0.0;
 #ifdef FT8
     } else if(mode==DIGU && ft8_tx_active()) {

@@ -166,6 +166,13 @@ typedef struct _radio {
   gint cw_keyer_hang_time;
   gboolean cw_breakin;
   gboolean cwdaemon;
+
+  // CW message memories (Phase 4.4a): free-text buttons + free-text sender in
+  // cw_panel.c, expanded via cw_encoder.c's cw_expand_macros() (%C -> station
+  // callsign) before transmission. Editable in Configure -> CW.
+  #define CW_N_MEMORIES 8
+  #define CW_MSG_LEN    64
+  char cw_memory[CW_N_MEMORIES][CW_MSG_LEN];
   
   gdouble protocol1_timer;
   gdouble hang_time_ctr;
