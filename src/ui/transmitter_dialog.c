@@ -338,15 +338,19 @@ GtkWidget *create_transmitter_dialog(TRANSMITTER *tx) {
   char temp[32];
 
 log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
-  GtkWidget *grid=gtk_grid_new();
-  sui_style_page(grid);
-  gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
-  gtk_grid_set_column_spacing(GTK_GRID(grid),5);
-  gtk_grid_set_row_spacing(GTK_GRID(grid),5);
-
-  int row=0;
-  int col=0;
+  // Three independent column boxes instead of one shared-row grid: with a grid,
+  // a short frame (FM/AM/CTCSS) gets stretched vertically to match a tall frame
+  // (Equalizer/CFC) sharing its row, leaving big empty gaps. Vertical boxes let
+  // each frame keep its natural height. col0 = input + mode settings, col1 =
+  // speech-processing chain, col2 = the wide graphic EQ (its own column).
+  GtkWidget *cols=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
+  sui_style_page(cols);
+  GtkWidget *col0=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
+  GtkWidget *col1=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
+  gtk_widget_set_valign(col0,GTK_ALIGN_START);
+  gtk_widget_set_valign(col1,GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(cols),col0);
+  gtk_box_append(GTK_BOX(cols),col1);
 
   microphone_frame=gtk_frame_new("Microphone");
   GtkWidget *microphone_grid=gtk_grid_new();
@@ -355,7 +359,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(microphone_grid),FALSE);
   sui_style_group(microphone_grid);
   gtk_frame_set_child(GTK_FRAME(microphone_frame),microphone_grid);
-  gtk_grid_attach(GTK_GRID(grid),microphone_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),microphone_frame);
 
   if(n_input_devices>=0) {
     radio->transmitter->local_microphone_b=gtk_check_button_new_with_label("Local Microphone");
@@ -394,7 +398,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(tune_grid),10);
   sui_style_group(tune_grid);
   gtk_frame_set_child(GTK_FRAME(tune_frame),tune_grid);
-  gtk_grid_attach(GTK_GRID(grid),tune_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),tune_frame);
 
   GtkWidget *tune_label=gtk_label_new("Tune Percent:");
   gtk_widget_set_visible(tune_label, TRUE);
@@ -420,7 +424,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(filter_grid),10);
   sui_style_group(filter_grid);
   gtk_frame_set_child(GTK_FRAME(filter_frame),filter_grid);
-  gtk_grid_attach(GTK_GRID(grid),filter_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),filter_frame);
 
   GtkWidget *use_rx_filter=gtk_check_button_new_with_label("Use Rx Filter");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (use_rx_filter), tx->use_rx_filter);
@@ -455,7 +459,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(fm_grid),10);
   sui_style_group(fm_grid);
   gtk_frame_set_child(GTK_FRAME(fm_frame),fm_grid);
-  gtk_grid_attach(GTK_GRID(grid),fm_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),fm_frame);
 
   GtkWidget *emp_b=gtk_check_button_new_with_label("FM TX Pre-emphasize before limiting");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (emp_b), tx->pre_emphasize);
@@ -470,7 +474,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(am_grid),10);
   sui_style_group(am_grid);
   gtk_frame_set_child(GTK_FRAME(am_frame),am_grid);
-  gtk_grid_attach(GTK_GRID(grid),am_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),am_frame);
 
   GtkWidget *am_carrier_level_label=gtk_label_new("AM Carrier Level: ");
 #ifdef GTK316
@@ -496,7 +500,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(ctcss_grid),10);
   sui_style_group(ctcss_grid);
   gtk_frame_set_child(GTK_FRAME(ctcss_frame),ctcss_grid);
-  gtk_grid_attach(GTK_GRID(grid),ctcss_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),ctcss_frame);
 
   GtkWidget *ctcss_enable=gtk_check_button_new_with_label("Enable CTCSS");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (ctcss_enable), tx->ctcss_enabled);
@@ -523,7 +527,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   sui_style_group(panadapter_grid);
   gtk_frame_set_child(GTK_FRAME(panadapter_frame),panadapter_grid);
-  gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),panadapter_frame);
 
   GtkWidget *fps_label=gtk_label_new("FPS:");
   gtk_grid_attach(GTK_GRID(panadapter_grid),fps_label,0,0,1,1);
@@ -560,8 +564,6 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,2,1,1);
 
-  col++;
-  row=0;
   
   GtkWidget *equalizer_frame=gtk_frame_new("Equalizer");
   GtkWidget *equalizer_grid=gtk_grid_new();
@@ -574,7 +576,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(equalizer_grid),2);
   gtk_widget_set_halign(equalizer_grid,GTK_ALIGN_START);
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
-  gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row++,1,4);
+  gtk_box_append(GTK_BOX(col1),equalizer_frame);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), tx->enable_equalizer);
@@ -599,18 +601,19 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
     g_signal_connect(scale,"value-changed",G_CALLBACK(tx_eq_value_changed_cb),tx);
     gtk_grid_attach(GTK_GRID(equalizer_grid),scale,i,2,1,10);
     gtk_widget_set_size_request(scale,16,220);
-    // Only the leftmost band carries the dB text scale; the rest show bare ticks
-    // so the columns pack tight instead of each reserving width for "-12dB".
-    for(int m=-12;m<=15;m+=3) {
-      const char *ml=(i==0)?((m==-12)?"-12dB":(m==0)?"0dB":(m==15)?"15dB":NULL):NULL;
-      gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT,ml);
+    // Only the leftmost band carries the dB scale (text + ticks); the other bands
+    // get NO marks at all, so each column collapses to the slider width and the
+    // 11 bands pack tight instead of every column reserving mark/label space.
+    if(i==0) {
+      for(int m=-12;m<=15;m+=3) {
+        gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT,
+                           (m==-12)?"-12":(m==0)?"0":(m==15)?"+15":NULL);
+      }
     }
   }
 
   if (radio->hl2 != NULL) {
   
-  row += 3;
-
   GtkWidget *latency_frame=gtk_frame_new("TX Buffer Latency");
   GtkWidget *latency_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(latency_grid),TRUE);
@@ -618,7 +621,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(latency_grid),10);
   sui_style_group(latency_grid);
   gtk_frame_set_child(GTK_FRAME(latency_frame),latency_grid);
-  gtk_grid_attach(GTK_GRID(grid),latency_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col1),latency_frame);
 
   GtkWidget *fifo_label=gtk_label_new("Size (ms):");
   gtk_widget_set_visible(fifo_label, TRUE);
@@ -632,8 +635,6 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   } 
 
-  row += 3;
-
   GtkWidget *compressor_frame=gtk_frame_new("Speech Processing");
   GtkWidget *compressor_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(compressor_grid),TRUE);
@@ -641,7 +642,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_column_spacing(GTK_GRID(compressor_grid),10);
   sui_style_group(compressor_grid);
   gtk_frame_set_child(GTK_FRAME(compressor_frame),compressor_grid);
-  gtk_grid_attach(GTK_GRID(grid),compressor_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col1),compressor_frame);
 
   GtkWidget *enable_cessb = gtk_check_button_new_with_label("Enable CESSB");
   gtk_widget_set_tooltip_text(enable_cessb, "Controlled-Envelope SSB overshoot control (SSB talk-power)");
@@ -677,7 +678,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_row_spacing(GTK_GRID(cfc_grid),3);
   sui_style_group(cfc_grid);
   gtk_frame_set_child(GTK_FRAME(cfc_frame),cfc_grid);
-  gtk_grid_attach(GTK_GRID(grid),cfc_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col1),cfc_frame);
 
   GtkWidget *cfc_enable=gtk_check_button_new_with_label("Enable CFC");
   gtk_check_button_set_active(GTK_CHECK_BUTTON(cfc_enable), tx->cfc_run);
@@ -748,7 +749,7 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_grid_set_row_spacing(GTK_GRID(phrot_grid),3);
   sui_style_group(phrot_grid);
   gtk_frame_set_child(GTK_FRAME(phrot_frame),phrot_grid);
-  gtk_grid_attach(GTK_GRID(grid),phrot_frame,col,row++,1,1);
+  gtk_box_append(GTK_BOX(col0),phrot_frame);
 
   GtkWidget *phrot_enable=gtk_check_button_new_with_label("Enable Phase Rotator");
   gtk_widget_set_tooltip_text(phrot_enable, "All-pass phase rotator: reduces speech-waveform asymmetry for more average talk power");
@@ -774,5 +775,5 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
 
   update_transmitter_dialog(tx);
 
-  return grid;
+  return cols;
 }

@@ -148,7 +148,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_window_set_title(GTK_WINDOW(dialog),title);
   // Bound the window so oversized pages scroll (see the scroller in add_page)
   // rather than forcing the window past the screen edge. User-resizable from here.
-  gtk_window_set_default_size(GTK_WINDOW(dialog),1000,700);
+  gtk_window_set_default_size(GTK_WINDOW(dialog),1040,720);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
   GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);

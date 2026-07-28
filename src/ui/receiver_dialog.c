@@ -836,10 +836,13 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     g_signal_connect(scale,"value-changed",G_CALLBACK(rx_eq_value_changed_cb),rx);
     gtk_grid_attach(GTK_GRID(equalizer_grid),scale,i,2,1,10);
     gtk_widget_set_size_request(scale,16,220);
-    // Only the leftmost band carries the dB text scale (see the TX-EQ comment).
-    for(int m=-12;m<=15;m+=3) {
-      const char *ml=(i==0)?((m==-12)?"-12dB":(m==0)?"0dB":(m==15)?"15dB":NULL):NULL;
-      gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT,ml);
+    // Only the leftmost band carries the dB scale; the rest get no marks so the
+    // 11 bands pack tight (see the matching TX-EQ comment).
+    if(i==0) {
+      for(int m=-12;m<=15;m+=3) {
+        gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT,
+                           (m==-12)?"-12":(m==0)?"0":(m==15)?"+15":NULL);
+      }
     }
   }
 
