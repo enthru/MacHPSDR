@@ -838,6 +838,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
     sui_style_group(audio_grid);
     gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
+    gtk_widget_set_valign(audio_frame,GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row,1,1);
     row++;
 
@@ -896,6 +897,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_spacing(GTK_GRID(equalizer_grid),2);
   gtk_widget_set_halign(equalizer_grid,GTK_ALIGN_START);
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
+  gtk_widget_set_valign(equalizer_frame,GTK_ALIGN_START);
+  gtk_widget_set_halign(equalizer_frame,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row,1,4);
   row+=4;
 
@@ -1222,6 +1225,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_homogeneous(GTK_GRID(cat_grid),FALSE);
   sui_style_group(cat_grid);
   gtk_frame_set_child(GTK_FRAME(cat_frame),cat_grid);
+  gtk_widget_set_valign(cat_frame,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),cat_frame,col,row,1,3);
   row++;
 
