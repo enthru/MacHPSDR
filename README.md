@@ -54,7 +54,7 @@ feature additions.
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
-| **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
+| **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
@@ -129,8 +129,10 @@ you've dialled in.
   **Peak Decay (dB/s)** slider controlling how fast the held peaks fall back (0 =
   hold forever). Two drop-downs also expose the WDSP display **Detector** (Peak,
   Rosenfell, Average, Sample) and **Averaging** (None, Recursive, Time Window, Log
-  Recursive) modes, which used to be fixed. All three are per receiver and
-  remembered between sessions.
+  Recursive) modes, which used to be fixed. A **Histogram** check box turns on a
+  **persistence** (virtual-phosphor) display — a heat-coloured density cloud that
+  shows where the trace has spent time, with a **Persistence Decay** slider for how
+  fast old activity fades. All are per receiver and remembered between sessions.
 
 - **Freetune.** A tuning mode where the cursor moves within the visible span;
   exiting keeps the frequency you were on, and the radio retunes automatically

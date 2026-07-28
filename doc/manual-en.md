@@ -41,7 +41,9 @@ The window is organised top-to-bottom around one or more **receivers**:
   settings dialog) — the waterfall then fills the whole spectrum area. The
   receiver settings dialog's **Panadapter** section also offers a **Peak Hold**
   overlay (a light max-hold trace, with a **Peak Decay** slider for how fast the
-  held peaks fall) and **Detector** / **Averaging** drop-downs that change how the
+  held peaks fall), a **Histogram** persistence display (a virtual-phosphor
+  heat-coloured cloud showing where the trace has been, with a **Persistence
+  Decay** slider) and **Detector** / **Averaging** drop-downs that change how the
   spectrum is computed; all are remembered per receiver.
 - **Waterfall** — the scrolling spectrogram beneath the panadapter, colour-coded
   by signal strength.

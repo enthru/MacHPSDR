@@ -169,6 +169,12 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_peak_decay",rx->channel);
   sprintf(value,"%d",rx->panadapter_peak_decay);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_histogram",rx->channel);
+  sprintf(value,"%d",rx->panadapter_histogram);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_histogram_decay",rx->channel);
+  sprintf(value,"%d",rx->panadapter_histogram_decay);
+  setProperty(name,value);
 
   if(rx->waterfall_automatic == FALSE) {
       sprintf(name,"receiver[%d].waterfall_low",rx->channel);
@@ -809,6 +815,12 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_peak_decay",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_peak_decay=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_histogram",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_histogram=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_histogram_decay",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_histogram_decay=atoi(value);
 
   sprintf(name,"receiver[%d].waterfall_low",rx->channel);
   value=getProperty(name);
@@ -2504,6 +2516,23 @@ void receiver_init_analyzer(RECEIVER *rx) {
     g_free(rx->panadapter_peaks);
     rx->panadapter_peaks=NULL;
   }
+  if(rx->panadapter_histogram_bins!=NULL) {
+    g_free(rx->panadapter_histogram_bins);
+    rx->panadapter_histogram_bins=NULL;
+  }
+  rx->panadapter_histogram_w=0;
+  rx->panadapter_histogram_h=0;
+  rx->panadapter_histogram_max=0.0f;
+  // Histogram bins accumulate in SCREEN coords (not analyzer pixels), so they
+  // are sized to the widget rather than rx->pixels - this keeps memory bounded
+  // regardless of zoom. Only allocate once the widget is actually sized; a
+  // later resize_timeout re-runs receiver_init_analyzer() and reallocs.
+  if(rx->panadapter_width>0 && rx->panadapter_height>0) {
+    rx->panadapter_histogram_bins=g_new0(float,rx->panadapter_width*rx->panadapter_height);
+    rx->panadapter_histogram_w=rx->panadapter_width;
+    rx->panadapter_histogram_h=rx->panadapter_height;
+    rx->panadapter_histogram_max=1.0f;
+  }
   if(rx->pixels>0) {
     rx->pixel_samples=g_new0(float,rx->pixels);
     // Peak-hold buffer mirrors pixel_samples 1:1 but seeded to a low floor
@@ -2796,6 +2825,10 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->pixels=0;
   rx->pixel_samples=NULL;
   rx->panadapter_peaks=NULL;
+  rx->panadapter_histogram_bins=NULL;
+  rx->panadapter_histogram_w=0;
+  rx->panadapter_histogram_h=0;
+  rx->panadapter_histogram_max=0.0f;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
   // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole
@@ -2879,6 +2912,9 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->panadapter_peak_hold=FALSE;
   rx->panadapter_peak_decay=10;
+
+  rx->panadapter_histogram=FALSE;
+  rx->panadapter_histogram_decay=20;
 
   rx->waterfall_automatic=TRUE;
   rx->waterfall_ft8_marker=FALSE;

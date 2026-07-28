@@ -247,6 +247,13 @@ typedef struct _receiver {
   gint     panadapter_peak_decay;  // dB/second the held peak falls (0 = infinite hold)
   gfloat  *panadapter_peaks;       // per-pixel held maxima, sized rx->pixels (mirrors pixel_samples)
 
+  gboolean panadapter_histogram;        // persistence/density heatmap display mode
+  gint     panadapter_histogram_decay;  // persistence fade rate (1=slow..100=fast), tunable
+  gfloat  *panadapter_histogram_bins;   // density buffer, sized W*H (screen coords), row index = i*H + yrow
+  gint     panadapter_histogram_w;      // width the bins buffer was allocated for
+  gint     panadapter_histogram_h;      // height the bins buffer was allocated for
+  gfloat   panadapter_histogram_max;    // EMA of max bin density, for auto-normalisation
+
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
   GtkWidget *ft8_waterfall;  // FT8 band waterfall, 1/3 right (NULL unless DIGU)

@@ -301,6 +301,17 @@ GtkWidget *create_rx_panadapter(RECEIVER *rx) {
   return panadapter;
 }
 
+// Heatmap for the persistence display: t in [0,1] -> black->blue->cyan->green->yellow->red.
+static void hist_heat_rgb(float t, double *r, double *g, double *b) {
+  if(t<0.0f) t=0.0f; if(t>1.0f) t=1.0f;
+  // 5-stop ramp
+  if(t<0.25f)      { double u=t/0.25f;        *r=0;          *g=0;          *b=0.15+0.85*u; }
+  else if(t<0.5f)  { double u=(t-0.25f)/0.25f;*r=0;          *g=u;          *b=1.0; }
+  else if(t<0.7f)  { double u=(t-0.5f)/0.2f;  *r=0;          *g=1.0;        *b=1.0-u; }
+  else if(t<0.85f) { double u=(t-0.7f)/0.15f; *r=u;          *g=1.0;        *b=0; }
+  else             { double u=(t-0.85f)/0.15f;*r=1.0;        *g=1.0-u;      *b=0; }
+}
+
 static gboolean first_time=TRUE;
 
 // Deterministic colour for a DX cluster spot's DXCC entity: unresolved (-1)
@@ -441,6 +452,59 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_fill(cr);
     }
 
+    // Persistence/density heatmap: accumulate where the trace has been over
+    // time into a screen-coord density buffer, decay it each frame, then blit
+    // it heat-coloured behind the graticule/filter/trace so those still read
+    // clearly on top.
+    if(rx->panadapter_histogram && rx->panadapter_histogram_bins!=NULL
+       && display_width==rx->panadapter_histogram_w && display_height==rx->panadapter_histogram_h) {
+      int H=rx->panadapter_histogram_h;
+      float *bins=rx->panadapter_histogram_bins;
+      // 1. exponential, frame-rate-independent decay toward 0
+      int fps = rx->fps>0 ? rx->fps : 15;
+      float keep = expf(-(float)rx->panadapter_histogram_decay/(2.0f*(float)fps));
+      int total = display_width*H;
+      for(int k=0;k<total;k++) bins[k]*=keep;
+      // 2. accumulate this frame's trace into the density buffer (screen coords)
+      for(i=0;i<display_width;i++) {
+        double s2h=(double)samples[i+offset]+attenuation+radio->panadapter_calibration;
+        int yr=(int)floor((rx->panadapter_high - s2h)*dbm_per_line);
+        if(yr<0) yr=0; if(yr>=H) yr=H-1;
+        bins[i*H+yr]+=1.0f;
+        // thicken by +/-1 row so thin single-pixel traces stay visible
+        if(yr>0)   bins[i*H+yr-1]+=0.5f;
+        if(yr<H-1) bins[i*H+yr+1]+=0.5f;
+      }
+      // 3. auto-normalise: EMA of the observed max
+      float mx=1.0f;
+      for(int k=0;k<total;k++) if(bins[k]>mx) mx=bins[k];
+      rx->panadapter_histogram_max = 0.9f*rx->panadapter_histogram_max + 0.1f*mx;
+      if(rx->panadapter_histogram_max<1.0f) rx->panadapter_histogram_max=1.0f;
+      float inv = 1.0f/rx->panadapter_histogram_max;
+      // 4. render into a temporary RGB24 image surface, then blit
+      cairo_surface_t *hs=cairo_image_surface_create(CAIRO_FORMAT_RGB24, display_width, display_height);
+      unsigned char *hd=cairo_image_surface_get_data(hs);
+      int stride=cairo_image_surface_get_stride(hs);
+      double bgr=0.09,bgg=0.09,bgb=0.10; css_rgb("SPECTRUM_BG",&bgr,&bgg,&bgb);
+      for(int y=0;y<display_height;y++) {
+        unsigned char *row=hd+y*stride;
+        for(int xx=0;xx<display_width;xx++) {
+          float d=bins[xx*H+y]*inv;
+          double rr,gg,bb;
+          if(d<=0.001f) { rr=bgr; gg=bgg; bb=bgb; }
+          else { hist_heat_rgb(d,&rr,&gg,&bb); }
+          // CAIRO_FORMAT_RGB24 is 0xXXRRGGBB (native-endian uint32); write B,G,R,X
+          row[xx*4+0]=(unsigned char)(bb*255.0);
+          row[xx*4+1]=(unsigned char)(gg*255.0);
+          row[xx*4+2]=(unsigned char)(rr*255.0);
+          row[xx*4+3]=0;
+        }
+      }
+      cairo_surface_mark_dirty(hs);
+      cairo_set_source_surface(cr, hs, 0.0, 0.0);
+      cairo_paint(cr);
+      cairo_surface_destroy(hs);
+    }
 
     long long frequency=rx->frequency_a;
     long long half=(long long)rx->sample_rate/2LL;
