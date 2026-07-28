@@ -178,28 +178,11 @@ static void enable_cb(GtkWidget *widget, gpointer data) {
   SetTXAEQRun(tx->channel, tx->enable_equalizer);
 }
 
-static void preamp_value_changed_cb (GtkWidget *widget, gpointer data) {
+static void tx_eq_value_changed_cb (GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->equalizer[0]=(int)gtk_range_get_value(GTK_RANGE(widget));
-  SetTXAGrphEQ(tx->channel, tx->equalizer);
-}
-
-static void low_value_changed_cb (GtkWidget *widget, gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->equalizer[1]=(int)gtk_range_get_value(GTK_RANGE(widget));
-  SetTXAGrphEQ(tx->channel, tx->equalizer);
-}
-
-static void mid_value_changed_cb (GtkWidget *widget, gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->equalizer[2]=(int)gtk_range_get_value(GTK_RANGE(widget));
-  SetTXAGrphEQ(tx->channel, tx->equalizer);
-}
-
-static void high_value_changed_cb (GtkWidget *widget, gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  tx->equalizer[3]=(int)gtk_range_get_value(GTK_RANGE(widget));
-  SetTXAGrphEQ(tx->channel, tx->equalizer);
+  int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),"eq_band"));
+  tx->equalizer[idx]=(int)gtk_range_get_value(GTK_RANGE(widget));
+  SetTXAGrphEQ10(tx->channel, tx->equalizer);
 }
 
 static void fps_value_changed_cb(GtkWidget *widget, gpointer data) {
@@ -527,6 +510,10 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   }
   GtkWidget *ctcss_frequency_b=gtk_drop_down_new(G_LIST_MODEL(ctcss_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(ctcss_frequency_b),tx->ctcss);
+  // The CTCSS frame shares a stretched outer-grid row with a tall neighbour, so
+  // GTK4's default GTK_ALIGN_FILL ballooned this lone dropdown vertically (same
+  // issue fixed for the AM Carrier spin button). Pin it to its natural height.
+  gtk_widget_set_valign(ctcss_frequency_b,GTK_ALIGN_CENTER);
   gtk_grid_attach(GTK_GRID(ctcss_grid),ctcss_frequency_b,1,0,1,1);
   g_signal_connect(ctcss_frequency_b,"notify::selected",G_CALLBACK(ctcss_frequency_cb),tx);
 
@@ -587,92 +574,26 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), tx->enable_equalizer);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),tx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,4,1);
+  gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,11,1);
 
-  GtkWidget *label=gtk_label_new("Preamp");
-  gtk_grid_attach(GTK_GRID(equalizer_grid),label,0,1,1,1);
+  const char *eq_band_labels[11]={"Pre","32","63","125","250","500","1k","2k","4k","8k","16k"};
+  for(int i=0;i<11;i++) {
+    GtkWidget *label=gtk_label_new(eq_band_labels[i]);
+    gtk_grid_attach(GTK_GRID(equalizer_grid),label,i,1,1,1);
 
-  label=gtk_label_new("Low");
-  gtk_grid_attach(GTK_GRID(equalizer_grid),label,1,1,1,1);
-
-  label=gtk_label_new("Mid");
-  gtk_grid_attach(GTK_GRID(equalizer_grid),label,2,1,1,1);
-
-  label=gtk_label_new("High");
-  gtk_grid_attach(GTK_GRID(equalizer_grid),label,3,1,1,1);
-
-  GtkWidget *preamp_scale=gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL,-12.0,15.0,1.0);
-  adj=gtk_range_get_adjustment(GTK_RANGE(preamp_scale));
-  gtk_adjustment_set_page_increment(adj,1.0);
-  gtk_range_set_value(GTK_RANGE(preamp_scale),(double)tx->equalizer[0]);
-  gtk_range_set_inverted(GTK_RANGE(preamp_scale),TRUE);
-  g_signal_connect(preamp_scale,"value-changed",G_CALLBACK(preamp_value_changed_cb),tx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),preamp_scale,0,2,1,10);
-  gtk_widget_set_size_request(preamp_scale,10,270);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),-12.0,GTK_POS_LEFT,"-12dB");
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),-9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),-6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),-3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),0.0,GTK_POS_LEFT,"0dB");
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),12.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(preamp_scale),15.0,GTK_POS_LEFT,"15dB");
-
-  GtkWidget *low_scale=gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL,-12.0,15.0,1.0);
-  adj=gtk_range_get_adjustment(GTK_RANGE(low_scale));
-  gtk_adjustment_set_page_increment(adj,1.0);
-  gtk_range_set_value(GTK_RANGE(low_scale),(double)tx->equalizer[1]);
-  gtk_range_set_inverted(GTK_RANGE(low_scale),TRUE);
-  g_signal_connect(low_scale,"value-changed",G_CALLBACK(low_value_changed_cb),tx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),low_scale,1,2,1,10);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),-12.0,GTK_POS_LEFT,"-12dB");
-  gtk_scale_add_mark(GTK_SCALE(low_scale),-9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),-6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),-3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),0.0,GTK_POS_LEFT,"0dB");
-  gtk_scale_add_mark(GTK_SCALE(low_scale),3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),12.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(low_scale),15.0,GTK_POS_LEFT,"15dB");
-
-  GtkWidget *mid_scale=gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL,-12.0,15.0,1.0);
-  adj=gtk_range_get_adjustment(GTK_RANGE(mid_scale));
-  gtk_adjustment_set_page_increment(adj,1.0);
-  gtk_range_set_value(GTK_RANGE(mid_scale),(double)tx->equalizer[2]);
-  gtk_range_set_inverted(GTK_RANGE(mid_scale),TRUE);
-  g_signal_connect(mid_scale,"value-changed",G_CALLBACK(mid_value_changed_cb),tx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),mid_scale,2,2,1,10);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),-12.0,GTK_POS_LEFT,"-12dB");
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),-9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),-6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),-3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),0.0,GTK_POS_LEFT,"0dB");
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),12.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(mid_scale),15.0,GTK_POS_LEFT,"15dB");
-
-  GtkWidget *high_scale=gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL,-12.0,15.0,1.0);
-  adj=gtk_range_get_adjustment(GTK_RANGE(high_scale));
-  gtk_adjustment_set_page_increment(adj,1.0);
-  gtk_range_set_value(GTK_RANGE(high_scale),(double)tx->equalizer[3]);
-  gtk_range_set_inverted(GTK_RANGE(high_scale),TRUE);
-  g_signal_connect(high_scale,"value-changed",G_CALLBACK(high_value_changed_cb),tx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),high_scale,3,2,1,10);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),-12.0,GTK_POS_LEFT,"-12dB");
-  gtk_scale_add_mark(GTK_SCALE(high_scale),-9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),-6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),-3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),0.0,GTK_POS_LEFT,"0dB");
-  gtk_scale_add_mark(GTK_SCALE(high_scale),3.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),6.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),9.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),12.0,GTK_POS_LEFT,NULL);
-  gtk_scale_add_mark(GTK_SCALE(high_scale),15.0,GTK_POS_LEFT,"15dB");
+    GtkWidget *scale=gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL,-12.0,15.0,1.0);
+    adj=gtk_range_get_adjustment(GTK_RANGE(scale));
+    gtk_adjustment_set_page_increment(adj,1.0);
+    gtk_range_set_value(GTK_RANGE(scale),(double)tx->equalizer[i]);
+    gtk_range_set_inverted(GTK_RANGE(scale),TRUE);
+    g_object_set_data(G_OBJECT(scale),"eq_band",GINT_TO_POINTER(i));
+    g_signal_connect(scale,"value-changed",G_CALLBACK(tx_eq_value_changed_cb),tx);
+    gtk_grid_attach(GTK_GRID(equalizer_grid),scale,i,2,1,10);
+    gtk_widget_set_size_request(scale,10,270);
+    for(int m=-12;m<=15;m+=3) {
+      gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT, (m==-12)?"-12dB":(m==0)?"0dB":(m==15)?"15dB":NULL);
+    }
+  }
 
   if (radio->hl2 != NULL) {
   

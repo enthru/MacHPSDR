@@ -302,7 +302,7 @@ typedef struct _receiver {
   gint pan;
 
   gboolean enable_equalizer;
-  gint equalizer[4];
+  gint equalizer[11];
 
   GMutex mutex;
 

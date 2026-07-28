@@ -72,8 +72,20 @@ static int n_pages;
 
 static void add_page(GtkWidget *child, const char *title) {
   if(n_pages>=(int)(sizeof(pages)/sizeof(pages[0]))) return;
-  gtk_stack_add_titled(GTK_STACK(stack),child,title,title);
-  pages[n_pages++]=child;
+  // Wrap every settings page in a scroller so tall/wide pages (e.g. the TX page
+  // with the CFC + Phase-Rotator + 10-band EQ frames) stay inside the window
+  // instead of running off the screen edge. The scroller does not propagate its
+  // child's natural size (GTK default), so the window honours its default size
+  // and scrolls the overflow. Store the scroller in pages[] since that is what
+  // gtk_stack_set_visible_child() must target (the child is no longer the direct
+  // stack child).
+  GtkWidget *scroller=gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),child);
+  gtk_widget_set_hexpand(scroller,TRUE);
+  gtk_widget_set_vexpand(scroller,TRUE);
+  gtk_stack_add_titled(GTK_STACK(stack),scroller,title,title);
+  pages[n_pages++]=scroller;
 }
 
 // GTK4: GtkWindow emits "close-request" (delete-event was removed). Returning
@@ -134,6 +146,9 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_widget_set_name(dialog,"config-dialog");
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));
   gtk_window_set_title(GTK_WINDOW(dialog),title);
+  // Bound the window so oversized pages scroll (see the scroller in add_page)
+  // rather than forcing the window past the screen edge. User-resizable from here.
+  gtk_window_set_default_size(GTK_WINDOW(dialog),1000,700);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
   GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);

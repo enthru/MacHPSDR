@@ -127,7 +127,7 @@ typedef struct _transmitter {
 
   gboolean pre_emphasize;
   gboolean enable_equalizer;
-  gint equalizer[4];
+  gint equalizer[11];
   gboolean leveler;
   gboolean cessb;
 

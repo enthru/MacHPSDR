@@ -130,6 +130,7 @@ extern void RXASetNC(int channel, int nc);
 extern void RXASetMP(int channel, int nc);
 extern void SetRXAEQRun (int channel, int run);
 extern void SetRXAGrphEQ (int channel, int *rxeq);
+extern void SetRXAGrphEQ10 (int channel, int *rxeq);
 extern void RXANBPSetShiftFrequency (int channel, double shift);
 
 // Diversity prototypes
@@ -255,6 +256,7 @@ extern void SetTXAPostGenSweepFreq (int channel, double freq1, double freq2);
 extern void SetTXAPostGenSweepRate (int channel, double rate);
 
 extern void SetTXAGrphEQ (int channel, int *txeq);
+extern void SetTXAGrphEQ10 (int channel, int *txeq);
 
 extern void SetTXAFMDeviation (int channel, double deviation);
 extern void SetTXAFMEmphPosition (int channel, int position);

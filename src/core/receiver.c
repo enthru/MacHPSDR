@@ -342,7 +342,7 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].enable_equalizer",rx->channel);
   sprintf(value,"%d",rx->enable_equalizer);
   setProperty(name,value);
-  for(i=0;i<4;i++) {
+  for(i=0;i<11;i++) {
     sprintf(name,"receiver[%d].equalizer[%d]",rx->channel,i);
     sprintf(value,"%d",rx->equalizer[i]);
     setProperty(name,value);
@@ -694,7 +694,7 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].enable_equalizer",rx->channel);
   value=getProperty(name);
   if(value) rx->enable_equalizer=atoi(value);
-  for(i=0;i<4;i++) {
+  for(i=0;i<11;i++) {
     sprintf(name,"receiver[%d].equalizer[%d]",rx->channel,i);
     value=getProperty(name);
     if(value) rx->equalizer[i]=atoi(value);
@@ -2709,10 +2709,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->pan=0;
   rx->is_panning=FALSE;
   rx->enable_equalizer=FALSE;
-  rx->equalizer[0]=0;
-  rx->equalizer[1]=0;
-  rx->equalizer[2]=0;
-  rx->equalizer[3]=0;
+  for(int i=0;i<11;i++) rx->equalizer[i]=0;
 
   rx->bookmark_dialog=NULL;
 
@@ -2821,7 +2818,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetRXAPanelRun(rx->channel, 1);
 
   if(rx->enable_equalizer) {
-    SetRXAGrphEQ(rx->channel, rx->equalizer);
+    SetRXAGrphEQ10(rx->channel, rx->equalizer);
     SetRXAEQRun(rx->channel, 1);
   } else {
     SetRXAEQRun(rx->channel, 0);

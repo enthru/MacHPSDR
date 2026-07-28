@@ -573,7 +573,7 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].enable_equalizer",tx->channel);
   sprintf(value,"%d",tx->enable_equalizer);
   setProperty(name,value);
-  for(i=0;i<4;i++) {
+  for(i=0;i<11;i++) {
     sprintf(name,"transmitter[%d].eualizer[%d]",tx->channel,i);
     sprintf(value,"%d",tx->equalizer[i]);
     setProperty(name,value);
@@ -746,7 +746,7 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].enable_equalizer",tx->channel);
   value=getProperty(name);
   if(value) tx->enable_equalizer=atoi(value);
-  for(i=0;i<4;i++) {
+  for(i=0;i<11;i++) {
     sprintf(name,"transmitter[%d].eualizer[%d]",tx->channel,i);
     value=getProperty(name);
     if(value) tx->equalizer[i]=atoi(value);
@@ -1829,7 +1829,7 @@ log_info("create_transmitter: channel=%d\n",channel);
 
   tx->pre_emphasize=FALSE;
   tx->enable_equalizer=FALSE;
-  tx->equalizer[0]=tx->equalizer[1]=tx->equalizer[2]=tx->equalizer[3]=0;
+  for(int i=0;i<11;i++) tx->equalizer[i]=0;
   tx->leveler=FALSE;
   tx->cessb=FALSE;
 
@@ -1933,7 +1933,7 @@ log_info("create_transmitter: channel=%d\n",channel);
   SetTXAFMEmphPosition(tx->channel,tx->pre_emphasize);
 
   SetTXACFIRRun(tx->channel, 0);
-  SetTXAGrphEQ(tx->channel, tx->equalizer);
+  SetTXAGrphEQ10(tx->channel, tx->equalizer);
   if(tx->enable_equalizer) {
     SetTXAEQRun(tx->channel, 1);
   } else {
