@@ -207,8 +207,18 @@ token `%C` expands to your station callsign. Sending turns the text into a
 keyed sidetone at the configured speed, weight and pitch, keys the transmitter
 in CWL/CWU automatically, and un-keys it when the message finishes. *(The
 encoder is verified by an internal encode-then-decode round-trip; the on-air
-signal itself is not yet confirmed — this fork has no transmit hardware. A
-paddle-driven iambic keyer is planned.)*
+signal itself is not yet confirmed — this fork has no transmit hardware.)*
+
+There is also a **software iambic keyer**. Set the keyer mode (Straight /
+Mode A / Mode B), speed, weight and paddle reversal in **Configure → CW**. The
+two paddles are the **`[`** (dot) and **`]`** (dash) keys — they only act while
+the active receiver is in CWL/CWU — or a **MIDI** controller mapped to the
+CW-left / CW-right actions (map them with the ONOFF option so both press and
+release are sent). Squeezing both paddles gives proper iambic alternation with
+dot/dash memory; Mode B adds the extra trailing element. Keying stops (and the
+transmitter un-keys, after a short break-in hang) when you release the paddles.
+*(The A/B timing is verified by a headless unit test; on-air behaviour with a
+real paddle is unverified — no transmit hardware or physical paddle here.)*
 
 ---
 

@@ -18,14 +18,17 @@
 */
 
 /*
- * CW (Morse) transmit engine (Phase 4.4a).
+ * CW (Morse) transmit engine: memory-message sender (Phase 4.4a) plus a
+ * real-time keyer tone (Phase 4.4b, driven by cw_keyer.c's iambic state
+ * machine via cw_tx_key()).
  *
- * Synthesizes a keyed sidetone waveform for a text message (PARIS-standard
- * timing at the operator's configured WPM/weight/sidetone) and clocks it into
- * the WDSP TX chain via add_mic_sample() when the receiver is in CWL/CWU,
- * mirroring the ft8_encoder.c / sstv_encoder.c MOX-keying pattern: raise MOX
- * if we weren't already keyed, clock samples out, drop MOX again when the
- * waveform ends (watchdog-protected).
+ * The message path synthesizes a keyed sidetone waveform for a text message
+ * (PARIS-standard timing at the operator's configured WPM/weight/sidetone)
+ * and clocks it into the WDSP TX chain via add_mic_sample() when the receiver
+ * is in CWL/CWU; the keyer path instead gates a live sidetone by cw_tx_key()
+ * edges. Both mirror the ft8_encoder.c / sstv_encoder.c MOX-keying pattern:
+ * raise MOX if we weren't already keyed, clock samples out, drop MOX again
+ * when the waveform ends / the paddle hangs (watchdog-protected either way).
  *
  * cw_encode_to_audio() is a pure computational core (no RADIO/GTK/MOX
  * dependency) so it can be exercised by a small headless test harness against
@@ -51,6 +54,13 @@ extern float cw_tx_next_sample(void);
 
 // Abort any in-progress transmission and drop MOX if we raised it.
 extern void cw_tx_abort(void);
+
+// Real-time keyer keying (Phase B). The iambic keyer calls cw_tx_key(TRUE) at a
+// mark's start and cw_tx_key(FALSE) at its end; cw_tx_next_sample() renders a
+// gated sidetone (raised-cosine edges, phase-continuous) at radio->cw_keyer_
+// sidetone_frequency. MOX is owned here: raised on the first key-down (if not
+// already keyed), dropped after cw_keyer_hang_time ms of no keying. GTK thread.
+extern void cw_tx_key(gboolean down);
 
 // --- PURE encoder (NO radio globals, NO MOX/GTK) — used by the headless test ---
 // Render `text` to a keyed sidetone float buffer at sample_rate. Returns a newly

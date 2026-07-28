@@ -39,6 +39,9 @@
 #include "cwdaemon.h"
 #include <libcw.h>
 #endif
+#ifdef SSTV
+#include "cw_keyer.h"
+#endif
 #include "receiver_dialog.h"
 #include "configure_dialog.h"
 
@@ -507,12 +510,18 @@ static int midi_action(void *data) {
 	/////////////////////////////////////////////////////////// "CWR"
 	case CWLEFT: // only key
 	case CWRIGHT: // only key
-//#ifdef LOCALCW
+	    // Software iambic keyer (Phase 4.4b): CWLEFT=DOT, CWRIGHT=DASH,
+	    // val=1 press / 0 release (ONOFF). This is the macOS path -- only
+	    // wired when NOT built with CWDAEMON. On a CWDAEMON build (Linux),
+	    // DoTheMidi() claims CWRIGHT directly as a hardware hand-key
+	    // straight-key input before it ever reaches this switch, so wiring
+	    // the software keyer here too would let two different CW engines
+	    // key MOX/TX off the same MIDI action.
+#if defined(SSTV) && !defined(CWDAEMON)
 	    if (type == MIDI_KEY) {
-		//new=(action == CWL);
-		//keyer_event(new,val);
+	      cw_keyer_paddle(action==CWLEFT ? CW_PADDLE_DOT : CW_PADDLE_DASH, val ? TRUE : FALSE);
 	    }
-//#endif
+#endif
 	    break;
 	/////////////////////////////////////////////////////////// "CWSPEED"
 	case CWSPEED: // knob or wheel
@@ -1198,8 +1207,11 @@ void DoTheMidi(enum MIDIaction action, enum MIDItype type, int val) {
     // Handle cases in alphabetical order of the key words in midi.props
     //
     switch (action) {
-       case CWRIGHT: // CW straight key
-          #ifdef CWDAEMON
+#ifdef CWDAEMON
+       case CWRIGHT: // CW straight key -- CWDAEMON hardware keying owns this
+                     // action synchronously, so it never reaches midi_action()'s
+                     // switch (see the CWLEFT/CWRIGHT case there for the
+                     // !CWDAEMON software-keyer path this intentionally shadows).
          //g_print("CW callback\n");
             if (val) {
               keysidetone = 1;
@@ -1214,8 +1226,8 @@ void DoTheMidi(enum MIDIaction action, enum MIDItype type, int val) {
               g_mutex_unlock(&cwdaemon_mutex);
             }
             cwd_changed_at = read_time_now();
-          #endif
           break;
+#endif
         // TODO: add dit dah and use unixcw built in iambic keyer
         default:
           // all other actions are performed using g_idle_add

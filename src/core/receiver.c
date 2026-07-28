@@ -72,6 +72,7 @@
 #include "sstv_decoder.h"
 #include "wefax_decoder.h"
 #include "cw_decoder.h"
+#include "cw_keyer.h"
 #endif
 // Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
 // gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
@@ -1487,6 +1488,24 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
     case GDK_KEY_space:
         set_mox(radio,TRUE);
       return TRUE;
+#ifdef SSTV
+    // Software iambic keyer paddles (Phase 4.4b): `[`/`]` are unused and
+    // adjacent, and only act in CWL/CWU so they stay free for everything else.
+    case GDK_KEY_bracketleft:
+      if(radio->active_receiver!=NULL &&
+         (radio->active_receiver->mode_a==CWL || radio->active_receiver->mode_a==CWU)) {
+        cw_keyer_paddle(CW_PADDLE_DOT,TRUE);
+        return TRUE;
+      }
+      break;
+    case GDK_KEY_bracketright:
+      if(radio->active_receiver!=NULL &&
+         (radio->active_receiver->mode_a==CWL || radio->active_receiver->mode_a==CWU)) {
+        cw_keyer_paddle(CW_PADDLE_DASH,TRUE);
+        return TRUE;
+      }
+      break;
+#endif
   }
   return FALSE;
 }
@@ -1498,6 +1517,18 @@ void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guin
     case GDK_KEY_space:
       set_mox(radio,FALSE);
       break;
+#ifdef SSTV
+    // Always release on key-up (no mode gate): if the mode changed away from
+    // CWL/CWU while the key was held, this is the only chance to clear the
+    // paddle -- gating it the same as the press would leave it stuck down.
+    // A release with nothing pressed is a harmless no-op in cw_keyer.c.
+    case GDK_KEY_bracketleft:
+      cw_keyer_paddle(CW_PADDLE_DOT,FALSE);
+      break;
+    case GDK_KEY_bracketright:
+      cw_keyer_paddle(CW_PADDLE_DASH,FALSE);
+      break;
+#endif
   }
 }
 

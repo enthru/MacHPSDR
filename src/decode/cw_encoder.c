@@ -224,28 +224,70 @@ float *cw_encode_to_audio(const char *text, int wpm, int weight,
 // acquires `active` before touching the buffer. (An earlier version g_free()d a
 // heap wave from the GTK thread while the audio thread was mid-read — a
 // use-after-free on weakly-ordered CPUs; the static buffer removes it entirely.)
+//
+// Phase 4.4b adds a second TX mode alongside the memory-message wave[] replay:
+// a real-time KEYER tone gated by cw_tx_key(), driven by the iambic keyer
+// (cw_keyer.c). `active` (and MOX) is shared by both modes -- `tx_mode` picks
+// which one cw_tx_next_sample() renders, and cw_tx_send_text()'s pre-existing
+// `if (active) return FALSE` guard already keeps a memory send from fighting a
+// paddle that is mid-KEYER (see the mode==CW_TX_MESSAGE check in cw_tx_key()
+// for the reverse direction: a paddle event can't hijack an in-flight send).
 // ===========================================================================
 #define CW_TX_RATE            48000
 #define CW_TX_AMPL            0.6f
 #define CW_TX_MAX_MARGIN_MS   2000               // safety margin over waveform length
 #define CW_TX_MAX_SAMPLES     (CW_TX_RATE * 60)  // hard cap: 60 s of keyed CW
+#define CW_KEYER_RAMP_SAMPLES ((int)(CW_TX_RATE * 0.005))  // ~5 ms raised-cosine edge
+#define CW_KEYER_HANG_MS      250                // default hang time if unset/<=0
+
+enum { CW_TX_IDLE = 0, CW_TX_MESSAGE, CW_TX_KEYER };
 
 static float          wave[CW_TX_MAX_SAMPLES];   // static: never freed (no UAF)
 static int            wave_len = 0;              // valid once published; set before `active`
 static volatile int   wave_pos = 0;             // next sample index (audio thread)
-static volatile gint  active = 0;               // g_atomic: 1 while clocking out
+static volatile gint  active = 0;               // g_atomic: 1 while clocking out (either mode)
 static gboolean       we_keyed = FALSE;         // did WE raise MOX (GTK thread only)
 static guint          tick_id = 0;              // watchdog g_timeout id (GTK thread)
-static gint64         key_time_ms = 0;          // when the send started (watchdog, ms)
+static gint64         key_time_ms = 0;          // when the MESSAGE send started (watchdog, ms)
 
-// ~100 ms watchdog tick (GTK thread): drops MOX when the waveform finishes and
-// enforces the MOX safety watchdog, like ft8_encoder.c's tx_tick.
+static volatile gint  tx_mode = CW_TX_IDLE;     // g_atomic: which engine cw_tx_next_sample() renders
+static volatile gint  key_on = 0;               // g_atomic: KEYER paddle state (audio thread reads)
+static gint64         last_key_ms = 0;          // GTK thread: last cw_tx_key() edge, for hang timing
+static int            keyer_ramp_pos = 0;       // audio thread: 0..CW_KEYER_RAMP_SAMPLES envelope
+static double         keyer_phase = 0.0;        // audio thread: phase-continuous across gaps
+
+// ~100 ms watchdog tick (GTK thread): drops MOX when the waveform finishes /
+// the paddle hangs, and enforces the MESSAGE-mode safety watchdog, like
+// ft8_encoder.c's tx_tick.
 static gboolean tx_tick(gpointer data) {
   if (!g_atomic_int_get(&active)) { tick_id = 0; return G_SOURCE_REMOVE; }
   gint64 now_ms = g_get_real_time() / 1000;
 
+  if (g_atomic_int_get(&tx_mode) == CW_TX_KEYER) {
+    if (!g_atomic_int_get(&key_on)) {
+      // Hang floored at ~2 dot-units so it always spans a 1-unit inter-element
+      // gap: at slow WPM (or a short configured hang) MOX would otherwise drop
+      // and re-key between every element, chopping the character.
+      gint64 cfg_hang = (radio != NULL && radio->cw_keyer_hang_time > 0) ?
+                         radio->cw_keyer_hang_time : CW_KEYER_HANG_MS;
+      gint64 min_hang = (radio != NULL && radio->cw_keyer_speed > 0) ?
+                         (gint64)(2.0 * 1200.0 / radio->cw_keyer_speed) : 120;
+      gint64 hang_ms = cfg_hang > min_hang ? cfg_hang : min_hang;
+      if (now_ms - last_key_ms > hang_ms) {
+        if (we_keyed) { we_keyed = FALSE; set_mox(radio, FALSE); }
+        g_atomic_int_set(&active, 0);
+        g_atomic_int_set(&tx_mode, CW_TX_IDLE);
+        tick_id = 0;
+        return G_SOURCE_REMOVE;
+      }
+    }
+    return G_SOURCE_CONTINUE;
+  }
+
+  // CW_TX_MESSAGE: unchanged completion / stall-watchdog logic.
   if (wave_pos >= wave_len) {
     g_atomic_int_set(&active, 0);
+    g_atomic_int_set(&tx_mode, CW_TX_IDLE);
     if (we_keyed) { we_keyed = FALSE; set_mox(radio, FALSE); }
     log_info("cw-tx: complete\n");
     tick_id = 0;
@@ -259,6 +301,7 @@ static gboolean tx_tick(gpointer data) {
     log_error("cw-tx: WATCHDOG - waveform not drained in %lldms (wave_pos=%d/%d)\n",
               (long long)max_ms, wave_pos, wave_len);
     g_atomic_int_set(&active, 0);
+    g_atomic_int_set(&tx_mode, CW_TX_IDLE);
     if (we_keyed) { we_keyed = FALSE; set_mox(radio, FALSE); }
     tick_id = 0;
     return G_SOURCE_REMOVE;
@@ -268,6 +311,8 @@ static gboolean tx_tick(gpointer data) {
 
 gboolean cw_tx_send_text(const char *text) {
   if (text == NULL || text[0] == '\0') return FALSE;
+  // Also true while the KEYER is mid-paddle (active==1 covers both modes), so
+  // a memory send can't fight the paddle.
   if (g_atomic_int_get(&active)) return FALSE;
   if (radio == NULL || !radio->can_transmit) {
     log_error("cw-tx: radio cannot transmit\n");
@@ -309,7 +354,8 @@ gboolean cw_tx_send_text(const char *text) {
   wave_len = n;
   wave_pos = 0;
   key_time_ms = g_get_real_time() / 1000;
-  g_atomic_int_set(&active, 1);   // release: publishes wave[]/wave_len to the audio thread
+  g_atomic_int_set(&tx_mode, CW_TX_MESSAGE);
+  g_atomic_int_set(&active, 1);   // release: publishes wave[]/wave_len + tx_mode to the audio thread
 
   we_keyed = FALSE;
   if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
@@ -320,6 +366,7 @@ gboolean cw_tx_send_text(const char *text) {
 
 void cw_tx_abort(void) {
   g_atomic_int_set(&active, 0);
+  g_atomic_int_set(&tx_mode, CW_TX_IDLE);
   if (we_keyed) { we_keyed = FALSE; set_mox(radio, FALSE); }
   // tx_tick removes itself on its next fire now that active is clear.
 }
@@ -328,10 +375,68 @@ gboolean cw_tx_active(void) {
   return g_atomic_int_get(&active) ? TRUE : FALSE;
 }
 
+// Real-time keyer keying (Phase B): the iambic keyer (cw_keyer.c) calls this at
+// every mark's start/end. MOX is owned here exactly like a MESSAGE send -- raised
+// on the first key-down if we weren't already keyed, dropped by tx_tick() once
+// the paddle has been up for cw_keyer_hang_time ms. A MESSAGE send in progress
+// owns the TX chain, so paddle edges are ignored while one is active.
+void cw_tx_key(gboolean down) {
+  if (radio == NULL) return;
+  if (g_atomic_int_get(&tx_mode) == CW_TX_MESSAGE) return;   // a memory send owns the TX
+
+  if (down) {
+    // Safety gate on the DOWN edge only (an UP must always be honoured so the
+    // key can't stick): never raise MOX unless the radio can transmit and the
+    // transmit mode is CW. This covers BOTH the keyboard paddle (which also
+    // gates in receiver.c) and the MIDI paddle (which has no gate of its own),
+    // and guards the RX-only case where radio->transmitter is NULL (set_mox ->
+    // rxtx() would deref it).
+    if (!radio->can_transmit || radio->transmitter == NULL) return;
+    int m = transmitter_get_mode(radio->transmitter);
+    if (m != CWL && m != CWU) return;
+
+    if (g_atomic_int_get(&tx_mode) != CW_TX_KEYER) {
+      // Start of a keying session: raise MOX ONCE here (not per key-down). If
+      // we set we_keyed on every element's key-down, the 2nd element would find
+      // MOX already up -> we_keyed reset to FALSE -> tx_tick would never drop
+      // the MOX we raised, leaving it stuck on after the paddle is released.
+      g_atomic_int_set(&tx_mode, CW_TX_KEYER);
+      g_atomic_int_set(&active, 1);   // release: publishes tx_mode to the audio thread
+      we_keyed = FALSE;
+      if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
+      if (tick_id == 0) tick_id = g_timeout_add(100, tx_tick, NULL);
+    }
+    g_atomic_int_set(&key_on, 1);
+  } else {
+    g_atomic_int_set(&key_on, 0);
+  }
+  last_key_ms = g_get_real_time() / 1000;
+}
+
 float cw_tx_next_sample(void) {
-  if (!g_atomic_int_get(&active)) return 0.0f;   // acquire: pairs with the send's release
-  int i = wave_pos;
-  if (i >= wave_len) return 0.0f;
-  wave_pos = i + 1;
-  return wave[i];
+  if (!g_atomic_int_get(&active)) return 0.0f;   // acquire: pairs with the publishing release
+  gint mode = g_atomic_int_get(&tx_mode);
+
+  if (mode == CW_TX_KEYER) {
+    gboolean on = g_atomic_int_get(&key_on) ? TRUE : FALSE;
+    if (on && keyer_ramp_pos < CW_KEYER_RAMP_SAMPLES) keyer_ramp_pos++;
+    else if (!on && keyer_ramp_pos > 0) keyer_ramp_pos--;
+    double env = 0.5 * (1.0 - cos(M_PI * (double)keyer_ramp_pos / (double)CW_KEYER_RAMP_SAMPLES));
+
+    double hz = (radio != NULL) ? (double)radio->cw_keyer_sidetone_frequency : 600.0;
+    double dphi = 2.0 * M_PI * hz / (double)CW_TX_RATE;
+    float s = (float)(CW_TX_AMPL * env * sin(keyer_phase));
+    keyer_phase += dphi;   // keeps advancing even while silent -> phase-continuous, no click on re-key
+    if (keyer_phase >= 2.0 * M_PI) keyer_phase -= 2.0 * M_PI;
+    return s;
+  }
+
+  if (mode == CW_TX_MESSAGE) {   // wave[] replay
+    int i = wave_pos;
+    if (i >= wave_len) return 0.0f;
+    wave_pos = i + 1;
+    return wave[i];
+  }
+
+  return 0.0f;   // CW_TX_IDLE seen transiently on a mode change: no stale wave[] replay
 }
