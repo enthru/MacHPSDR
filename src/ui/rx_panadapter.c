@@ -452,36 +452,41 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_fill(cr);
     }
 
-    // Persistence/density heatmap: accumulate where the trace has been over
-    // time into a screen-coord density buffer, decay it each frame, then blit
-    // it heat-coloured behind the graticule/filter/trace so those still read
-    // clearly on top.
+    // Persistence / "digital phosphor" heatmap (Siglent/Rigol style). Drawn here,
+    // right after the background and BEFORE the graticule / dB+frequency scales /
+    // trace, so all of those redraw cleanly on top (the scales must not get
+    // speckled). Each cell of a screen-coord buffer is an EMA of a "was the trace
+    // here this frame?" indicator, so it holds the fraction of recent frames the
+    // pixel was lit (occupancy in [0,1]): the dense noise floor / steady signals
+    // grade up to red, rarer high excursions stay blue - the whole visited cloud
+    // is colour-graded, not just the hottest baseline. No peak normalisation (a
+    // lone outlier would wash the rest to blue). Accumulate + render are all on
+    // this GTK-main-thread timer, same as the peak-hold buffer, so no lock.
     if(rx->panadapter_histogram && rx->panadapter_histogram_bins!=NULL
        && display_width==rx->panadapter_histogram_w && display_height==rx->panadapter_histogram_h) {
       int H=rx->panadapter_histogram_h;
       float *bins=rx->panadapter_histogram_bins;
-      // 1. exponential, frame-rate-independent decay toward 0
+      // frame-rate-independent exponential fade; /20 makes the default (decay=20)
+      // persist ~1 s of frames so the cloud builds up, slider spans slow..fast.
       int fps = rx->fps>0 ? rx->fps : 15;
-      float keep = expf(-(float)rx->panadapter_histogram_decay/(2.0f*(float)fps));
+      float keep = expf(-(float)rx->panadapter_histogram_decay/(20.0f*(float)fps));
+      float add = 1.0f - keep;   // EMA step toward occupancy = 1
       int total = display_width*H;
       for(int k=0;k<total;k++) bins[k]*=keep;
-      // 2. accumulate this frame's trace into the density buffer (screen coords)
       for(i=0;i<display_width;i++) {
         double s2h=(double)samples[i+offset]+attenuation+radio->panadapter_calibration;
         int yr=(int)floor((rx->panadapter_high - s2h)*dbm_per_line);
         if(yr<0) yr=0; if(yr>=H) yr=H-1;
-        bins[i*H+yr]+=1.0f;
-        // thicken by +/-1 row so thin single-pixel traces stay visible
-        if(yr>0)   bins[i*H+yr-1]+=0.5f;
-        if(yr<H-1) bins[i*H+yr+1]+=0.5f;
+        // Deposit over +/-3 rows (tapered) so a level that dithers across several
+        // pixels on a wide dB span still concentrates into one warm band instead
+        // of splitting its dwell thinly across many rows (which reads as cold blue).
+        for(int dz=-3; dz<=3; dz++) {
+          int yy=yr+dz;
+          if(yy<0 || yy>=H) continue;
+          float w=1.0f-0.18f*(float)(dz<0?-dz:dz);   // 1.0 at centre -> 0.46 at +/-3
+          bins[i*H+yy]+=w*add;
+        }
       }
-      // 3. auto-normalise: EMA of the observed max
-      float mx=1.0f;
-      for(int k=0;k<total;k++) if(bins[k]>mx) mx=bins[k];
-      rx->panadapter_histogram_max = 0.9f*rx->panadapter_histogram_max + 0.1f*mx;
-      if(rx->panadapter_histogram_max<1.0f) rx->panadapter_histogram_max=1.0f;
-      float inv = 1.0f/rx->panadapter_histogram_max;
-      // 4. render into a temporary RGB24 image surface, then blit
       cairo_surface_t *hs=cairo_image_surface_create(CAIRO_FORMAT_RGB24, display_width, display_height);
       unsigned char *hd=cairo_image_surface_get_data(hs);
       int stride=cairo_image_surface_get_stride(hs);
@@ -489,11 +494,18 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       for(int y=0;y<display_height;y++) {
         unsigned char *row=hd+y*stride;
         for(int xx=0;xx<display_width;xx++) {
-          float d=bins[xx*H+y]*inv;
+          float d=bins[xx*H+y];   // absolute occupancy 0..1 (fraction of recent frames lit)
+          if(d>1.0f) d=1.0f;
           double rr,gg,bb;
-          if(d<=0.001f) { rr=bgr; gg=bgg; bb=bgb; }
-          else { hist_heat_rgb(d,&rr,&gg,&bb); }
-          // CAIRO_FORMAT_RGB24 is 0xXXRRGGBB (native-endian uint32); write B,G,R,X
+          if(d<=0.015f) { rr=bgr; gg=bgg; bb=bgb; }   // essentially unvisited -> background
+          else {
+            // Gamma-lift the absolute occupancy so even a modestly-dwelt pixel
+            // (e.g. the noise floor, ~0.2-0.4) reads green/yellow while a steady
+            // signal (->1) burns red. NO peak normalisation - that let a lone
+            // outlier pixel wash the whole cloud back to blue.
+            hist_heat_rgb(powf(d,0.40f),&rr,&gg,&bb);
+          }
+          // CAIRO_FORMAT_RGB24 is native-endian 0xXXRRGGBB -> bytes B,G,R,X.
           row[xx*4+0]=(unsigned char)(bb*255.0);
           row[xx*4+1]=(unsigned char)(gg*255.0);
           row[xx*4+2]=(unsigned char)(rr*255.0);
@@ -854,6 +866,11 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       }
     }
 
+    // When the phosphor/histogram is on it IS the spectrum display, so skip the
+    // ordinary trace line/fill - it would just paint a solid colour over the
+    // graded cloud and hide it. The dB/frequency scales already drew above and
+    // the phosphor was drawn behind them, so everything stays clean.
+    if(!rx->panadapter_histogram) {
     cairo_move_to(cr, 0.0, display_height-20);
 
     for(i=1;i<display_width;i++) {
@@ -963,6 +980,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
             }
         }
     }
+    }  // end if(!panadapter_histogram): ordinary trace suppressed under phosphor
 
     // Peak-hold trace: same mapping as the main trace, line only (no fill),
     // drawn last so it sits on top.

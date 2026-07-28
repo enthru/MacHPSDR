@@ -252,7 +252,6 @@ typedef struct _receiver {
   gfloat  *panadapter_histogram_bins;   // density buffer, sized W*H (screen coords), row index = i*H + yrow
   gint     panadapter_histogram_w;      // width the bins buffer was allocated for
   gint     panadapter_histogram_h;      // height the bins buffer was allocated for
-  gfloat   panadapter_histogram_max;    // EMA of max bin density, for auto-normalisation
 
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)

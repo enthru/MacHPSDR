@@ -2522,7 +2522,6 @@ void receiver_init_analyzer(RECEIVER *rx) {
   }
   rx->panadapter_histogram_w=0;
   rx->panadapter_histogram_h=0;
-  rx->panadapter_histogram_max=0.0f;
   // Histogram bins accumulate in SCREEN coords (not analyzer pixels), so they
   // are sized to the widget rather than rx->pixels - this keeps memory bounded
   // regardless of zoom. Only allocate once the widget is actually sized; a
@@ -2531,7 +2530,6 @@ void receiver_init_analyzer(RECEIVER *rx) {
     rx->panadapter_histogram_bins=g_new0(float,rx->panadapter_width*rx->panadapter_height);
     rx->panadapter_histogram_w=rx->panadapter_width;
     rx->panadapter_histogram_h=rx->panadapter_height;
-    rx->panadapter_histogram_max=1.0f;
   }
   if(rx->pixels>0) {
     rx->pixel_samples=g_new0(float,rx->pixels);
@@ -2828,7 +2826,6 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->panadapter_histogram_bins=NULL;
   rx->panadapter_histogram_w=0;
   rx->panadapter_histogram_h=0;
-  rx->panadapter_histogram_max=0.0f;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
   // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole

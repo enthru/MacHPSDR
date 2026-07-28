@@ -436,7 +436,6 @@ static void panadapter_histogram_changed_cb(GtkWidget *widget, gpointer data) {
   if(rx->panadapter_histogram && rx->panadapter_histogram_bins!=NULL) {
     memset(rx->panadapter_histogram_bins,0,
            sizeof(float)*rx->panadapter_histogram_w*rx->panadapter_histogram_h);
-    rx->panadapter_histogram_max=1.0f;
   }
 }
 
