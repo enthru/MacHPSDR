@@ -65,6 +65,27 @@ void diversity_mix_full_buffers(DIVMIXER *dmix) {
   // Mix the iq streams
   memcpy(dmix->iq_input[1], dmix->rx_hidden->iq_input_buffer, 2*dmix->iq_buffer_size * sizeof(gdouble));
 
+  // Diversity phase-scope tap: both coherent streams are now aligned in
+  // iq_input[0] (visual/main) and iq_input[1] (hidden) BEFORE the mix, so this
+  // is the one point where a main-vs-hidden Lissajous can be built. Plot the
+  // main channel's I on X against the hidden channel's I on Y (the classic
+  // diversity alignment scope): a common signal with relative complex gain
+  // g=A*e^{jphi} traces a line (phi=0, slope=A) or an ellipse (phi!=0), so the
+  // operator collapses the ellipse to the 45-deg reference with the diversity
+  // Phase then Gain controls. Only fires when the visual RX's phase scope is in
+  // Diversity source; publish is under scope_mutex, matching scope_iq_feed.
+  RECEIVER *rxv = dmix->rx_visual;
+  if(rxv->panadapter_phase && rxv->panadapter_phase_source==2 && rxv->scope_iq!=NULL) {
+    int n = dmix->iq_buffer_size < rxv->scope_iq_cap ? dmix->iq_buffer_size : rxv->scope_iq_cap;
+    g_mutex_lock(&rxv->scope_mutex);
+    for(int i=0;i<n;i++) {
+      rxv->scope_iq[i*2]   = (gfloat)dmix->iq_input[0][i*2];   // main  I -> X
+      rxv->scope_iq[i*2+1] = (gfloat)dmix->iq_input[1][i*2];   // hidden I -> Y
+    }
+    rxv->scope_iq_n = n;
+    g_mutex_unlock(&rxv->scope_mutex);
+  }
+
   xdivEXT(dmix->id, dmix->iq_buffer_size, dmix->iq_input, dmix->iq_output_buffer);
 
   // Copy the output from the diversity mixer to our rx that we have visuals display for

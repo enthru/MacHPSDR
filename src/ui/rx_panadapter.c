@@ -483,6 +483,19 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_arc(cr,cx,cy,R/2.0,0,2*M_PI);
       cairo_stroke(cr);
 
+      // Diversity source plots main-I (X) vs hidden-I (Y): a common signal that
+      // is in-phase and equal-gain across the two antennas lands on the y=x
+      // diagonal (math coords; lower-left -> upper-right on screen). Draw it as
+      // the alignment target so the operator collapses the ellipse onto this
+      // line with the diversity Phase (line vs ellipse) then Gain (45 deg slope)
+      // controls.
+      if(rx->panadapter_phase_source==2) {
+        cairo_set_source_rgba(cr,1.0,0.8,0.2,0.4);
+        cairo_move_to(cr,cx-R,cy+R);
+        cairo_line_to(cr,cx+R,cy-R);
+        cairo_stroke(cr);
+      }
+
       // Snapshot the tapped I/Q under the lock, then draw outside it so the
       // audio thread is never blocked on cairo work.
       g_mutex_lock(&rx->scope_mutex);
@@ -537,9 +550,10 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
       {
         char scope_label[32];
+        const char *src = rx->panadapter_phase_source==1 ? "Tuned" :
+                          rx->panadapter_phase_source==2 ? "Diversity" : "Wideband";
         snprintf(scope_label,sizeof(scope_label),"%s (%s)",
-                 rx->panadapter_phase_mode==0 ? "PHASE" : "PHASE2",
-                 rx->panadapter_phase_source==1 ? "Tuned" : "Wideband");
+                 rx->panadapter_phase_mode==0 ? "PHASE" : "PHASE2", src);
         SetColour(cr, WARNING);
         cairo_set_font_size(cr, 12);
         cairo_move_to(cr, 4, 14);

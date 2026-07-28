@@ -2357,6 +2357,9 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
 // tuned carrier so the scope shows a real constellation (scope_iq_feed_tuned).
 static void scope_iq_feed(RECEIVER *rx, double *iq, int nsamples) {
   if(!rx->panadapter_phase || rx->scope_iq==NULL) return;
+  // Diversity source: scope_iq is filled from the mixer's main-vs-hidden tap
+  // (diversity_mix_full_buffers), not from this single-RX feed.
+  if(rx->panadapter_phase_source==2) return;
   if(rx->panadapter_phase_source==1) {
     scope_iq_feed_tuned(rx, iq, nsamples);
     return;

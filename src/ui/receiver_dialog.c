@@ -1156,6 +1156,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkStringList *ps_sl=gtk_string_list_new(NULL);
   gtk_string_list_append(ps_sl,"Wideband");
   gtk_string_list_append(ps_sl,"Tuned");
+  gtk_string_list_append(ps_sl,"Diversity");
   GtkWidget *panadapter_phase_source_b=gtk_drop_down_new(G_LIST_MODEL(ps_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_phase_source_b),rx->panadapter_phase_source);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_b,4,12,1,1);
