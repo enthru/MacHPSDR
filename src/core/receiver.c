@@ -71,6 +71,7 @@
 #ifdef SSTV
 #include "sstv_decoder.h"
 #include "wefax_decoder.h"
+#include "cw_decoder.h"
 #endif
 // Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
 // gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
@@ -1937,8 +1938,14 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   receiver_ft8_waterfall_sync(rx);
 #endif
 #ifdef SSTV
-  // Same for the SSTV image panel (meaningful in DIGU/DIGL + SSTV).
-  if(radio!=NULL && rx==radio->active_receiver) radio_sstv_panel_sync(radio);
+  // Same for the SSTV image, WEFAX image and CW text panels: an active-RX mode
+  // change out of their mode must tear the panel down (and free the RX2 slot /
+  // re-enable Add Receiver), or it strands open with no control to dismiss it.
+  if(radio!=NULL && rx==radio->active_receiver) {
+    radio_sstv_panel_sync(radio);
+    radio_wefax_panel_sync(radio);
+    radio_cw_panel_sync(radio);
+  }
 #endif
 }
 
@@ -1991,6 +1998,9 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
   // SSB-only (DIGU/DIGL).
   if(radio->decode_mode==DECODE_SSTV)
     return rx->mode_a==DIGU || rx->mode_a==DIGL || rx->mode_a==FMN;
+  // CW is only valid in the CW modes.
+  if(radio->decode_mode==DECODE_CW)
+    return rx->mode_a==CWL || rx->mode_a==CWU;
   // WEFAX/FT8/FT4 are HF SSB-only (DIGU/DIGL).
   return rx->mode_a==DIGU || rx->mode_a==DIGL;
 }
@@ -2140,6 +2150,12 @@ static void process_rx_buffer(RECEIVER *rx) {
                         radio->decode_mode==DECODE_WEFAX;
     wefax_decoder_set_enabled(wefax_on);
     if(wefax_on) wefax_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
+
+    // CW (Morse) decoder tap (same one-place enable/disable). CW modes only.
+    gboolean cw_on = (rx->mode_a==CWL || rx->mode_a==CWU) &&
+                     radio->decode_mode==DECODE_CW;
+    cw_decoder_set_enabled(cw_on);
+    if(cw_on) cw_decoder_add_audio(rx->audio_output_buffer, rx->output_samples);
   }
 #endif
 }

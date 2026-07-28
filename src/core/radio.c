@@ -78,6 +78,8 @@
 #include "sstv_panel.h"
 #include "wefax_decoder.h"
 #include "wefax_panel.h"
+#include "cw_decoder.h"
+#include "cw_panel.h"
 #endif
 
 #include "cwdaemon.h"
@@ -94,6 +96,18 @@ int MIDIstartup(char *filename);
 
 static GtkWidget *add_receiver_b;
 static GtkWidget *add_wideband_b;
+
+// Single source of truth for the "Add Receiver" button's sensitivity: another
+// receiver may be added only when no embedded panel (FT8/SSTV/WEFAX/CW) owns the
+// second-receiver slot and the device has a spare receiver. Every panel
+// create/destroy path re-evaluates this; keeping it in one place stops a new
+// panel type (or a missed site) from silently leaving the button clickable while
+// a panel occupies the slot.
+static gboolean panels_idle(RADIO *r) {
+  return r->ft8_panel==NULL && r->sstv_panel==NULL &&
+         r->wefax_panel==NULL && r->cw_panel==NULL &&
+         r->receivers < r->discovered->supported_receivers;
+}
 
 static void rxtx(RADIO *r);
 
@@ -1243,7 +1257,7 @@ log_info("add_receiver: no receivers available\n");
   }
 
   if (radio->hl2 == NULL || radio->hl2->xvtr == FALSE) {
-    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,panels_idle(r));
   }
 
   // Only tear the Configure dialog down when a *visible* receiver was added: its
@@ -1311,6 +1325,7 @@ static gboolean rx_stack_balance(gpointer data) {
   if(r->ft8_panel!=NULL)   n++;
   if(r->sstv_panel!=NULL)  n++;
   if(r->wefax_panel!=NULL) n++;
+  if(r->cw_panel!=NULL)    n++;
   if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
 
   GtkWidget *w=gtk_widget_get_first_child(r->rx_container);
@@ -1406,6 +1421,14 @@ void radio_rebuild_rx_stack(RADIO *r) {
     child_remove_from_parent(r->wefax_panel);
     tables[n++]=r->wefax_panel;
   }
+  // The CW text panel is likewise mutually exclusive with the FT8/SSTV/WEFAX
+  // panels (different decode_mode) and occupies the second-receiver slot.
+  if(r->cw_panel!=NULL) {
+    g_object_ref(r->cw_panel);
+    GtkWidget *parent=gtk_widget_get_parent(r->cw_panel);
+    child_remove_from_parent(r->cw_panel);
+    tables[n++]=r->cw_panel;
+  }
 
   // Destroy whatever remains in the container: the old paned skeleton plus any
   // orphaned panel (e.g. a receiver that was just closed). Live panels were
@@ -1491,8 +1514,7 @@ void radio_ft8_panel_sync(RADIO *r) {
   }
 
   if(add_receiver_b!=NULL)
-    gtk_widget_set_sensitive(add_receiver_b,
-      r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b, panels_idle(r));
 
   // Add/remove the FT8 band waterfall (right of the RF spectrum) to match.
   if(r->active_receiver!=NULL) receiver_ft8_waterfall_sync(r->active_receiver);
@@ -1526,6 +1548,7 @@ static const char *decode_mode_label(int m) {
     case DECODE_FT4:   return "FT4";
     case DECODE_SSTV:  return "SSTV";
     case DECODE_WEFAX: return "WEFAX";
+    case DECODE_CW:    return "CW";
   }
   return "?";
 }
@@ -1546,6 +1569,9 @@ static int decode_valid_mask(RECEIVER *rx) {
   }
   if(rx->mode_a==FMN)
     return (1<<DECODE_OFF)|(1<<DECODE_SSTV);   // ISS/VHF SSTV over narrow FM only
+#ifdef SSTV
+  if(rx->mode_a==CWL || rx->mode_a==CWU) return (1<<DECODE_OFF)|(1<<DECODE_CW);
+#endif
   return 0;
 }
 
@@ -1571,9 +1597,9 @@ static void decode_sel_sync(RADIO *r) {
   g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
   if(rebuild) {
     gtk_string_list_splice(sl,0,g_list_model_get_n_items(G_LIST_MODEL(sl)),NULL);
-    int *modes = g_new0(int, DECODE_WEFAX+1);
+    int *modes = g_new0(int, DECODE_CW+1);
     int n = 0;
-    for(int m=DECODE_OFF;m<=DECODE_WEFAX;m++) if(mask & (1<<m)) {
+    for(int m=DECODE_OFF;m<=DECODE_CW;m++) if(mask & (1<<m)) {
       gtk_string_list_append(sl,decode_mode_label(m));
       modes[n++] = m;
     }
@@ -1614,6 +1640,7 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
 #ifdef SSTV
   radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV
   radio_wefax_panel_sync(r); // close the WEFAX image panel if we left WEFAX
+  radio_cw_panel_sync(r);    // close the CW text panel if we left CW
 #endif
 }
 #endif
@@ -1649,8 +1676,7 @@ void radio_sstv_panel_sync(RADIO *r) {
 
   if(add_receiver_b!=NULL)
     gtk_widget_set_sensitive(add_receiver_b,
-      r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL &&
-      r->receivers<r->discovered->supported_receivers);
+      panels_idle(r));
 }
 
 // Bottom-bar "Show SSTV" toggle: open/close the SSTV image panel (in place of RX2).
@@ -1688,8 +1714,7 @@ void radio_wefax_panel_sync(RADIO *r) {
 
   if(add_receiver_b!=NULL)
     gtk_widget_set_sensitive(add_receiver_b,
-      r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL &&
-      r->receivers<r->discovered->supported_receivers);
+      panels_idle(r));
 }
 
 // Bottom-bar "Show WEFAX" toggle: open/close the WEFAX image panel (in place of RX2).
@@ -1697,6 +1722,43 @@ static void wefax_expand_cb(GtkButton *b, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->wefax_panel_open = !r->wefax_panel_open;
   radio_wefax_panel_sync(r);
+}
+
+// Show or hide the embedded CW text panel.  Like the SSTV/WEFAX panels it takes
+// the second-receiver slot, but only in the CW modes (CWL/CWU).  Leaving CW or
+// the CW modes closes it.  GTK thread only.
+void radio_cw_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean cwmode = (r->active_receiver!=NULL &&
+                     (r->active_receiver->mode_a==CWL || r->active_receiver->mode_a==CWU)) &&
+                    r->decode_mode==DECODE_CW;
+  if(!cwmode) r->cw_panel_open=FALSE;
+  gboolean want = cwmode && r->cw_panel_open;
+  gboolean have = (r->cw_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->cw_panel=cw_panel_create();
+    g_object_ref_sink(r->cw_panel);
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->cw_panel;
+    r->cw_panel=NULL;                          // hide from the rebuild below
+    child_remove_from_parent(p);
+    g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      panels_idle(r));
+}
+
+// Bottom-bar "Show CW" toggle: open/close the CW text panel (in place of RX2).
+static void cw_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->cw_panel_open = !r->cw_panel_open;
+  radio_cw_panel_sync(r);
 }
 #endif
 
@@ -1993,6 +2055,8 @@ static gboolean rds_update_cb(gpointer data) {
   // SSTV is valid in the digital SSB modes (HF, e.g. 14.230) AND in narrowband
   // FM (VHF, e.g. the ISS on 145.800) — Robot 36 / PD120 are FM-mode modes.
   gboolean sstv_cap = digi || (rx!=NULL && rx->mode_a==FMN);
+  // CW (Morse) decoder is valid only in the CW modes.
+  gboolean cw_cap = rx!=NULL && (rx->mode_a==CWL || rx->mode_a==CWU);
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
@@ -2002,6 +2066,7 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean ft8_active  = digi && (r->decode_mode==DECODE_FT8 || r->decode_mode==DECODE_FT4);
   gboolean sstv_active = sstv_cap && r->decode_mode==DECODE_SSTV;
   gboolean wefax_active = digi && r->decode_mode==DECODE_WEFAX;   // HF USB radiofax
+  gboolean cw_active = cw_cap && r->decode_mode==DECODE_CW;
   const char *ftname = r->decode_mode==DECODE_FT4 ? "FT4" : "FT8";
 #endif
   // The decoder block is the RDS readout in WFM and the selected-decoder readout
@@ -2014,6 +2079,7 @@ static gboolean rds_update_cb(gpointer data) {
     else if(ft8_active)  title = ftname;
     else if(sstv_active) title = "SSTV";
     else if(wefax_active) title = "WEFAX";
+    else if(cw_active) title = "CW";
 #endif
     gtk_label_set_text(GTK_LABEL(r->rds_title), title);
   }
@@ -2170,6 +2236,23 @@ static gboolean rds_update_cb(gpointer data) {
     snprintf(ft8buf,sizeof(ft8buf),"WEFAX support not built in");
 #endif
   }
+  else if(cw_active) {
+    // CW: the decoded text lives in the panel; the bottom block carries a
+    // compact WPM/tone readout (and, when the panel is closed, a hint to open it).
+    show_ft8 = TRUE;
+#ifdef SSTV
+    int wpm; double tone_hz; gboolean locked;
+    cw_decoder_get_status(&wpm, &tone_hz, &locked);
+    if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "CW");
+    if(r->cw_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s", wpm, tone_hz, locked?"":"  (searching…)");
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n(Show CW to view the text)",
+               wpm, tone_hz, locked?"":"  (searching…)");
+#else
+    snprintf(ft8buf,sizeof(ft8buf),"CW decoder support not built in");
+#endif
+  }
 #endif
 #ifdef FT8
   // Swap between the 3 RDS rows and the single decoder block depending on the mode.
@@ -2182,7 +2265,7 @@ static gboolean rds_update_cb(gpointer data) {
   // (FMN — for VHF SSTV like the ISS), kept in sync with radio->decode_mode
   // (which the FT8 panel's protocol combo can also change).
   if(r->decode_sel!=NULL) {
-    gtk_widget_set_visible(r->decode_sel, sstv_cap);
+    gtk_widget_set_visible(r->decode_sel, sstv_cap || cw_cap);
     decode_sel_sync(r);   // repopulate per-mode rows + sync active to decode_mode
   }
   // The "FT8 Panel" toggle only makes sense in DIGU with an FT8/FT4 decoder.
@@ -2202,6 +2285,12 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_widget_set_visible(r->wefax_expand_btn, wefax_active);
     gtk_button_set_label(GTK_BUTTON(r->wefax_expand_btn),
                          r->wefax_panel_open?"Hide WEFAX":"Show WEFAX");
+  }
+  // The "Show CW" toggle: shown in CWL/CWU with the CW decoder selected.
+  if(r->cw_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->cw_expand_btn, cw_active);
+    gtk_button_set_label(GTK_BUTTON(r->cw_expand_btn),
+                         r->cw_panel_open?"Hide CW":"Show CW");
   }
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
     gtk_widget_set_visible(r->rds_label[i], !show_ft8);
@@ -2374,6 +2463,14 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_valign(r->wefax_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->wefax_expand_btn,"clicked",G_CALLBACK(wefax_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->wefax_expand_btn);
+
+  // "Show CW" toggle: opens/closes the CW text panel (in place of RX2).
+  // Shown only in CWL/CWU with the CW decoder selected (see rds_update_cb).
+  r->cw_expand_btn=gtk_button_new_with_label("Show CW");
+  gtk_widget_set_name(r->cw_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->cw_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->cw_expand_btn,"clicked",G_CALLBACK(cw_expand_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(dec_ctl),r->cw_expand_btn);
 #endif
 
   // Decode block content: the text column (expands) with the controls on the right.
@@ -2412,7 +2509,7 @@ static void create_visual(RADIO *r) {
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
-        gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
+        gtk_widget_set_sensitive(add_receiver_b,panels_idle(r));
       }
       else {
         gtk_widget_set_sensitive(add_receiver_b, FALSE);
@@ -2706,6 +2803,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->sstv_panel_open = FALSE;
   r->wefax_panel = NULL;
   r->wefax_panel_open = FALSE;
+  r->cw_panel = NULL;
+  r->cw_panel_open = FALSE;
   r->wefax_lpm = 120;          // weather-fax standard
   r->wefax_ioc = 576;          // standard IOC
   r->wefax_autostart = TRUE;   // auto-detect the start tone
@@ -2824,7 +2923,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // Must be AFTER create_visual, which is what creates add_receiver_b (only
   // when supported_receivers>1); leave HL2-with-xvtr as-is.
   if(add_receiver_b!=NULL && (r->hl2==NULL || r->hl2->xvtr==FALSE)) {
-    gtk_widget_set_sensitive(add_receiver_b,r->ft8_panel==NULL && r->sstv_panel==NULL && r->wefax_panel==NULL && r->receivers<r->discovered->supported_receivers);
+    gtk_widget_set_sensitive(add_receiver_b,panels_idle(r));
   }
 
   switch(r->discovered->protocol) {

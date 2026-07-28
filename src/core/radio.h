@@ -92,6 +92,7 @@ typedef enum {
   DECODE_FT4,       // FT4 decoder (ft8_proto = 1)
   DECODE_SSTV,      // SSTV image decoder (Scottie/Martin)
   DECODE_WEFAX,     // WEFAX / HF radiofax image decoder
+  DECODE_CW,        // CW (Morse) audio->text decoder
 } decode_mode_t;
 
 typedef struct _radio {
@@ -121,6 +122,8 @@ typedef struct _radio {
   gboolean sstv_panel_open;// user toggled the SSTV image panel on (in place of RX2)
   GtkWidget *wefax_panel;  // embedded WEFAX image panel (NULL unless open in DIGU/DIGL+WEFAX)
   gboolean wefax_panel_open;// user toggled the WEFAX image panel on (in place of RX2)
+  GtkWidget *cw_panel;     // embedded CW text panel (NULL unless open in CWL/CWU+CW)
+  gboolean cw_panel_open;  // user toggled the CW text panel on (in place of RX2)
   gint wefax_lpm;          // WEFAX lines per minute (60/90/120/240; default 120)
   gint wefax_ioc;          // WEFAX Index Of Cooperation (576/288; default 576)
   gboolean wefax_autostart;// auto-detect the WEFAX start tone (default TRUE)
@@ -318,6 +321,7 @@ typedef struct _radio {
   GtkWidget *ft8_expand_btn; // bottom-bar toggle: open/close the big FT8 panel (DIGU only)
   GtkWidget *sstv_expand_btn;// bottom-bar toggle: open/close the SSTV image panel (DIGU/DIGL)
   GtkWidget *wefax_expand_btn;// bottom-bar toggle: open/close the WEFAX image panel (DIGU/DIGL)
+  GtkWidget *cw_expand_btn;  // bottom-bar toggle: open/close the CW text panel (CWL/CWU)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
@@ -354,6 +358,7 @@ extern void set_mox(RADIO *r,gboolean state);
 extern void radio_ft8_panel_sync(RADIO *r);
 extern void radio_sstv_panel_sync(RADIO *r);
 extern void radio_wefax_panel_sync(RADIO *r);
+extern void radio_cw_panel_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

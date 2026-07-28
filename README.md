@@ -51,6 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
+| **CW decoder** | Decode Morse to text in CWL/CWU: auto tone-lock, adaptive WPM, a scrolling text panel with a live WPM/tone readout — no external program. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
@@ -305,6 +306,17 @@ you've dialled in.
 - **PureSignal.** Adaptive predistortion (Protocol 1 only), turned on in
   **Configure → Pure Signal**. Still an unfinished prototype, calibrated mainly
   for the Hermes-Lite 2.
+
+- **CW (Morse) decoder.** In **CWL/CWU** the Decode-block selector offers
+  **Off / CW**; pick **CW** and the receiver's audio is decoded to text. A
+  self-contained DSP chain (Goertzel tone-tracking → adaptive-WPM envelope →
+  Morse table) locks onto the keyed tone, follows the sending speed
+  automatically, and turns the dots/dashes into letters. **Show CW** opens a
+  panel (in the second-RX slot, like the SSTV/FT8 panels) with the scrolling
+  text, a live WPM / tone-frequency readout and a **Clear** button. No external
+  program. *(Decoder verified on synthetic Morse audio; end-to-end off-air
+  decode not yet confirmed on hardware. Works best on a single well-tuned signal
+  in a narrow filter — heavy QRM garbles the text.)*
 
 - **DX cluster + spot overlay.** Connect to a telnet DX cluster from
   **Configure → Cluster** (host / port / login call; a live status line). Incoming

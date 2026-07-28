@@ -189,6 +189,17 @@ MacHPSDR has a built-in FT8/FT4 engine (no external WSJT-X needed): pick **FT8**
 - **DXCC** — the "new one" highlight uses AD1C's `cty.dat`; a **Reload cty.dat**
   button and status live in Configure → FT8.
 
+**CW (Morse) decoder.** In the CW modes (CWL/CWU), the Decode block offers an
+**Off / CW** selector. With **CW** selected, the receiver's audio is decoded to
+text: the decoder locks onto the keyed tone, adapts to the sending speed
+automatically, and turns the dots and dashes into letters. Press **Show CW** to
+open a panel (in place of the second receiver, like the SSTV/FT8 panels) with
+the scrolling decoded text, a live WPM / tone-frequency readout, and a **Clear**
+button. The decoded text also flows into the Decode block's readout. Decoding
+is automatic — no external program is needed. (It works best on a single,
+well-tuned CW signal in a fairly narrow filter; heavy QRM or several
+overlapping signals will garble the text.)
+
 ---
 
 ## 8. SSTV and WEFAX — images and weather fax
