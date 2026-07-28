@@ -375,6 +375,21 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->snb);
   setProperty(name,value);
 
+  sprintf(name,"receiver[%d].notches",rx->channel);
+  sprintf(value,"%d",rx->notches);
+  setProperty(name,value);
+  for(i=0;i<rx->notches;i++) {
+    sprintf(name,"receiver[%d].notch[%d].fcenter",rx->channel,i);
+    sprintf(value,"%f",rx->notch[i].fcenter);
+    setProperty(name,value);
+    sprintf(name,"receiver[%d].notch[%d].fwidth",rx->channel,i);
+    sprintf(value,"%f",rx->notch[i].fwidth);
+    setProperty(name,value);
+    sprintf(name,"receiver[%d].notch[%d].active",rx->channel,i);
+    sprintf(value,"%d",rx->notch[i].active);
+    setProperty(name,value);
+  }
+
   sprintf(name,"receiver[%d].rit_enabled",rx->channel);
   sprintf(value,"%d",rx->rit_enabled);
   setProperty(name,value);
@@ -675,6 +690,23 @@ void receiver_restore_state(RECEIVER *rx) {
   value=getProperty(name);
   if(value) rx->snb=atoi(value);
 
+  sprintf(name,"receiver[%d].notches",rx->channel);
+  value=getProperty(name);
+  if(value) rx->notches=atoi(value);
+  if(rx->notches<0) rx->notches=0;
+  if(rx->notches>MAX_NOTCHES) rx->notches=MAX_NOTCHES;
+  for(i=0;i<rx->notches;i++) {
+    sprintf(name,"receiver[%d].notch[%d].fcenter",rx->channel,i);
+    value=getProperty(name);
+    if(value) rx->notch[i].fcenter=atof(value);
+    sprintf(name,"receiver[%d].notch[%d].fwidth",rx->channel,i);
+    value=getProperty(name);
+    if(value) rx->notch[i].fwidth=atof(value);
+    sprintf(name,"receiver[%d].notch[%d].active",rx->channel,i);
+    value=getProperty(name);
+    if(value) rx->notch[i].active=atoi(value);
+  }
+
   sprintf(name,"receiver[%d].agc",rx->channel);
   value=getProperty(name);
   if(value) rx->agc=atoi(value);
@@ -917,6 +949,55 @@ void update_noise(RECEIVER *rx) {
   update_vfo(rx);
 }
 
+// Push the whole MacHPSDR notch list into WDSP for this rx's channel, set the
+// tune frequency so notches anchor to absolute RF, and enable the notched
+// bandpass only when at least one active notch exists.
+void receiver_notch_sync(RECEIVER *rx) {
+  int existing=0, i;
+  RXANBPGetNumNotches(rx->channel, &existing);
+  // clear all WDSP notches (always delete index 0 as the list collapses)
+  for(i=0;i<existing;i++) RXANBPDeleteNotch(rx->channel, 0);
+  int any_active=0;
+  for(i=0;i<rx->notches;i++) {
+    RXANBPAddNotch(rx->channel, i, rx->notch[i].fcenter, rx->notch[i].fwidth,
+                   rx->notch[i].active?1:0);
+    if(rx->notch[i].active) any_active=1;
+  }
+  RXANBPSetTuneFrequency(rx->channel, (double)rx->frequency_a);
+  RXANBPSetNotchesRun(rx->channel, any_active?1:0);
+}
+
+// Append a notch at absolute RF fcenter with given width; returns index or -1 if full.
+int receiver_add_notch(RECEIVER *rx, gdouble fcenter, gdouble fwidth) {
+  if(rx->notches>=MAX_NOTCHES) return -1;
+  int idx=rx->notches;
+  rx->notch[idx].fcenter=fcenter;
+  rx->notch[idx].fwidth=fwidth;
+  rx->notch[idx].active=TRUE;
+  rx->notches++;
+  receiver_notch_sync(rx);
+  return idx;
+}
+
+void receiver_delete_notch(RECEIVER *rx, int idx) {
+  int i;
+  if(idx<0 || idx>=rx->notches) return;
+  for(i=idx;i<rx->notches-1;i++) rx->notch[i]=rx->notch[i+1];
+  rx->notches--;
+  receiver_notch_sync(rx);
+}
+
+// Return index of the notch whose band contains absolute freq f_hz, else -1.
+int receiver_notch_at(RECEIVER *rx, gdouble f_hz) {
+  int i;
+  for(i=0;i<rx->notches;i++) {
+    gdouble lo=rx->notch[i].fcenter-0.5*rx->notch[i].fwidth;
+    gdouble hi=rx->notch[i].fcenter+0.5*rx->notch[i].fwidth;
+    if(f_hz>=lo && f_hz<=hi) return i;
+  }
+  return -1;
+}
+
 void receiver_close(RECEIVER *rx) {
   // Keep at least one receiver — never leave the radio headless
   if(radio->receivers<=1) return;
@@ -983,6 +1064,20 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
   switch(button) {
     case 1: // left button
+      // Ctrl+click manages manual notch filters: click empty area to drop a
+      // 100 Hz notch at the clicked RF; click on an existing notch to remove it.
+      if(state & GDK_CONTROL_MASK) {
+        long long half=(long long)rx->sample_rate/2LL;
+        long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+        double clicked=(double)min_display + ex*rx->hz_per_pixel;
+        int hit=receiver_notch_at(rx,clicked);
+        if(hit>=0) receiver_delete_notch(rx,hit);
+        else       receiver_add_notch(rx,clicked,100.0);
+        if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
+        rx->has_moved=FALSE;
+        rx->is_panning=FALSE;
+        return;
+      }
 #ifdef FT8
       // Shift+click in DIGU sets the FT8 TX audio offset (dial+offset) without
       // tuning the dial.  Mirrors WSJT-X double-click-to-set-Tx.  The matching
@@ -2649,6 +2744,8 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->anf=FALSE;
   rx->snb=FALSE;
 
+  rx->notches=0;
+
   rx->nr_agc=0;
   rx->nr2_gain_method=2;
   rx->nr2_npe_method=0;
@@ -2839,6 +2936,9 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetRXAANRRun(rx->channel, rx->nr);
   SetRXAANFRun(rx->channel, rx->anf);
   SetRXASNBARun(rx->channel, rx->snb);
+
+  // Apply any restored manual notches now that the WDSP channel exists.
+  receiver_notch_sync(rx);
 
   /* Restore freetune WDSP shift state after channel open */
   if(rx->freetune || rx->ctun) {

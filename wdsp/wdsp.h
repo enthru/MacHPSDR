@@ -84,6 +84,17 @@ extern double GetRXAMeter (int channel, int mt);
 extern void SetRXAPanelBinaural(int channel, int bin);
 extern void SetRXAPanelPan (int channel, double pan);
 extern void RXANBPSetFreqs (int channel, double low, double high);
+// Manual notch filter (MNF) database (wdsp/nbp.c). notch is an index into the
+// per-channel notch list; RXANBPAddNotch inserts at that index (append == the
+// current count). fcenter/fwidth are absolute Hz, compared against the
+// passband after RXANBPSetTuneFrequency/RXANBPSetShiftFrequency are applied.
+extern void RXANBPGetNumNotches   (int channel, int* nnotches);
+extern int  RXANBPAddNotch        (int channel, int notch, double fcenter, double fwidth, int active);
+extern int  RXANBPGetNotch        (int channel, int notch, double* fcenter, double* fwidth, int* active);
+extern int  RXANBPDeleteNotch     (int channel, int notch);
+extern int  RXANBPEditNotch       (int channel, int notch, double fcenter, double fwidth, int active);
+extern void RXANBPSetNotchesRun   (int channel, int run);
+extern void RXANBPSetTuneFrequency(int channel, double tunefreq);
 extern void SetRXASNBAOutputBandwidth (int channel, double low, double high);
 
 extern void SetRXAANRRun(int channel, int run);

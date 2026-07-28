@@ -51,6 +51,16 @@ typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 _Static_assert((WDSP_ANALYZER_MAX_SIZE * 2) % ANALYZER_FEED_BLOCK == 0,
                "ANALYZER_FEED_BLOCK must divide the WDSP analyzer input ring");
 
+// Manual notch filter (MNF): operator-placed notches on top of WDSP's
+// notched-bandpass (wdsp/nbp.c), stored as absolute RF Hz so they anchor to
+// real RF as the dial moves (see receiver_notch_sync).
+#define MAX_NOTCHES 16
+typedef struct _notch {
+  gdouble  fcenter;   // absolute RF Hz
+  gdouble  fwidth;    // Hz
+  gboolean active;
+} NOTCH;
+
 typedef struct _receiver {
 
   gint channel; // WDSP channel
@@ -169,6 +179,9 @@ typedef struct _receiver {
   gboolean nr2;
   gboolean anf;
   gboolean snb;
+
+  NOTCH notch[MAX_NOTCHES];
+  gint  notches;      // number of notches in use
 
   gint nr_agc;
   gint nr2_gain_method;
@@ -399,6 +412,12 @@ extern void set_deviation(RECEIVER *rx);
 extern void set_squelch(RECEIVER *rx);
 
 extern void update_noise(RECEIVER *rx);
+
+// Manual notch filter (MNF) helpers (receiver.c).
+extern void receiver_notch_sync(RECEIVER *rx);
+extern int  receiver_add_notch(RECEIVER *rx, gdouble fcenter, gdouble fwidth);
+extern void receiver_delete_notch(RECEIVER *rx, int idx);
+extern int  receiver_notch_at(RECEIVER *rx, gdouble f_hz);
 
 extern void receiver_save_state(RECEIVER *rx);
 extern void receiver_change_sample_rate(RECEIVER *rx,int sample_rate);

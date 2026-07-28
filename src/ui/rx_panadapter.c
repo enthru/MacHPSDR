@@ -477,6 +477,32 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_fill(cr);
     }
 
+    // Manual notch filters: translucent band + centre line, drawn in the same
+    // absolute-RF-to-pixel coordinate system as the filter passband above so
+    // they sit on top of it and track the dial (Ctrl+click in receiver.c adds
+    // or removes one).
+    for(i=0;i<rx->notches;i++) {
+      double _fc=rx->notch[i].fcenter;
+      double _w =rx->notch[i].fwidth;
+      double _xl=((_fc-0.5*_w)-(double)min_display)/rx->hz_per_pixel;
+      double _xr=((_fc+0.5*_w)-(double)min_display)/rx->hz_per_pixel;
+      if(_xr<0 || _xl>display_width) continue;
+      if(rx->notch[i].active) {
+        cairo_set_source_rgba(cr, 0.9, 0.2, 0.2, 0.30);   // active: translucent red band
+      } else {
+        cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 0.20);   // inactive: grey
+      }
+      cairo_rectangle(cr, _xl, 0.0, (_xr-_xl)<1.0?1.0:(_xr-_xl), (double)display_height-20);
+      cairo_fill(cr);
+      // centre line
+      cairo_set_source_rgba(cr, 0.9, 0.2, 0.2, 0.8);
+      cairo_set_line_width(cr, 1.0);
+      double _xc=(_fc-(double)min_display)/rx->hz_per_pixel;
+      cairo_move_to(cr, _xc, 0.0);
+      cairo_line_to(cr, _xc, (double)display_height-20);
+      cairo_stroke(cr);
+    }
+
 #ifdef FT8
     // FT8 TX audio-offset marker: a green vertical line where our transmission
     // will land (dial + tx offset, USB). Only meaningful while the FT8 panel is
