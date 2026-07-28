@@ -81,6 +81,11 @@ static void add_page(GtkWidget *child, const char *title) {
   // stack child).
   GtkWidget *scroller=gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
+  // Let the scroller request its child's full natural height so the window opens
+  // tall enough to show the whole page (GTK caps it to the monitor work-area, and
+  // the scrollbar only appears as a fallback when the page is taller than the
+  // screen). Width stays fixed (horizontal scroll fallback only).
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller),TRUE);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),child);
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
@@ -148,7 +153,9 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_window_set_title(GTK_WINDOW(dialog),title);
   // Bound the window so oversized pages scroll (see the scroller in add_page)
   // rather than forcing the window past the screen edge. User-resizable from here.
-  gtk_window_set_default_size(GTK_WINDOW(dialog),1040,720);
+  // Fix the width; let the height follow the page's natural size (-1) so a tall
+  // page opens without a vertical scrollbar (see the scroller in add_page).
+  gtk_window_set_default_size(GTK_WINDOW(dialog),1040,-1);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
   GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
