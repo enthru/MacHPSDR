@@ -89,7 +89,14 @@ own VFO, panadapter and waterfall.
 - **AGC** — off / long / slow / medium / fast, with an adjustable threshold ("AGC
   gain") line drawn on the panadapter.
 - **Noise handling** — NR / NR2 (noise reduction), NB / NB2 (noise blanker), ANF
-  (automatic notch filter).
+  (automatic notch filter) and **SNB** (Spectral Noise Blanker). Each is
+  remembered per receiver between sessions.
+- **Manual notch filters (MNF)** — place your own notches to kill a steady
+  carrier or heterodyne. **Ctrl+click** on the RX spectrum drops a notch at that
+  frequency; **Ctrl+click** on an existing notch removes it. A notch is drawn as
+  a translucent red band with a centre line and is stored by absolute frequency,
+  so it stays on the offending signal as you tune. Up to 16 per receiver,
+  remembered between sessions.
 - **Volume / mute / squelch** — audible-output level and squelch per receiver.
 - **Sub-receiver (SUBRX)** — a second demodulator inside one receiver slice,
   switched on with the **SUBRX** button on the VFO; it has its own frequency
@@ -121,6 +128,16 @@ For HPSDR radios MacHPSDR provides a full TX path: TX filtering, CTCSS, EER, and
 metering. PureSignal (adaptive predistortion, Protocol 1) is available as a
 build option. HackRF TX is implemented (half-duplex) via SoapySDR. Keying is by
 MOX, PTT, or a mapped MIDI/keyboard action.
+
+**TX speech processing (Configure → TX).** A Thetis-parity audio chain:
+**CESSB** (controlled-envelope SSB overshoot control), **CFC** (a 5-band
+Continuous Frequency Compressor at 200 / 1 k / 2 k / 3 k / 4 k Hz with pre-comp
+and pre-emphasis), a **Phase Rotator** (voice-asymmetry reduction, adjustable
+corner and stages), and a **10-band graphic equaliser** on both TX and RX.
+Per-stage **Leveler / CFC / Compressor** gain-reduction meters (dB) are drawn
+under the ALC line on the TX panadapter while transmitting. *These are built and
+tested with the fake device but are not yet verified on the air — this fork has
+no transmit hardware.*
 
 ---
 

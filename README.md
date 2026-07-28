@@ -51,6 +51,8 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
+| **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
+| **TX speech processing** | Thetis-parity transmit chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -140,6 +142,21 @@ you've dialled in.
   - Tuning is clamped to **0 – 6 GHz** (or the radio's own upper limit if it is
     lower, e.g. ~61 MHz for classic HPSDR), so a stray edit can't run the VFO
     off to a nonsense frequency.
+
+- **Noise blankers & reduction.** Per-receiver toggles on the VFO row: **NB**/**NB2**
+  (impulse-noise blankers), **NR**/**NR2** (noise reduction), **ANF** (automatic
+  notch) and **SNB** (Spectral Noise Blanker — a wideband spectral impulse
+  remover). Each is remembered per receiver between sessions.
+
+- **Manual notch filters (MNF).** In addition to the automatic notch (**ANF**),
+  you can place your own notches to kill a steady carrier or heterodyne.
+  **Ctrl+click** on the RX spectrum drops a notch at that frequency;
+  **Ctrl+click** on an existing notch removes it. Each notch is drawn as a
+  translucent red band with a centre line, is stored by absolute RF frequency so
+  it stays on the offending signal as you tune, and is remembered per receiver
+  between sessions (up to 16 notches). *(On-air notch depth is unverified — no
+  receive hardware in this fork; the on-screen placement and tuning behaviour are
+  faker-verified.)*
 
 ### Modes & decoding
 
@@ -255,6 +272,24 @@ you've dialled in.
   `--faker` replay path reads — so it's loop-back-able) and clean demodulated
   audio at 48 kHz. Output folder and which streams to write are set in
   **Configure → Recording**.
+
+- **TX speech processing chain (Thetis-parity).** A full transmit audio chain in
+  **Configure → TX**, matching the processing Thetis exposes on ANAN radios:
+  - **CESSB** (Controlled-Envelope SSB) overshoot control for more clean talk
+    power on SSB.
+  - **CFC** — a multiband **Continuous Frequency Compressor** (5-band profile at
+    200 / 1 k / 2 k / 3 k / 4 k Hz, with pre-comp and a pre-emphasis stage).
+  - **Phase Rotator** (asymmetry reduction for the human voice; adjustable corner
+    frequency and number of stages).
+  - A **10-band graphic equaliser** on **both** transmit and receive
+    (32 Hz … 16 kHz plus a preamp band).
+  - **Per-stage TX metering:** Leveler / CFC / Compressor gain-reduction readouts
+    (dB) drawn under the ALC line on the TX panadapter, each shown only while its
+    stage is on and you are transmitting.
+
+  *(These are built and faker-smoke-tested but **unverified on air** — there is no
+  transmit hardware in this fork. They need a real SSB transmitter and a monitor
+  receiver to confirm they improve talk power and that the meters read sanely.)*
 
 - **PureSignal.** Adaptive predistortion (Protocol 1 only), turned on in
   **Configure → Pure Signal**. Still an unfinished prototype, calibrated mainly
