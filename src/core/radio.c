@@ -81,6 +81,7 @@
 #endif
 
 #include "cwdaemon.h"
+#include "dxcluster.h"
 
 #ifdef MIDI
 #include "midi.h"
@@ -231,6 +232,14 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_log_udp_port",value);
   sprintf(value,"%d",radio->ft8_pskr);
   setProperty("radio.ft8_pskr",value);
+  sprintf(value,"%d",radio->cluster_enable);
+  setProperty("radio.cluster_enable",value);
+  sprintf(value,"%d",radio->cluster_spots_show);
+  setProperty("radio.cluster_spots_show",value);
+  setProperty("radio.cluster_host",radio->cluster_host);
+  sprintf(value,"%d",radio->cluster_port);
+  setProperty("radio.cluster_port",value);
+  setProperty("radio.cluster_login",radio->cluster_login);
   setProperty("radio.rec_dir",radio->rec_dir);
   sprintf(value,"%d",radio->rec_iq);
   setProperty("radio.rec_iq",value);
@@ -1734,6 +1743,16 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_log_udp_port=atoi(value);
   value=getProperty("radio.ft8_pskr");
   if(value!=NULL) r->ft8_pskr=atoi(value);
+  value=getProperty("radio.cluster_enable");
+  if(value!=NULL) r->cluster_enable=atoi(value);
+  value=getProperty("radio.cluster_spots_show");
+  if(value!=NULL) r->cluster_spots_show=atoi(value);
+  value=getProperty("radio.cluster_host");
+  if(value!=NULL) { strncpy(r->cluster_host,value,sizeof(r->cluster_host)-1); r->cluster_host[sizeof(r->cluster_host)-1]='\0'; }
+  value=getProperty("radio.cluster_port");
+  if(value!=NULL) r->cluster_port=atoi(value);
+  value=getProperty("radio.cluster_login");
+  if(value!=NULL) { strncpy(r->cluster_login,value,sizeof(r->cluster_login)-1); r->cluster_login[sizeof(r->cluster_login)-1]='\0'; }
   value=getProperty("radio.rec_dir");
   if(value!=NULL) { strncpy(r->rec_dir,value,sizeof(r->rec_dir)-1); r->rec_dir[sizeof(r->rec_dir)-1]='\0'; }
   value=getProperty("radio.rec_iq");
@@ -2698,6 +2717,12 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
   r->ft8_pskr = FALSE;         // PSK Reporter spotting off until call/grid set
 
+  r->cluster_enable = FALSE;
+  r->cluster_spots_show = TRUE;
+  strcpy(r->cluster_host, "dxc.nc7j.com");
+  r->cluster_port = 7373;
+  r->cluster_login[0] = '\0';
+
   r->rec_dir[0] = '\0';        // recorder: empty => default ~/.local/share/machpsdr
   r->rec_iq = TRUE;            // record both streams by default
   r->rec_af = TRUE;
@@ -2882,6 +2907,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   g_idle_add(radio_start,(gpointer)r);
 
+  // DX cluster client (P4.2): store the RADIO pointer (also seeds synthetic
+  // test spots under MACHPSDR_CLUSTER_TESTSPOTS) now that receiver 0 and its
+  // panadapter exist, then start the socket thread if the operator enabled it.
+  dxcluster_init(r);
+  if(r->cluster_enable) dxcluster_start();
 
   return r;
 }

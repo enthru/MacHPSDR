@@ -43,6 +43,7 @@
 #include "vfo.h"
 #include "level_meter.h"
 #include "css.h"
+#include "dxcluster.h"
 
 #define LINE_WIDTH 1.0
 
@@ -302,6 +303,27 @@ GtkWidget *create_rx_panadapter(RECEIVER *rx) {
 
 static gboolean first_time=TRUE;
 
+// Deterministic colour for a DX cluster spot's DXCC entity: unresolved (-1)
+// draws grey, otherwise a stable hue spread (HSV, s=0.7 v=1.0) so repeat
+// entities are visually distinguishable without a lookup table.
+static void cluster_spot_rgb(int entity, double *r, double *g, double *b) {
+  if(entity<0) { *r=0.6; *g=0.6; *b=0.6; return; }
+  double hue=(double)((entity*47)%360);
+  double s=0.7, v=1.0;
+  double c=v*s;
+  double hp=hue/60.0;
+  double x=c*(1.0-fabs(fmod(hp,2.0)-1.0));
+  double r1,g1,b1;
+  if(hp<1.0)      { r1=c; g1=x; b1=0; }
+  else if(hp<2.0) { r1=x; g1=c; b1=0; }
+  else if(hp<3.0) { r1=0; g1=c; b1=x; }
+  else if(hp<4.0) { r1=0; g1=x; b1=c; }
+  else if(hp<5.0) { r1=x; g1=0; b1=c; }
+  else            { r1=c; g1=0; b1=x; }
+  double m=v-c;
+  *r=r1+m; *g=g1+m; *b=b1+m;
+}
+
 void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   int i;
   int x1,x2;
@@ -520,6 +542,29 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       cairo_show_text(cr, "TX");
     }
 #endif
+
+    // DX cluster spot overlay: a short tick + callsign for each spot whose RF
+    // falls in the visible span, colour-keyed by DXCC entity. Click-to-tune
+    // hit-testing against these spots lives in receiver.c (receiver_pressed_cb).
+    if(radio->cluster_enable && radio->cluster_spots_show) {
+      dxcluster_lock();
+      int ns=dxcluster_count();
+      for(i=0;i<ns;i++) {
+        const DX_SPOT *s=dxcluster_spot(i);
+        double x=((double)s->freq - (double)min_display)/rx->hz_per_pixel;
+        if(x<0.0 || x>(double)display_width) continue;
+        double sr,sg,sb;
+        cluster_spot_rgb(s->entity,&sr,&sg,&sb);
+        cairo_set_source_rgba(cr, sr, sg, sb, 0.9);
+        cairo_set_line_width(cr, 1.0);
+        cairo_move_to(cr, x, 0.0);
+        cairo_line_to(cr, x, 18.0);
+        cairo_stroke(cr);
+        cairo_move_to(cr, x+2.0, 26.0);
+        cairo_show_text(cr, s->call);
+      }
+      dxcluster_unlock();
+    }
 
     cairo_set_line_width (cr, LINE_WIDTH);
     // plot the levels

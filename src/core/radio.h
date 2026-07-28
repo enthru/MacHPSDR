@@ -131,6 +131,12 @@ typedef struct _radio {
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
   gboolean ft8_pskr;       // report received FT8 spots to pskreporter.info
+  // DX cluster client (P4.2): telnet spot feed + panadapter overlay. Persisted.
+  gboolean cluster_enable;      // connect to DX cluster
+  gboolean cluster_spots_show;  // draw spot overlay on panadapter
+  char     cluster_host[64];
+  gint     cluster_port;
+  char     cluster_login[16];   // login call (empty => use station_call)
   // I/Q + audio recorder (see recorder.c). Persisted in radio_save_state.
   char rec_dir[512];       // output directory ("" = default ~/.local/share/machpsdr)
   gboolean rec_iq;         // write the off-air I/Q WAV

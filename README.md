@@ -51,6 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
+| **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
@@ -304,6 +305,17 @@ you've dialled in.
 - **PureSignal.** Adaptive predistortion (Protocol 1 only), turned on in
   **Configure → Pure Signal**. Still an unfinished prototype, calibrated mainly
   for the Hermes-Lite 2.
+
+- **DX cluster + spot overlay.** Connect to a telnet DX cluster from
+  **Configure → Cluster** (host / port / login call; a live status line). Incoming
+  `DX de …` spots are stored (15-minute age-out) and drawn on every RX panadapter
+  as a short tick plus the callsign, **colour-keyed by DXCC entity** (reusing the
+  FT8 `cty.dat` resolver). **Left-click a spot marker to tune** the receiver
+  straight onto the spotted frequency (works in normal, ctun and freetune modes,
+  and tracks a SAT/RSAT split). The client runs in its own thread with automatic
+  reconnect. *(The client, overlay and click-to-tune are built and faker-tested
+  — including a live connect to a public cluster — but the on-air spot-line
+  parsing and colouring have not been exercised against a busy cluster.)*
 
 ### SoapySDR / HackRF
 

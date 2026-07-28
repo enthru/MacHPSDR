@@ -115,6 +115,11 @@ own VFO, panadapter and waterfall.
   adding a hidden second receiver and the mixer — next to the gain/phase controls
   and a disclaimer. Protocol 1 only, needs a radio with two receivers/ADCs; not
   yet verified on hardware in this fork.
+- **DX cluster spots** — when a DX cluster is connected (see Configure →
+  Cluster), incoming spots are drawn on the RX panadapter as a short coloured
+  tick with the callsign, colour-keyed by DXCC entity. **Left-click a spot
+  marker** to tune the receiver straight onto that station (works in normal,
+  ctun and freetune tuning). Spots disappear after 15 minutes.
 
 ---
 
@@ -274,6 +279,14 @@ time/frequency-standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich
 on LF) and press **Calibrate** to measure its carrier and set the oscillator
 correction automatically, **Tune** to zero-beat it by ear, or type the value in
 manually.
+
+**DX cluster (Configure → Cluster).** Connect to a telnet DX cluster: enter the
+host/IP, the port and your login callsign (leave the login blank to use the
+station callsign from the FT8 page), then tick **Connect to DX cluster** — a
+status line shows the connection state. **Show spots on panadapter** toggles
+the overlay. Incoming `DX de …` spots are stored and shown on the RX
+panadapter, colour-keyed by DXCC entity, and clicking a spot tunes to it; the
+client reconnects automatically if the link drops.
 
 ---
 

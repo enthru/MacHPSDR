@@ -274,7 +274,9 @@ tx_info.c \
 tx_info_meter.c \
 peak_detect.c \
 subrx.c \
-actions.c
+actions.c\
+dxcluster.c\
+cluster_dialog.c
 
 HEADERS=\
 main.h\
@@ -338,7 +340,9 @@ tx_info.h \
 tx_info_meter.h \
 peak_detect.h \
 subrx.h \
-actions.h
+actions.h\
+dxcluster.h\
+cluster_dialog.h
 
 OBJS=\
 main.o\
@@ -407,7 +411,9 @@ peak_detect.o \
 subrx.o \
 actions.o \
 recorder.o \
-waterfall_theme.o
+waterfall_theme.o \
+dxcluster.o \
+cluster_dialog.o
 
 
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)

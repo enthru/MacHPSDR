@@ -63,6 +63,7 @@
 #include "property.h"
 #include "rigctl.h"
 #include "subrx.h"
+#include "dxcluster.h"
 #ifdef FT8
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
@@ -1081,6 +1082,16 @@ static void ft8_set_tx_offset_from_x(RECEIVER *rx, double ex) {
 }
 #endif
 
+// Absolute RF Hz under panadapter x-pixel `x`, folding in pan/zoom. The one
+// canonical inverse of the freq->x mapping the panadapter draws with; used by
+// the Ctrl+click notch hit-test and the DX-cluster spot hit-test so a click
+// always lands on the same RF the marker is drawn at.
+static long long receiver_x_to_freq(RECEIVER *rx, double x) {
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+  return (long long)((double)min_display + x*rx->hz_per_pixel);
+}
+
 // GTK4: GtkGestureClick "pressed" handler (button/state from the gesture).
 void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
@@ -1092,9 +1103,7 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
       // Ctrl+click manages manual notch filters: click empty area to drop a
       // 100 Hz notch at the clicked RF; click on an existing notch to remove it.
       if(state & GDK_CONTROL_MASK) {
-        long long half=(long long)rx->sample_rate/2LL;
-        long long min_display=(rx->frequency_a - half)+(long long)((double)rx->pan*rx->hz_per_pixel);
-        double clicked=(double)min_display + ex*rx->hz_per_pixel;
+        double clicked=(double)receiver_x_to_freq(rx,ex);
         int hit=receiver_notch_at(rx,clicked);
         if(hit>=0) receiver_delete_notch(rx,hit);
         else       receiver_add_notch(rx,clicked,100.0);
@@ -1115,6 +1124,9 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
         return;
       }
 #endif
+      // Plain left-click tunes on *release* (receiver_released_cb), which is
+      // also where the DX-cluster spot snap lives — doing it here as well would
+      // double-tune. Just stash the press position for the drag/pan test.
       //if(!rx->locked) {
         rx->last_x=(int)ex;
         rx->press_x=(int)ex;
@@ -1524,8 +1536,21 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
              not the waterfall centre */
           receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),TRUE);
         } else {
-          // move to this frequency
-          receiver_move_to(rx,(long long)((float)x*rx->hz_per_pixel));
+          // Plain click. If a DX-cluster spot marker sits within ~6px of the
+          // click, tune exactly onto its frequency (round=FALSE, no step snap)
+          // via receiver_move() so the move is committed and any SAT/RSAT split
+          // tracks; otherwise fall back to the normal move-to-clicked-frequency.
+          long long spot_f;
+          long long tol=(long long)(6.0*rx->hz_per_pixel);
+          if(radio->cluster_enable && radio->cluster_spots_show &&
+             dxcluster_nearest(receiver_x_to_freq(rx,(double)x),tol,&spot_f)) {
+            long long hz=(rx->ctun || rx->freetune) ? (spot_f - rx->ctun_frequency)
+                                                    : (rx->frequency_a - spot_f);
+            receiver_move(rx,hz,FALSE);
+          } else {
+            // move to this frequency
+            receiver_move_to(rx,(long long)((float)x*rx->hz_per_pixel));
+          }
         }
         rx->last_x=x;
         rx->has_moved=FALSE;
