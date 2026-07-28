@@ -642,6 +642,26 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].compressor_level",tx->channel);
   sprintf(value,"%f",tx->compressor_level);
   setProperty(name,value);
+  sprintf(name,"transmitter[%d].cfc_run",tx->channel);
+  sprintf(value,"%d",tx->cfc_run);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].cfc_peq_run",tx->channel);
+  sprintf(value,"%d",tx->cfc_peq_run);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].cfc_precomp",tx->channel);
+  sprintf(value,"%f",tx->cfc_precomp);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].cfc_prepeq",tx->channel);
+  sprintf(value,"%f",tx->cfc_prepeq);
+  setProperty(name,value);
+  for(int i=0;i<5;i++){
+    sprintf(name,"transmitter[%d].cfc_comp[%d]",tx->channel,i);
+    sprintf(value,"%f",tx->cfc_comp[i]);
+    setProperty(name,value);
+    sprintf(name,"transmitter[%d].cfc_eq[%d]",tx->channel,i);
+    sprintf(value,"%f",tx->cfc_eq[i]);
+    setProperty(name,value);
+  }
 }
 
 void transmitter_restore_state(TRANSMITTER *tx) {
@@ -787,6 +807,27 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].compressor_level",tx->channel);
   value=getProperty(name);
   if(value) tx->compressor_level=atof(value);
+
+  sprintf(name,"transmitter[%d].cfc_run",tx->channel);
+  value=getProperty(name);
+  if(value) tx->cfc_run=atoi(value);
+  sprintf(name,"transmitter[%d].cfc_peq_run",tx->channel);
+  value=getProperty(name);
+  if(value) tx->cfc_peq_run=atoi(value);
+  sprintf(name,"transmitter[%d].cfc_precomp",tx->channel);
+  value=getProperty(name);
+  if(value) tx->cfc_precomp=atof(value);
+  sprintf(name,"transmitter[%d].cfc_prepeq",tx->channel);
+  value=getProperty(name);
+  if(value) tx->cfc_prepeq=atof(value);
+  for(int i=0;i<5;i++){
+    sprintf(name,"transmitter[%d].cfc_comp[%d]",tx->channel,i);
+    value=getProperty(name);
+    if(value) tx->cfc_comp[i]=atof(value);
+    sprintf(name,"transmitter[%d].cfc_eq[%d]",tx->channel,i);
+    value=getProperty(name);
+    if(value) tx->cfc_eq[i]=atof(value);
+  }
 }
 
 static gboolean update_timer_cb(void *data) {
@@ -1773,6 +1814,17 @@ log_info("create_transmitter: channel=%d\n",channel);
   tx->leveler=FALSE;
   tx->cessb=FALSE;
 
+  tx->cfc_run=FALSE;
+  tx->cfc_peq_run=FALSE;
+  tx->cfc_precomp=0.0;
+  tx->cfc_prepeq=0.0;
+  {
+    const double dF[5]={200.0,1000.0,2000.0,3000.0,4000.0};
+    const double dG[5]={0.0,5.0,10.0,10.0,5.0};
+    const double dE[5]={7.0,7.0,7.0,7.0,7.0};
+    for(int i=0;i<5;i++){ tx->cfc_freq[i]=dF[i]; tx->cfc_comp[i]=dG[i]; tx->cfc_eq[i]=dE[i]; }
+  }
+
   tx->ctcss_enabled=FALSE;
   tx->ctcss=11;
   tx->tone_level=0.2;
@@ -1897,6 +1949,12 @@ log_info("create_transmitter: channel=%d\n",channel);
 
   SetTXACompressorGain(tx->channel, tx->compressor_level);
   SetTXACompressorRun(tx->channel, tx->compressor);
+
+  SetTXACFCOMPprofile(tx->channel, 5, tx->cfc_freq, tx->cfc_comp, tx->cfc_eq);
+  SetTXACFCOMPPrecomp(tx->channel, tx->cfc_precomp);
+  SetTXACFCOMPPrePeq(tx->channel, tx->cfc_prepeq);
+  SetTXACFCOMPPeqRun(tx->channel, tx->cfc_peq_run);
+  SetTXACFCOMPRun(tx->channel, tx->cfc_run);
 
   create_eerEXT(0, // id
                 0, // run

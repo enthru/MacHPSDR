@@ -204,6 +204,12 @@ extern void SetTXAAMSQRun (int channel, int run);
 extern void SetTXACompressorGain (int channel, double gain);
 extern void SetTXACompressorRun (int channel, int run);
 extern void SetTXAosctrlRun (int channel, int run);
+extern void SetTXACFCOMPRun (int channel, int run);
+extern void SetTXACFCOMPPeqRun (int channel, int run);
+extern void SetTXACFCOMPPosition (int channel, int pos);
+extern void SetTXACFCOMPPrecomp (int channel, double precomp);
+extern void SetTXACFCOMPPrePeq (int channel, double prepeq);
+extern void SetTXACFCOMPprofile (int channel, int nfreqs, double* F, double* G, double* E);
 extern void SetTXACFIRRun (int channel, int run);
 extern double GetTXAMeter (int channel, int mt);
 

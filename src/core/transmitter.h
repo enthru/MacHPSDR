@@ -131,6 +131,14 @@ typedef struct _transmitter {
   gboolean leveler;
   gboolean cessb;
 
+  gboolean cfc_run;       // Continuous Frequency Compressor on/off
+  gboolean cfc_peq_run;   // CFC post-equalizer on/off
+  gdouble  cfc_precomp;   // pre-compression (dB)
+  gdouble  cfc_prepeq;    // pre-post-eq (dB)
+  gdouble  cfc_freq[5];   // band centre freqs (Hz)
+  gdouble  cfc_comp[5];   // per-band compression (dB)
+  gdouble  cfc_eq[5];     // per-band post-eq (dB)
+
   gboolean ctcss_enabled;
   gint ctcss;
   gdouble tone_level;

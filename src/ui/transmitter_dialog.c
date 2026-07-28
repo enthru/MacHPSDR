@@ -259,6 +259,48 @@ static void tx_compressor_cb(GtkWidget *widget, gpointer data) {
   SetTXACompressorRun(tx->channel, tx->compressor);
 }
 
+static void cfc_apply_profile(TRANSMITTER *tx) {
+  SetTXACFCOMPprofile(tx->channel, 5, tx->cfc_freq, tx->cfc_comp, tx->cfc_eq);
+}
+
+static void cfc_run_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->cfc_run = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  SetTXACFCOMPRun(tx->channel, tx->cfc_run);
+}
+
+static void cfc_peq_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->cfc_peq_run = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  SetTXACFCOMPPeqRun(tx->channel, tx->cfc_peq_run);
+}
+
+static void cfc_precomp_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->cfc_precomp = gtk_range_get_value(GTK_RANGE(widget));
+  SetTXACFCOMPPrecomp(tx->channel, tx->cfc_precomp);
+}
+
+static void cfc_prepeq_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->cfc_prepeq = gtk_range_get_value(GTK_RANGE(widget));
+  SetTXACFCOMPPrePeq(tx->channel, tx->cfc_prepeq);
+}
+
+static void cfc_comp_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),"cfc_band"));
+  tx->cfc_comp[idx] = gtk_range_get_value(GTK_RANGE(widget));
+  cfc_apply_profile(tx);
+}
+
+static void cfc_eq_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),"cfc_band"));
+  tx->cfc_eq[idx] = gtk_range_get_value(GTK_RANGE(widget));
+  cfc_apply_profile(tx);
+}
+
 void update_transmitter_dialog(TRANSMITTER *tx) {
   int i;
 
@@ -679,6 +721,77 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_widget_set_visible(comp_scale, TRUE);
   g_signal_connect(G_OBJECT(comp_scale),"value_changed",G_CALLBACK(comp_value_changed_cb),tx);
   gtk_grid_attach(GTK_GRID(compressor_grid),comp_scale,1,1,1,1);
+
+  GtkWidget *cfc_frame=gtk_frame_new("CFC (Continuous Frequency Compressor)");
+  GtkWidget *cfc_grid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(cfc_grid),6);
+  gtk_grid_set_row_spacing(GTK_GRID(cfc_grid),3);
+  sui_style_group(cfc_grid);
+  gtk_frame_set_child(GTK_FRAME(cfc_frame),cfc_grid);
+  gtk_grid_attach(GTK_GRID(grid),cfc_frame,col,row++,1,1);
+
+  GtkWidget *cfc_enable=gtk_check_button_new_with_label("Enable CFC");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(cfc_enable), tx->cfc_run);
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_enable, 0,0,2,1);
+  g_signal_connect(cfc_enable,"toggled",G_CALLBACK(cfc_run_cb),tx);
+
+  GtkWidget *cfc_peq=gtk_check_button_new_with_label("Post-EQ");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(cfc_peq), tx->cfc_peq_run);
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_peq, 2,0,2,1);
+  g_signal_connect(cfc_peq,"toggled",G_CALLBACK(cfc_peq_cb),tx);
+
+  GtkWidget *cfc_precomp_label=gtk_label_new("Precomp (dB):");
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_precomp_label,0,1,1,1);
+
+  GtkWidget *cfc_precomp_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0,20,1);
+  gtk_widget_set_size_request(cfc_precomp_scale, 120, 28);
+  gtk_range_set_value(GTK_RANGE(cfc_precomp_scale), tx->cfc_precomp);
+  sui_scale_show_value(cfc_precomp_scale,0);
+  gtk_widget_set_tooltip_text(cfc_precomp_scale, "CFC pre-compression gain (dB)");
+  g_signal_connect(G_OBJECT(cfc_precomp_scale),"value_changed",G_CALLBACK(cfc_precomp_cb),tx);
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_precomp_scale,1,1,1,1);
+
+  GtkWidget *cfc_prepeq_label=gtk_label_new("PrePeq (dB):");
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_prepeq_label,2,1,1,1);
+
+  GtkWidget *cfc_prepeq_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0,20,1);
+  gtk_widget_set_size_request(cfc_prepeq_scale, 120, 28);
+  gtk_range_set_value(GTK_RANGE(cfc_prepeq_scale), tx->cfc_prepeq);
+  sui_scale_show_value(cfc_prepeq_scale,0);
+  gtk_widget_set_tooltip_text(cfc_prepeq_scale, "CFC pre-post-eq gain (dB)");
+  g_signal_connect(G_OBJECT(cfc_prepeq_scale),"value_changed",G_CALLBACK(cfc_prepeq_cb),tx);
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_prepeq_scale,3,1,1,1);
+
+  GtkWidget *cfc_band_header=gtk_label_new("Band");
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_band_header,0,2,1,1);
+  GtkWidget *cfc_comp_header=gtk_label_new("Comp");
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_comp_header,1,2,1,1);
+  GtkWidget *cfc_eq_header=gtk_label_new("EQ");
+  gtk_grid_attach(GTK_GRID(cfc_grid), cfc_eq_header,2,2,1,1);
+
+  for(i=0;i<5;i++) {
+    snprintf(temp,sizeof temp,"%.0f Hz",tx->cfc_freq[i]);
+    GtkWidget *cfc_band_label=gtk_label_new(temp);
+    gtk_grid_attach(GTK_GRID(cfc_grid), cfc_band_label,0,3+i,1,1);
+
+    GtkWidget *cfc_comp_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-20,20,1);
+    gtk_widget_set_size_request(cfc_comp_scale, 120, 28);
+    gtk_range_set_value(GTK_RANGE(cfc_comp_scale), tx->cfc_comp[i]);
+    sui_scale_show_value(cfc_comp_scale,0);
+    gtk_widget_set_tooltip_text(cfc_comp_scale, "Per-band compression (dB)");
+    g_object_set_data(G_OBJECT(cfc_comp_scale),"cfc_band",GINT_TO_POINTER(i));
+    g_signal_connect(G_OBJECT(cfc_comp_scale),"value_changed",G_CALLBACK(cfc_comp_cb),tx);
+    gtk_grid_attach(GTK_GRID(cfc_grid), cfc_comp_scale,1,3+i,1,1);
+
+    GtkWidget *cfc_eq_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,-20,20,1);
+    gtk_widget_set_size_request(cfc_eq_scale, 120, 28);
+    gtk_range_set_value(GTK_RANGE(cfc_eq_scale), tx->cfc_eq[i]);
+    sui_scale_show_value(cfc_eq_scale,0);
+    gtk_widget_set_tooltip_text(cfc_eq_scale, "Per-band post-eq (dB)");
+    g_object_set_data(G_OBJECT(cfc_eq_scale),"cfc_band",GINT_TO_POINTER(i));
+    g_signal_connect(G_OBJECT(cfc_eq_scale),"value_changed",G_CALLBACK(cfc_eq_cb),tx);
+    gtk_grid_attach(GTK_GRID(cfc_grid), cfc_eq_scale,2,3+i,2,1);
+  }
 
   update_transmitter_dialog(tx);
 
