@@ -30,3 +30,6 @@ screenshot.jpg
 
 # transient build artifact (entitlements for codesign)
 machpsdr_entitlements.plist
+
+# Internal roadmap (not for distribution)
+doc/TODO-thetis-parity.md
