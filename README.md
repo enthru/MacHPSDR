@@ -308,12 +308,13 @@ you've dialled in.
   for the Hermes-Lite 2.
 
 - **CW (Morse) decoder.** In **CWL/CWU** the Decode-block selector offers
-  **Off / CW**; pick **CW** and the receiver's audio is decoded to text. A
-  self-contained DSP chain (Goertzel tone-tracking → adaptive-WPM envelope →
-  Morse table) locks onto the keyed tone, follows the sending speed
-  automatically, and turns the dots/dashes into letters. **Show CW** opens a
-  panel (in the second-RX slot, like the SSTV/FT8 panels) with the scrolling
-  text, a live WPM / tone-frequency readout and a **Clear** button. No external
+  **Off / CW**; pick **CW** and the receiver's audio is decoded to text **right
+  in the bottom Decode block** (a live WPM/tone line plus a rolling copy of the
+  decoded text). A self-contained DSP chain (Goertzel tone-tracking →
+  adaptive-WPM envelope → Morse table) locks onto the keyed tone, follows the
+  sending speed automatically, and turns the dots/dashes into letters. **Show
+  CW** is optional — it opens a bigger panel (in the second-RX slot, like the
+  SSTV/FT8 panels) with full scrollback and a **Clear** button. No external
   program. *(Decoder verified on synthetic Morse audio; end-to-end off-air
   decode not yet confirmed on hardware. Works best on a single well-tuned signal
   in a narrow filter — heavy QRM garbles the text.)*

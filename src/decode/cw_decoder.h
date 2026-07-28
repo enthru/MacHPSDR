@@ -48,6 +48,12 @@ void cw_decoder_add_audio(const double *samples, int nframes);
 // Returns the number of characters copied. GTK thread only.
 int cw_decoder_get_text(char *buf, int buflen);
 
+// Copy the most-recently-decoded text (up to buflen-1 chars, NUL-terminated)
+// WITHOUT draining it — a rolling tail for the always-on bottom Decode-block
+// readout, which must not steal characters from the panel's get_text() drain.
+// Returns the number of characters copied. GTK thread only.
+int cw_decoder_get_recent(char *buf, int buflen);
+
 // Snapshot of decoder status for the panel's readout line. GTK thread only.
 //   wpm     - estimated words-per-minute (from the adaptive dot length)
 //   tone_hz - the currently-tracked keyed-tone frequency

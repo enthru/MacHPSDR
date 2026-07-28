@@ -2061,6 +2061,7 @@ static gboolean rds_update_cb(gpointer data) {
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
   gboolean ft8_markup=FALSE;         // ft8buf carries Pango markup (worked-call colour)
+  gboolean cw_readout=FALSE;         // ellipsize the readout at the START (CW ticker)
   // Which decoder is selected for the digital modes (radio->decode_mode is the
   // single source of truth; off by default). The FT8/FT4 name follows it.
   gboolean ft8_active  = digi && (r->decode_mode==DECODE_FT8 || r->decode_mode==DECODE_FT4);
@@ -2237,17 +2238,23 @@ static gboolean rds_update_cb(gpointer data) {
 #endif
   }
   else if(cw_active) {
-    // CW: the decoded text lives in the panel; the bottom block carries a
-    // compact WPM/tone readout (and, when the panel is closed, a hint to open it).
+    // CW: decode straight into the bottom block — a status line plus a rolling
+    // tail of the decoded text. The embedded panel (Show CW) is optional and
+    // just adds full scrollback. cw_readout flips the readout label to
+    // ellipsize at the START so the newest copy stays visible as it scrolls in.
     show_ft8 = TRUE;
 #ifdef SSTV
     int wpm; double tone_hz; gboolean locked;
     cw_decoder_get_status(&wpm, &tone_hz, &locked);
+    char cwtext[128];
+    cw_decoder_get_recent(cwtext, sizeof(cwtext));
+    cw_readout = TRUE;
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "CW");
-    if(r->cw_panel_open)
-      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s", wpm, tone_hz, locked?"":"  (searching…)");
+    if(cwtext[0])
+      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n%s",
+               wpm, tone_hz, locked?"":"  (searching…)", cwtext);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n(Show CW to view the text)",
+      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n(listening…)",
                wpm, tone_hz, locked?"":"  (searching…)");
 #else
     snprintf(ft8buf,sizeof(ft8buf),"CW decoder support not built in");
@@ -2257,6 +2264,10 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef FT8
   // Swap between the 3 RDS rows and the single decoder block depending on the mode.
   if(r->ft8_label!=NULL) {
+    // CW streams a rolling tail, so keep the newest copy visible (ellipsize the
+    // left); every other readout keeps the default end-ellipsize.
+    gtk_label_set_ellipsize(GTK_LABEL(r->ft8_label),
+                            cw_readout?PANGO_ELLIPSIZE_START:PANGO_ELLIPSIZE_END);
     if(ft8_markup) gtk_label_set_markup(GTK_LABEL(r->ft8_label), ft8buf);
     else           gtk_label_set_text  (GTK_LABEL(r->ft8_label), ft8buf);
     gtk_widget_set_visible(r->ft8_label, show_ft8);

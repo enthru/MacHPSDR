@@ -154,6 +154,12 @@ static int    gz_count = 0;
 static GMutex text_mutex;
 static char   pending[PENDING_CAP];
 static int    pending_len = 0;
+// Non-draining rolling tail of the most-recent decoded text, for the always-on
+// bottom Decode-block readout (the panel drains `pending`; the block peeks this).
+#define HIST_CAP  256
+#define HIST_DROP 64            // how much to shed when the ring fills
+static char   history[HIST_CAP];
+static int    hist_len = 0;
 static double pub_dot_ms = DOT_MS_SEED;
 static double pub_tone   = 600.0;
 static int    pub_elements = 0;
@@ -168,6 +174,12 @@ static void echo_char(char c) {
 static void push_pending(char c) {
   g_mutex_lock(&text_mutex);
   if (pending_len < PENDING_CAP - 1) pending[pending_len++] = c;
+  // Also feed the non-draining rolling tail; shed the oldest chunk when full.
+  if (hist_len >= HIST_CAP - 1) {
+    memmove(history, history + HIST_DROP, hist_len - HIST_DROP);
+    hist_len -= HIST_DROP;
+  }
+  history[hist_len++] = c;
   g_mutex_unlock(&text_mutex);
   echo_char(c);
 }
@@ -259,6 +271,7 @@ static void do_reset(void) {
 
   g_mutex_lock(&text_mutex);
   pending_len = 0;
+  hist_len = 0;
   pub_dot_ms = DOT_MS_SEED;
   pub_tone = (F_LO + F_HI) * 0.5;
   pub_elements = 0;
@@ -426,6 +439,17 @@ int cw_decoder_get_text(char *buf, int buflen) {
   return n;
 }
 
+int cw_decoder_get_recent(char *buf, int buflen) {
+  if (buf == NULL || buflen <= 0) return 0;
+  g_mutex_lock(&text_mutex);
+  int take = hist_len;
+  if (take > buflen - 1) take = buflen - 1;
+  memcpy(buf, history + hist_len - take, take);   // the newest `take` chars
+  buf[take] = '\0';
+  g_mutex_unlock(&text_mutex);
+  return take;
+}
+
 void cw_decoder_get_status(int *wpm, double *tone_hz, gboolean *locked) {
   g_mutex_lock(&text_mutex);
   double d = pub_dot_ms, t = pub_tone;
@@ -442,9 +466,11 @@ void cw_decoder_get_status(int *wpm, double *tone_hz, gboolean *locked) {
 
 void cw_decoder_reset(void) {
   reset_req = TRUE;
-  // Also clear pending text immediately so the panel's "Clear" is instant even
-  // if the audio thread is momentarily idle (do_reset() will re-clear it too).
+  // Also clear pending + rolling text immediately so both the panel's "Clear"
+  // and the bottom-block readout blank at once, even if the audio thread is
+  // momentarily idle (do_reset() will re-clear them too).
   g_mutex_lock(&text_mutex);
   pending_len = 0;
+  hist_len = 0;
   g_mutex_unlock(&text_mutex);
 }
