@@ -78,6 +78,15 @@ static void init_bins(void) {
 #define WPM_MAX             60
 #define MAX_SYMBOL_LEN       8
 #define LOCK_ELEMENTS        6     // elements observed before status.locked
+// Morse-timing plausibility gate. Real CW marks land on 1 or 3 dot-units and
+// gaps on 1/3/7; a strong NON-CW signal (SSB carrier, birdie, AGC-pumped noise)
+// that gets past the squelch has chaotic durations. We EMA each interval's
+// distance to its nearest ideal multiple and only emit while that error stays
+// small — so garbage from non-CW signals is suppressed even when they modulate
+// enough to open the squelch.
+#define TIMING_ALPHA        0.15   // responsiveness of the timing-error EMA
+#define TIMING_TOL          0.55   // emit only while EMA'd timing error is below this (dot-units)
+#define TIMING_ERR_CAP      2.0    // clamp a single wild interval's contribution
 
 // ---- Morse table ------------------------------------------------------
 static const struct { const char *code; char ch; } MORSE_TABLE[] = {
@@ -141,6 +150,7 @@ static long     run_blocks = 0;
 
 static double dot_ms = DOT_MS_SEED;
 static int    elements_seen = 0;
+static double timing_err = TIMING_ERR_CAP;   // EMA of interval-vs-ideal error; starts pessimistic (suppress)
 
 static char current_symbol[MAX_SYMBOL_LEN + 1];
 static int  current_symbol_len = 0;
@@ -200,12 +210,25 @@ static void emit_space(void) {
   last_emitted_was_space = TRUE;
 }
 
+// Feed one interval's fit to the timing-error EMA. `units` = interval/dot_ms;
+// `ideals` are the allowed dot-unit multiples (1,3 for marks; 1,3,7 for gaps).
+static void feed_timing(double units, const double *ideals, int n) {
+  double err = fabs(units - ideals[0]);
+  for (int i = 1; i < n; i++) { double e = fabs(units - ideals[i]); if (e < err) err = e; }
+  if (err > TIMING_ERR_CAP) err = TIMING_ERR_CAP;
+  timing_err += TIMING_ALPHA * (err - timing_err);
+}
+
+static gboolean timing_ok(void) { return timing_err < TIMING_TOL; }
+
 static void emit_char_from_symbol(void) {
   if (current_symbol_len == 0) return;
   current_symbol[current_symbol_len] = '\0';
   char c = morse_lookup(current_symbol);
-  if (c) emit_char(c);
-  else    log_debug("cw_decoder: unknown code '%s'\n", current_symbol);
+  // Only emit when the recent timing looks like real Morse; otherwise the
+  // symbol is discarded (a non-CW signal that opened the squelch).
+  if (c && timing_ok()) emit_char(c);
+  else if (!c)          log_debug("cw_decoder: unknown code '%s'\n", current_symbol);
   current_symbol_len = 0;
   current_symbol[0] = '\0';
 }
@@ -214,9 +237,15 @@ static void emit_char_from_symbol(void) {
 // while a long silence continues (used both for the confirmed space->mark
 // transition and for a flush during an ongoing word gap with no mark yet).
 static void handle_gap(double gap_ms) {
+  // Feed the timing plausibility gate for every gap (element/char/word ideals
+  // 1/3/7 dot-units) — element gaps count too, so a signal whose gaps don't fit
+  // pulls timing_err up and suppresses emission.
+  static const double gap_ideals[3] = { 1.0, 3.0, 7.0 };
+  feed_timing(gap_ms / dot_ms, gap_ideals, 3);
+
   if (gap_ms < 2.0 * dot_ms) return;              // element gap: ignore
   emit_char_from_symbol();                        // char gap: flush the symbol
-  if (gap_ms >= 5.0 * dot_ms) emit_space();        // word gap: also a space
+  if (gap_ms >= 5.0 * dot_ms && timing_ok()) emit_space();  // word gap: also a space
 }
 
 // Adaptive dot length: track the shortest mark seen in a short rolling window
@@ -242,6 +271,9 @@ static void classify_mark(double mark_ms) {
   dot_ms = dot_ms * (1.0 - DOT_EMA_ALPHA) + min_recent * DOT_EMA_ALPHA;
   if (dot_ms < DOT_MS_MIN) dot_ms = DOT_MS_MIN;
   if (dot_ms > DOT_MS_MAX) dot_ms = DOT_MS_MAX;
+
+  static const double mark_ideals[2] = { 1.0, 3.0 };   // dot, dash
+  feed_timing(mark_ms / dot_ms, mark_ideals, 2);
 
   gboolean is_dot = mark_ms < 2.0 * dot_ms;
   if (current_symbol_len < MAX_SYMBOL_LEN) {
@@ -269,6 +301,7 @@ static void do_reset(void) {
   mark_hist_len = 0;
   mark_hist_pos = 0;
   elements_seen = 0;
+  timing_err = TIMING_ERR_CAP;
   current_symbol_len = 0;
   current_symbol[0] = '\0';
   last_emitted_was_space = TRUE;
