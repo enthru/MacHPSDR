@@ -253,6 +253,15 @@ typedef struct _receiver {
   gint     panadapter_histogram_w;      // width the bins buffer was allocated for
   gint     panadapter_histogram_h;      // height the bins buffer was allocated for
 
+  gboolean panadapter_phase;        // I/Q vectorscope display mode (replaces the trace)
+  gint     panadapter_phase_mode;   // 0=dots (Phase), 1=lines (Phase2)
+  gint     panadapter_phase_gain;   // display scale in percent (10..400), 100 = auto-fit
+  gfloat  *scope_iq;                // snapshot of recent I/Q, interleaved, sized 2*scope_iq_cap
+  gint     scope_iq_cap;            // capacity in complex samples (allocated)
+  gint     scope_iq_n;              // valid complex samples in scope_iq
+  GMutex   scope_mutex;             // guards scope_iq / scope_iq_n
+  gdouble  scope_ref;               // smoothed magnitude reference for auto-scale (runtime only, not persisted)
+
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
   GtkWidget *ft8_waterfall;  // FT8 band waterfall, 1/3 right (NULL unless DIGU)

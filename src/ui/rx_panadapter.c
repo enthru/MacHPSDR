@@ -22,6 +22,7 @@
 #include <epoxy/gl.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wdsp.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> //inet_addr
@@ -46,6 +47,10 @@
 #include "dxcluster.h"
 
 #define LINE_WIDTH 1.0
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 int signal_vertices_size=-1;
 float *signal_vertices=NULL;
@@ -450,6 +455,94 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
       cairo_rectangle(cr,0,0,display_width,display_height);
       cairo_fill(cr);
+    }
+
+    // I/Q vectorscope (X-Y phase display). Takes precedence over the whole
+    // spectrum path below (graticule/dB+freq scales/trace/histogram/peak
+    // hold/AGC/filter/cursor/cluster overlay all assume a frequency-domain
+    // trace, which the scope has none of), so draw it and return early right
+    // after the background, mirroring the histogram/peak-hold early-exit
+    // style used elsewhere in this function.
+    if(rx->panadapter_phase) {
+      int cx=display_width/2;
+      int cy=display_height/2;
+      int min_dim = display_width<display_height ? display_width : display_height;
+      double R=0.45*(double)min_dim;
+
+      // Graticule: faint crosshair + two concentric circles.
+      cairo_set_source_rgba(cr,0.5,0.5,0.5,0.35);
+      cairo_set_line_width(cr,1.0);
+      cairo_move_to(cr,0,cy);
+      cairo_line_to(cr,display_width,cy);
+      cairo_stroke(cr);
+      cairo_move_to(cr,cx,0);
+      cairo_line_to(cr,cx,display_height);
+      cairo_stroke(cr);
+      cairo_arc(cr,cx,cy,R,0,2*M_PI);
+      cairo_stroke(cr);
+      cairo_arc(cr,cx,cy,R/2.0,0,2*M_PI);
+      cairo_stroke(cr);
+
+      // Snapshot the tapped I/Q under the lock, then draw outside it so the
+      // audio thread is never blocked on cairo work.
+      g_mutex_lock(&rx->scope_mutex);
+      int n=rx->scope_iq_n;
+      float *pts=NULL;
+      if(n>0) {
+        pts=g_new(float,2*n);
+        memcpy(pts,rx->scope_iq,sizeof(float)*2*n);
+      }
+      g_mutex_unlock(&rx->scope_mutex);
+
+      if(pts!=NULL) {
+        // Auto-scale: track the smoothed peak magnitude so the cloud fills
+        // the graticule without needing a manual reference; the gain slider
+        // is a multiplier on top of that auto-fit.
+        double m=0.0;
+        for(int i=0;i<n;i++) {
+          double ai=fabs((double)pts[i*2]);
+          double aq=fabs((double)pts[i*2+1]);
+          double a = ai>aq ? ai : aq;
+          if(a>m) m=a;
+        }
+        rx->scope_ref = m > rx->scope_ref ? m : rx->scope_ref*0.95;
+        if(rx->scope_ref<1e-6) rx->scope_ref=1e-6;
+        double scale=(R/rx->scope_ref)*((double)rx->panadapter_phase_gain/100.0);
+
+        cairo_set_line_width(cr,1.0);
+        cairo_set_source_rgba(cr,0.1,1.0,0.3,rx->panadapter_phase_mode==0 ? 0.5 : 0.6);
+
+        if(rx->panadapter_phase_mode==0) {
+          // Dots: batch every sample into one path, single fill.
+          for(int i=0;i<n;i++) {
+            double x=cx+(double)pts[i*2]*scale;
+            double y=cy-(double)pts[i*2+1]*scale;
+            cairo_rectangle(cr,x-0.5,y-0.5,1.5,1.5);
+          }
+          cairo_fill(cr);
+        } else {
+          // Lines: polyline through consecutive samples, single stroke.
+          double x0=cx+(double)pts[0]*scale;
+          double y0=cy-(double)pts[1]*scale;
+          cairo_move_to(cr,x0,y0);
+          for(int i=1;i<n;i++) {
+            double x=cx+(double)pts[i*2]*scale;
+            double y=cy-(double)pts[i*2+1]*scale;
+            cairo_line_to(cr,x,y);
+          }
+          cairo_stroke(cr);
+        }
+        g_free(pts);
+      }
+
+      SetColour(cr, WARNING);
+      cairo_set_font_size(cr, 12);
+      cairo_move_to(cr, 4, 14);
+      cairo_show_text(cr, rx->panadapter_phase_mode==0 ? "PHASE" : "PHASE2");
+
+      cairo_destroy(cr);
+      gtk_widget_queue_draw(rx->panadapter);
+      return;
     }
 
     // Persistence / "digital phosphor" heatmap (Siglent/Rigol style). Drawn here,

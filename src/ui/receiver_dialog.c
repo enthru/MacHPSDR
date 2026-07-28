@@ -444,6 +444,21 @@ static void panadapter_histogram_decay_changed_cb(GtkWidget *widget, gpointer da
   rx->panadapter_histogram_decay=(int)gtk_range_get_value(GTK_RANGE(widget));
 }
 
+static void panadapter_phase_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_phase=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+}
+
+static void panadapter_phase_mode_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_phase_mode=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+}
+
+static void panadapter_phase_gain_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_phase_gain=(int)gtk_range_get_value(GTK_RANGE(widget));
+}
+
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_high=gtk_range_get_value(GTK_RANGE(widget));
@@ -1092,6 +1107,35 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_set_visible(panadapter_histogram_decay_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_histogram_decay_scale),"value_changed",G_CALLBACK(panadapter_histogram_decay_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram_decay_scale,4,8,1,1);
+
+  GtkWidget *panadapter_phase=gtk_check_button_new_with_label("Phase Scope");
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_phase), rx->panadapter_phase);
+  gtk_widget_set_margin_start(panadapter_phase,24);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase,3,9,2,1);
+  g_signal_connect(panadapter_phase,"toggled",G_CALLBACK(panadapter_phase_changed_cb),rx);
+
+  GtkWidget *panadapter_phase_mode_label=gtk_label_new("Phase Style:");
+  gtk_widget_set_margin_start(panadapter_phase_mode_label,24);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_label,3,10,1,1);
+
+  GtkStringList *pm_sl=gtk_string_list_new(NULL);
+  gtk_string_list_append(pm_sl,"Dots");
+  gtk_string_list_append(pm_sl,"Lines");
+  GtkWidget *panadapter_phase_mode_b=gtk_drop_down_new(G_LIST_MODEL(pm_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_phase_mode_b),rx->panadapter_phase_mode);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_b,4,10,1,1);
+  g_signal_connect(panadapter_phase_mode_b,"notify::selected",G_CALLBACK(panadapter_phase_mode_changed_cb),rx);
+
+  GtkWidget *panadapter_phase_gain_label=gtk_label_new("Phase Gain:");
+  gtk_widget_set_margin_start(panadapter_phase_gain_label,24);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_label,3,11,1,1);
+
+  GtkWidget *panadapter_phase_gain_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_phase_gain,10.0, 400.0, 1.0, 1.0, 1.0));
+  gtk_widget_set_size_request(panadapter_phase_gain_scale,200,30);
+  sui_scale_show_value(panadapter_phase_gain_scale,0);
+  gtk_widget_set_visible(panadapter_phase_gain_scale, TRUE);
+  g_signal_connect(G_OBJECT(panadapter_phase_gain_scale),"value_changed",G_CALLBACK(panadapter_phase_gain_changed_cb),rx);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_scale,4,11,1,1);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();

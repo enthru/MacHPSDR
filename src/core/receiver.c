@@ -175,6 +175,15 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_histogram_decay",rx->channel);
   sprintf(value,"%d",rx->panadapter_histogram_decay);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_phase",rx->channel);
+  sprintf(value,"%d",rx->panadapter_phase);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_phase_mode",rx->channel);
+  sprintf(value,"%d",rx->panadapter_phase_mode);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_phase_gain",rx->channel);
+  sprintf(value,"%d",rx->panadapter_phase_gain);
+  setProperty(name,value);
 
   if(rx->waterfall_automatic == FALSE) {
       sprintf(name,"receiver[%d].waterfall_low",rx->channel);
@@ -821,6 +830,15 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_histogram_decay",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_histogram_decay=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_phase",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_phase=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_phase_mode",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_phase_mode=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_phase_gain",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_phase_gain=atoi(value);
 
   sprintf(name,"receiver[%d].waterfall_low",rx->channel);
   value=getProperty(name);
@@ -2223,6 +2241,22 @@ void analyzer_feed(int channel, double *iq, int nsamples) {
   }
 }
 
+// Vectorscope tap: snapshot the genuine off-air I/Q (same tap point as the
+// recorder/PPM cal) into rx->scope_iq for the panadapter render (GTK main
+// thread) to pick up under scope_mutex. Guarded on panadapter_phase so it
+// costs nothing when the scope display isn't in use.
+static void scope_iq_feed(RECEIVER *rx, double *iq, int nsamples) {
+  if(!rx->panadapter_phase || rx->scope_iq==NULL) return;
+  int n = nsamples < rx->scope_iq_cap ? nsamples : rx->scope_iq_cap;
+  g_mutex_lock(&rx->scope_mutex);
+  for(int i=0; i<n; i++) {
+    rx->scope_iq[i*2]   = (gfloat)iq[i*2];
+    rx->scope_iq[i*2+1] = (gfloat)iq[i*2+1];
+  }
+  rx->scope_iq_n = n;
+  g_mutex_unlock(&rx->scope_mutex);
+}
+
 static void full_rx_buffer(RECEIVER *rx) {
   int error;
 
@@ -2231,6 +2265,7 @@ static void full_rx_buffer(RECEIVER *rx) {
   // Tap the genuine off-air I/Q before the noise blanker mutates it in place.
   recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
   ppm_cal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
+  scope_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {
@@ -2826,6 +2861,9 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->panadapter_histogram_bins=NULL;
   rx->panadapter_histogram_w=0;
   rx->panadapter_histogram_h=0;
+  rx->scope_iq=NULL;
+  rx->scope_iq_cap=0;
+  rx->scope_iq_n=0;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
   // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole
@@ -2853,6 +2891,9 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
 log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->iq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
   rx->diviq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
+  rx->scope_iq_cap=rx->buffer_size;
+  rx->scope_iq=g_new0(gfloat,2*rx->scope_iq_cap);
+  rx->scope_iq_n=0;
 
 
   rx->audio_buffer_size=480;
@@ -2912,6 +2953,12 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->panadapter_histogram=FALSE;
   rx->panadapter_histogram_decay=20;
+
+  rx->panadapter_phase=FALSE;
+  rx->panadapter_phase_mode=0;
+  rx->panadapter_phase_gain=100;
+  rx->scope_ref=0.0;
+  g_mutex_init(&rx->scope_mutex);
 
   rx->waterfall_automatic=TRUE;
   rx->waterfall_ft8_marker=FALSE;
