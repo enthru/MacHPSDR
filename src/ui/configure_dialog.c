@@ -81,11 +81,12 @@ static void add_page(GtkWidget *child, const char *title) {
   // stack child).
   GtkWidget *scroller=gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
-  // Let the scroller request its child's full natural width so the window opens
-  // wide enough to show the whole page (GTK caps it to the monitor work-area, and
-  // the horizontal scrollbar only appears as a fallback when the page is wider
-  // than the screen). Height stays fixed (vertical scroll fallback only).
+  // Let the scroller request its child's full natural size so the window opens
+  // large enough to show the whole page. GTK caps the window to the monitor
+  // work-area, and the AUTOMATIC scrollbars only appear as a fallback when the
+  // page is bigger than the screen (so nothing is ever pushed off-screen).
   gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroller),TRUE);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller),TRUE);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),child);
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
@@ -153,9 +154,11 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_window_set_title(GTK_WINDOW(dialog),title);
   // Bound the window so oversized pages scroll (see the scroller in add_page)
   // rather than forcing the window past the screen edge. User-resizable from here.
-  // Fix the height; let the width follow the page's natural size (-1) so a wide
-  // page opens without a horizontal scrollbar (see the scroller in add_page).
-  gtk_window_set_default_size(GTK_WINDOW(dialog),-1,720);
+  // Let both dimensions follow the page's natural size (-1,-1) so the window
+  // opens exactly big enough for the page, without scrollbars; GTK still caps it
+  // to the monitor work-area, and the scroller (AUTOMATIC) scrolls only when a
+  // page is bigger than the screen (see add_page).
+  gtk_window_set_default_size(GTK_WINDOW(dialog),-1,-1);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
 
   GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
