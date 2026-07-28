@@ -52,7 +52,7 @@ feature additions.
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
-| **TX speech processing** | Thetis-parity transmit chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
+| **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
@@ -273,8 +273,8 @@ you've dialled in.
   audio at 48 kHz. Output folder and which streams to write are set in
   **Configure → Recording**.
 
-- **TX speech processing chain (Thetis-parity).** A full transmit audio chain in
-  **Configure → TX**, matching the processing Thetis exposes on ANAN radios:
+- **TX speech processing chain.** A full transmit audio chain in
+  **Configure → TX**:
   - **CESSB** (Controlled-Envelope SSB) overshoot control for more clean talk
     power on SSB.
   - **CFC** — a multiband **Continuous Frequency Compressor** (5-band profile at

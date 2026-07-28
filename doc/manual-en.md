@@ -129,7 +129,7 @@ metering. PureSignal (adaptive predistortion, Protocol 1) is available as a
 build option. HackRF TX is implemented (half-duplex) via SoapySDR. Keying is by
 MOX, PTT, or a mapped MIDI/keyboard action.
 
-**TX speech processing (Configure → TX).** A Thetis-parity audio chain:
+**TX speech processing (Configure → TX).** A full transmit audio chain:
 **CESSB** (controlled-envelope SSB overshoot control), **CFC** (a 5-band
 Continuous Frequency Compressor at 200 / 1 k / 2 k / 3 k / 4 k Hz with pre-comp
 and pre-emphasis), a **Phase Rotator** (voice-asymmetry reduction, adjustable
