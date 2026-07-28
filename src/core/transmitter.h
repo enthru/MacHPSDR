@@ -129,6 +129,7 @@ typedef struct _transmitter {
   gboolean enable_equalizer;
   gint equalizer[4];
   gboolean leveler;
+  gboolean cessb;
 
   gboolean ctcss_enabled;
   gint ctcss;

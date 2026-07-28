@@ -241,6 +241,12 @@ static void tx_leveler_cb(GtkWidget *widget, gpointer data) {
   SetTXALevelerSt(tx->channel, tx->leveler);
 }
 
+static void tx_cessb_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->cessb = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  SetTXAosctrlRun(tx->channel, tx->cessb);
+}
+
 static void comp_value_changed_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   tx->compressor_level = gtk_range_get_value(GTK_RANGE(widget));
@@ -645,6 +651,12 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   sui_style_group(compressor_grid);
   gtk_frame_set_child(GTK_FRAME(compressor_frame),compressor_grid);
   gtk_grid_attach(GTK_GRID(grid),compressor_frame,col,row++,1,1);
+
+  GtkWidget *enable_cessb = gtk_check_button_new_with_label("Enable CESSB");
+  gtk_widget_set_tooltip_text(enable_cessb, "Controlled-Envelope SSB overshoot control (SSB talk-power)");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_cessb), tx->cessb);
+  gtk_grid_attach(GTK_GRID(compressor_grid), enable_cessb, 0, 0, 2, 1);
+  g_signal_connect(enable_cessb,"toggled", G_CALLBACK(tx_cessb_cb), tx);
 
   GtkWidget *enable_comp = gtk_check_button_new_with_label("Enable compressor");
   gtk_check_button_set_active(GTK_CHECK_BUTTON(enable_comp), tx->compressor);

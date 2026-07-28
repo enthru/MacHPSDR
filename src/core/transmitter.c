@@ -581,6 +581,9 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].leveler",tx->channel);
   sprintf(value,"%d",tx->leveler);
   setProperty(name,value);
+  sprintf(name,"transmitter[%d].cessb",tx->channel);
+  sprintf(value,"%d",tx->cessb);
+  setProperty(name,value);
   sprintf(name,"transmitter[%d].fps",tx->channel);
   sprintf(value,"%d",tx->fps);
   setProperty(name,value);
@@ -722,6 +725,9 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].leveler",tx->channel);
   value=getProperty(name);
   if(value) tx->leveler=atoi(value);
+  sprintf(name,"transmitter[%d].cessb",tx->channel);
+  value=getProperty(name);
+  if(value) tx->cessb=atoi(value);
   sprintf(name,"transmitter[%d].fps",tx->channel);
   value=getProperty(name);
   if(value) tx->fps=atoi(value);
@@ -1765,6 +1771,7 @@ log_info("create_transmitter: channel=%d\n",channel);
   tx->enable_equalizer=FALSE;
   tx->equalizer[0]=tx->equalizer[1]=tx->equalizer[2]=tx->equalizer[3]=0;
   tx->leveler=FALSE;
+  tx->cessb=FALSE;
 
   tx->ctcss_enabled=FALSE;
   tx->ctcss=11;
@@ -1860,7 +1867,7 @@ log_info("create_transmitter: channel=%d\n",channel);
 
   transmitter_set_ctcss(tx,tx->ctcss_enabled,tx->ctcss);
   SetTXAAMSQRun(tx->channel, 0);
-  SetTXAosctrlRun(tx->channel, 0);
+  SetTXAosctrlRun(tx->channel, tx->cessb);
 
   SetTXAALCAttack(tx->channel, 1);
   SetTXAALCDecay(tx->channel, 10);
