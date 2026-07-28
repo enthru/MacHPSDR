@@ -662,6 +662,15 @@ void transmitter_save_state(TRANSMITTER *tx) {
     sprintf(value,"%f",tx->cfc_eq[i]);
     setProperty(name,value);
   }
+  sprintf(name,"transmitter[%d].phrot_run",tx->channel);
+  sprintf(value,"%d",tx->phrot_run);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].phrot_corner",tx->channel);
+  sprintf(value,"%f",tx->phrot_corner);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
+  sprintf(value,"%d",tx->phrot_nstages);
+  setProperty(name,value);
 }
 
 void transmitter_restore_state(TRANSMITTER *tx) {
@@ -828,6 +837,16 @@ void transmitter_restore_state(TRANSMITTER *tx) {
     value=getProperty(name);
     if(value) tx->cfc_eq[i]=atof(value);
   }
+
+  sprintf(name,"transmitter[%d].phrot_run",tx->channel);
+  value=getProperty(name);
+  if(value) tx->phrot_run=atoi(value);
+  sprintf(name,"transmitter[%d].phrot_corner",tx->channel);
+  value=getProperty(name);
+  if(value) tx->phrot_corner=atof(value);
+  sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
+  value=getProperty(name);
+  if(value) tx->phrot_nstages=atoi(value);
 }
 
 static gboolean update_timer_cb(void *data) {
@@ -1825,6 +1844,10 @@ log_info("create_transmitter: channel=%d\n",channel);
     for(int i=0;i<5;i++){ tx->cfc_freq[i]=dF[i]; tx->cfc_comp[i]=dG[i]; tx->cfc_eq[i]=dE[i]; }
   }
 
+  tx->phrot_run=FALSE;
+  tx->phrot_corner=338.0;
+  tx->phrot_nstages=8;
+
   tx->ctcss_enabled=FALSE;
   tx->ctcss=11;
   tx->tone_level=0.2;
@@ -1955,6 +1978,10 @@ log_info("create_transmitter: channel=%d\n",channel);
   SetTXACFCOMPPrePeq(tx->channel, tx->cfc_prepeq);
   SetTXACFCOMPPeqRun(tx->channel, tx->cfc_peq_run);
   SetTXACFCOMPRun(tx->channel, tx->cfc_run);
+
+  SetTXAPHROTCorner(tx->channel, tx->phrot_corner);
+  SetTXAPHROTNstages(tx->channel, tx->phrot_nstages);
+  SetTXAPHROTRun(tx->channel, tx->phrot_run);
 
   create_eerEXT(0, // id
                 0, // run

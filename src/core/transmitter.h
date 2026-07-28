@@ -139,6 +139,10 @@ typedef struct _transmitter {
   gdouble  cfc_comp[5];   // per-band compression (dB)
   gdouble  cfc_eq[5];     // per-band post-eq (dB)
 
+  gboolean phrot_run;      // phase rotator on/off
+  gdouble  phrot_corner;   // phase-rotator corner freq (Hz)
+  gint     phrot_nstages;  // phase-rotator all-pass stages
+
   gboolean ctcss_enabled;
   gint ctcss;
   gdouble tone_level;

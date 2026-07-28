@@ -301,6 +301,22 @@ static void cfc_eq_cb(GtkWidget *widget, gpointer data) {
   cfc_apply_profile(tx);
 }
 
+static void phrot_run_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->phrot_run = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  SetTXAPHROTRun(tx->channel, tx->phrot_run);
+}
+static void phrot_corner_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->phrot_corner = gtk_range_get_value(GTK_RANGE(widget));
+  SetTXAPHROTCorner(tx->channel, tx->phrot_corner);
+}
+static void phrot_nstages_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->phrot_nstages = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  SetTXAPHROTNstages(tx->channel, tx->phrot_nstages);
+}
+
 void update_transmitter_dialog(TRANSMITTER *tx) {
   int i;
 
@@ -792,6 +808,36 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
     g_signal_connect(G_OBJECT(cfc_eq_scale),"value_changed",G_CALLBACK(cfc_eq_cb),tx);
     gtk_grid_attach(GTK_GRID(cfc_grid), cfc_eq_scale,2,3+i,2,1);
   }
+
+  GtkWidget *phrot_frame=gtk_frame_new("Phase Rotator");
+  GtkWidget *phrot_grid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(phrot_grid),6);
+  gtk_grid_set_row_spacing(GTK_GRID(phrot_grid),3);
+  sui_style_group(phrot_grid);
+  gtk_frame_set_child(GTK_FRAME(phrot_frame),phrot_grid);
+  gtk_grid_attach(GTK_GRID(grid),phrot_frame,col,row++,1,1);
+
+  GtkWidget *phrot_enable=gtk_check_button_new_with_label("Enable Phase Rotator");
+  gtk_widget_set_tooltip_text(phrot_enable, "All-pass phase rotator: reduces speech-waveform asymmetry for more average talk power");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(phrot_enable), tx->phrot_run);
+  gtk_grid_attach(GTK_GRID(phrot_grid), phrot_enable, 0,0,2,1);
+  g_signal_connect(phrot_enable,"toggled",G_CALLBACK(phrot_run_cb),tx);
+
+  GtkWidget *phrot_corner_label=gtk_label_new("Corner (Hz):");
+  gtk_grid_attach(GTK_GRID(phrot_grid), phrot_corner_label,0,1,1,1);
+  GtkWidget *phrot_corner_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,100,800,1);
+  gtk_widget_set_size_request(phrot_corner_scale, 120, 28);
+  gtk_range_set_value(GTK_RANGE(phrot_corner_scale), tx->phrot_corner);
+  sui_scale_show_value(phrot_corner_scale,0);
+  g_signal_connect(G_OBJECT(phrot_corner_scale),"value_changed",G_CALLBACK(phrot_corner_cb),tx);
+  gtk_grid_attach(GTK_GRID(phrot_grid), phrot_corner_scale,1,1,1,1);
+
+  GtkWidget *phrot_nstages_label=gtk_label_new("Stages:");
+  gtk_grid_attach(GTK_GRID(phrot_grid), phrot_nstages_label,0,2,1,1);
+  GtkWidget *phrot_nstages_spin=gtk_spin_button_new_with_range(1,12,1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(phrot_nstages_spin), tx->phrot_nstages);
+  g_signal_connect(G_OBJECT(phrot_nstages_spin),"value_changed",G_CALLBACK(phrot_nstages_cb),tx);
+  gtk_grid_attach(GTK_GRID(phrot_grid), phrot_nstages_spin,1,2,1,1);
 
   update_transmitter_dialog(tx);
 

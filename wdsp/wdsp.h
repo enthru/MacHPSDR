@@ -210,6 +210,9 @@ extern void SetTXACFCOMPPosition (int channel, int pos);
 extern void SetTXACFCOMPPrecomp (int channel, double precomp);
 extern void SetTXACFCOMPPrePeq (int channel, double prepeq);
 extern void SetTXACFCOMPprofile (int channel, int nfreqs, double* F, double* G, double* E);
+extern void SetTXAPHROTRun (int channel, int run);
+extern void SetTXAPHROTCorner (int channel, double corner);
+extern void SetTXAPHROTNstages (int channel, int nstages);
 extern void SetTXACFIRRun (int channel, int run);
 extern double GetTXAMeter (int channel, int mt);
 
