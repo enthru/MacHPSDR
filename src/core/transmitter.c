@@ -869,6 +869,9 @@ static gboolean update_timer_cb(void *data) {
 
   if(isTransmitting(radio)) {
     tx->alc=GetTXAMeter(tx->channel,tx->alc_meter);
+    tx->lvlr_gain=GetTXAMeter(tx->channel,TXA_LVLR_GAIN);
+    tx->cfc_gain=GetTXAMeter(tx->channel,TXA_CFC_GAIN);
+    tx->comp_pk=GetTXAMeter(tx->channel,TXA_COMP_PK);
 
     int fwd_power;
     int rev_power;
@@ -1746,7 +1749,10 @@ log_info("create_transmitter: channel=%d\n",channel);
   tx->fwd_peak = 0;
   tx->fwd = 0;
   tx->rev = 0;
-  
+  tx->lvlr_gain=0.0;
+  tx->cfc_gain=0.0;
+  tx->comp_pk=0.0;
+
   tx->eer_amiq=1;
   tx->eer_pgain=0.5;
   tx->eer_mgain=0.5;

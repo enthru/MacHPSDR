@@ -57,6 +57,9 @@ typedef struct _transmitter {
   gdouble exciter;
   gdouble rev;
   gdouble alc;
+  gdouble lvlr_gain;   // leveler gain-reduction meter (dB)
+  gdouble cfc_gain;    // CFC gain-reduction meter (dB)
+  gdouble comp_pk;     // compressor peak meter (dB)
   gdouble swr;
   PEAKDETECTOR *fwd_peak_buf;    
   gdouble fwd_peak;

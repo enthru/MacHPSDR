@@ -299,6 +299,21 @@ void update_tx_panadapter(RADIO *r) {
         sprintf(text,"ALC: %2.1f dB",tx->alc);
         txpan_text_right(cr, readout_right, 80, text);
       }
+
+      if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
+        if(tx->leveler) {
+          sprintf(text,"LVL: %2.1f dB",tx->lvlr_gain);
+          txpan_text_right(cr, readout_right, 104, text);
+        }
+        if(tx->cfc_run) {
+          sprintf(text,"CFC: %2.1f dB",tx->cfc_gain);
+          txpan_text_right(cr, readout_right, 128, text);
+        }
+        if(tx->compressor) {
+          sprintf(text,"COMP: %2.1f dB",tx->comp_pk);
+          txpan_text_right(cr, readout_right, 152, text);
+        }
+      }
     }
 
     // frequency
