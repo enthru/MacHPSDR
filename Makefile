@@ -243,6 +243,7 @@ fake_protocol.c\
 protocol2.c\
 reconnect.c\
 radio_dialog.c\
+cw_dialog.c\
 receiver_dialog.c\
 transmitter_dialog.c\
 pa_dialog.c\
@@ -309,6 +310,7 @@ waterfall.h\
 protocol1.h\
 protocol2.h\
 radio_dialog.h\
+cw_dialog.h\
 receiver_dialog.h\
 transmitter_dialog.h\
 pa_dialog.h\
@@ -378,6 +380,7 @@ fake_protocol.o\
 protocol2.o\
 reconnect.o\
 radio_dialog.o\
+cw_dialog.o\
 receiver_dialog.o\
 transmitter_dialog.o\
 pa_dialog.o\

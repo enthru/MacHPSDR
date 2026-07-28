@@ -40,6 +40,7 @@
 #include "radio.h"
 #include "main.h"
 #include "radio_dialog.h"
+#include "cw_dialog.h"
 #include "transmitter_dialog.h"
 #include "puresignal_dialog.h"
 #include "pa_dialog.h"
@@ -176,6 +177,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar),GTK_STACK(stack));
 
   add_page(create_radio_dialog(radio),"Radio");
+  add_page(create_cw_dialog(radio),"CW");
   add_page(create_oc_dialog(radio),"OC");
   add_page(create_xvtr_dialog(radio),"XVTR");
 
