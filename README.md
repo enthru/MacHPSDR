@@ -52,6 +52,7 @@ feature additions.
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
+| **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
@@ -119,6 +120,15 @@ you've dialled in.
   receiver, in the receiver settings dialog) sets the S-meter needle ballistics —
   0 makes it track instantly, higher values damp it like a mechanical meter
   (fast attack, slower decay); the default is 50 and it is remembered per receiver.
+
+- **Spectrum display modes.** In the receiver settings dialog's **Panadapter**
+  section: a **Peak Hold** check box overlays a max-hold trace (a light line that
+  keeps the highest level seen at each point) on top of the live spectrum, with a
+  **Peak Decay (dB/s)** slider controlling how fast the held peaks fall back (0 =
+  hold forever). Two drop-downs also expose the WDSP display **Detector** (Peak,
+  Rosenfell, Average, Sample) and **Averaging** (None, Recursive, Time Window, Log
+  Recursive) modes, which used to be fixed. All three are per receiver and
+  remembered between sessions.
 
 - **Freetune.** A tuning mode where the cursor moves within the visible span;
   exiting keeps the frequency you were on, and the radio retunes automatically

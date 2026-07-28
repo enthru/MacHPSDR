@@ -38,7 +38,11 @@ The window is organised top-to-bottom around one or more **receivers**:
 - **Panadapter (RF spectrum)** — the live spectrum of the receiver's passband.
   The filter passband is shaded; the cursor shows where you are tuned. It can be
   turned off per receiver (a **Show Panadapter** check box in the receiver
-  settings dialog) — the waterfall then fills the whole spectrum area.
+  settings dialog) — the waterfall then fills the whole spectrum area. The
+  receiver settings dialog's **Panadapter** section also offers a **Peak Hold**
+  overlay (a light max-hold trace, with a **Peak Decay** slider for how fast the
+  held peaks fall) and **Detector** / **Averaging** drop-downs that change how the
+  spectrum is computed; all are remembered per receiver.
 - **Waterfall** — the scrolling spectrogram beneath the panadapter, colour-coded
   by signal strength.
 - **Bottom bar** — grouped control "modules": band/mode/filter selectors, AGC,

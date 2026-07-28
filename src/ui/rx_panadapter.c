@@ -729,7 +729,22 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     double s2;
     
     samples[display_width-1+offset]=-200;
-    
+
+    // Peak-hold overlay: per-pixel running maximum with a configurable
+    // dB/second decay, tracked once per frame before the main trace draws.
+    if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
+      double dec = (rx->panadapter_peak_decay<=0) ? 0.0 : ((double)rx->panadapter_peak_decay/(double)rx->fps);
+      for(int j=offset; j<offset+display_width && j<rx->pixels; j++) {
+        float s = samples[j];
+        if(dec>0.0) {
+          float d=rx->panadapter_peaks[j]-(float)dec;
+          rx->panadapter_peaks[j] = s>d ? s : d;
+        } else {
+          if(s>rx->panadapter_peaks[j]) rx->panadapter_peaks[j]=s;
+        }
+      }
+    }
+
     cairo_move_to(cr, 0.0, display_height-20);
 
     for(i=1;i<display_width;i++) {
@@ -839,6 +854,22 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
             }
         }
     }
+
+    // Peak-hold trace: same mapping as the main trace, line only (no fill),
+    // drawn last so it sits on top.
+    if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
+      cairo_set_line_width(cr, LINE_WIDTH);
+      cairo_set_source_rgba(cr, 0.95, 0.95, 0.95, 0.85);   // light grey/white, distinct from any trace colour
+      cairo_move_to(cr, 0.0, display_height-20);
+      for(i=1;i<display_width;i++) {
+        double ph=(double)rx->panadapter_peaks[i+offset]+attenuation+radio->panadapter_calibration;
+        ph=floor((rx->panadapter_high - ph)*dbm_per_line);
+        if(ph >= rx->panadapter_height-20) ph=rx->panadapter_height-20;
+        cairo_line_to(cr, (double)i, ph);
+      }
+      cairo_stroke(cr);
+    }
+
     cairo_destroy (cr);
     gtk_widget_queue_draw (rx->panadapter);
   }

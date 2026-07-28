@@ -240,6 +240,12 @@ typedef struct _receiver {
   gboolean panadapter_gradient;
   gboolean panadapter_agc_line;
   gint panadapter_single_color;
+  gint display_detector_mode;   // WDSP DETECTOR_MODE_* (0=Peak,1=Rosenfell,2=Average,3=Sample)
+  gint display_average_mode;    // WDSP AVERAGE_MODE_* (0=None,1=Recursive,2=Time Window,3=Log Recursive)
+
+  gboolean panadapter_peak_hold;   // draw a max-hold overlay trace
+  gint     panadapter_peak_decay;  // dB/second the held peak falls (0 = infinite hold)
+  gfloat  *panadapter_peaks;       // per-pixel held maxima, sized rx->pixels (mirrors pixel_samples)
 
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)

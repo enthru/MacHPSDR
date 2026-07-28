@@ -154,6 +154,18 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_single_color",rx->channel);
   sprintf(value,"%d",rx->panadapter_single_color);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].display_detector_mode",rx->channel);
+  sprintf(value,"%d",rx->display_detector_mode);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].display_average_mode",rx->channel);
+  sprintf(value,"%d",rx->display_average_mode);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_peak_hold",rx->channel);
+  sprintf(value,"%d",rx->panadapter_peak_hold);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_peak_decay",rx->channel);
+  sprintf(value,"%d",rx->panadapter_peak_decay);
+  setProperty(name,value);
 
   if(rx->waterfall_automatic == FALSE) {
       sprintf(name,"receiver[%d].waterfall_low",rx->channel);
@@ -781,6 +793,19 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_agc_line=atoi(value);
+
+  sprintf(name,"receiver[%d].display_detector_mode",rx->channel);
+  value=getProperty(name);
+  if(value) rx->display_detector_mode=atoi(value);
+  sprintf(name,"receiver[%d].display_average_mode",rx->channel);
+  value=getProperty(name);
+  if(value) rx->display_average_mode=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_peak_hold",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_peak_hold=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_peak_decay",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_peak_decay=atoi(value);
 
   sprintf(name,"receiver[%d].waterfall_low",rx->channel);
   value=getProperty(name);
@@ -2403,8 +2428,17 @@ void receiver_init_analyzer(RECEIVER *rx) {
     g_free(rx->pixel_samples);
     rx->pixel_samples=NULL;
   }
+  if(rx->panadapter_peaks!=NULL) {
+    g_free(rx->panadapter_peaks);
+    rx->panadapter_peaks=NULL;
+  }
   if(rx->pixels>0) {
     rx->pixel_samples=g_new0(float,rx->pixels);
+    // Peak-hold buffer mirrors pixel_samples 1:1 but seeded to a low floor
+    // (g_new0's 0.0 dBm reads as a huge signal, which would draw the overlay
+    // as a flat line pinned at the top until real data pushes it down).
+    rx->panadapter_peaks=g_new(float,rx->pixels);
+    for(int _p=0;_p<rx->pixels;_p++) rx->panadapter_peaks[_p]=-220.0f;
     rx->hz_per_pixel=(gdouble)rx->sample_rate/(gdouble)rx->pixels;
 
     int max_w = fft_size + (int) fmin(keep_time * (double) rx->fps, keep_time * (double) fft_size * (double) rx->fps);
@@ -2689,6 +2723,7 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
 
   rx->pixels=0;
   rx->pixel_samples=NULL;
+  rx->panadapter_peaks=NULL;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
   // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole
@@ -2729,6 +2764,8 @@ log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->fps=25;
   rx->meter_smoothing=50;   // half-strength S-meter needle ballistics by default
   rx->display_average_time=40.0;
+  rx->display_detector_mode = DETECTOR_MODE_AVERAGE;      // matches previous hard-coded default
+  rx->display_average_mode  = AVERAGE_MODE_LOG_RECURSIVE; // matches previous hard-coded default
 
   // Must equal buffer_size for wideband receivers so in_size==dsp_insize for the
   // WFM chain (see the buffer_size comment above): avoids the WDSP output-ring
@@ -2767,6 +2804,9 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->panadapter_agc_line=TRUE;
 
   rx->panadapter_single_color=TRUE;
+
+  rx->panadapter_peak_hold=FALSE;
+  rx->panadapter_peak_decay=10;
 
   rx->waterfall_automatic=TRUE;
   rx->waterfall_ft8_marker=FALSE;
@@ -2955,8 +2995,8 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
     receiver_init_analyzer(rx);
   }
 
-  SetDisplayDetectorMode(rx->channel, 0, DETECTOR_MODE_AVERAGE/*display_detector_mode*/);
-  SetDisplayAverageMode(rx->channel, 0,  AVERAGE_MODE_LOG_RECURSIVE/*display_average_mode*/);
+  SetDisplayDetectorMode(rx->channel, 0, rx->display_detector_mode);
+  SetDisplayAverageMode(rx->channel, 0, rx->display_average_mode);
   calculate_display_average(rx);
 
   /* Apply the saved broadcast-FM de-emphasis (WDSP defaults to 50 us). */

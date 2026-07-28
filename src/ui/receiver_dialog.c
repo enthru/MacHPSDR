@@ -388,6 +388,47 @@ static void panadapter_single_color_changed_cb(GtkDropDown *widget, GParamSpec *
   rx->panadapter_single_color=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 }
 
+// WDSP display detector/averaging mode choices, in combo-box order == the
+// WDSP DETECTOR_MODE_*/AVERAGE_MODE_* constants (wdsp.h).
+static const char *display_detector_mode_names[] = {
+  "Peak",
+  "Rosenfell",
+  "Average",
+  "Sample",
+};
+static const char *display_average_mode_names[] = {
+  "None",
+  "Recursive",
+  "Time Window",
+  "Log Recursive",
+};
+
+static void display_detector_mode_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->display_detector_mode=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+  SetDisplayDetectorMode(rx->channel, 0, rx->display_detector_mode);
+}
+
+static void display_average_mode_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->display_average_mode=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+  SetDisplayAverageMode(rx->channel, 0, rx->display_average_mode);
+  calculate_display_average(rx);
+}
+
+static void panadapter_peak_hold_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_peak_hold=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
+    for(int i=0;i<rx->pixels;i++) rx->panadapter_peaks[i]=-220.0f;
+  }
+}
+
+static void panadapter_peak_decay_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_peak_decay=(int)gtk_range_get_value(GTK_RANGE(widget));
+}
+
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_high=gtk_range_get_value(GTK_RANGE(widget));
@@ -970,6 +1011,45 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_set_visible(meter_smoothing_scale, TRUE);
   g_signal_connect(G_OBJECT(meter_smoothing_scale),"value_changed",G_CALLBACK(meter_smoothing_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_scale,1,10,1,1);
+
+  GtkWidget *display_detector_mode_label=gtk_label_new("Detector:");
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_label,0,11,1,1);
+
+  GtkStringList *ddm_sl=gtk_string_list_new(NULL);
+  for(i=0; i<(int)(sizeof(display_detector_mode_names)/sizeof(display_detector_mode_names[0])); i++) {
+    gtk_string_list_append(ddm_sl,display_detector_mode_names[i]);
+  }
+  GtkWidget *display_detector_mode_b=gtk_drop_down_new(G_LIST_MODEL(ddm_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(display_detector_mode_b),rx->display_detector_mode);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_b,1,11,1,1);
+  g_signal_connect(display_detector_mode_b,"notify::selected",G_CALLBACK(display_detector_mode_changed_cb),rx);
+
+  GtkWidget *display_average_mode_label=gtk_label_new("Averaging:");
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_label,0,12,1,1);
+
+  GtkStringList *dam_sl=gtk_string_list_new(NULL);
+  for(i=0; i<(int)(sizeof(display_average_mode_names)/sizeof(display_average_mode_names[0])); i++) {
+    gtk_string_list_append(dam_sl,display_average_mode_names[i]);
+  }
+  GtkWidget *display_average_mode_b=gtk_drop_down_new(G_LIST_MODEL(dam_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(display_average_mode_b),rx->display_average_mode);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_b,1,12,1,1);
+  g_signal_connect(display_average_mode_b,"notify::selected",G_CALLBACK(display_average_mode_changed_cb),rx);
+
+  GtkWidget *panadapter_peak_hold=gtk_check_button_new_with_label("Peak Hold");
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_peak_hold), rx->panadapter_peak_hold);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_hold,0,13,2,1);
+  g_signal_connect(panadapter_peak_hold,"toggled",G_CALLBACK(panadapter_peak_hold_changed_cb),rx);
+
+  GtkWidget *panadapter_peak_decay_label=gtk_label_new("Peak Decay (dB/s):");
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_label,0,14,1,1);
+
+  GtkWidget *panadapter_peak_decay_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_peak_decay,0.0, 50.0, 1.0, 1.0, 1.0));
+  gtk_widget_set_size_request(panadapter_peak_decay_scale,200,30);
+  sui_scale_show_value(panadapter_peak_decay_scale,0);
+  gtk_widget_set_visible(panadapter_peak_decay_scale, TRUE);
+  g_signal_connect(G_OBJECT(panadapter_peak_decay_scale),"value_changed",G_CALLBACK(panadapter_peak_decay_changed_cb),rx);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_scale,1,14,1,1);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();
