@@ -87,7 +87,10 @@ static void init_bins(void) {
 // small — so garbage from non-CW signals is suppressed even when they modulate
 // enough to open the squelch.
 #define TIMING_ALPHA        0.15   // responsiveness of the timing-error EMA
-#define TIMING_TOL          0.55   // emit only while EMA'd timing error is below this (dot-units)
+#define TIMING_TOL          1.6    // emit while EMA'd timing error < this. Loose on purpose: real
+                                   // off-air CW jitters (err ~0.6-1.5), so a tight gate suppressed
+                                   // genuine copy; the squelch is the primary noise defence and this
+                                   // only rejects near-saturated (err→2) chaos from non-CW signals.
 #define TIMING_ERR_CAP      2.0    // clamp a single wild interval's contribution
 
 // ---- Morse table ------------------------------------------------------
@@ -240,45 +243,45 @@ static void emit_char_from_symbol(void) {
 // while a long silence continues (used both for the confirmed space->mark
 // transition and for a flush during an ongoing word gap with no mark yet).
 static void handle_gap(double gap_ms) {
-  // Feed the timing plausibility gate for every gap (element/char/word ideals
-  // 1/3/7 dot-units) — element gaps count too, so a signal whose gaps don't fit
-  // pulls timing_err up and suppresses emission.
-  static const double gap_ideals[3] = { 1.0, 3.0, 7.0 };
-  feed_timing(gap_ms / dot_ms, gap_ideals, 3);
+  // Feed the timing gate only for SHORT gaps (element ≈1 / char ≈3 dot-units),
+  // where consistency actually distinguishes CW from noise. A long gap is just a
+  // pause between words/overs — legitimate CW — so it must NOT be scored against
+  // an ideal (an earlier {1,3,7} test penalised a 12-unit pause as "off by 5",
+  // spiking timing_err and suppressing the characters that followed).
+  double gu = gap_ms / dot_ms;
+  if (gu < 5.0) {
+    static const double gap_ideals[2] = { 1.0, 3.0 };
+    feed_timing(gu, gap_ideals, 2);
+  }
 
   if (gap_ms < 2.0 * dot_ms) return;              // element gap: ignore
   emit_char_from_symbol();                        // char gap: flush the symbol
-  if (gap_ms >= 5.0 * dot_ms && timing_ok()) emit_space();  // word gap: also a space
+  if (gap_ms >= 5.0 * dot_ms) emit_space();        // word gap: a space (always — harmless, real break)
 }
 
-// Adaptive dot length: track the shortest mark seen in a short rolling window
-// and EMA the running estimate toward it. This is deliberately *not* "only
-// learn from marks already classified as dots" — that scheme is a trap: a bad
-// early estimate (e.g. corrupted by pre-signal noise transients) makes every
-// later mark classify as a dash too, so it would never see another "dot" to
-// correct itself from. Feeding every mark's duration through a rolling
-// minimum means one genuinely short element — dot or not — is enough to pull
-// the estimate back to reality within a window's worth of marks.
-#define MARK_HISTORY 16
-static double mark_history[MARK_HISTORY];
-static int    mark_hist_len = 0, mark_hist_pos = 0;
+// Adaptive dot length. Each mark is a dot or a dash (split at 2*dot); the dot
+// estimate is an EMA *average* of the dot-length marks, nudged more gently by
+// dashes (dot ≈ dash/3) so it can still track a speed change during a run of
+// dashes. **This replaces an earlier rolling-MINIMUM estimator that collapsed
+// dot_ms to its floor on real CW:** the natural spread of real dots plus the
+// odd short glitch dragged the "recent minimum" down until every real dot read
+// as a dash, timing fell apart and the whole transmission was suppressed (only
+// a couple of letters got through). Averaging the dot cluster is stable; a hard
+// glitch-reject drops impossibly short marks before they can bias anything.
+#define MIN_MARK_MS  18.0   // shorter than a ~60 WPM dot → a key click / noise spike, not an element
 
 static void classify_mark(double mark_ms) {
-  mark_history[mark_hist_pos] = mark_ms;
-  mark_hist_pos = (mark_hist_pos + 1) % MARK_HISTORY;
-  if (mark_hist_len < MARK_HISTORY) mark_hist_len++;
-  double min_recent = mark_history[0];
-  for (int i = 1; i < mark_hist_len; i++)
-    if (mark_history[i] < min_recent) min_recent = mark_history[i];
+  if (mark_ms < MIN_MARK_MS) return;   // glitch: ignore (no estimate or symbol update)
 
-  dot_ms = dot_ms * (1.0 - DOT_EMA_ALPHA) + min_recent * DOT_EMA_ALPHA;
+  gboolean is_dot = mark_ms < 2.0 * dot_ms;
+  if (is_dot) dot_ms += DOT_EMA_ALPHA * (mark_ms - dot_ms);
+  else        dot_ms += 0.5 * DOT_EMA_ALPHA * (mark_ms / 3.0 - dot_ms);
   if (dot_ms < DOT_MS_MIN) dot_ms = DOT_MS_MIN;
   if (dot_ms > DOT_MS_MAX) dot_ms = DOT_MS_MAX;
 
   static const double mark_ideals[2] = { 1.0, 3.0 };   // dot, dash
   feed_timing(mark_ms / dot_ms, mark_ideals, 2);
 
-  gboolean is_dot = mark_ms < 2.0 * dot_ms;
   if (current_symbol_len < MAX_SYMBOL_LEN) {
     current_symbol[current_symbol_len++] = is_dot ? '.' : '-';
     current_symbol[current_symbol_len] = '\0';
@@ -301,8 +304,6 @@ static void do_reset(void) {
   debounce_cnt = 0;
   run_blocks = 0;
   dot_ms = DOT_MS_SEED;
-  mark_hist_len = 0;
-  mark_hist_pos = 0;
   elements_seen = 0;
   timing_err = TIMING_ERR_CAP;
   current_symbol_len = 0;
