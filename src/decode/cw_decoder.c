@@ -59,6 +59,9 @@ static void init_bins(void) {
 // (even the longest dash at the slowest sane WPM) or the on/off threshold
 // collapses mid-element and every mark misclassifies. Time constants here are
 // several seconds; the *snap* side (floor down, peak up) is still immediate.
+#define SQ_OPEN             10.0    // open the squelch when the keying modulation depth (sig_hi/floor) exceeds this
+#define SQ_CLOSE            3.0     // ...and re-squelch below this (hysteresis) — CW keying swing vs flat noise
+#define SIG_HI_DECAY        (BLOCK_MS / 1500.0)   // ~1.5 s: sig_hi holds the mark level across inter-element gaps
 #define TONE_EMA_ALPHA      0.02    // slow: which bin is "the" CW tone
 #define FLOOR_RISE_ALPHA    (BLOCK_MS / 4000.0)   // ~4 s time constant
 #define PEAK_DECAY_ALPHA    (BLOCK_MS / 2500.0)   // ~2.5 s time constant
@@ -110,6 +113,7 @@ static double tracked_freq = 600.0;
 
 static double floor_env = 0.0;
 static double peak_env  = 0.0;
+static double sig_hi    = 0.0;    // fast-attack/slow-decay envelope peak, for the modulation-depth squelch
 static gboolean env_seeded = FALSE;
 static gboolean peak_locked = FALSE;   // TRUE once a real mark has ever been confirmed
 #define BOOTSTRAP_MULT 6.0             // pre-lock squelch margin over the floor
@@ -129,6 +133,7 @@ static long warmup_count = 0;
 #define P_SMOOTH_ALPHA 0.3   // ~3-block (~8 ms) smoothing of the raw block power
 static double p_smooth = 0.0;
 
+static gboolean squelch_open = FALSE; // envelope modulation-depth gate (keyed tone present vs noise)
 static gboolean tone_state = FALSE;   // debounced mark(TRUE)/space(FALSE)
 static gboolean candidate  = FALSE;
 static int      debounce_cnt = 0;
@@ -250,12 +255,13 @@ static void do_reset(void) {
   for (int i = 0; i < N_BINS; i++) slow_energy[i] = 0.0;
   dominant_bin = 0;
   tracked_freq = (F_LO + F_HI) * 0.5;
-  floor_env = peak_env = 0.0;
+  floor_env = peak_env = sig_hi = 0.0;
   env_seeded = FALSE;
   peak_locked = FALSE;
   warmup_left = WARMUP_BLOCKS;
   warmup_count = 0;
   p_smooth = 0.0;
+  squelch_open = FALSE;
   tone_state = candidate = FALSE;
   debounce_cnt = 0;
   run_blocks = 0;
@@ -298,23 +304,19 @@ static void process_block(void) {
   dominant_bin = best;
   tracked_freq = bin_freq[best];
 
-  // On/off envelope signal: the *instantaneous* max across the whole bank,
-  // not just the (slowly-adapting) reported bin. Using only the slow-tracked
-  // bin's own power made the Schmitt trigger fragile before that bin ever
-  // locked onto a real tone (during silence the "dominant" bin is whichever
-  // noise happened to be loudest, and its raw power chases every fluctuation
-  // as much as a real tone would). The instantaneous max is far more likely
-  // to actually be the CW tone whenever one is present, and self-selects
-  // without waiting on the slow tracker.
-  double p_raw = power[0];
-  for (int i = 1; i < N_BINS; i++) if (power[i] > p_raw) p_raw = power[i];
+  // On/off envelope = TOTAL in-band energy (sum of all bins). The Goertzel bank
+  // is deliberately oversampled (16 bins / 40 Hz over a ~375 Hz per-filter
+  // resolution), so it can't resolve spectral tonality — a single tone lights up
+  // the whole bank. But total in-band energy is a clean keying envelope: on a
+  // keyed CW signal it swings between mark (noise+tone) and gap (noise); on
+  // broadband noise the sum over 16 bins is statistically near-constant. That
+  // difference — envelope MODULATION DEPTH, not spectral shape — is what tells
+  // CW from noise here (see the sig_hi/floor squelch below).
+  double p_raw = 0.0;
+  for (int i = 0; i < N_BINS; i++) p_raw += power[i];
 
-  // Smooth the per-block max over a few blocks (~8 ms) before it ever reaches
-  // the trigger/envelope logic. A single 2.667 ms Goertzel block is a noisy
-  // instantaneous power estimate; letting the peak follower "snap" straight to
-  // one lets a lone noisy block masquerade as signal. A short EMA averages
-  // that out while staying well under the shortest real element (~20 ms dot
-  // at the fastest supported WPM).
+  // Smooth over a few blocks (~8 ms) so a single noisy 2.667 ms block can't
+  // masquerade as a keying edge (still well under the shortest real element).
   p_smooth += P_SMOOTH_ALPHA * (p_raw - p_smooth);
   double p = p_smooth;
 
@@ -324,7 +326,7 @@ static void process_block(void) {
   if (warmup_left > 0) {
     warmup_count++;
     floor_env += (p - floor_env) / (double)warmup_count;
-    peak_env = floor_env;
+    peak_env = sig_hi = floor_env;
     warmup_left--;
     run_blocks++;
     return;
@@ -342,6 +344,19 @@ static void process_block(void) {
   if (p < floor_env) floor_env = p;
   else floor_env += FLOOR_RISE_ALPHA * (p - floor_env);
 
+  // Envelope MODULATION-DEPTH squelch. sig_hi is a fast-attack / slow-decay
+  // follower of the total-energy envelope, so it sits at the mark level while
+  // floor_env sits at the gap/noise level. Their ratio is the keying depth:
+  // a real keyed signal swings it high; broadband noise (near-constant total
+  // energy) keeps sig_hi≈floor, so the ratio stays low and the squelch shut.
+  // Only while open does the Schmitt trigger form marks/spaces (below), so
+  // noise emits nothing. Hysteresis: SQ_OPEN to open, SQ_CLOSE to re-squelch.
+  if (p > sig_hi) sig_hi = p;
+  else sig_hi += SIG_HI_DECAY * (p - sig_hi);
+  double depth = sig_hi / (floor_env + 1e-9);
+  if (!squelch_open && depth >= SQ_OPEN)      squelch_open = TRUE;
+  else if (squelch_open && depth <  SQ_CLOSE) squelch_open = FALSE;
+
   // Before any mark has ever been confirmed, require a strict margin over the
   // floor (a real keyed tone comfortably clears the noise floor by several
   // times; noise alone essentially never does for DEBOUNCE_BLOCKS in a row).
@@ -358,36 +373,49 @@ static void process_block(void) {
   double thr_on  = floor_env + THRESH_ON_K  * span;
   double thr_off = floor_env + THRESH_OFF_K * span;
 
-  gboolean want = candidate;
-  if (!tone_state && p > thr_on)       want = TRUE;
-  else if (tone_state && p < thr_off)  want = FALSE;
+  // The Schmitt trigger + element classification only run while the squelch is
+  // open (a sustained tone is present). Noise keeps the squelch closed, so it
+  // forms no marks and emits nothing.
+  if (squelch_open) {
+    gboolean want = candidate;
+    if (!tone_state && p > thr_on)       want = TRUE;
+    else if (tone_state && p < thr_off)  want = FALSE;
 
-  if (want != candidate) { candidate = want; debounce_cnt = 0; }
-  else debounce_cnt++;
+    if (want != candidate) { candidate = want; debounce_cnt = 0; }
+    else debounce_cnt++;
 
-  if (candidate != tone_state && debounce_cnt >= DEBOUNCE_BLOCKS) {
-    double duration_ms = run_blocks * BLOCK_MS;
-    if (tone_state) {
-      classify_mark(duration_ms);   // mark just ended
-    } else {
-      handle_gap(duration_ms);       // space just ended
-      // A mark just got confirmed (we were OFF, now going ON): seed peak_env
-      // from the tone power we're actually seeing right now — the one and
-      // only place peak_env moves, so it only ever reflects a real,
-      // debounce-confirmed element.
-      peak_env = p;
-      peak_locked = TRUE;
+    if (candidate != tone_state && debounce_cnt >= DEBOUNCE_BLOCKS) {
+      double duration_ms = run_blocks * BLOCK_MS;
+      if (tone_state) {
+        classify_mark(duration_ms);   // mark just ended
+      } else {
+        handle_gap(duration_ms);       // space just ended
+        // A mark just got confirmed (we were OFF, now going ON): seed peak_env
+        // from the tone power we're actually seeing right now — the one and
+        // only place peak_env moves, so it only ever reflects a real,
+        // debounce-confirmed element.
+        peak_env = p;
+        peak_locked = TRUE;
+      }
+      tone_state = candidate;
+      run_blocks = 0;
     }
-    tone_state = candidate;
-    run_blocks = 0;
-  }
-  run_blocks++;
+    run_blocks++;
 
-  // Flush a completed word/char before the next mark ever arrives (covers the
-  // tail of a transmission / trailing silence between words).
-  if (!tone_state) {
-    double off_ms = run_blocks * BLOCK_MS;
-    if (off_ms >= 2.0 * dot_ms) handle_gap(off_ms);
+    // Flush a completed word/char before the next mark ever arrives (covers the
+    // tail of a transmission / trailing silence between words).
+    if (!tone_state) {
+      double off_ms = run_blocks * BLOCK_MS;
+      if (off_ms >= 2.0 * dot_ms) handle_gap(off_ms);
+    }
+  } else {
+    // Squelched: close an in-progress mark and flush the symbol accumulated
+    // while a real tone was present (end-of-transmission tail), then hold off.
+    if (tone_state) classify_mark(run_blocks * BLOCK_MS);
+    emit_char_from_symbol();
+    tone_state = candidate = FALSE;
+    debounce_cnt = 0;
+    run_blocks = 0;
   }
 
   // Publish the status trio under the text lock so the GTK reader never sees a
