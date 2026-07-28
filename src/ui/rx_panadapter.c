@@ -535,10 +535,16 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         g_free(pts);
       }
 
-      SetColour(cr, WARNING);
-      cairo_set_font_size(cr, 12);
-      cairo_move_to(cr, 4, 14);
-      cairo_show_text(cr, rx->panadapter_phase_mode==0 ? "PHASE" : "PHASE2");
+      {
+        char scope_label[32];
+        snprintf(scope_label,sizeof(scope_label),"%s (%s)",
+                 rx->panadapter_phase_mode==0 ? "PHASE" : "PHASE2",
+                 rx->panadapter_phase_source==1 ? "Tuned" : "Wideband");
+        SetColour(cr, WARNING);
+        cairo_set_font_size(cr, 12);
+        cairo_move_to(cr, 4, 14);
+        cairo_show_text(cr, scope_label);
+      }
 
       cairo_destroy(cr);
       gtk_widget_queue_draw(rx->panadapter);

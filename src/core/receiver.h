@@ -262,6 +262,16 @@ typedef struct _receiver {
   GMutex   scope_mutex;             // guards scope_iq / scope_iq_n
   gdouble  scope_ref;               // smoothed magnitude reference for auto-scale (runtime only, not persisted)
 
+  gint     panadapter_phase_source; // 0=Wideband (raw), 1=Tuned (downmixed+filtered)
+  // --- Tuned-path DSP state (runtime only, not persisted) ---
+  gdouble  scope_nco_ph;            // downmix NCO phase accumulator (radians)
+  gfloat  *scope_fir_taps;          // Hamming-windowed sinc LPF taps
+  gint     scope_fir_ntaps;         // number of taps (0 = not built yet)
+  gdouble  scope_fir_fc_cached;     // cutoff (Hz) the current taps were built for
+  gint     scope_fir_rate_cached;   // sample_rate the current taps were built for
+  gfloat  *scope_fir_hist;          // carry-over of last (ntaps-1) downmixed complex samples, interleaved
+  gint     scope_fir_hist_n;        // valid complex samples in scope_fir_hist
+
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
   GtkWidget *ft8_waterfall;  // FT8 band waterfall, 1/3 right (NULL unless DIGU)

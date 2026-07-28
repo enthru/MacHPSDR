@@ -81,6 +81,10 @@
 #define DECODERS 1
 #endif
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // Minimum on-screen height (px) for the panadapter (the "spectroscope") and the
 // waterfall in the vertical split, so neither can open collapsed to a sliver.
 // The panadapter's size-request + shrink=FALSE enforce this against the pane's
@@ -183,6 +187,9 @@ void receiver_save_state(RECEIVER *rx) {
   setProperty(name,value);
   sprintf(name,"receiver[%d].panadapter_phase_gain",rx->channel);
   sprintf(value,"%d",rx->panadapter_phase_gain);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_phase_source",rx->channel);
+  sprintf(value,"%d",rx->panadapter_phase_source);
   setProperty(name,value);
 
   if(rx->waterfall_automatic == FALSE) {
@@ -839,6 +846,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_phase_gain",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_phase_gain=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_phase_source",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_phase_source=atoi(value);
 
   sprintf(name,"receiver[%d].waterfall_low",rx->channel);
   value=getProperty(name);
@@ -2241,12 +2251,116 @@ void analyzer_feed(int channel, double *iq, int nsamples) {
   }
 }
 
+#define SCOPE_FIR_NTAPS 63
+
+// Tuned-path vectorscope: downmix the raw wideband I/Q by the tuned carrier's
+// baseband offset (off_hz = ctun_frequency - frequency_a, 0 for plain
+// non-ctun tuning) so the listening signal lands on DC, then lowpass+decimate
+// to the channel bandwidth. This isolates just the tuned signal, giving a
+// real constellation instead of the whole-span blob of the Wideband tap.
+// Runs on the audio thread; only the final rx->scope_iq/scope_iq_n publish
+// is mutex-guarded (mirrors scope_iq_feed's Wideband path) -- the FIR/NCO
+// state below is touched only from here.
+static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
+  int N = SCOPE_FIR_NTAPS;
+
+  double fc = fabs((double)rx->filter_low_a) > fabs((double)rx->filter_high_a) ?
+              fabs((double)rx->filter_low_a) : fabs((double)rx->filter_high_a);
+  fc += 300.0;
+  if(fc < 500.0) fc = 500.0;
+  if(fc > 0.45*(double)rx->sample_rate) fc = 0.45*(double)rx->sample_rate;
+
+  if(rx->scope_fir_ntaps==0 || fc != rx->scope_fir_fc_cached || rx->sample_rate != rx->scope_fir_rate_cached) {
+    if(rx->scope_fir_taps==NULL) rx->scope_fir_taps=g_new(gfloat,N);
+    if(rx->scope_fir_hist==NULL) rx->scope_fir_hist=g_new0(gfloat,2*(N-1));
+    double fcn = fc / (double)rx->sample_rate;
+    double h[SCOPE_FIR_NTAPS];
+    double sum=0.0;
+    for(int k=0; k<N; k++) {
+      int m = k - (N-1)/2;
+      double sinc = (m==0) ? 2.0*fcn : sin(2.0*M_PI*fcn*m)/(M_PI*m);
+      double w = 0.54 - 0.46*cos(2.0*M_PI*k/(N-1));
+      h[k] = sinc*w;
+      sum += h[k];
+    }
+    if(sum==0.0) sum=1.0;
+    for(int k=0; k<N; k++) rx->scope_fir_taps[k]=(gfloat)(h[k]/sum);
+    rx->scope_fir_fc_cached=fc;
+    rx->scope_fir_rate_cached=rx->sample_rate;
+    rx->scope_fir_ntaps=N;
+    rx->scope_fir_hist_n=0;
+  }
+
+  int D = rx->sample_rate/12000;
+  if(D<1) D=1;
+
+  double off_hz = (double)(rx->ctun_frequency - rx->frequency_a);
+  double dph = -2.0*M_PI*off_hz/(double)rx->sample_rate;
+
+  int n = nsamples;
+  int hist_n = N-1;
+
+  // ext = carried-over history (hist_n complex) ++ this block's downmixed
+  // samples (n complex), so the FIR window at output position p can always
+  // reach back hist_n samples even right at the start of the block.
+  gfloat *ext = g_new(gfloat, 2*(hist_n+n));
+  memcpy(ext, rx->scope_fir_hist, sizeof(gfloat)*2*hist_n);
+
+  double ph = rx->scope_nco_ph;
+  for(int i=0; i<n; i++) {
+    double I = iq[i*2];
+    double Q = iq[i*2+1];
+    double c = cos(ph), s = sin(ph);
+    ext[(hist_n+i)*2]   = (gfloat)(I*c - Q*s);
+    ext[(hist_n+i)*2+1] = (gfloat)(I*s + Q*c);
+    ph += dph;
+    if(ph > M_PI) ph -= 2.0*M_PI;
+    else if(ph < -M_PI) ph += 2.0*M_PI;
+  }
+  rx->scope_nco_ph = ph;
+
+  int cap = rx->scope_iq_cap;
+  gfloat *out = g_new(gfloat, 2*n);
+  int nout = 0;
+  for(int p=0; p<n && nout<cap; p+=D) {
+    double y_re=0.0, y_im=0.0;
+    for(int t=0; t<N; t++) {
+      gfloat tap = rx->scope_fir_taps[t];
+      y_re += tap * ext[(p+t)*2];
+      y_im += tap * ext[(p+t)*2+1];
+    }
+    out[nout*2]   = (gfloat)y_re;
+    out[nout*2+1] = (gfloat)y_im;
+    nout++;
+  }
+
+  // Carry the last hist_n downmixed complex samples of this block forward.
+  // ext's tail hist_n samples are exactly this (whether n>=hist_n or not,
+  // since ext = history++block and the tail always reflects the most
+  // recent hist_n samples of the stream).
+  memcpy(rx->scope_fir_hist, &ext[n*2], sizeof(gfloat)*2*hist_n);
+  rx->scope_fir_hist_n = hist_n;
+  g_free(ext);
+
+  g_mutex_lock(&rx->scope_mutex);
+  memcpy(rx->scope_iq, out, sizeof(gfloat)*2*nout);
+  rx->scope_iq_n = nout;
+  g_mutex_unlock(&rx->scope_mutex);
+  g_free(out);
+}
+
 // Vectorscope tap: snapshot the genuine off-air I/Q (same tap point as the
 // recorder/PPM cal) into rx->scope_iq for the panadapter render (GTK main
 // thread) to pick up under scope_mutex. Guarded on panadapter_phase so it
-// costs nothing when the scope display isn't in use.
+// costs nothing when the scope display isn't in use. Wideband (source==0)
+// is the original raw copy; Tuned (source==1) downmixes+filters onto the
+// tuned carrier so the scope shows a real constellation (scope_iq_feed_tuned).
 static void scope_iq_feed(RECEIVER *rx, double *iq, int nsamples) {
   if(!rx->panadapter_phase || rx->scope_iq==NULL) return;
+  if(rx->panadapter_phase_source==1) {
+    scope_iq_feed_tuned(rx, iq, nsamples);
+    return;
+  }
   int n = nsamples < rx->scope_iq_cap ? nsamples : rx->scope_iq_cap;
   g_mutex_lock(&rx->scope_mutex);
   for(int i=0; i<n; i++) {
@@ -2864,6 +2978,13 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->scope_iq=NULL;
   rx->scope_iq_cap=0;
   rx->scope_iq_n=0;
+  rx->scope_nco_ph=0.0;
+  rx->scope_fir_taps=NULL;
+  rx->scope_fir_ntaps=0;
+  rx->scope_fir_fc_cached=0.0;
+  rx->scope_fir_rate_cached=0;
+  rx->scope_fir_hist=NULL;
+  rx->scope_fir_hist_n=0;
   rx->waterfall_pixbuf=NULL;
   rx->iq_sequence=0;
   // Wideband receivers use the large 5120-sample I/O block.  WFM runs the whole
@@ -2957,6 +3078,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->panadapter_phase=FALSE;
   rx->panadapter_phase_mode=0;
   rx->panadapter_phase_gain=100;
+  rx->panadapter_phase_source=0;
   rx->scope_ref=0.0;
   g_mutex_init(&rx->scope_mutex);
 

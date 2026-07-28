@@ -459,6 +459,18 @@ static void panadapter_phase_gain_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_phase_gain=(int)gtk_range_get_value(GTK_RANGE(widget));
 }
 
+static void panadapter_phase_source_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_phase_source=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+  // Switching source: reset the tuned-path DSP state so a stale downmixed/
+  // filtered snapshot from before the switch doesn't linger on screen. A
+  // torn frame here is harmless visually (main thread writes, audio thread
+  // only reads these when source==1, which we've just changed).
+  rx->scope_iq_n=0;
+  rx->scope_fir_hist_n=0;
+  rx->scope_nco_ph=0.0;
+}
+
 static void waterfall_high_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_high=gtk_range_get_value(GTK_RANGE(widget));
@@ -1136,6 +1148,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_set_visible(panadapter_phase_gain_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_phase_gain_scale),"value_changed",G_CALLBACK(panadapter_phase_gain_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_scale,4,11,1,1);
+
+  GtkWidget *panadapter_phase_source_label=gtk_label_new("Phase Source:");
+  gtk_widget_set_margin_start(panadapter_phase_source_label,24);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_label,3,12,1,1);
+
+  GtkStringList *ps_sl=gtk_string_list_new(NULL);
+  gtk_string_list_append(ps_sl,"Wideband");
+  gtk_string_list_append(ps_sl,"Tuned");
+  GtkWidget *panadapter_phase_source_b=gtk_drop_down_new(G_LIST_MODEL(ps_sl),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_phase_source_b),rx->panadapter_phase_source);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_b,4,12,1,1);
+  g_signal_connect(panadapter_phase_source_b,"notify::selected",G_CALLBACK(panadapter_phase_source_changed_cb),rx);
 
   GtkWidget *waterfall_frame=gtk_frame_new("Waterfall");
     GtkWidget *waterfall_grid=gtk_grid_new();
