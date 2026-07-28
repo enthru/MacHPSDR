@@ -809,6 +809,9 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_row_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(equalizer_grid),FALSE);
   sui_style_group(equalizer_grid);
+  // Keep the 11 bands tight (see the matching TX-EQ comment).
+  gtk_grid_set_column_spacing(GTK_GRID(equalizer_grid),2);
+  gtk_widget_set_halign(equalizer_grid,GTK_ALIGN_START);
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
   gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row,1,4);
   row+=4;
@@ -821,16 +824,22 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   const char *eq_band_labels[11]={"Pre","32","63","125","250","500","1k","2k","4k","8k","16k"};
   for(int i=0;i<11;i++) {
     GtkWidget *label=gtk_label_new(eq_band_labels[i]);
+    gtk_widget_set_halign(label,GTK_ALIGN_CENTER);
     gtk_grid_attach(GTK_GRID(equalizer_grid),label,i,1,1,1);
 
     GtkWidget *scale=gtk_scale_new(GTK_ORIENTATION_VERTICAL,gtk_adjustment_new(rx->equalizer[i],-12.0,15.0,1.0,1.0,1.0));
     gtk_range_set_inverted(GTK_RANGE(scale),TRUE);
+    gtk_widget_set_hexpand(scale,FALSE);
+    gtk_widget_set_halign(scale,GTK_ALIGN_CENTER);
+    gtk_widget_add_css_class(scale,"eq-scale");
     g_object_set_data(G_OBJECT(scale),"eq_band",GINT_TO_POINTER(i));
     g_signal_connect(scale,"value-changed",G_CALLBACK(rx_eq_value_changed_cb),rx);
     gtk_grid_attach(GTK_GRID(equalizer_grid),scale,i,2,1,10);
-    gtk_widget_set_size_request(scale,10,270);
+    gtk_widget_set_size_request(scale,16,220);
+    // Only the leftmost band carries the dB text scale (see the TX-EQ comment).
     for(int m=-12;m<=15;m+=3) {
-      gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT, (m==-12)?"-12dB":(m==0)?"0dB":(m==15)?"15dB":NULL);
+      const char *ml=(i==0)?((m==-12)?"-12dB":(m==0)?"0dB":(m==15)?"15dB":NULL):NULL;
+      gtk_scale_add_mark(GTK_SCALE(scale),(double)m,GTK_POS_LEFT,ml);
     }
   }
 

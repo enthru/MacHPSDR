@@ -828,6 +828,14 @@ static const char css_body[]=
 "    background-color: @OFF_WHITE;\n"
 "    border-radius: 50%;\n"
 "    }\n"
+/* The graphic-EQ band sliders carry the .eq-scale class so their knob can be
+   shrunk (11 side-by-side vertical sliders) without affecting the ordinary
+   horizontal scales elsewhere on the config pages. */
+"  #config-dialog scale.eq-scale slider {\n"
+"    min-width: 11px;\n"
+"    min-height: 11px;\n"
+"    margin: -4px;\n"
+"    }\n"
 "  #config-dialog separator {\n"
 "    background-color: @BORDER;\n"
 "    }\n"
