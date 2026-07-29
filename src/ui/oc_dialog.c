@@ -257,6 +257,15 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(tune_grid),oc_memory_tune_time_b,0,11,2,1);
   g_signal_connect(oc_memory_tune_time_b,"value_changed",G_CALLBACK(oc_memory_tune_time_cb),radio);
 
+#ifdef SOAPYSDR
+  // Open-collector outputs are HPSDR-only hardware pins; a SoapySDR device
+  // (HackRF/RTL/Lime) has none. Keep the page visible for reference but disable
+  // every control on it (same approach as the Diversity page's greying).
+  if(radio->discovered->protocol == PROTOCOL_SOAPYSDR) {
+    gtk_widget_set_sensitive(grid, FALSE);
+  }
+#endif
+
   gtk_widget_set_visible(grid, TRUE);
 
   return grid;

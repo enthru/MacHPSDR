@@ -180,5 +180,12 @@ GtkWidget *create_eer_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(page),eer_frame,0,0,1,1);
   gtk_grid_attach(GTK_GRID(page),eer_pwm_frame,1,0,1,1);
 
+  // EER (envelope elimination & restoration / class-E) is a Protocol-1 ANAN
+  // feature; it is not wired on any other protocol. Keep the page visible for
+  // reference but disable its controls.
+  if(r->discovered->protocol != PROTOCOL_1) {
+    gtk_widget_set_sensitive(page, FALSE);
+  }
+
   return page;
 }

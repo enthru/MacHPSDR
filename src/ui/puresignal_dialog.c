@@ -307,5 +307,12 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_label_set_xalign(GTK_LABEL(note),0.0);
   gtk_grid_attach(GTK_GRID(grid),note,0,row++,2,1);
 
+  // PureSignal (adaptive predistortion) needs a Protocol-1 feedback ADC; the
+  // controls do nothing on any other protocol. Grey the interactive frame but
+  // leave the note above sensitive so it stays readable and explains why.
+  if(radio->discovered->protocol != PROTOCOL_1) {
+    gtk_widget_set_sensitive(ps_frame, FALSE);
+  }
+
   return grid;
 }
