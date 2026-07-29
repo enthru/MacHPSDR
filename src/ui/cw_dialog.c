@@ -144,6 +144,31 @@ static void cwport_value_changed_cb(GtkWidget *widget, gpointer data) {
 }
 #endif
 
+// Audio Peak Filter (CW) — moved here from the RX page (it only does anything in
+// CWL/CWU). The apf_* fields are per-receiver, so these act on the active RX;
+// set_apf() re-reads all three fields and gates on mode.
+static void apf_enable_cb(GtkCheckButton *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  RECEIVER *rx=radio->active_receiver;
+  if(rx==NULL) return;
+  rx->apf_enable=gtk_check_button_get_active(widget);
+  set_apf(rx);
+}
+static void apf_bw_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  RECEIVER *rx=radio->active_receiver;
+  if(rx==NULL) return;
+  rx->apf_bw=gtk_range_get_value(GTK_RANGE(widget));
+  set_apf(rx);
+}
+static void apf_gain_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  RECEIVER *rx=radio->active_receiver;
+  if(rx==NULL) return;
+  rx->apf_gain=gtk_range_get_value(GTK_RANGE(widget));
+  set_apf(rx);
+}
+
 GtkWidget *create_cw_dialog(RADIO *radio) {
   int x,y;
 
@@ -355,6 +380,42 @@ GtkWidget *create_cw_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(cw_grid),cw_mem_entry,mcol+1,mrow,1,1);
   }
   y=cw_mem_row0+(CW_N_MEMORIES+1)/2;
+
+  // Audio Peak Filter (CW): peaks at the CW sidetone; only active in CWL/CWU.
+  // Per-RX settings — acts on the active receiver.
+  {
+    RECEIVER *arx=radio->active_receiver;
+    GtkWidget *apf_frame=gtk_frame_new("Audio Peak Filter (CW)");
+    gtk_widget_set_halign(apf_frame,GTK_ALIGN_START);
+    GtkWidget *apf_grid=gtk_grid_new();
+    sui_style_group(apf_grid);
+    gtk_frame_set_child(GTK_FRAME(apf_frame),apf_grid);
+    gtk_grid_attach(GTK_GRID(page),apf_frame,0,1,1,1);
+
+    GtkWidget *l,*s;
+    GtkWidget *apf_enable_b=gtk_check_button_new_with_label("Enable APF");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(apf_enable_b),arx!=NULL && arx->apf_enable);
+    g_signal_connect(apf_enable_b,"toggled",G_CALLBACK(apf_enable_cb),radio);
+    gtk_grid_attach(GTK_GRID(apf_grid),apf_enable_b,0,0,2,1);
+
+    l=gtk_label_new("Bandwidth (Hz):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(apf_grid),l,0,1,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(arx!=NULL?arx->apf_bw:100.0,25.0,300.0,5.0,25.0,0.0));
+    gtk_widget_set_size_request(s,200,25);
+    sui_scale_show_value(s,0);
+    gtk_grid_attach(GTK_GRID(apf_grid),s,1,1,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(apf_bw_cb),radio);
+
+    l=gtk_label_new("Gain:");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(apf_grid),l,0,2,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(arx!=NULL?arx->apf_gain:1.0,0.5,4.0,0.1,0.5,0.0));
+    gtk_widget_set_size_request(s,200,25);
+    sui_scale_show_value(s,1);
+    gtk_grid_attach(GTK_GRID(apf_grid),s,1,2,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(apf_gain_cb),radio);
+  }
 
   return page;
 }
