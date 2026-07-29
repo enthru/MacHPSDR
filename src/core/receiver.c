@@ -433,6 +433,20 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->snb);
   setProperty(name,value);
 
+  // Squelch (previously not persisted) + APF (CW peak filter).
+  sprintf(name,"receiver[%d].squelch",rx->channel);
+  sprintf(value,"%f",rx->squelch);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].apf_enable",rx->channel);
+  sprintf(value,"%d",rx->apf_enable);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].apf_bw",rx->channel);
+  sprintf(value,"%f",rx->apf_bw);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].apf_gain",rx->channel);
+  sprintf(value,"%f",rx->apf_gain);
+  setProperty(name,value);
+
   sprintf(name,"receiver[%d].notches",rx->channel);
   sprintf(value,"%d",rx->notches);
   setProperty(name,value);
@@ -768,6 +782,21 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].snb",rx->channel);
   value=getProperty(name);
   if(value) rx->snb=atoi(value);
+
+  sprintf(name,"receiver[%d].squelch",rx->channel);
+  value=getProperty(name);
+  if(value) rx->squelch=atof(value);
+  if(rx->squelch<0.0) rx->squelch=0.0;
+  if(rx->squelch>1.0) rx->squelch=1.0;
+  sprintf(name,"receiver[%d].apf_enable",rx->channel);
+  value=getProperty(name);
+  if(value) rx->apf_enable=atoi(value);
+  sprintf(name,"receiver[%d].apf_bw",rx->channel);
+  value=getProperty(name);
+  if(value) rx->apf_bw=atof(value);
+  sprintf(name,"receiver[%d].apf_gain",rx->channel);
+  value=getProperty(name);
+  if(value) rx->apf_gain=atof(value);
 
   sprintf(name,"receiver[%d].notches",rx->channel);
   value=getProperty(name);
@@ -1943,25 +1972,65 @@ log_info("set_deviation: %d\n",rx->deviation);
   set_squelch(rx);
 }
 
+// Mode-aware "variable squelch". FM modes (FMN/WFM) use WDSP's FM squelch
+// (keys off the demodulated noise level); every other mode uses the amplitude
+// (voice) squelch AMSQ, which gates on the pre-AGC signal magnitude. Exactly
+// one of the two WDSP squelches runs at a time; the other is forced off so a
+// mode change can't leave a stale squelch armed on the wrong path.
+//
+// The single 0..1 SQL bar drives both: bar at minimum = squelch fully OFF
+// (audio always passes) for every mode -- see the FM note below for why the
+// bar-at-minimum-is-off rule matters.
 void set_squelch(RECEIVER *rx) {
-  double fm_sq=pow(10.0, -2.0*rx->squelch);
-  SetRXAFMSQThreshold(rx->channel, fm_sq);
-  // The squelch bar is clamped to [0,1], so fm_sq = 10^(-2*squelch) is at most
-  // 1.0 and the old "fm_sq > 1" disable test could never fire: the FM squelch
-  // stayed armed even with the bar fully down, where fm_sq=1.0 leaves
-  // unmute_thresh=0.9 (see SetRXAFMSQThreshold) still gating the audio.  On a
-  // weak/fake signal avnoise never drops below that, so the channel sits muted
-  // and there is no way to fully open the squelch -> "no sound with squelch off".
-  // Treat the bar at minimum as squelch OFF: stop the FMSQ so audio always
-  // passes (open FM = hiss on an empty channel, as expected).
-  if(rx->squelch <= 0.0) {
-    rx->squelch_enable = FALSE;
+  if(rx->channel < 0) return;
+  int mode=rx->mode_a;
+  gboolean is_fm=(mode==FMN || mode==WFM);
+
+  // Bar fully down = squelch OFF. For FM: fm_sq = 10^(-2*squelch) is at most 1.0
+  // and the old "fm_sq > 1" disable test could never fire -- the FM squelch
+  // stayed armed even with the bar fully down (fm_sq=1.0 leaves unmute_thresh=0.9
+  // in SetRXAFMSQThreshold still gating audio), so on a weak/fake signal avnoise
+  // never dropped below it and the channel sat muted with no way to fully open
+  // it ("no sound with squelch off"). Treating the bar at minimum as OFF fixes
+  // that; the same convention now applies to AMSQ for the other modes.
+  rx->squelch_enable=(rx->squelch > 0.0);
+
+  if(is_fm) {
+    double fm_sq=pow(10.0, -2.0*rx->squelch);
+    SetRXAFMSQThreshold(rx->channel, fm_sq);
+    SetRXAAMSQRun(rx->channel, 0);
+    SetRXAFMSQRun(rx->channel, rx->squelch_enable);
+    log_info("Set FM squelch %f %f\n", rx->squelch, fm_sq);
+  } else {
+    // Voice/amplitude squelch. AMSQ's unmute threshold is pow(10, thresh_db/20)
+    // on the pre-AGC signal magnitude, so map the 0..1 bar linearly in dB:
+    // higher bar = tighter gate. The absolute scale is provisional -- there is
+    // no calibrated on-air reference signal here, so the dB endpoints likely
+    // need tuning against a real band.
+    const double amsq_min_db=-160.0, amsq_max_db=-40.0;
+    double thresh_db=amsq_min_db + (amsq_max_db-amsq_min_db)*rx->squelch;
+    SetRXAAMSQThreshold(rx->channel, thresh_db);
+    SetRXAFMSQRun(rx->channel, 0);
+    SetRXAAMSQRun(rx->channel, rx->squelch_enable);
+    log_info("Set AM/voice squelch %f %f dB\n", rx->squelch, thresh_db);
   }
-  else {
-    rx->squelch_enable = TRUE;
-  }
-  SetRXAFMSQRun(rx->channel, rx->squelch_enable);
-  log_info("Set squelch %f %f\n", rx->squelch, fm_sq);
+}
+
+// APF -- CW audio peak filter (WDSP "speak"/SPCW). Peaks a narrow band at the
+// CW sidetone (beat-note) frequency to pull weak CW out of the noise. Runs only
+// in CWL/CWU so an enabled APF can't ring on SSB/AM audio; leaving CW disables
+// it automatically (this is called from receiver_mode_changed). Guarded on a
+// live WDSP channel like set_agc/set_squelch.
+void set_apf(RECEIVER *rx) {
+  if(rx->channel < 0) return;
+  int mode=rx->mode_a;
+  gboolean cw=(mode==CWL || mode==CWU);
+  double freq=(double)radio->cw_keyer_sidetone_frequency;
+  if(freq < 200.0) freq=200.0; // SPCW design 1 clamps below 200 Hz anyway
+  SetRXASPCWFreq(rx->channel, freq);
+  SetRXASPCWBandwidth(rx->channel, rx->apf_bw);
+  SetRXASPCWGain(rx->channel, rx->apf_gain);
+  SetRXASPCWRun(rx->channel, (rx->apf_enable && cw) ? 1 : 0);
 }
 
 void calculate_display_average(RECEIVER *rx) {
@@ -2065,9 +2134,13 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     if(rx->channel>=0) set_agc(rx);
   }
   log_info("mode_changed: %d\n",mode);
-  if(mode != 5) {
-    rx->squelch_enable = FALSE;
-    SetRXAFMSQRun(rx->channel, rx->squelch_enable);
+  // Re-apply the mode-aware squelch (FMSQ for FM, AMSQ otherwise) and the CW
+  // APF, which both key off the new mode. set_squelch/set_apf pick the right
+  // WDSP block and force the others off, so switching modes can't strand a
+  // squelch on the wrong path or leave the CW peaking filter ringing on SSB.
+  if(rx->channel>=0) {
+    set_squelch(rx);
+    set_apf(rx);
   }
   receiver_filter_changed(rx,rx->filter_a);
 #ifdef DECODERS
@@ -2990,6 +3063,12 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->deviation=2500;
   rx->squelch_enable = FALSE;
   rx->squelch = 0.1;
+
+  // APF (CW audio peak filter) defaults mirror the WDSP "speak" create values
+  // (bw 100 Hz, gain 2.0); off by default. Freq tracks the CW sidetone in set_apf.
+  rx->apf_enable = FALSE;
+  rx->apf_bw = 100.0;
+  rx->apf_gain = 2.0;
 
   rx->filter_a=F5;
   for(int i=0;i<MODES;i++) rx->mode_filter[i]=F5;

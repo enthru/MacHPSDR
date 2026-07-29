@@ -487,6 +487,24 @@ static void nr4_postfilter_cb(GtkWidget *widget, gpointer data) {
   SetRXASBNRpostFilterThreshold(rx->channel,(float)rx->nr4_postfilter);
 }
 
+// APF (CW audio peak filter). set_apf() re-reads all three fields and only
+// runs the SPCW block in CWL/CWU, so these callbacks just store + re-apply.
+static void apf_enable_cb(GtkCheckButton *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->apf_enable=gtk_check_button_get_active(widget);
+  set_apf(rx);
+}
+static void apf_bw_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->apf_bw=gtk_range_get_value(GTK_RANGE(widget));
+  set_apf(rx);
+}
+static void apf_gain_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->apf_gain=gtk_range_get_value(GTK_RANGE(widget));
+  set_apf(rx);
+}
+
 static void panadapter_phase_source_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->panadapter_phase_source=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
@@ -990,6 +1008,46 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
     gtk_frame_set_child(GTK_FRAME(nr4_frame),nr4_grid);
     gtk_box_append(GTK_BOX(audio_eq_box),nr4_frame);
+  }
+
+  // APF -- CW audio peak filter. Only active in CWL/CWU (set_apf gates on mode),
+  // peaks at the CW sidetone frequency; narrower bandwidth = sharper peak.
+  {
+    GtkWidget *apf_frame=gtk_frame_new("Audio Peak Filter (CW)");
+    GtkWidget *apf_grid=gtk_grid_new();
+    sui_style_group(apf_grid);
+    gtk_widget_set_halign(apf_frame,GTK_ALIGN_FILL);
+
+    GtkWidget *l;
+    GtkWidget *s;
+
+    GtkWidget *apf_enable_b=gtk_check_button_new_with_label("Enable APF");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(apf_enable_b),rx->apf_enable);
+    g_signal_connect(apf_enable_b,"toggled",G_CALLBACK(apf_enable_cb),rx);
+    gtk_grid_attach(GTK_GRID(apf_grid),apf_enable_b,0,0,2,1);
+
+    l=gtk_label_new("Bandwidth (Hz):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(apf_grid),l,0,1,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->apf_bw,25.0,300.0,5.0,25.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
+    sui_scale_show_value(s,0);
+    gtk_grid_attach(GTK_GRID(apf_grid),s,1,1,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(apf_bw_cb),rx);
+
+    l=gtk_label_new("Gain:");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(apf_grid),l,0,2,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->apf_gain,0.5,4.0,0.1,0.5,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
+    sui_scale_show_value(s,1);
+    gtk_grid_attach(GTK_GRID(apf_grid),s,1,2,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(apf_gain_cb),rx);
+
+    gtk_frame_set_child(GTK_FRAME(apf_frame),apf_grid);
+    gtk_box_append(GTK_BOX(audio_eq_box),apf_frame);
   }
 
   gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);

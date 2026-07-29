@@ -149,6 +149,12 @@ typedef struct _receiver {
   gboolean squelch_enable;
   gdouble squelch;
 
+  // APF — CW audio peak filter (WDSP "speak"/SPCW block). Runs only in CWL/CWU;
+  // peaks at the CW sidetone frequency. bw = sharpness (Hz), gain = linear.
+  gboolean apf_enable;
+  gdouble apf_bw;
+  gdouble apf_gain;
+
   gint filter_low_b;
   gint filter_high_b;
 
@@ -449,6 +455,7 @@ extern void receiver_xvtr_changed(RECEIVER *rx);
 extern void set_filter(RECEIVER *rx,int low,int high);
 extern void set_deviation(RECEIVER *rx);
 extern void set_squelch(RECEIVER *rx);
+extern void set_apf(RECEIVER *rx);
 
 extern void update_noise(RECEIVER *rx);
 

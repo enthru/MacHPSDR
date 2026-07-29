@@ -103,7 +103,14 @@ own VFO, panadapter and waterfall.
   a translucent red band with a centre line and is stored by absolute frequency,
   so it stays on the offending signal as you tune. Up to 16 per receiver,
   remembered between sessions.
+- **Audio Peak Filter (APF)** — a narrow audio peaking filter for CW that boosts
+  the beat-note (centred on your sidetone pitch) to lift weak signals out of the
+  noise. Enable it, and set its bandwidth (sharpness) and gain, in
+  Configure → RX-N; it runs only in CW modes. Remembered per receiver.
 - **Volume / mute / squelch** — audible-output level and squelch per receiver.
+  The **SQL** bar is mode-aware: in FM it drives the FM noise squelch, in every
+  other mode an amplitude / voice squelch that mutes until a signal exceeds the
+  threshold. At its minimum the squelch is fully off (audio always passes).
 - **Sub-receiver (SUBRX)** — a second demodulator inside one receiver slice,
   switched on with the **SUBRX** button on the VFO; it has its own frequency
   (VFO B), mode, filter and AGC. The main RX plays on the left channel and the

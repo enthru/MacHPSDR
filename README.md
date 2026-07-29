@@ -55,6 +55,7 @@ feature additions.
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. |
+| **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → RX) that peaks the beat-note to lift weak CW out of the noise, plus a **mode-aware squelch** — the SQL bar now gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), remembered per receiver *(faker-tested; on-air threshold calibration pending hardware)*. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
@@ -171,6 +172,20 @@ you've dialled in.
   denoiser live while you listen.
   *(NR3/NR4 are built and fake-tested; their on-air audio has not yet been tuned
   on real hardware.)*
+
+- **Audio peak filter (APF) for CW.** A narrow audio peaking filter that boosts
+  the CW beat-note (centred on your sidetone pitch) to pull weak signals out of
+  the noise. Enable it — with adjustable **bandwidth** (sharpness) and **gain** —
+  in Configure → RX-N; it runs only in CWL/CWU and is remembered per receiver.
+  *(Faker-tested; on-air benefit not yet judged on hardware.)*
+
+- **Variable squelch (mode-aware).** The **SQL** bar on the VFO row is now
+  mode-aware: in FM it drives the classic FM noise squelch, and in every other
+  mode (SSB/AM/CW/digital) it drives an **amplitude / voice squelch** that mutes
+  the channel until a signal exceeds the threshold. The bar at its minimum means
+  squelch fully off (audio always passes); the setting is persisted per receiver.
+  *(Faker-tested; the amplitude-squelch dB scale still needs calibration against
+  a real on-air signal.)*
 
 - **Manual notch filters (MNF).** In addition to the automatic notch (**ANF**),
   you can place your own notches to kill a steady carrier or heterodyne.

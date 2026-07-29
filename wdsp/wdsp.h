@@ -75,6 +75,12 @@ extern void SetRXAFMSQRun (int channel, int run);
 extern void SetRXAFMSQThreshold (int channel, double threshold);
 extern void SetRXAAMSQRun (int channel, int run);
 extern void SetRXAAMSQThreshold (int channel, double threshold);
+extern void SetRXAAMSQMaxTail (int channel, double tail);
+// APF / CW audio peaking filter (wdsp/iir.c "speak" block, in the RXA pipeline)
+extern void SetRXASPCWRun (int channel, int run);
+extern void SetRXASPCWFreq (int channel, double freq);
+extern void SetRXASPCWBandwidth (int channel, double bw);
+extern void SetRXASPCWGain (int channel, double gain);
 extern void SetRXAEMNRRun (int channel, int run);
 extern void SetRXAEMNRgainMethod (int channel, int method);
 extern void SetRXAEMNRnpeMethod (int channel, int method);
