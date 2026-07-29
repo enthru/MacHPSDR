@@ -47,6 +47,13 @@
 //#include "rigctl.h"
 
 static GtkWidget *filter_board_combo_box;
+// Audio-related frames (Microphone / Audio backend / dBm calibration) used to
+// crowd the Radio hardware page. They are now attached to their own grid,
+// exposed via create_radio_audio_dialog() and composed onto the "Audio" tab
+// (next to the recorder settings) in configure_dialog.c. Built during
+// create_radio_dialog() — which must run first (it does: the Radio page is
+// added before the Audio page).
+static GtkWidget *radio_audio_page;
 static GtkWidget *adc0_frame;
 static GtkWidget *adc0_antenna_combo_box;
 static GtkWidget *adc0_filters_combo_box;
@@ -542,6 +549,15 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   int row=0;
   int col=0;
 
+  // Separate grid for the audio-related frames, split off the Radio page onto
+  // the "Audio" tab. arow is its own row counter (independent of the hardware
+  // page's row) so the frames pack from the top with no gaps.
+  radio_audio_page=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(radio_audio_page),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(radio_audio_page),FALSE);
+  sui_style_page(radio_audio_page);
+  int arow=0;
+
   GtkWidget *model_frame=gtk_frame_new("Radio Model");
   GtkWidget *model_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(model_grid),TRUE);
@@ -1011,7 +1027,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_set_column_homogeneous(GTK_GRID(mic_grid),FALSE);
     sui_style_group(mic_grid);
     gtk_frame_set_child(GTK_FRAME(mic_frame),mic_grid);
-    gtk_grid_attach(GTK_GRID(grid),mic_frame,col,row++,1,1);
+    gtk_grid_attach(GTK_GRID(radio_audio_page),mic_frame,0,arow++,1,1);
 
     x=0;
     y=0;
@@ -1119,7 +1135,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
   sui_style_group(audio_grid);
   gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
-  gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row++,1,1);
+  gtk_grid_attach(GTK_GRID(radio_audio_page),audio_frame,0,arow++,1,1);
 
   GtkWidget *audio_combo=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_combo))),"SOUNDIO");
@@ -1147,7 +1163,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_set_column_homogeneous(GTK_GRID(calibration_grid),FALSE);
   sui_style_group(calibration_grid);
   gtk_frame_set_child(GTK_FRAME(calibration_frame),calibration_grid);
-  gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1);
+  gtk_grid_attach(GTK_GRID(radio_audio_page),calibration_frame,0,arow++,1,1);
 
   GtkWidget *smeter_label=gtk_label_new(" S-Meter:");
   gtk_grid_attach(GTK_GRID(calibration_grid),smeter_label,0,1,1,1);
@@ -1189,4 +1205,13 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   g_signal_connect(region_combo,"notify::selected",G_CALLBACK(region_cb),radio);
 
   return grid;
+}
+
+// The audio-related frames (Microphone / Audio backend / dBm calibration) are
+// built by create_radio_dialog() into radio_audio_page; this returns that grid
+// for the "Audio" configuration tab. Depends on create_radio_dialog() having
+// run first — guaranteed by the page order in create_configure_dialog().
+GtkWidget *create_radio_audio_dialog(RADIO *radio) {
+  (void)radio;
+  return radio_audio_page;
 }

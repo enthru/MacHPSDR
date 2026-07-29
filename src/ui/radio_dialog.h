@@ -18,3 +18,4 @@
 */
 
 extern GtkWidget *create_radio_dialog(RADIO *radio);
+extern GtkWidget *create_radio_audio_dialog(RADIO *radio);

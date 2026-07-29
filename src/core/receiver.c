@@ -1277,13 +1277,11 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
       break;
     case 3: // right button
       if(radio->dialog==NULL) {
-        int i;
-        for(i=0;i<radio->discovered->supported_receivers;i++) {
-          if(rx==radio->receiver[i]) {
-            break;
-          }
-        }
-        radio->dialog=create_configure_dialog(radio,i+rx_base);
+        // Open Configure focused on this RX's page (by name — page merges no
+        // longer shift the integer index this used to compute from rx_base).
+        char page[16];
+        snprintf(page,sizeof(page),"RX-%d",rx->channel);
+        configure_dialog_open(radio,page);
         update_receiver_dialog(rx);
       }
       break;

@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -97,6 +98,25 @@ static void add_page(GtkWidget *child, const char *title) {
   pages[n_pages++]=scroller;
 }
 
+// Compose several page builders onto one tab. Each create_*_dialog() returns a
+// self-contained styled root (an sui_style_page grid of frames); stacking them
+// in a vertical box makes a merged tab read as several groups on one page. The
+// outer page padding comes from CSS on #config-stack, so the box needs none of
+// its own — only an inter-group gap matching the page rhythm. NULL children are
+// skipped (a builder may legitimately return NULL when its feature is absent).
+static GtkWidget *merge_pages(int n,...) {
+  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
+  gtk_widget_set_hexpand(box,TRUE);
+  va_list ap;
+  va_start(ap,n);
+  for(int i=0;i<n;i++) {
+    GtkWidget *w=va_arg(ap,GtkWidget *);
+    if(w!=NULL) gtk_box_append(GTK_BOX(box),w);
+  }
+  va_end(ap);
+  return box;
+}
+
 // GTK4: GtkWindow emits "close-request" (delete-event was removed). Returning
 // FALSE lets the default handler destroy the window; we must clear the cached
 // radio->dialog (and per-receiver widget pointers) here or configure_cb's
@@ -136,7 +156,8 @@ static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer dat
   else if(strncmp("TX",text,2)==0) {
     update_transmitter_dialog(radio->transmitter);
   }
-  else if(strncmp("OC",text,2)==0) {
+  else if(strncmp("Bands",text,5)==0) {
+    // OC lives on the merged "Bands" tab now; refresh it on show as before.
     update_oc_dialog(radio);
   }
   // gtk_stack_page_get_title() returns a GTK-owned (transfer-none) string —
@@ -177,10 +198,21 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   GtkWidget *sidebar=gtk_stack_sidebar_new();
   gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar),GTK_STACK(stack));
 
+  // Page grouping is rebalanced so no tab is left near-empty and the crowded
+  // Radio page is relieved. The Radio builder also constructs the audio-related
+  // frames (Microphone / Audio / dBm Calibration) into a separate grid it
+  // returns via create_radio_audio_dialog() — so the Radio add_page MUST run
+  // before the Audio one. Sparse single-purpose pages are merged by theme:
+  //   Audio  = radio-audio frames + Recording
+  //   Bands  = OC + XVTR (both band-indexed hardware matrices)
+  //   PA / Linearity = PA + EER + Pure Signal (TX amplifier/linearity)
+  //   Network = DX Cluster + TCI
   add_page(create_radio_dialog(radio),"Radio");
+  add_page(merge_pages(2,create_radio_audio_dialog(radio),
+                         create_recording_dialog(radio)),"Audio");
   add_page(create_cw_dialog(radio),"CW");
-  add_page(create_oc_dialog(radio),"OC");
-  add_page(create_xvtr_dialog(radio),"XVTR");
+  add_page(merge_pages(2,create_oc_dialog(radio),
+                         create_xvtr_dialog(radio)),"Bands");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {
     // Skip hidden receivers (show_rx==FALSE): a diversity hidden RX or a
@@ -198,9 +230,10 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 
   if(radio->can_transmit) {
     add_page(create_transmitter_dialog(radio->transmitter),"TX");
-    add_page(create_puresignal_dialog(radio->transmitter),"Pure Signal");
-    add_page(create_pa_dialog(radio),"PA");
-    add_page(create_eer_dialog(radio),"EER");
+    add_page(merge_pages(3,create_pa_dialog(radio),
+                           create_eer_dialog(radio),
+                           create_puresignal_dialog(radio->transmitter)),
+             "PA / Linearity");
   }
 
   if(radio->wideband) {
@@ -211,17 +244,14 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(create_midi_dialog(radio),"MIDI");
 #endif
 
-  add_page(create_labels_dialog(radio),"Misc");
-
-  add_page(create_recording_dialog(radio),"Recording");
+  add_page(create_labels_dialog(radio),"Display");
 
 #ifdef FT8
   add_page(create_ft8_dialog(radio),"FT8");
 #endif
 
-  add_page(create_cluster_dialog(radio),"Cluster");
-
-  add_page(create_tci_dialog(radio),"TCI");
+  add_page(merge_pages(2,create_cluster_dialog(radio),
+                         create_tci_dialog(radio)),"Network");
 
   add_page(create_about_dialog(radio),"About");
 
@@ -254,4 +284,14 @@ void configure_dialog_set_page(const char *name) {
   if(stack!=NULL && name!=NULL) {
     gtk_stack_set_visible_child_name(GTK_STACK(stack),name);
   }
+}
+
+// Open the Configure dialog (creating it if needed) focused on a named page.
+// Preferred over the integer-index create/set_tab pair: page merges/reordering
+// no longer shift indices under callers, they just name the page they want.
+void configure_dialog_open(RADIO *radio,const char *name) {
+  if(radio->dialog==NULL) {
+    radio->dialog=create_configure_dialog(radio,-1);
+  }
+  configure_dialog_set_page(name);
 }

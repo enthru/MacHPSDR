@@ -83,7 +83,7 @@ own VFO, panadapter and waterfall.
 - **PPM correction & auto-calibration** — corrects the reference-oscillator
   error (fractional ppm; applied on Protocol 1, Protocol 2 and SoapySDR alike).
   It can be measured automatically from a time-signal station's carrier — see
-  §10 (Configure → Misc).
+  §10 (Configure → Display).
 
 ---
 
@@ -301,7 +301,7 @@ The **Record** button (SETUP module) captures the active receiver to
 - `rec_<UTC>_af.wav` — clean demodulated audio at 48 kHz.
 
 Which streams are written and the output folder are set in
-**Configure → Recording**.
+**Configure → Audio**.
 
 ---
 
@@ -320,7 +320,7 @@ on LF) and press **Calibrate** to measure its carrier and set the oscillator
 correction automatically, **Tune** to zero-beat it by ear, or type the value in
 manually.
 
-**DX cluster (Configure → Cluster).** Connect to a telnet DX cluster: enter the
+**DX cluster (Configure → Network).** Connect to a telnet DX cluster: enter the
 host/IP, the port and your login callsign (leave the login blank to use the
 station callsign from the FT8 page), then tick **Connect to DX cluster** — a
 status line shows the connection state. **Show spots on panadapter** toggles
@@ -328,7 +328,7 @@ the overlay. Incoming `DX de …` spots are stored and shown on the RX
 panadapter, colour-keyed by DXCC entity, and clicking a spot tunes to it; the
 client reconnects automatically if the link drops.
 
-**TCI server (Configure → TCI).** MacHPSDR can act as a **TCI** (Expert
+**TCI server (Configure → Network).** MacHPSDR can act as a **TCI** (Expert
 Electronics) control server so external loggers and skimmers — Log4OM, N1MM+,
 SkookumLogger and others that speak TCI — can set and follow the radio over the
 network, without a virtual serial or audio cable. Tick **Enable TCI server**,

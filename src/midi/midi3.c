@@ -389,82 +389,40 @@ static int midi_action(void *data) {
 	/////////////////////////////////////////////////////////// "MENUS"
 	case MENU_ABOUT:
 	  break;
+	// Open Configure focused on a named page (indices shift when pages are
+	// merged/reordered — names don't). EER/PA/PS all live on "PA / Linearity";
+	// OC/XVTR both live on "Bands".
 	case MENU_EER:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,rx_base+radio->receivers+3);
-          } else {
-	    configure_dialog_set_tab(rx_base+radio->receivers+3);
-	  }
+	  configure_dialog_open(radio,"PA / Linearity");
 	  break;
 	case MENU_MIDI:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,rx_base+radio->receivers+4);
-          } else {
-	    configure_dialog_set_tab(rx_base+radio->receivers+4);
-          }
+	  configure_dialog_open(radio,"MIDI");
 	  break;
 	case MENU_OC:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,1);
-          } else {
-	    configure_dialog_set_tab(1);
-          }
+	  configure_dialog_open(radio,"Bands");
 	  break;
 	case MENU_PA:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,rx_base+radio->receivers+2);
-          } else {
-	    configure_dialog_set_tab(rx_base+radio->receivers+2);
-          }
+	  configure_dialog_open(radio,"PA / Linearity");
 	  break;
 	case MENU_PS:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,rx_base+radio->receivers+1);
-          } else {
-	    configure_dialog_set_tab(rx_base+radio->receivers+1);
-          }
+	  configure_dialog_open(radio,"PA / Linearity");
 	  break;
 	case MENU_RADIO:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,0);
-          } else {
-	    configure_dialog_set_tab(0);
-          }
+	  configure_dialog_open(radio,"Radio");
 	  break;
 	case MENU_RX:
-	  if(radio->dialog==NULL) {
-            int i;
-            for(i=0;i<radio->discovered->supported_receivers;i++) {
-              if(rx==radio->receiver[i]) {
-                break;
-              }
-            }
-            radio->dialog=create_configure_dialog(radio,rx_base+i);
-            update_receiver_dialog(rx);
-          } else {
-	    int i;
-            for(i=0;i<radio->discovered->supported_receivers;i++) {
-              if(rx==radio->receiver[i]) {
-                break;
-              }
-            }
-	    configure_dialog_set_tab(rx_base+i);
-            update_receiver_dialog(rx);
-          }
+	  {
+	    char page[16];
+	    snprintf(page,sizeof(page),"RX-%d",rx->channel);
+	    configure_dialog_open(radio,page);
+	    update_receiver_dialog(rx);
+	  }
 	  break;
 	case MENU_TX:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,rx_base+radio->receivers);
-          } else {
-	    configure_dialog_set_tab(rx_base+radio->receivers);
-          }
+	  configure_dialog_open(radio,"TX");
 	  break;
 	case MENU_XVTR:
-	  if(radio->dialog==NULL) {
-            radio->dialog=create_configure_dialog(radio,2);
-          } else {
-	    configure_dialog_set_tab(2);
-          }
+	  configure_dialog_open(radio,"Bands");
 	  break;
 
 /*

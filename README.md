@@ -53,7 +53,7 @@ feature additions.
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
-| **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → TCI** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
+| **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. |
 | **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → RX) that peaks the beat-note to lift weak CW out of the noise, plus a **mode-aware squelch** — the SQL bar now gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), remembered per receiver *(faker-tested; on-air threshold calibration pending hardware)*. |
@@ -85,7 +85,7 @@ auto-detected and the picture is painted line-by-line beside the receiver.
 
 ![SSTV image panel](./doc/sstv.jpg)
 
-**Settings** — Configure → Misc: colour-skin selection (applied immediately and
+**Settings** — Configure → Display: colour-skin selection (applied immediately and
 remembered per radio), custom attenuator-button labels, and Broadcast FM
 de-emphasis / RDS options. Every slider in the settings dialogs shows its
 current numeric value beside the control, so you can read off the exact figure
@@ -115,7 +115,7 @@ you've dialled in.
 - **Colour skins.** A dark interface with eleven selectable colour schemes
   (Charcoal, Solarized Dark, Solarized Light, Nord, Gruvbox Dark, Dracula,
   Tokyo Night, Catppuccin Mocha, Rosé Pine, One Dark, Gruvbox Light), chosen in
-  **Configure → Misc → Appearance** and remembered per radio. Includes a
+  **Configure → Display → Appearance** and remembered per radio. Includes a
   redesigned S-meter and frequency display. The waterfall has several selectable
   colour themes of its own, and the panadapter trace colour is chosen from a
   named drop-down (Gradient, Skin Accent, Red, Orange, Yellow, Green, Blue,
@@ -312,7 +312,7 @@ you've dialled in.
   the data folder: off-air I/Q (before the noise blanker, in the same format the
   `--faker` replay path reads — so it's loop-back-able) and clean demodulated
   audio at 48 kHz. Output folder and which streams to write are set in
-  **Configure → Recording**.
+  **Configure → Audio**.
 
 - **TX speech processing chain.** A full transmit audio chain in
   **Configure → TX**:
@@ -333,7 +333,7 @@ you've dialled in.
   receiver to confirm they improve talk power and that the meters read sanely.)*
 
 - **PureSignal.** Adaptive predistortion (Protocol 1 only), turned on in
-  **Configure → Pure Signal**. Still an unfinished prototype, calibrated mainly
+  **Configure → PA / Linearity**. Still an unfinished prototype, calibrated mainly
   for the Hermes-Lite 2.
 
 - **CW (Morse) decoder.** In **CWL/CWU** the Decode-block selector offers
@@ -365,7 +365,7 @@ you've dialled in.
   here**.)*
 
 - **DX cluster + spot overlay.** Connect to a telnet DX cluster from
-  **Configure → Cluster** (host / port / login call; a live status line). Incoming
+  **Configure → Network** (host / port / login call; a live status line). Incoming
   `DX de …` spots are stored (15-minute age-out) and drawn on every RX panadapter
   as a short tick plus the callsign, **colour-keyed by DXCC entity** (reusing the
   FT8 `cty.dat` resolver). **Left-click a spot marker to tune** the receiver
@@ -376,7 +376,7 @@ you've dialled in.
   parsing and colouring have not been exercised against a busy cluster.)*
 
 - **TCI server (Expert Electronics).** A built-in TCI control server, enabled in
-  **Configure → TCI** (port, default 40001; a live status line with the client
+  **Configure → Network** (port, default 40001; a live status line with the client
   count). TCI is the modern network-control protocol used by ExpertSDR-family
   radios and speaks a plain text command set (`vfo:…`, `modulation:…`, `trx:…`)
   over a **WebSocket** transport, so third-party loggers and skimmers (Log4OM,
@@ -486,7 +486,7 @@ you've dialled in.
   reference-oscillator error (in fractional parts-per-million, so sub-ppm
   accuracy is possible on the high bands) and is applied on **all** device types
   — Classic HPSDR (Protocol 1), the enhanced Protocol 2, and SoapySDR. In
-  **Configure → Misc → Frequency Calibration (PPM)** you pick a time/frequency
+  **Configure → Display → Frequency Calibration (PPM)** you pick a time/frequency
   standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich on LF) and
   press **Calibrate** to measure its carrier and set the correction
   automatically, or **Tune** to zero-beat it by ear. The correction can also be

@@ -49,7 +49,7 @@ extern void tci_init(RADIO *radio);
 extern void tci_start(void);
 extern void tci_stop(void);
 
-// Human-readable one-liner for the Configure → TCI status label.
+// Human-readable one-liner for the Configure → Network status label.
 extern const char *tci_status(void);
 
 // Outbound state notifications (call from the GTK/audio thread). No-op unless
