@@ -2364,9 +2364,18 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_valign(r->bottom_bar,GTK_ALIGN_START);
 
   if(r->can_transmit) {
-    // Module: TX MONITOR - the small transmit panadapter.
+    // Module: TX MONITOR - the small transmit panadapter, recessed into a
+    // bezel frame (#tx-monitor-frame) so it reads as a framed instrument
+    // rather than a bare strip. The drawing area fills the frame's content box.
+    GtkWidget *mon_frame=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+    gtk_widget_set_name(mon_frame,"tx-monitor-frame");
+    gtk_widget_set_hexpand(r->transmitter->panadapter,TRUE);
+    gtk_widget_set_vexpand(r->transmitter->panadapter,TRUE);
+    gtk_widget_set_halign(r->transmitter->panadapter,GTK_ALIGN_FILL);
+    gtk_widget_set_valign(r->transmitter->panadapter,GTK_ALIGN_FILL);
+    gtk_box_append(GTK_BOX(mon_frame),r->transmitter->panadapter);
     gtk_box_append(GTK_BOX(r->bottom_bar),
-                       bar_module("TX MONITOR",r->transmitter->panadapter));
+                       bar_module("TX MONITOR",mon_frame));
     gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
 
     // Module: MIC & DRIVE - three stacked meters.

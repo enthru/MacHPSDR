@@ -719,6 +719,17 @@ static const char css_body[]=
 "    padding-left: 6px;\n"
 "    margin-left: 2px;\n"
 "    }\n"
+/* ---- TX MONITOR bezel: recess the little transmit panadapter into a framed
+   display so it reads as an instrument, not a bare strip. The 3px padding ring
+   is @SURFACE (same fill the Cairo surface draws), so the rounded @BORDER edge
+   and the inset shadow form a thin bezel around the trace. ---- */
+"  #tx-monitor-frame {\n"
+"    background-color: @SURFACE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 5px;\n"
+"    padding: 3px;\n"
+"    box-shadow: inset 0 1px 3px alpha(black,0.45);\n"
+"    }\n"
 /* ---- RDS readout: 3-line typographic hierarchy ---- */
 "  #rds-text-0 {\n"
 "    font-family: monospace;\n"
