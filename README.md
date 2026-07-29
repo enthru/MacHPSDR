@@ -53,6 +53,7 @@ feature additions.
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
+| **TCI server** | Built-in TCI (Expert Electronics) control server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT with no virtual cable. Enable in **Configure → TCI** *(control only for now — spectrum/audio streaming not yet implemented; verified with a WebSocket test client, not yet against a commercial logger)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. |
 | **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → RX) that peaks the beat-note to lift weak CW out of the noise, plus a **mode-aware squelch** — the SQL bar now gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), remembered per receiver *(faker-tested; on-air threshold calibration pending hardware)*. |
@@ -372,6 +373,20 @@ you've dialled in.
   reconnect. *(The client, overlay and click-to-tune are built and faker-tested
   — including a live connect to a public cluster — but the on-air spot-line
   parsing and colouring have not been exercised against a busy cluster.)*
+
+- **TCI server (Expert Electronics).** A built-in TCI control server, enabled in
+  **Configure → TCI** (port, default 40001; a live status line with the client
+  count). TCI is the modern network-control protocol used by ExpertSDR-family
+  radios and speaks a plain text command set (`vfo:…`, `modulation:…`, `trx:…`)
+  over a **WebSocket** transport, so third-party loggers and skimmers (Log4OM,
+  N1MM+, SkookumLogger, …) can both **set** and **follow** the radio's VFO, mode
+  and PTT — a modern alternative to the legacy CAT/rigctl link, with no virtual
+  serial or audio cable. Several clients may connect at once; the server runs in
+  its own thread and never blocks the UI. **This is Phase A — control only:**
+  spectrum and audio streaming (the TCI binary streams that would replace a VAC)
+  are deliberately deferred. *(Handshake and VFO/mode/PTT set-and-notify are
+  verified end-to-end with a WebSocket test client on the fake device; not yet
+  exercised against a commercial logger.)*
 
 ### SoapySDR / HackRF
 

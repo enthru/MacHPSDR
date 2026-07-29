@@ -84,6 +84,7 @@
 
 #include "cwdaemon.h"
 #include "dxcluster.h"
+#include "tci.h"
 
 #ifdef MIDI
 #include "midi.h"
@@ -254,6 +255,10 @@ log_info("radio_save_state: %s\n",filename);
   sprintf(value,"%d",radio->cluster_port);
   setProperty("radio.cluster_port",value);
   setProperty("radio.cluster_login",radio->cluster_login);
+  sprintf(value,"%d",radio->tci_enable);
+  setProperty("radio.tci_enable",value);
+  sprintf(value,"%d",radio->tci_port);
+  setProperty("radio.tci_port",value);
   setProperty("radio.rec_dir",radio->rec_dir);
   sprintf(value,"%d",radio->rec_iq);
   setProperty("radio.rec_iq",value);
@@ -903,6 +908,10 @@ void frequency_changed(RECEIVER *rx) {
     }
     subrx_frequency_changed(rx);
   }
+
+  // TCI (Phase A): push the new VFO to connected clients. No-op unless the
+  // server is running and rx is the active receiver (see tci.c).
+  tci_notify_vfo(rx);
 }
 
 long long radio_ppm_correction(long long f_rf) {
@@ -1111,6 +1120,7 @@ log_info("%s: state=%d\n",__FUNCTION__,state);
     }
   }
   r->mox=state;
+  tci_notify_trx(state);   // TCI (Phase A): mirror PTT to connected clients
   rxtx(r);
   update_radio(r);
 }
@@ -1834,6 +1844,10 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->cluster_port=atoi(value);
   value=getProperty("radio.cluster_login");
   if(value!=NULL) { strncpy(r->cluster_login,value,sizeof(r->cluster_login)-1); r->cluster_login[sizeof(r->cluster_login)-1]='\0'; }
+  value=getProperty("radio.tci_enable");
+  if(value!=NULL) r->tci_enable=atoi(value);
+  value=getProperty("radio.tci_port");
+  if(value!=NULL) r->tci_port=atoi(value);
   value=getProperty("radio.rec_dir");
   if(value!=NULL) { strncpy(r->rec_dir,value,sizeof(r->rec_dir)-1); r->rec_dir[sizeof(r->rec_dir)-1]='\0'; }
   value=getProperty("radio.rec_iq");
@@ -2852,6 +2866,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->cluster_port = 7373;
   r->cluster_login[0] = '\0';
 
+  r->tci_enable = FALSE;
+  r->tci_port = TCI_DEFAULT_PORT;
+
   r->rec_dir[0] = '\0';        // recorder: empty => default ~/.local/share/machpsdr
   r->rec_iq = TRUE;            // record both streams by default
   r->rec_af = TRUE;
@@ -3041,6 +3058,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // panadapter exist, then start the socket thread if the operator enabled it.
   dxcluster_init(r);
   if(r->cluster_enable) dxcluster_start();
+
+  // TCI control server (Phase A): remember the RADIO and auto-start if enabled.
+  tci_init(r);
 
   return r;
 }

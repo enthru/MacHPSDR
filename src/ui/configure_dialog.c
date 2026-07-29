@@ -61,6 +61,7 @@
 #include "ft8_dialog.h"
 #endif
 #include "cluster_dialog.h"
+#include "tci_dialog.h"
 
 int rx_base=3; // number of tabs before receivers
 
@@ -219,6 +220,8 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 #endif
 
   add_page(create_cluster_dialog(radio),"Cluster");
+
+  add_page(create_tci_dialog(radio),"TCI");
 
   add_page(create_about_dialog(radio),"About");
 

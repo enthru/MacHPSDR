@@ -416,7 +416,9 @@ actions.o \
 recorder.o \
 waterfall_theme.o \
 dxcluster.o \
-cluster_dialog.o
+cluster_dialog.o \
+tci.o \
+tci_dialog.o
 
 
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)

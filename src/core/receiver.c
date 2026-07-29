@@ -64,6 +64,7 @@
 #include "rigctl.h"
 #include "subrx.h"
 #include "dxcluster.h"
+#include "tci.h"
 #ifdef FT8
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
@@ -2168,6 +2169,9 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     radio_cw_panel_sync(radio);
   }
 #endif
+  // TCI (Phase A): mirror the mode change to connected clients (no-op unless
+  // the server runs and rx is the active receiver; see tci.c).
+  tci_notify_mode(rx);
 }
 
 void receiver_band_changed(RECEIVER *rx,int band) {

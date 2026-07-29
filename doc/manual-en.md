@@ -328,6 +328,18 @@ the overlay. Incoming `DX de …` spots are stored and shown on the RX
 panadapter, colour-keyed by DXCC entity, and clicking a spot tunes to it; the
 client reconnects automatically if the link drops.
 
+**TCI server (Configure → TCI).** MacHPSDR can act as a **TCI** (Expert
+Electronics) control server so external loggers and skimmers — Log4OM, N1MM+,
+SkookumLogger and others that speak TCI — can set and follow the radio over the
+network, without a virtual serial or audio cable. Tick **Enable TCI server**,
+optionally change the **port** (default 40001), and point the client software at
+`ws://<this-computer>:40001`. The status line shows whether the server is
+listening and how many clients are connected. When a client changes the VFO,
+mode or PTT the radio follows, and when you tune or switch mode locally the
+change is pushed back to every connected client so they stay in sync. Several
+clients may connect at once. *This first release is **control only** (VFO, mode,
+PTT); spectrum and audio streaming over TCI are planned for a later version.*
+
 ---
 
 ## 11. MIDI and keyboard control
