@@ -1232,8 +1232,30 @@ static long long receiver_x_to_freq(RECEIVER *rx, double x) {
 }
 
 // GTK4: GtkGestureClick "pressed" handler (button/state from the gesture).
+#ifdef __APPLE__
+// TRUE when a panadapter/waterfall click is really a leaked click from the
+// Configure dialog's native title bar: on macOS the gdkmacos backend delivers
+// the press to the main window even though the Configure dialog is the active
+// (key) toplevel. A genuine spectrum click activates the main window first, so
+// the dialog is no longer active by the time the gesture fires.
+static gboolean receiver_click_leaked_from_dialog(void) {
+  return radio!=NULL && radio->dialog!=NULL &&
+         gtk_window_is_active(GTK_WINDOW(radio->dialog));
+}
+#endif
+
 void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+#ifdef __APPLE__
+  // macOS: the gdkmacos backend delivers pointer clicks to the main window even
+  // when it is not the active (key) toplevel, so a click on the Configure
+  // dialog's native title bar (e.g. to drag/move the window) leaks through to the
+  // panadapter/waterfall gesture underneath and retunes the RX. Drop the click
+  // while the Configure dialog is itself the active window — that is exactly the
+  // leak condition, and it never fires for a genuine spectrum click (which makes
+  // the main window active and the dialog inactive first).
+  if(receiver_click_leaked_from_dialog()) return;
+#endif
   radio->active_receiver=rx;
   guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
@@ -1670,6 +1692,11 @@ void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guin
 // GTK4: GtkGestureClick "released" handler.
 void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+#ifdef __APPLE__
+  // See receiver_pressed_cb: drop clicks that leak from the Configure dialog's
+  // native title bar while that dialog is the active window.
+  if(receiver_click_leaked_from_dialog()) return;
+#endif
   guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
   int x=(int)ex;
@@ -1809,6 +1836,13 @@ int scroll_notches(GtkEventControllerScroll *controller, double dy) {
 
 gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+#ifdef __APPLE__
+  // See receiver_pressed_cb: the gdkmacos backend also leaks scroll events from
+  // the Configure dialog to the panadapter/waterfall underneath, so two-finger
+  // dragging the dialog around scrolls (pans/tunes) the waterfall. Drop the
+  // scroll while that dialog is the active window — same leak condition.
+  if(receiver_click_leaked_from_dialog()) return TRUE;
+#endif
   GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
   int x=rx->cursor_x;
   int y=rx->cursor_y;
