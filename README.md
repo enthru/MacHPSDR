@@ -46,7 +46,7 @@ feature additions.
 | Feature | Summary |
 |---|---|
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
-| **Colour skins** | Five dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
+| **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
@@ -112,8 +112,9 @@ you've dialled in.
   narrows SSB, and switching, say, from SSB to CW restores the AGC setting that
   mode had last. Both are remembered per receiver between sessions.
 
-- **Colour skins.** A dark interface with five selectable colour schemes
-  (Charcoal, Solarized Dark, Solarized Light, Nord, Gruvbox), chosen in
+- **Colour skins.** A dark interface with eleven selectable colour schemes
+  (Charcoal, Solarized Dark, Solarized Light, Nord, Gruvbox Dark, Dracula,
+  Tokyo Night, Catppuccin Mocha, Rosé Pine, One Dark, Gruvbox Light), chosen in
   **Configure → Misc → Appearance** and remembered per radio. Includes a
   redesigned S-meter and frequency display. The waterfall has several selectable
   colour themes of its own, and the panadapter trace colour is chosen from a

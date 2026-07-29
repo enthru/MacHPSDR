@@ -103,12 +103,118 @@ static const char palette_gruvbox_dark[]=
 "  @define-color INFO_ON #458588;\n"
 "  @define-color SPECTRUM_BG #1d2021;\n";
 
+// Dracula (dracula-theme.com): cyan VFO-A, orange VFO-B, purple "on" state.
+static const char palette_dracula[]=
+"  @define-color BACKGROUND #282a36;\n"
+"  @define-color SURFACE #343746;\n"
+"  @define-color SURFACE_HOVER #44475a;\n"
+"  @define-color BORDER #4d5066;\n"
+"  @define-color OFF_WHITE #f8f8f2;\n"
+"  @define-color DARK_TEXT #6272a4;\n"
+"  @define-color ON_ACCENT #f8f8f2;\n"
+"  @define-color ACCENT_A #8be9fd;\n"
+"  @define-color ACCENT_B #ffb86c;\n"
+"  @define-color ACCENT_ON #bd93f9;\n"
+"  @define-color WARNING #ff5555;\n"
+"  @define-color INFO_ON #6272a4;\n"
+"  @define-color SPECTRUM_BG #21222c;\n";
+
+// Tokyo Night (enkia): deep indigo base, cyan/orange accents, blue "on".
+static const char palette_tokyo_night[]=
+"  @define-color BACKGROUND #1a1b26;\n"
+"  @define-color SURFACE #24283b;\n"
+"  @define-color SURFACE_HOVER #292e42;\n"
+"  @define-color BORDER #3b4261;\n"
+"  @define-color OFF_WHITE #c0caf5;\n"
+"  @define-color DARK_TEXT #565f89;\n"
+"  @define-color ON_ACCENT #c0caf5;\n"
+"  @define-color ACCENT_A #7dcfff;\n"
+"  @define-color ACCENT_B #ff9e64;\n"
+"  @define-color ACCENT_ON #7aa2f7;\n"
+"  @define-color WARNING #f7768e;\n"
+"  @define-color INFO_ON #bb9af7;\n"
+"  @define-color SPECTRUM_BG #16161e;\n";
+
+// Catppuccin Mocha (catppuccin.com): soft pastel accents, so ON_ACCENT is dark
+// (accent fills are light) — a gentle, low-glare dark skin.
+static const char palette_catppuccin_mocha[]=
+"  @define-color BACKGROUND #1e1e2e;\n"
+"  @define-color SURFACE #313244;\n"
+"  @define-color SURFACE_HOVER #45475a;\n"
+"  @define-color BORDER #585b70;\n"
+"  @define-color OFF_WHITE #cdd6f4;\n"
+"  @define-color DARK_TEXT #a6adc8;\n"
+"  @define-color ON_ACCENT #1e1e2e;\n"
+"  @define-color ACCENT_A #89dceb;\n"
+"  @define-color ACCENT_B #fab387;\n"
+"  @define-color ACCENT_ON #cba6f7;\n"
+"  @define-color WARNING #f38ba8;\n"
+"  @define-color INFO_ON #89b4fa;\n"
+"  @define-color SPECTRUM_BG #11111b;\n";
+
+// Rosé Pine (rosepinetheme.com): muted, "cosy" low-contrast dark; pastel accents
+// so ON_ACCENT is dark like Catppuccin.
+static const char palette_rose_pine[]=
+"  @define-color BACKGROUND #191724;\n"
+"  @define-color SURFACE #1f1d2e;\n"
+"  @define-color SURFACE_HOVER #26233a;\n"
+"  @define-color BORDER #403d52;\n"
+"  @define-color OFF_WHITE #e0def4;\n"
+"  @define-color DARK_TEXT #908caa;\n"
+"  @define-color ON_ACCENT #191724;\n"
+"  @define-color ACCENT_A #9ccfd8;\n"
+"  @define-color ACCENT_B #f6c177;\n"
+"  @define-color ACCENT_ON #c4a7e7;\n"
+"  @define-color WARNING #eb6f92;\n"
+"  @define-color INFO_ON #3e8fb0;\n"
+"  @define-color SPECTRUM_BG #12101c;\n";
+
+// One Dark (Atom): the classic slate-grey editor skin; medium accents keep a
+// light ON_ACCENT.
+static const char palette_one_dark[]=
+"  @define-color BACKGROUND #282c34;\n"
+"  @define-color SURFACE #31353f;\n"
+"  @define-color SURFACE_HOVER #3b4048;\n"
+"  @define-color BORDER #4b5263;\n"
+"  @define-color OFF_WHITE #abb2bf;\n"
+"  @define-color DARK_TEXT #5c6370;\n"
+"  @define-color ON_ACCENT #e6e9ef;\n"
+"  @define-color ACCENT_A #56b6c2;\n"
+"  @define-color ACCENT_B #d19a66;\n"
+"  @define-color ACCENT_ON #c678dd;\n"
+"  @define-color WARNING #e06c75;\n"
+"  @define-color INFO_ON #61afef;\n"
+"  @define-color SPECTRUM_BG #21252b;\n";
+
+// Gruvbox Light: a warm-paper light skin (companion to Gruvbox Dark). Accents are
+// dark so text on them stays light; the spectrum stays dark for signal contrast.
+static const char palette_gruvbox_light[]=
+"  @define-color BACKGROUND #fbf1c7;\n"
+"  @define-color SURFACE #ebdbb2;\n"
+"  @define-color SURFACE_HOVER #d5c4a1;\n"
+"  @define-color BORDER #bdae93;\n"
+"  @define-color OFF_WHITE #3c3836;\n"
+"  @define-color DARK_TEXT #665c54;\n"
+"  @define-color ON_ACCENT #fbf1c7;\n"
+"  @define-color ACCENT_A #427b58;\n"
+"  @define-color ACCENT_B #af3a03;\n"
+"  @define-color ACCENT_ON #8f3f71;\n"
+"  @define-color WARNING #9d0006;\n"
+"  @define-color INFO_ON #076678;\n"
+"  @define-color SPECTRUM_BG #1d2021;\n";
+
 static const THEME themes[]={
-  { "Charcoal",        palette_charcoal,        TRUE  },
-  { "Solarized Dark",  palette_solarized_dark,  TRUE  },
-  { "Solarized Light", palette_solarized_light, FALSE },
-  { "Nord",            palette_nord,            TRUE  },
-  { "Gruvbox Dark",    palette_gruvbox_dark,    TRUE  },
+  { "Charcoal",         palette_charcoal,          TRUE  },
+  { "Solarized Dark",   palette_solarized_dark,    TRUE  },
+  { "Solarized Light",  palette_solarized_light,   FALSE },
+  { "Nord",             palette_nord,              TRUE  },
+  { "Gruvbox Dark",     palette_gruvbox_dark,      TRUE  },
+  { "Dracula",          palette_dracula,           TRUE  },
+  { "Tokyo Night",      palette_tokyo_night,       TRUE  },
+  { "Catppuccin Mocha", palette_catppuccin_mocha,  TRUE  },
+  { "Rosé Pine",        palette_rose_pine,         TRUE  },
+  { "One Dark",         palette_one_dark,          TRUE  },
+  { "Gruvbox Light",    palette_gruvbox_light,     FALSE },
 };
 static const int n_themes=(int)(sizeof(themes)/sizeof(themes[0]));
 
