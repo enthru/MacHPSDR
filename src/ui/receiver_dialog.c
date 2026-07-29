@@ -931,7 +931,9 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *nr4_frame=gtk_frame_new("Noise Reduction (NR4)");
     GtkWidget *nr4_grid=gtk_grid_new();
     sui_style_group(nr4_grid);
-    gtk_widget_set_halign(nr4_frame,GTK_ALIGN_START);
+    // Fill the column width so the frame matches the Audio/Equalizer blocks
+    // stacked above it (a shrink-to-content frame looked narrower than them).
+    gtk_widget_set_halign(nr4_frame,GTK_ALIGN_FILL);
 
     GtkWidget *l;
     GtkWidget *s;
@@ -941,6 +943,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(nr4_grid),l,0,0,1,1);
     s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_reduction,0.0,20.0,0.5,5.0,0.0));
     gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
     sui_scale_show_value(s,1);
     gtk_grid_attach(GTK_GRID(nr4_grid),s,1,0,1,1);
     g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_reduction_cb),rx);
@@ -950,6 +953,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(nr4_grid),l,0,1,1,1);
     s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_smoothing,0.0,100.0,1.0,10.0,0.0));
     gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
     sui_scale_show_value(s,0);
     gtk_grid_attach(GTK_GRID(nr4_grid),s,1,1,1,1);
     g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_smoothing_cb),rx);
@@ -959,6 +963,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(nr4_grid),l,0,2,1,1);
     s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_whitening,0.0,100.0,1.0,10.0,0.0));
     gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
     sui_scale_show_value(s,0);
     gtk_grid_attach(GTK_GRID(nr4_grid),s,1,2,1,1);
     g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_whitening_cb),rx);
@@ -968,6 +973,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(nr4_grid),l,0,3,1,1);
     s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_rescale,0.0,12.0,0.5,2.0,0.0));
     gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
     sui_scale_show_value(s,1);
     gtk_grid_attach(GTK_GRID(nr4_grid),s,1,3,1,1);
     g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_rescale_cb),rx);
@@ -977,6 +983,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(nr4_grid),l,0,4,1,1);
     s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_postfilter,-10.0,10.0,0.5,2.0,0.0));
     gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
     sui_scale_show_value(s,1);
     gtk_grid_attach(GTK_GRID(nr4_grid),s,1,4,1,1);
     g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_postfilter_cb),rx);
