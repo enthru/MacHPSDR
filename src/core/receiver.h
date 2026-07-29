@@ -179,6 +179,12 @@ typedef struct _receiver {
   gboolean nr2;
   gboolean nr3;
   gboolean nr4;
+  // NR4 (libspecbleach) tunable parameters, per receiver, persisted.
+  gdouble nr4_reduction;    // reduction amount, 0..20 dB
+  gdouble nr4_smoothing;    // smoothing factor, 0..100 %
+  gdouble nr4_whitening;    // residual whitening, 0..100 %
+  gdouble nr4_rescale;      // noise rescale, 0..12 dB
+  gdouble nr4_postfilter;   // post-filter threshold, -10..+10 dB
   gboolean anf;
   gboolean snb;
 

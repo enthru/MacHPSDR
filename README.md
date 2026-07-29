@@ -166,6 +166,9 @@ you've dialled in.
   adaptive spectral subtraction). NR3 and NR4 are vendored third-party libraries
   compiled straight into WDSP (RNNoise's model is baked in — nothing to download,
   no external install). Each toggle is remembered per receiver between sessions.
+  NR4 has a **"Noise Reduction (NR4)" slider block** (Configure → RX-N: reduction,
+  smoothing, whitening, noise rescale, post-filter) that tunes the spectral
+  denoiser live while you listen.
   *(NR3/NR4 are built and fake-tested; their on-air audio has not yet been tuned
   on real hardware.)*
 

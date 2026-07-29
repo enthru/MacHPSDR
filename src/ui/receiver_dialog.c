@@ -459,6 +459,34 @@ static void panadapter_phase_gain_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_phase_gain=(int)gtk_range_get_value(GTK_RANGE(widget));
 }
 
+// NR4 (libspecbleach) live parameter tuning. Each pushes straight to WDSP so the
+// operator can hear the change while A/B-testing on real signals.
+static void nr4_reduction_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr4_reduction=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXASBNRreductionAmount(rx->channel,(float)rx->nr4_reduction);
+}
+static void nr4_smoothing_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr4_smoothing=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXASBNRsmoothingFactor(rx->channel,(float)rx->nr4_smoothing);
+}
+static void nr4_whitening_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr4_whitening=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXASBNRwhiteningFactor(rx->channel,(float)rx->nr4_whitening);
+}
+static void nr4_rescale_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr4_rescale=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXASBNRnoiseRescale(rx->channel,(float)rx->nr4_rescale);
+}
+static void nr4_postfilter_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr4_postfilter=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXASBNRpostFilterThreshold(rx->channel,(float)rx->nr4_postfilter);
+}
+
 static void panadapter_phase_source_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->panadapter_phase_source=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
@@ -896,6 +924,66 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
   gtk_widget_set_halign(equalizer_frame,GTK_ALIGN_START);
   gtk_box_append(GTK_BOX(audio_eq_box),equalizer_frame);
+
+  // NR4 (libspecbleach) tuning: live sliders so the operator can dial the
+  // spectral denoiser in on real signals (defaults are conservative).
+  {
+    GtkWidget *nr4_frame=gtk_frame_new("Noise Reduction (NR4)");
+    GtkWidget *nr4_grid=gtk_grid_new();
+    sui_style_group(nr4_grid);
+    gtk_widget_set_halign(nr4_frame,GTK_ALIGN_START);
+
+    GtkWidget *l;
+    GtkWidget *s;
+
+    l=gtk_label_new("Reduction (dB):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),l,0,0,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_reduction,0.0,20.0,0.5,5.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    sui_scale_show_value(s,1);
+    gtk_grid_attach(GTK_GRID(nr4_grid),s,1,0,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_reduction_cb),rx);
+
+    l=gtk_label_new("Smoothing (%):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),l,0,1,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_smoothing,0.0,100.0,1.0,10.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    sui_scale_show_value(s,0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),s,1,1,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_smoothing_cb),rx);
+
+    l=gtk_label_new("Whitening (%):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),l,0,2,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_whitening,0.0,100.0,1.0,10.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    sui_scale_show_value(s,0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),s,1,2,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_whitening_cb),rx);
+
+    l=gtk_label_new("Noise rescale (dB):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),l,0,3,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_rescale,0.0,12.0,0.5,2.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    sui_scale_show_value(s,1);
+    gtk_grid_attach(GTK_GRID(nr4_grid),s,1,3,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_rescale_cb),rx);
+
+    l=gtk_label_new("Post-filter (dB):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr4_grid),l,0,4,1,1);
+    s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr4_postfilter,-10.0,10.0,0.5,2.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    sui_scale_show_value(s,1);
+    gtk_grid_attach(GTK_GRID(nr4_grid),s,1,4,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr4_postfilter_cb),rx);
+
+    gtk_frame_set_child(GTK_FRAME(nr4_frame),nr4_grid);
+    gtk_box_append(GTK_BOX(audio_eq_box),nr4_frame);
+  }
 
   gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);
   row+=4;
