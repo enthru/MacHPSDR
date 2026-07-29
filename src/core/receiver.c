@@ -1756,6 +1756,15 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
 // comes from the controller; cursor coords are stashed for the scroll handler).
 void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
+#ifdef __APPLE__
+  // See receiver_pressed_cb: the gdkmacos backend leaks the button-1 drag motion
+  // from the Configure dialog's title bar to the panadapter underneath. This
+  // handler retunes on any button-1 motion (independent of our own press flag,
+  // which the guarded press handler never set), so dragging the dialog around
+  // re-tuned the waterfall. Drop the motion while that dialog is the active
+  // window — same leak condition.
+  if(receiver_click_leaked_from_dialog()) return;
+#endif
   GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
   int x=(int)ex;
