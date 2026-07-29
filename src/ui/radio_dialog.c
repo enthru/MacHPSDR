@@ -1163,7 +1163,9 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_set_column_homogeneous(GTK_GRID(calibration_grid),FALSE);
   sui_style_group(calibration_grid);
   gtk_frame_set_child(GTK_FRAME(calibration_frame),calibration_grid);
-  gtk_grid_attach(GTK_GRID(radio_audio_page),calibration_frame,0,arow++,1,1);
+  // Calibration [dBm] stays on the Radio page (not the Audio tab) — it belongs
+  // with the radio hardware settings.
+  gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1);
 
   GtkWidget *smeter_label=gtk_label_new(" S-Meter:");
   gtk_grid_attach(GTK_GRID(calibration_grid),smeter_label,0,1,1,1);

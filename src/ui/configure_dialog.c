@@ -230,8 +230,8 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(merge_pages(2,create_radio_audio_dialog(radio),
                          create_recording_dialog(radio)),"Audio");
   add_page(create_cw_dialog(radio),"CW");
-  add_page(merge_pages(2,titled(create_oc_dialog(radio),"Open Collector"),
-                         titled(create_xvtr_dialog(radio),"Transverters")),"Bands");
+  add_page(merge_pages(2,titled(create_xvtr_dialog(radio),"Transverters"),
+                         titled(create_oc_dialog(radio),"Open Collector")),"Bands");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {
     // Skip hidden receivers (show_rx==FALSE): a diversity hidden RX or a

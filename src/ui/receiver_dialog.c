@@ -1382,41 +1382,48 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   GtkWidget *cat_debug_b=gtk_check_button_new_with_label("CAT Debug");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_debug_b), rx->rigctl_debug);
-  gtk_grid_attach(GTK_GRID(cat_grid),cat_debug_b,0,0,1,1);
+  gtk_grid_attach(GTK_GRID(cat_grid),cat_debug_b,0,0,3,1);
   g_signal_connect(cat_debug_b,"toggled",G_CALLBACK(cat_debug_cb),rx);
+  // CAT fills the full Panadapter width above it via two groups: TCP/IP on the
+  // left (cols 0-2), Serial on the right (cols 4-6, a 40px gap at col 3). The
+  // serial-port entry hexpands to consume the remainder — no empty right half.
 
 
   GtkWidget *cat_enable_b=gtk_check_button_new_with_label("TCP/IP enable");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_enable_b), rx->rigctl_enable);
-  gtk_grid_attach(GTK_GRID(cat_grid),cat_enable_b,0,1,1,1);
+  gtk_grid_attach(GTK_GRID(cat_grid),cat_enable_b,0,1,3,1);
   g_signal_connect(cat_enable_b,"toggled",G_CALLBACK(cat_enable_cb),rx);
 
   GtkWidget *rigctl_port_spinner =gtk_spin_button_new_with_range(18000,21000,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(rigctl_port_spinner),(double)rx->rigctl_port);
   gtk_widget_set_visible(rigctl_port_spinner, TRUE);
-  gtk_grid_attach(GTK_GRID(cat_grid),rigctl_port_spinner,0,2,2,1);
+  gtk_grid_attach(GTK_GRID(cat_grid),rigctl_port_spinner,0,2,3,1);
   g_signal_connect(rigctl_port_spinner,"value_changed",G_CALLBACK(rigctl_value_changed_cb),rx);
 
 
 
   GtkWidget *cat_serial_enable_b=gtk_check_button_new_with_label("Serial Port Enable");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_serial_enable_b), rx->rigctl_serial_enable);
-  gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_enable_b,0,4,1,1);
+  gtk_widget_set_margin_start(cat_serial_enable_b,40);
+  gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_enable_b,4,0,3,1);
   g_signal_connect(cat_serial_enable_b,"toggled",G_CALLBACK(cat_serial_enable_cb),rx);
 
   GtkWidget *serial_text_label=gtk_label_new(NULL);
   gtk_label_set_markup(GTK_LABEL(serial_text_label), "<b>Serial Port: </b>");
-  gtk_grid_attach(GTK_GRID(cat_grid),serial_text_label,0,5,1,1);
+  gtk_widget_set_margin_start(serial_text_label,40);
+  gtk_grid_attach(GTK_GRID(cat_grid),serial_text_label,4,1,1,1);
 
   rx->serial_port_entry=gtk_entry_new();
   gtk_editable_set_text(GTK_EDITABLE(rx->serial_port_entry),rx->rigctl_serial_port);
   gtk_widget_set_visible(rx->serial_port_entry, TRUE);
-  gtk_grid_attach(GTK_GRID(cat_grid),rx->serial_port_entry,1,5,2,1);
+  gtk_widget_set_hexpand(rx->serial_port_entry,TRUE);
+  gtk_grid_attach(GTK_GRID(cat_grid),rx->serial_port_entry,5,1,2,1);
   g_signal_connect(rx->serial_port_entry,"activate",G_CALLBACK(cat_serial_port_cb),rx);
 
   GtkWidget *serial_baudrate_label=gtk_label_new(NULL);
   gtk_label_set_markup(GTK_LABEL(serial_baudrate_label), "<b>Baudrate: </b>");
-  gtk_grid_attach(GTK_GRID(cat_grid),serial_baudrate_label,0,6,1,1);
+  gtk_widget_set_margin_start(serial_baudrate_label,40);
+  gtk_grid_attach(GTK_GRID(cat_grid),serial_baudrate_label,4,2,1,1);
 
   const char *baud_opts[]={"4800","9600","19200","38400",NULL};
   GtkWidget *cat_serial_port_baudrate=gtk_drop_down_new_from_strings(baud_opts);
@@ -1429,7 +1436,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   } else if(rx->rigctl_serial_baudrate==B38400) {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),3);
   }
-  gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,1,6,1,1);
+  gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,5,2,1,1);
   g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
   return grid;
 }

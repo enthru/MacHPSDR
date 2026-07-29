@@ -192,12 +192,22 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   DIVPAGE *dp = g_new0(DIVPAGE, 1);
   dp->radio = radio;
 
+  // Page root + a titled "Diversity" frame so these settings match the framed-
+  // group style of every other Configure page (they used to sit bare).
+  GtkWidget *page = gtk_grid_new();
+  sui_style_page(page);
+
+  GtkWidget *div_frame = gtk_frame_new("Diversity");
+  gtk_widget_set_halign(div_frame, GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(page), div_frame, 0, 0, 1, 1);
+
   GtkWidget *grid = gtk_grid_new();
-  sui_style_page(grid);
+  sui_style_group(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid), FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid), FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
   gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+  gtk_frame_set_child(GTK_FRAME(div_frame), grid);
 
   // Row 0: the on/off checkbox (greyed out when the device can't do diversity).
   RECEIVER *arx = radio->active_receiver;
@@ -293,13 +303,13 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   gtk_label_set_wrap(GTK_LABEL(note), TRUE);
   gtk_label_set_xalign(GTK_LABEL(note), 0.0);
   gtk_widget_set_size_request(note, 600, -1);
-  gtk_grid_attach(GTK_GRID(grid), note, 0, 6, 4, 1);
+  gtk_grid_attach(GTK_GRID(page), note, 0, 1, 1, 1);   // below the frame
 
   // Load current state into the controls (and grey them if diversity is off).
   div_page_sync(dp);
 
   // The page owns the DIVPAGE; free it when the page widget is destroyed.
-  g_object_set_data_full(G_OBJECT(grid), "divpage", dp, g_free);
+  g_object_set_data_full(G_OBJECT(page), "divpage", dp, g_free);
 
-  return grid;
+  return page;
 }
