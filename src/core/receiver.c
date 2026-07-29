@@ -2537,6 +2537,9 @@ static void full_rx_buffer(RECEIVER *rx) {
   recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
   ppm_cal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   scope_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
+  // TCI (Phase B): stream this off-air I/Q block to any iq_start client. No-op
+  // with no IQ subscribers (single atomic read).
+  tci_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size, rx->sample_rate);
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {

@@ -337,8 +337,12 @@ optionally change the **port** (default 40001), and point the client software at
 listening and how many clients are connected. When a client changes the VFO,
 mode or PTT the radio follows, and when you tune or switch mode locally the
 change is pushed back to every connected client so they stay in sync. Several
-clients may connect at once. *This first release is **control only** (VFO, mode,
-PTT); spectrum and audio streaming over TCI are planned for a later version.*
+clients may connect at once. A client may also request the **live I/Q stream**
+(`iq_start`): MacHPSDR then sends the off-air I/Q as TCI binary frames, so an
+external CW/RTTY skimmer or panadapter can work from this receiver without a
+virtual audio cable — run the receiver at 96 or 192 kHz for this, since TCI only
+treats a stream above 48 kHz as I/Q. *Audio in/out streaming (for digital modes)
+is planned for a later version.*
 
 ---
 

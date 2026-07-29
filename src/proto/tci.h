@@ -58,4 +58,9 @@ extern void tci_notify_vfo(RECEIVER *rx);   // frequency_a / frequency_b changed
 extern void tci_notify_mode(RECEIVER *rx);  // mode changed
 extern void tci_notify_trx(gboolean mox);   // PTT / MOX changed
 
+// Phase B: feed one block of off-air I/Q (interleaved doubles, `nsamples`
+// complex pairs at `sample_rate`) to any client that sent iq_start. Called from
+// the RX audio thread (receiver.c:full_rx_buffer). No-op with no IQ subscribers.
+extern void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate);
+
 #endif
