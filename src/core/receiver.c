@@ -1778,20 +1778,54 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
 
 // GTK4: GtkEventControllerScroll "scroll" handler. The signal carries no pointer
 // position, so use the coords the motion handler stashed; dy<0 == scroll up.
+// Accumulated surface-delta (macOS trackpad scrollingDeltaY ~= points) that
+// makes one tuning notch.  ~10 points is one classic "scroll line", so a
+// trackpad notch feels close to one mouse-wheel detent instead of the dozens of
+// raw precise events a single swipe fires.  Raise for a coarser (less
+// sensitive) trackpad, lower for finer.
+#define SCROLL_SURFACE_STEP 10.0
+
+int scroll_notches(GtkEventControllerScroll *controller, double dy) {
+  if(dy==0.0) return 0;
+  // Mechanical mouse wheel arrives as a discrete event (unit WHEEL, dy=+-1 per
+  // detent): keep the classic one-notch-per-click feel untouched.
+  if(gtk_event_controller_scroll_get_unit(controller)==GDK_SCROLL_UNIT_WHEEL) {
+    return dy<0.0 ? -1 : 1;
+  }
+  // Trackpad / Magic Mouse: a precise (SURFACE) stream of many small deltas per
+  // swipe.  Accumulate per-controller and only emit a notch each time the sum
+  // crosses SCROLL_SURFACE_STEP, so a smooth swipe no longer over-scrolls.
+  gdouble *acc=g_object_get_data((GObject *)controller,"scroll_acc");
+  if(acc==NULL) {
+    acc=g_new0(gdouble,1);
+    g_object_set_data_full((GObject *)controller,"scroll_acc",acc,g_free);
+  }
+  // Reversing direction responds immediately rather than first unwinding the
+  // leftover accumulation from the previous direction.
+  if(((*acc)>0.0 && dy<0.0) || ((*acc)<0.0 && dy>0.0)) *acc=0.0;
+  *acc+=dy;
+  int notches=(int)((*acc)/SCROLL_SURFACE_STEP);
+  if(notches!=0) *acc-=notches*SCROLL_SURFACE_STEP;
+  return notches;
+}
+
 gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
   int x=rx->cursor_x;
   int y=rx->cursor_y;
   int half=rx->panadapter_height/2;
-  gboolean up=dy<0;
+  int n=scroll_notches(controller,dy);
+  if(n==0) return TRUE;   // trackpad delta below the notch threshold
+  gboolean up=n<0;
+  int mag=n<0?-n:n;       // notches this event (>1 on a fast flick)
 
   if(rx->zoom>1 && y>=rx->panadapter_height-20) {
     int pan;
     if(up) {
-      pan=rx->pan+rx->zoom;
+      pan=rx->pan+rx->zoom*mag;
     } else {
-      pan=rx->pan-rx->zoom;
+      pan=rx->pan-rx->zoom*mag;
     }
 
     if(pan<0) {
@@ -1804,28 +1838,28 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
     if((x>4 && x<35) && (widget==rx->panadapter)) {
       if(up) {
         if(y<half) {
-          rx->panadapter_high=rx->panadapter_high-5;
+          rx->panadapter_high=rx->panadapter_high-5*mag;
         } else {
-          rx->panadapter_low=rx->panadapter_low-5;
+          rx->panadapter_low=rx->panadapter_low-5*mag;
         }
       } else {
         if(y<half) {
-          rx->panadapter_high=rx->panadapter_high+5;
+          rx->panadapter_high=rx->panadapter_high+5*mag;
         } else {
-          rx->panadapter_low=rx->panadapter_low+5;
+          rx->panadapter_low=rx->panadapter_low+5*mag;
         }
       }
     } else if(up) {
       if(rx->ctun || rx->freetune) {
-        receiver_move(rx,rx->step,TRUE);
+        receiver_move(rx,rx->step*mag,TRUE);
       } else {
-        receiver_move(rx,-rx->step,TRUE);
+        receiver_move(rx,-rx->step*mag,TRUE);
       }
     } else {
       if(rx->ctun || rx->freetune) {
-        receiver_move(rx,-rx->step,TRUE);
+        receiver_move(rx,-rx->step*mag,TRUE);
       } else {
-        receiver_move(rx,+rx->step,TRUE);
+        receiver_move(rx,+rx->step*mag,TRUE);
       }
     }
   }

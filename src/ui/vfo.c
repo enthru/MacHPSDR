@@ -1581,17 +1581,20 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
-  if(!rx->locked) {
+  // Trackpad-aware: 1 notch per wheel detent, threshold-accumulated notches for
+  // a trackpad so smooth scroll doesn't over-tune (n>1 on a fast flick).
+  int n=scroll_notches(ctrl,dy);
+  if(!rx->locked && n!=0) {
     digit=freq_digit_at(v->frequency_a_text,freq_hover_x);
     long long step=0LL;
     if(digit>=0 && digit<13) {
-      step=ll_step[digit];
+      step=ll_step[digit]*(long long)(n<0?-n:n);
     }
-    // Wheel up (dy<0) tunes up, wheel down (dy>0) tunes down. receiver_move
-    // SUBTRACTS its argument for a normal VFO but ADDS it in ctun/freetune, so
-    // the sign to negate depends on the mode to keep the direction consistent.
+    // Notch up (n<0) tunes up, down (n>0) tunes down. receiver_move SUBTRACTS
+    // its argument for a normal VFO but ADDS it in ctun/freetune, so the sign to
+    // negate depends on the mode to keep the direction consistent.
     gboolean adds = rx->ctun || rx->freetune;
-    if((dy>0.0 && !adds) || (dy<0.0 && adds)) {
+    if((n>0 && !adds) || (n<0 && adds)) {
       step=-step;
     }
 //g_print("%s: digit=%d step=%lld\n",__FUNCTION__,digit,step);
@@ -1645,16 +1648,17 @@ static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)rx->vfo,"vfo_data");
   int digit;
 
-  if(!rx->locked) {
+  int n=scroll_notches(ctrl,dy);
+  if(!rx->locked && n!=0) {
     digit=freq_digit_at(v->frequency_b_text,freq_hover_x);
     long long step=0LL;
     if(digit>=0 && digit<13) {
-      step=ll_step[digit];
+      step=ll_step[digit]*(long long)(n<0?-n:n);
     }
     // receiver_move_b ADDS its argument (VFO A's receiver_move subtracts), so
-    // to move the same way as VFO A for a given wheel direction the sign is
-    // flipped on the opposite dy: wheel-up tunes up, wheel-down tunes down.
-    if((dy<0.0)) {
+    // to move the same way as VFO A for a given scroll direction the sign is
+    // flipped on notch-up (n<0): up tunes up, down tunes down.
+    if((n<0)) {
       step=-step;
     }
     switch(rx->split) {

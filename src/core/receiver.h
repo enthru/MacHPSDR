@@ -444,6 +444,10 @@ extern void receiver_motion_cb(GtkEventControllerMotion *controller, double x, d
 extern gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data);
 extern void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data);
 extern gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
+/* Trackpad-aware scroll step count: 1 notch per detent for a mouse wheel,
+ * threshold-accumulated (far fewer) notches for a trackpad/precise device so a
+ * smooth-scroll swipe doesn't over-tune.  Sign follows dy (dy<0 => up). */
+extern int scroll_notches(GtkEventControllerScroll *controller, double dy);
 
 extern void receiver_filter_changed(RECEIVER *rx,int filter);
 extern void receiver_mode_changed(RECEIVER *rx,int mode);
