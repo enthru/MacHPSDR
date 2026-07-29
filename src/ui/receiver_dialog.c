@@ -831,6 +831,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   col=0;
 
+  // Audio + Equalizer share column 0 and are stacked in one top-aligned box so
+  // they hug each other; without it the tall Panadapter in the next column
+  // stretches Audio's grid row and opens a gap above the Equalizer.
+  GtkWidget *audio_eq_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+  gtk_widget_set_valign(audio_eq_box,GTK_ALIGN_START);
+
   if(n_output_devices>=0) {
     GtkWidget *audio_frame=gtk_frame_new("Audio");
     GtkWidget *audio_grid=gtk_grid_new();
@@ -838,9 +844,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
     sui_style_group(audio_grid);
     gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
-    gtk_widget_set_valign(audio_frame,GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid),audio_frame,col,row,1,1);
-    row++;
+    gtk_box_append(GTK_BOX(audio_eq_box),audio_frame);
 
     rx->local_audio_b=gtk_check_button_new_with_label("Local Audio");
     gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->local_audio_b), rx->local_audio);
@@ -897,9 +901,10 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_spacing(GTK_GRID(equalizer_grid),2);
   gtk_widget_set_halign(equalizer_grid,GTK_ALIGN_START);
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
-  gtk_widget_set_valign(equalizer_frame,GTK_ALIGN_START);
   gtk_widget_set_halign(equalizer_frame,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),equalizer_frame,col,row,1,4);
+  gtk_box_append(GTK_BOX(audio_eq_box),equalizer_frame);
+
+  gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);
   row+=4;
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
