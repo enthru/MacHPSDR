@@ -780,8 +780,8 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
         cairo_line_to(cr,(double)display_width,y);
         // With a very small step the labels would collide; at step<=3 dB print
-        // the number on every other gridline (the lines are still all drawn).
-        if(db_step>3 || (abs(i)/db_step)%2==0) {
+        // the number on every third gridline (the lines are still all drawn).
+        if(db_step>3 || (abs(i)/db_step)%3==0) {
           if(rx->panadapter_gradient) SetColour(cr, TEXT_B);
           sprintf(temp," %d",i);
           cairo_move_to(cr, 5, y-4);  // lift the label clear of the graticule line
