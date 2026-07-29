@@ -175,6 +175,8 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
 
   SetRXAANRVals(subrx->channel, 64, 16, 16e-4, 10e-7); // defaults
   SetRXAANRRun(subrx->channel, rx->nr);
+  SetRXARNNRRun(subrx->channel, rx->nr3);
+  SetRXASBNRRun(subrx->channel, rx->nr4);
   SetRXAANFRun(subrx->channel, rx->anf);
   SetRXASNBARun(subrx->channel, rx->snb);
 

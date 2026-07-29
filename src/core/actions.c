@@ -377,17 +377,7 @@ int switch_action(void * data) {
       update_noise(rx);
       break;
     case NR:
-      if(rx->nr) {
-        rx->nr = FALSE;
-        rx->nr2= TRUE;
-      } else if(rx->nr2) {
-        rx->nr = FALSE;
-        rx->nr2= FALSE;
-      } else {
-        rx->nr = TRUE;
-        rx->nr2= FALSE;
-      }
-      update_noise(rx);
+      receiver_set_nr_mode(rx,(receiver_nr_mode(rx)+1)%5);
       break;
     case NUM_1:
       if(arg->function) {

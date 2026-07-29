@@ -761,19 +761,9 @@ static int midi_action(void *data) {
 	    break;
 	/////////////////////////////////////////////////////////// "NOISEREDUCTION"
 	case MIDI_NR: // only key supported
-	    // cycle through NoiseReduction settings: OFF, NR1, NR2
+	    // cycle through NoiseReduction settings: OFF, NR1, NR2, NR3, NR4
 	    if (type == MIDI_KEY) {
-	      if (rx->nr) {
-		rx->nr = FALSE;
-		rx->nr2= TRUE;
-	      } else if (rx->nr2) {
-		rx->nr = FALSE;
-		rx->nr2= FALSE;
-	      } else {
-		rx->nr = TRUE;
-		rx->nr2= FALSE;
-	      }
-	      update_noise(rx);
+	      receiver_set_nr_mode(rx,(receiver_nr_mode(rx)+1)%5);
 	    }
 	    break;
 	/////////////////////////////////////////////////////////// "PAN"

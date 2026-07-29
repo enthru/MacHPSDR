@@ -780,28 +780,28 @@ void nr_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   VFO_DATA *v=(VFO_DATA *)g_object_get_data((GObject *)choice->rx->vfo,"vfo_data");
 
+  // choice->selection encodes the NR mode directly: 0=off,1=NR,2=NR2,3=NR3,4=NR4
+  receiver_set_nr_mode(choice->rx,choice->selection);
   switch(choice->selection) {
     case 0:
-      choice->rx->nr=FALSE;
-      choice->rx->nr2=FALSE;
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR");
       break;
     case 1:
-      choice->rx->nr=TRUE;
-      choice->rx->nr2=FALSE;
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR");
       break;
     case 2:
-      choice->rx->nr=FALSE;
-      choice->rx->nr2=TRUE;
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR2");
+      break;
+    case 3:
+      gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR3");
+      break;
+    case 4:
+      gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR4");
       break;
   }
   g_signal_handlers_block_by_func(v->nr_b,G_CALLBACK(nr_b_pressed_cb),data);
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),choice->rx->nr|choice->rx->nr2);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),choice->selection!=0);
   g_signal_handlers_unblock_by_func(v->nr_b,G_CALLBACK(nr_b_pressed_cb),data);
-
-  update_noise(choice->rx);
 
   g_free(choice);
 }
@@ -831,6 +831,20 @@ static gboolean nr_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,d
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
+  choice->button=widget;
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
+  menu_item=gtk_menu_item_new_with_label("NR3");
+  choice=g_new0(CHOICE,1);
+  choice->rx=rx;
+  choice->selection=3;
+  choice->button=widget;
+  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
+  menu_item=gtk_menu_item_new_with_label("NR4");
+  choice=g_new0(CHOICE,1);
+  choice->rx=rx;
+  choice->selection=4;
   choice->button=widget;
   g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
@@ -1954,7 +1968,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->nr_b=gtk_toggle_button_new_with_label("NR");
   gtk_widget_set_name(v->nr_b,"vfo-toggle");
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2|rx->nr3|rx->nr4);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(nr_b_pressed_cb),rx); gtk_widget_add_controller(v->nr_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->nr_b);
 
@@ -2207,11 +2221,15 @@ void update_vfo(RECEIVER *rx) {
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR");
   } else if(rx->nr2) {
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR2");
+  } else if(rx->nr3) {
+      gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR3");
+  } else if(rx->nr4) {
+      gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR4");
   } else {
       gtk_button_set_label(GTK_BUTTON(v->nr_b),"NR");
   }
   g_signal_handlers_block_by_func(v->nr_b,G_CALLBACK(nr_b_pressed_cb),rx);
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2|rx->nr3|rx->nr4);
   g_signal_handlers_unblock_by_func(v->nr_b,G_CALLBACK(nr_b_pressed_cb),rx);
 
   // update SNB button

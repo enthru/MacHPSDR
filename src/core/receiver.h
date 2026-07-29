@@ -177,6 +177,8 @@ typedef struct _receiver {
   gboolean nb2;
   gboolean nr;
   gboolean nr2;
+  gboolean nr3;
+  gboolean nr4;
   gboolean anf;
   gboolean snb;
 
@@ -443,6 +445,10 @@ extern void set_deviation(RECEIVER *rx);
 extern void set_squelch(RECEIVER *rx);
 
 extern void update_noise(RECEIVER *rx);
+
+// NR mode helpers: 0=off,1=NR,2=NR2,3=NR3,4=NR4 (mutually exclusive nr/nr2/nr3/nr4 bools).
+extern int  receiver_nr_mode(RECEIVER *rx);
+extern void receiver_set_nr_mode(RECEIVER *rx, int mode);
 
 // Manual notch filter (MNF) helpers (receiver.c).
 extern void receiver_notch_sync(RECEIVER *rx);

@@ -1832,6 +1832,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             rx->nr=atoi(&command[4]);
             if(rx->nr) {
               rx->nr2=0;
+              rx->nr3=0;
+              rx->nr4=0;
             }
             update_noise(rx);
           }
@@ -1845,6 +1847,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             rx->nr2=atoi(&command[4]);
             if(rx->nr2) {
               rx->nr=0;
+              rx->nr3=0;
+              rx->nr4=0;
             }
             update_noise(rx);
           }
@@ -1878,6 +1882,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             rx->nr=atoi(&command[4]);
             if(rx->nr) {
               rx->nr2=0;
+              rx->nr3=0;
+              rx->nr4=0;
             }
             update_noise(rx);
           }
@@ -1891,6 +1897,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             rx->nr2=atoi(&command[4]);
             if(rx->nr2) {
               rx->nr=0;
+              rx->nr3=0;
+              rx->nr4=0;
             }
             update_noise(rx);
           }
@@ -3171,14 +3179,20 @@ int parse_cmd(void *data) {
               case 0: // NR OFF
                 rx->nr=0;
                 rx->nr2=0;
+                rx->nr3=0;
+                rx->nr4=0;
                 break;
               case 1: // NR ON
                 rx->nr=1;
                 rx->nr2=0;
+                rx->nr3=0;
+                rx->nr4=0;
                 break;
               case 2: // NR2 ON
                 rx->nr=0;
                 rx->nr2=1;
+                rx->nr3=0;
+                rx->nr4=0;
                 break;
             }
             update_noise(rx);

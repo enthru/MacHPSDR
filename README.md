@@ -54,6 +54,7 @@ feature additions.
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
+| **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
@@ -158,9 +159,15 @@ you've dialled in.
     off to a nonsense frequency.
 
 - **Noise blankers & reduction.** Per-receiver toggles on the VFO row: **NB**/**NB2**
-  (impulse-noise blankers), **NR**/**NR2** (noise reduction), **ANF** (automatic
-  notch) and **SNB** (Spectral Noise Blanker — a wideband spectral impulse
-  remover). Each is remembered per receiver between sessions.
+  (impulse-noise blankers), **ANF** (automatic notch) and **SNB** (Spectral Noise
+  Blanker — a wideband spectral impulse remover). The **NR** button opens a menu
+  with five states — OFF, **NR** (WDSP LMS/ANR), **NR2** (WDSP spectral/EMNR),
+  **NR3** (RNNoise recurrent-neural-net denoiser) and **NR4** (libspecbleach
+  adaptive spectral subtraction). NR3 and NR4 are vendored third-party libraries
+  compiled straight into WDSP (RNNoise's model is baked in — nothing to download,
+  no external install). Each toggle is remembered per receiver between sessions.
+  *(NR3/NR4 are built and fake-tested; their on-air audio has not yet been tuned
+  on real hardware.)*
 
 - **Manual notch filters (MNF).** In addition to the automatic notch (**ANF**),
   you can place your own notches to kill a steady carrier or heterodyne.

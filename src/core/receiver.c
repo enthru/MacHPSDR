@@ -399,6 +399,12 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].nr2",rx->channel);
   sprintf(value,"%d",rx->nr2);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].nr3",rx->channel);
+  sprintf(value,"%d",rx->nr3);
+  setProperty(name,value);
+  sprintf(name,"receiver[%d].nr4",rx->channel);
+  sprintf(value,"%d",rx->nr4);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].nb",rx->channel);
   sprintf(value,"%d",rx->nb);
   setProperty(name,value);
@@ -714,6 +720,12 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].nr2",rx->channel);
   value=getProperty(name);
   if(value) rx->nr2=atoi(value);
+  sprintf(name,"receiver[%d].nr3",rx->channel);
+  value=getProperty(name);
+  if(value) rx->nr3=atoi(value);
+  sprintf(name,"receiver[%d].nr4",rx->channel);
+  value=getProperty(name);
+  if(value) rx->nr4=atoi(value);
   sprintf(name,"receiver[%d].nb",rx->channel);
   value=getProperty(name);
   if(value) rx->nb=atoi(value);
@@ -1012,9 +1024,29 @@ void update_noise(RECEIVER *rx) {
   SetEXTNOBRun(rx->channel, rx->nb2);
   SetRXAANRRun(rx->channel, rx->nr);
   SetRXAEMNRRun(rx->channel, rx->nr2);
+  SetRXARNNRRun(rx->channel, rx->nr3);
+  SetRXASBNRRun(rx->channel, rx->nr4);
   SetRXAANFRun(rx->channel, rx->anf);
   SetRXASNBARun(rx->channel, rx->snb);
   update_vfo(rx);
+}
+
+// returns 0=off,1=NR,2=NR2,3=NR3,4=NR4
+int receiver_nr_mode(RECEIVER *rx) {
+  if(rx->nr)  return 1;
+  if(rx->nr2) return 2;
+  if(rx->nr3) return 3;
+  if(rx->nr4) return 4;
+  return 0;
+}
+
+// sets exactly one (or none) of the four NR flags, then applies via update_noise
+void receiver_set_nr_mode(RECEIVER *rx, int mode) {
+  rx->nr  = (mode==1);
+  rx->nr2 = (mode==2);
+  rx->nr3 = (mode==3);
+  rx->nr4 = (mode==4);
+  update_noise(rx);
 }
 
 // Push the whole MacHPSDR notch list into WDSP for this rx's channel, set the
@@ -3055,6 +3087,8 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->nb2=FALSE;
   rx->nr=FALSE;
   rx->nr2=FALSE;
+  rx->nr3=FALSE;
+  rx->nr4=FALSE;
   rx->anf=FALSE;
   rx->snb=FALSE;
 
@@ -3261,6 +3295,8 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 
   SetRXAANRVals(rx->channel, 64, 16, 16e-4, 10e-7); // defaults
   SetRXAANRRun(rx->channel, rx->nr);
+  SetRXARNNRRun(rx->channel, rx->nr3);
+  SetRXASBNRRun(rx->channel, rx->nr4);
   SetRXAANFRun(rx->channel, rx->anf);
   SetRXASNBARun(rx->channel, rx->snb);
 

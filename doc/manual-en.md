@@ -94,7 +94,7 @@ own VFO, panadapter and waterfall.
   attenuation filter controls (att10 / att20) were added in this fork.
 - **AGC** — off / long / slow / medium / fast, with an adjustable threshold ("AGC
   gain") line drawn on the panadapter.
-- **Noise handling** — NR / NR2 (noise reduction), NB / NB2 (noise blanker), ANF
+- **Noise handling** — NR / NR2 / NR3 / NR4 (noise reduction — NR3 is an RNNoise neural-net denoiser, NR4 is libspecbleach adaptive spectral subtraction; pick from the VFO NR menu), NB / NB2 (noise blanker), ANF
   (automatic notch filter) and **SNB** (Spectral Noise Blanker). Each is
   remembered per receiver between sessions.
 - **Manual notch filters (MNF)** — place your own notches to kill a steady
