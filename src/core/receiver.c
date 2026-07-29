@@ -1913,6 +1913,16 @@ void receiver_fps_changed(RECEIVER *rx) {
   g_source_remove(rx->update_timer_id);
   int poll_ms=1000/(3*rx->fps); if(poll_ms<8) poll_ms=8;   // oversample vs frame production
   rx->update_timer_id=g_timeout_add(poll_ms,update_timer_cb,(gpointer)rx);
+  // The waterfall scroll rate is the WDSP frame-production rate
+  // (sample_rate/(fft_size-overlap)), and `overlap` is derived from rx->fps
+  // ONLY inside receiver_init_analyzer(). Re-run it here so production actually
+  // tracks the new fps - otherwise the slider changed only the poll interval,
+  // which is visible only when it falls below the (frozen) production rate at
+  // low fps. Guard with rx->mutex like the resize path (it frees/reallocs the
+  // pixel buffers the audio thread reads).
+  g_mutex_lock(&rx->mutex);
+  receiver_init_analyzer(rx);
+  g_mutex_unlock(&rx->mutex);
   calculate_display_average(rx);
 }
 

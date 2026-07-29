@@ -763,9 +763,13 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     cairo_rectangle(cr,0,0,40,display_height);
     cairo_fill(cr);    
     
+    // dB graticule spacing follows the "Step" slider (rx->panadapter_step),
+    // not a hardcoded 20 dB - otherwise the slider is inert. Guard against a
+    // 0/negative step (would be a %0 divide) by falling back to 20.
+    int db_step = rx->panadapter_step>0 ? rx->panadapter_step : 20;
     for(i=rx->panadapter_high;i>=rx->panadapter_low;i--) {
       SetColour(cr, DARK_LINES);
-      int mod=abs(i)%20;
+      int mod=abs(i)%db_step;
       if(mod==0) {
         double y = (double)(rx->panadapter_high-i)*dbm_per_line;
         cairo_move_to(cr,0.0,y);
