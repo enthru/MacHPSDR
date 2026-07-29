@@ -159,6 +159,42 @@ static gboolean close_request(GtkWindow *self, gpointer data) {
   return FALSE;
 }
 
+// Layout-independent test for the physical "W" key (mirrors key_is_q() in
+// receiver.c): GTK reports keyval after the active keyboard layout, so on a
+// Russian layout Cmd-W arrives as Cyrillic "ц" and a plain keyval==GDK_KEY_w
+// test misses it. Look up every keyval the pressed hardware keycode produces
+// across all layout groups (there is always a Latin group where the physical W
+// key is w) so Cmd-W closes the dialog on any keyboard layout.
+static gboolean key_is_w(guint keyval, guint keycode) {
+  if(keyval==GDK_KEY_w || keyval==GDK_KEY_W) return TRUE;
+  GdkDisplay *display=gdk_display_get_default();
+  if(!display || keycode==0) return FALSE;
+  GdkKeymapKey *keys=NULL;
+  guint *keyvals=NULL;
+  int n=0;
+  gboolean found=FALSE;
+  if(gdk_display_map_keycode(display,keycode,&keys,&keyvals,&n)) {
+    for(int i=0;i<n;i++) {
+      if(keyvals[i]==GDK_KEY_w || keyvals[i]==GDK_KEY_W) { found=TRUE; break; }
+    }
+  }
+  g_free(keys);
+  g_free(keyvals);
+  return found;
+}
+
+// Cmd-W (macOS) / Ctrl-W closes the Configure dialog regardless of keyboard
+// layout, mirroring the main window's Cmd-Q handling. gtk_window_close() emits
+// "close-request" so close_request() still runs its cleanup.
+static gboolean configure_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
+  if(key_is_w(keyval,keycode) &&
+     (state & (GDK_META_MASK|GDK_ALT_MASK|GDK_CONTROL_MASK))) {
+    gtk_window_close(GTK_WINDOW(data));
+    return TRUE;
+  }
+  return FALSE;
+}
+
 static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer data) {
   RADIO *radio=(RADIO *)data;
   GtkWidget *child=gtk_stack_get_visible_child(GTK_STACK(stack));
@@ -203,6 +239,11 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   // page is bigger than the screen (see add_page).
   gtk_window_set_default_size(GTK_WINDOW(dialog),-1,-1);
   g_signal_connect (dialog,"close-request",G_CALLBACK(close_request),(gpointer)radio);
+
+  // Cmd-W / Ctrl-W closes the dialog on any keyboard layout (see key_is_w).
+  GtkEventController *key_controller=gtk_event_controller_key_new();
+  g_signal_connect(key_controller,"key-pressed",G_CALLBACK(configure_key_pressed),dialog);
+  gtk_widget_add_controller(dialog,key_controller);
 
   GtkWidget *content=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
   gtk_window_set_child(GTK_WINDOW(dialog),content);
