@@ -773,16 +773,20 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       if(mod==0) {
         double y = (double)(rx->panadapter_high-i)*dbm_per_line;
         cairo_move_to(cr,0.0,y);
-        
+
         static const double dashed2[] = {2.0, 2.0};
-        static int len2  = sizeof(dashed2) / sizeof(dashed2[0]);        
+        static int len2  = sizeof(dashed2) / sizeof(dashed2[0]);
         cairo_set_dash(cr, dashed2, len2, 0);
 
         cairo_line_to(cr,(double)display_width,y);
-        if(rx->panadapter_gradient) SetColour(cr, TEXT_B);
-        sprintf(temp," %d",i);
-        cairo_move_to(cr, 5, y-4);  // lift the label clear of the graticule line
-        cairo_show_text(cr, temp);
+        // With a very small step the labels would collide; at step<=3 dB print
+        // the number on every other gridline (the lines are still all drawn).
+        if(db_step>3 || (abs(i)/db_step)%2==0) {
+          if(rx->panadapter_gradient) SetColour(cr, TEXT_B);
+          sprintf(temp," %d",i);
+          cairo_move_to(cr, 5, y-4);  // lift the label clear of the graticule line
+          cairo_show_text(cr, temp);
+        }
       }
     }
     SetColour(cr, DARK_LINES);      
