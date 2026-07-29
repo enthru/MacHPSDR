@@ -574,6 +574,14 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 #endif
   gtk_drop_down_set_selected(GTK_DROP_DOWN(model_combo_box),radio->model);
   g_signal_connect(model_combo_box,"notify::selected",G_CALLBACK(model_cb),radio);
+#ifdef SOAPYSDR
+  // "Radio model" is an HPSDR-only concept (which ANAN/Hermes variant). For a
+  // non-HPSDR device (SoapySDR: HackRF/RTL/Lime) the model is fixed by the
+  // discovered hardware and changing it is meaningless, so grey it out.
+  if(radio->discovered->device==DEVICE_SOAPYSDR) {
+    gtk_widget_set_sensitive(model_combo_box,FALSE);
+  }
+#endif
   gtk_grid_attach(GTK_GRID(model_grid),model_combo_box,x,0,1,1);
   x++;
   if ((radio->discovered->device == DEVICE_HERMES_LITE2) || (radio->discovered->device == DEVICE_HERMES_LITE)) {
