@@ -277,8 +277,12 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   GtkWidget *ps_frame=gtk_frame_new("Pure Signal");
   GtkWidget *ps_grid=gtk_grid_new();
   gtk_grid_set_column_spacing(GTK_GRID(ps_grid),10);
-  gtk_grid_set_row_homogeneous(GTK_GRID(ps_grid),TRUE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(ps_grid),TRUE);
+  // NOT homogeneous: the plot spans 8 columns, so homogeneous columns forced
+  // every column to the width of the "Enable PureSignal" checkbox (~150px each
+  // → ~1200px total, stretching the whole tab). Content-sized columns let the
+  // plot keep its bounded 480px and the frame stays compact.
+  gtk_grid_set_row_homogeneous(GTK_GRID(ps_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(ps_grid),FALSE);
   sui_style_group(ps_grid);
   gtk_frame_set_child(GTK_FRAME(ps_frame),ps_grid);
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
@@ -295,6 +299,14 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   tx->ps=gtk_drawing_area_new();
   gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx->ps),ps_draw_cb,(gpointer)tx,NULL);
   g_signal_connect (tx->ps,"resize",G_CALLBACK(ps_resize_cb),(gpointer)tx);
+  // Bound the feedback plot to a modest fixed size (it had none, so it ballooned
+  // to fill the tab). Left-aligned, no expand — this is an unfinished prototype
+  // graph, it doesn't need to swallow the whole page.
+  gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(tx->ps),480);
+  gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(tx->ps),180);
+  gtk_widget_set_hexpand(tx->ps,FALSE);
+  gtk_widget_set_vexpand(tx->ps,FALSE);
+  gtk_widget_set_halign(tx->ps,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ps_grid),tx->ps,0,1,8,8);
 
   // Honest disclaimer: this PureSignal path is an unfinished prototype.
@@ -304,6 +316,10 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
     "and its peak calibration is tuned mainly for the Hermes-Lite 2. "
     "It has not been verified on hardware in this fork; use at your own risk.</i></small>");
   gtk_label_set_wrap(GTK_LABEL(note),TRUE);
+  // Bound the wrap width so this long sentence doesn't stretch the whole page
+  // (its single-line natural width was driving the tab wide).
+  gtk_label_set_max_width_chars(GTK_LABEL(note),64);
+  gtk_widget_set_halign(note,GTK_ALIGN_START);
   gtk_label_set_xalign(GTK_LABEL(note),0.0);
   gtk_grid_attach(GTK_GRID(grid),note,0,row++,2,1);
 

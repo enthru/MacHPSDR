@@ -217,7 +217,10 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   gtk_grid_set_row_spacing(GTK_GRID(tune_grid),4);
   gtk_widget_set_valign(tune_grid,GTK_ALIGN_START);
   gtk_widget_set_margin_start(tune_grid,24); // separate the tune block from the OC matrix
-  gtk_grid_attach(GTK_GRID(grid),tune_grid,18,1,2,30);
+  // Span only the matrix rows (1..dr), not a fixed 30 — the extra phantom rows
+  // added ~10 empty grid tracks of dead space below the matrix. tune_grid is
+  // valign START + self-contained, so it sits at the top of whatever it spans.
+  gtk_grid_attach(GTK_GRID(grid),tune_grid,18,1,2,dr);
 
   GtkWidget *tune_title=gtk_label_new("Tune (ORed with TX)");
   gtk_grid_attach(GTK_GRID(tune_grid),tune_title,0,0,2,1);

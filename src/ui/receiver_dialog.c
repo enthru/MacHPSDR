@@ -1322,14 +1322,20 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_column_homogeneous(GTK_GRID(waterfall_grid),FALSE);
     sui_style_group(waterfall_grid);
     gtk_frame_set_child(GTK_FRAME(waterfall_frame),waterfall_grid);
-    gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col,row,1,2);
-    row+=2;
+    // Waterfall goes in the RIGHT column (col+1) under the CAT frame instead of
+    // below the tall Panadapter in the middle column — the Panadapter's height
+    // (its Phase sub-column) left the whole bottom-right of the page empty, and
+    // stacking Waterfall under Panadapter wasted that space. col+1 == the CAT
+    // column; CAT spans rows 0..2, so Waterfall sits at row 3 beneath it.
+    gtk_widget_set_valign(waterfall_frame,GTK_ALIGN_START);
+    gtk_widget_set_halign(waterfall_frame,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid),waterfall_frame,col+1,3,1,2);
 
     GtkWidget *waterfall_high_label=gtk_label_new("High:");
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_high_label,0,0,1,1);
 
     GtkWidget *waterfall_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_high,-200.0, 20.0, 1.0, 1.0, 1.0));
-    gtk_widget_set_size_request(waterfall_high_scale,200,30);
+    gtk_widget_set_size_request(waterfall_high_scale,150,30);
     sui_scale_show_value(waterfall_high_scale,0);
     gtk_widget_set_visible(waterfall_high_scale, TRUE);
     g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),rx);
@@ -1339,7 +1345,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(waterfall_grid),waterfall_low_label,0,1,1,1);
 
     GtkWidget *waterfall_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_low,-200.0, 20.0, 1.0, 1.0, 1.0));
-    gtk_widget_set_size_request(waterfall_low_scale,200,30);
+    gtk_widget_set_size_request(waterfall_low_scale,150,30);
     sui_scale_show_value(waterfall_low_scale,0);
     gtk_widget_set_visible(waterfall_low_scale, TRUE);
     g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),rx);

@@ -91,6 +91,17 @@ static void add_page(GtkWidget *child, const char *title) {
   // page is bigger than the screen (so nothing is ever pushed off-screen).
   gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroller),TRUE);
   gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller),TRUE);
+  // Pin the page content to the top-left at its NATURAL size. The GtkStack is
+  // homogeneous (every page gets the size of the biggest page — RX/TX/MIDI), so
+  // without this a small page's frames hexpand/vexpand to fill that whole area
+  // and look grotesquely stretched (full-width Recording box, etc.). halign/
+  // valign START + explicit hexpand/vexpand FALSE stops the fill and stops the
+  // upward expand-propagation from greedy descendants (entries, column views),
+  // so each frame renders at its content width with empty margin to the right.
+  gtk_widget_set_halign(child,GTK_ALIGN_START);
+  gtk_widget_set_valign(child,GTK_ALIGN_START);
+  gtk_widget_set_hexpand(child,FALSE);
+  gtk_widget_set_vexpand(child,FALSE);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),child);
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
@@ -104,9 +115,17 @@ static void add_page(GtkWidget *child, const char *title) {
 // outer page padding comes from CSS on #config-stack, so the box needs none of
 // its own — only an inter-group gap matching the page rhythm. NULL children are
 // skipped (a builder may legitimately return NULL when its feature is absent).
+// Wrap a builder's bare page-grid in a titled frame so a merged tab labels each
+// section (OC/XVTR return unframed grids — the Bands tab needs the group names).
+static GtkWidget *titled(GtkWidget *child,const char *title) {
+  GtkWidget *frame=gtk_frame_new(title);
+  gtk_widget_set_halign(frame,GTK_ALIGN_START);
+  gtk_frame_set_child(GTK_FRAME(frame),child);
+  return frame;
+}
+
 static GtkWidget *merge_pages(int n,...) {
   GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
-  gtk_widget_set_hexpand(box,TRUE);
   va_list ap;
   va_start(ap,n);
   for(int i=0;i<n;i++) {
@@ -211,8 +230,8 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(merge_pages(2,create_radio_audio_dialog(radio),
                          create_recording_dialog(radio)),"Audio");
   add_page(create_cw_dialog(radio),"CW");
-  add_page(merge_pages(2,create_oc_dialog(radio),
-                         create_xvtr_dialog(radio)),"Bands");
+  add_page(merge_pages(2,titled(create_oc_dialog(radio),"Open Collector"),
+                         titled(create_xvtr_dialog(radio),"Transverters")),"Bands");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {
     // Skip hidden receivers (show_rx==FALSE): a diversity hidden RX or a
@@ -231,8 +250,8 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   if(radio->can_transmit) {
     add_page(create_transmitter_dialog(radio->transmitter),"TX");
     add_page(merge_pages(3,create_pa_dialog(radio),
-                           create_eer_dialog(radio),
-                           create_puresignal_dialog(radio->transmitter)),
+                           create_puresignal_dialog(radio->transmitter),
+                           create_eer_dialog(radio)),
              "PA / Linearity");
   }
 
