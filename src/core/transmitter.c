@@ -63,6 +63,7 @@
 #ifdef SSTV
 #include "sstv_encoder.h"
 #include "cw_encoder.h"
+#include "tci.h"
 #endif
 
 double ctcss_frequencies[CTCSS_FREQUENCIES]= {
@@ -1519,6 +1520,13 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
       // SSB, FMN = FM).  The panel only keys TX in one of those modes.
       mic_sample_double=(double)sstv_tx_next_sample();
 #endif
+    } else if(tci_tx_active()) {
+      // TCI (Phase C) TX audio: a TCI client is streaming modulator audio and
+      // has keyed TX, so substitute its samples for the mic in this phone/digi
+      // mode. Reached only after the CW/FT8/SSTV/tune branches, so it never
+      // overrides the app's own encoders; tci_tx_active() is FALSE (mic path
+      // untouched) unless a client is driving TX audio right now.
+      mic_sample_double=(double)tci_tx_next_sample();
     } else {
       mic_sample_double=(double)mic_sample;
     }

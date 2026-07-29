@@ -53,7 +53,7 @@ feature additions.
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
-| **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, **and can pull the live I/Q stream** (`iq_start`) for a CW/RTTY skimmer or an external panadapter — no virtual cable. Enable in **Configure → TCI** *(control + IQ streaming done; audio streaming still to come; verified with a WebSocket test client, not yet against a commercial logger)*. |
+| **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → TCI** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. |
 | **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → RX) that peaks the beat-note to lift weak CW out of the noise, plus a **mode-aware squelch** — the SQL bar now gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), remembered per receiver *(faker-tested; on-air threshold calibration pending hardware)*. |
@@ -387,11 +387,18 @@ you've dialled in.
   frames (float32, at the receiver's sample rate) — enough to feed an external
   CW/RTTY **skimmer** or a third-party panadapter with no virtual audio cable.
   *(TCI treats a stream as I/Q only above 48 kHz, so run the receiver at 96/192
-  kHz for skimmer use.)* **Still deferred:** the audio in/out streams (the
-  digital-mode VAC replacement). *(Control set-and-notify **and** the I/Q stream
-  are verified end-to-end with a raw-WebSocket test client on the fake device —
-  correct 64-byte frame headers, ~192 kS/s throughput, clean start/stop; not yet
-  exercised against a commercial logger or skimmer.)*
+  kHz for skimmer use.)* **RX and TX audio** are also served (`audio_start`):
+  the receiver's demodulated audio streams out as TCI audio frames, and a client
+  may stream **TX audio in** — MacHPSDR substitutes it for the microphone while
+  the client keys TX, so external digital-mode software can key and modulate the
+  radio over TCI instead of a virtual audio cable (48 kHz, stereo float32). The
+  TX-audio injection is inert unless a client is actively driving it, so the
+  normal mic path is untouched. *(Control, the I/Q stream **and** RX audio are
+  verified end-to-end with a raw-WebSocket test client on the fake device —
+  correct frame headers, ~48/192 kS/s throughput, clean start/stop; TX audio is
+  verified to ingest without disturbing the mic path but, like the whole TX
+  chain, is unverified on air. Not yet exercised against a commercial logger or
+  skimmer.)*
 
 ### SoapySDR / HackRF
 

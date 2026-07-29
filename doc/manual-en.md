@@ -341,8 +341,11 @@ clients may connect at once. A client may also request the **live I/Q stream**
 (`iq_start`): MacHPSDR then sends the off-air I/Q as TCI binary frames, so an
 external CW/RTTY skimmer or panadapter can work from this receiver without a
 virtual audio cable — run the receiver at 96 or 192 kHz for this, since TCI only
-treats a stream above 48 kHz as I/Q. *Audio in/out streaming (for digital modes)
-is planned for a later version.*
+treats a stream above 48 kHz as I/Q. A client may also request the **RX audio
+stream** (`audio_start`) to receive the demodulated audio, and stream **TX audio**
+back so external digital-mode software can key and modulate the radio over TCI
+instead of a virtual audio cable (48 kHz). *The TX-audio path has not been tested
+on the air (no transmit hardware).*
 
 ---
 

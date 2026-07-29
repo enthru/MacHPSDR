@@ -60,16 +60,22 @@
 // interleaved float32 sample payload.
 #define TCI_SAMPLE_FLOAT32   3    // TciSampleType::FLOAT32
 #define TCI_STREAM_IQ        0    // TciStreamType::IQ_STREAM
+#define TCI_STREAM_RX_AUDIO  1    // TciStreamType::RX_AUDIO_STREAM
+#define TCI_STREAM_TX_AUDIO  2    // TciStreamType::TX_AUDIO_STREAM
 #define TCI_HDR_BYTES        64
+#define TCI_AUDIO_RATE       48000 // RX/TX audio streamed at the native AF rate
+#define TCI_TX_RING          48000 // TX-audio jitter ring: 1 s of mono float
+#define TCI_TX_ACTIVE_US     250000 // TX-audio idle timeout (µs) -> release mic
 
 // One connected client. `send_mtx` serialises the byte stream to `fd` so control
 // replies (client thread), state notifications (GTK thread) and IQ frames (audio
 // thread) can never interleave partial WebSocket frames on the same socket. The
 // GMutex lives in static storage, so it needs no g_mutex_init.
 typedef struct {
-  int    fd;       // -1 = free slot
-  GMutex send_mtx; // serialise all sends to fd
-  gint   iq_on;    // atomic: client subscribed to the IQ stream (iq_start)
+  int    fd;        // -1 = free slot
+  GMutex send_mtx;  // serialise all sends to fd
+  gint   iq_on;     // atomic: subscribed to the IQ stream (iq_start)
+  gint   audio_on;  // atomic: subscribed to the RX audio stream (audio_start)
 } TCI_CLIENT;
 
 static RADIO   *g_radio = NULL;
@@ -81,6 +87,15 @@ static int      listening_port = TCI_DEFAULT_PORT;
 static GMutex     clients_mutex;              // guards the clients[] table
 static TCI_CLIENT clients[TCI_MAX_CLIENTS];
 static gint       iq_sub_count = 0;           // atomic: # clients with iq_on
+static gint       audio_sub_count = 0;        // atomic: # clients with audio_on
+
+// TX audio ingest: a mono float ring filled by client threads (from inbound TCI
+// TX-audio binary frames) and drained by the TX thread via tci_tx_next_sample().
+static GMutex   tx_ring_mutex;
+static float    tx_ring[TCI_TX_RING];
+static int      tx_ring_head = 0;             // next write
+static int      tx_ring_tail = 0;             // next read
+static gint64   tx_audio_last_us = 0;         // monotonic time of last TX-audio frame
 
 static char     status_line[96] = "stopped";
 
@@ -168,7 +183,7 @@ static int ws_recv_frame(int fd, char **out, size_t *out_len) {
     len = 0;
     for (int i = 0; i < 8; i++) len = (len << 8) | e[i];
   }
-  if (len > 65536) return -1;                 // no TCI control frame is this big
+  if (len > 262144) return -1;                // bounded: control frames tiny, TX-audio blocks small
   guint8 mask[4] = {0,0,0,0};
   if (masked && !recv_all(fd, mask, 4)) return -1;
   char *buf = g_malloc(len + 1);
@@ -350,6 +365,42 @@ static void client_set_iq(TCI_CLIENT *c, gboolean on) {
   }
 }
 
+// Same for the RX audio subscription.
+static void client_set_audio(TCI_CLIENT *c, gboolean on) {
+  gint was = g_atomic_int_get(&c->audio_on);
+  if (on && !was) { g_atomic_int_set(&c->audio_on, 1); g_atomic_int_inc(&audio_sub_count); }
+  else if (!on && was) {
+    g_atomic_int_set(&c->audio_on, 0);
+    g_atomic_int_add(&audio_sub_count, -1);
+  }
+}
+
+// Ingest one inbound TCI binary frame from a client. Only TX-audio (type 2,
+// float32) is consumed: its left channel is pushed into the mono TX ring for
+// add_mic_sample() to drain. Everything else is ignored.
+static void tci_ingest_binary(const guint8 *buf, size_t len) {
+  if (len < TCI_HDR_BYTES + 4) return;
+  guint32 fmt     = ((guint32)buf[ 8]) | ((guint32)buf[ 9]<<8) | ((guint32)buf[10]<<16) | ((guint32)buf[11]<<24);
+  guint32 dtype   = ((guint32)buf[24]) | ((guint32)buf[25]<<8) | ((guint32)buf[26]<<16) | ((guint32)buf[27]<<24);
+  guint32 channels= ((guint32)buf[28]) | ((guint32)buf[29]<<8) | ((guint32)buf[30]<<16) | ((guint32)buf[31]<<24);
+  if (dtype != TCI_STREAM_TX_AUDIO) return;
+  if (fmt != TCI_SAMPLE_FLOAT32) return;              // only float32 supported
+  if (channels < 1) channels = 1;
+
+  const float *s = (const float *)(buf + TCI_HDR_BYTES);
+  size_t nfloats = (len - TCI_HDR_BYTES) / sizeof(float);
+  size_t stride  = channels;                          // take the left channel
+  g_mutex_lock(&tx_ring_mutex);
+  for (size_t i = 0; i + stride <= nfloats; i += stride) {
+    int next = (tx_ring_head + 1) % TCI_TX_RING;
+    if (next == tx_ring_tail) break;                  // ring full: drop the rest
+    tx_ring[tx_ring_head] = s[i];
+    tx_ring_head = next;
+  }
+  g_mutex_unlock(&tx_ring_mutex);
+  tx_audio_last_us = g_get_monotonic_time();
+}
+
 // Handle one ';'-stripped command token from client `c`.
 static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   char name[32];
@@ -412,6 +463,17 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     char r[48];
     g_snprintf(r, sizeof(r), "iq_samplerate:%d;", rate);
     client_send_text(c, r);
+  } else if (!strcmp(name, "audio_start")) {
+    client_set_audio(c, TRUE);
+    log_info("tci: audio_start (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&audio_sub_count));
+  } else if (!strcmp(name, "audio_stop")) {
+    client_set_audio(c, FALSE);
+    log_info("tci: audio_stop (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&audio_sub_count));
+  } else if (!strcmp(name, "audio_samplerate") || !strcmp(name, "audio_sample_rate")) {
+    // RX audio (and expected TX audio) run at the native 48 kHz AF rate.
+    char r[48];
+    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", TCI_AUDIO_RATE);
+    client_send_text(c, r);
   } else {
     // Everything else (if, split_enable, rx_enable, mute, audio_*, start, stop,
     // …): echo as an ack so a request/response client doesn't hang. Phase A/B
@@ -440,6 +502,11 @@ static void tci_send_handshake(TCI_CLIENT *c) {
   client_send_text(c, "vfo_limits:0,6000000000;");
   client_send_text(c, "if_limits:-24000,24000;");
   client_send_text(c, "modulations_list:" TCI_MODLIST ";");
+  {
+    char r[48];
+    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", TCI_AUDIO_RATE);
+    client_send_text(c, r);
+  }
   if (rx != NULL) {
     char r[64];
     g_snprintf(r, sizeof(r), "iq_samplerate:%d;", rx->sample_rate);
@@ -458,7 +525,8 @@ static void tci_send_handshake(TCI_CLIENT *c) {
 
 static void clients_remove(TCI_CLIENT *c) {
   g_mutex_lock(&clients_mutex);
-  client_set_iq(c, FALSE);   // keep iq_sub_count balanced
+  client_set_iq(c, FALSE);      // keep iq_sub_count balanced
+  client_set_audio(c, FALSE);   // keep audio_sub_count balanced
   c->fd = -1;
   g_mutex_unlock(&clients_mutex);
 }
@@ -496,7 +564,8 @@ static gpointer tci_client_thread(gpointer data) {
       g_free(payload);
       continue;
     }
-    if (op == 0x1 && payload) tci_process_text(c, payload);   // text
+    if (op == 0x1 && payload) tci_process_text(c, payload);          // text command
+    else if (op == 0x2 && payload) tci_ingest_binary((guint8 *)payload, plen);  // TX audio
     g_free(payload);
   }
 
@@ -556,7 +625,13 @@ static gpointer tci_server_thread(gpointer data) {
     TCI_CLIENT *slot = NULL;
     g_mutex_lock(&clients_mutex);
     for (int i = 0; i < TCI_MAX_CLIENTS; i++)
-      if (clients[i].fd < 0) { clients[i].fd = fd; g_atomic_int_set(&clients[i].iq_on, 0); slot = &clients[i]; break; }
+      if (clients[i].fd < 0) {
+        clients[i].fd = fd;
+        g_atomic_int_set(&clients[i].iq_on, 0);
+        g_atomic_int_set(&clients[i].audio_on, 0);
+        slot = &clients[i];
+        break;
+      }
     g_mutex_unlock(&clients_mutex);
     if (slot == NULL) {
       log_info("tci: too many clients, rejecting fd=%d\n", fd);
@@ -631,8 +706,9 @@ const char *tci_status(void) {
   for (int i = 0; i < TCI_MAX_CLIENTS; i++) if (clients[i].fd >= 0) n++;
   g_mutex_unlock(&clients_mutex);
   int iq = g_atomic_int_get(&iq_sub_count);
-  g_snprintf(buf, sizeof(buf), "%s (%d client%s%s)", status_line, n, n == 1 ? "" : "s",
-             iq > 0 ? ", IQ streaming" : "");
+  int au = g_atomic_int_get(&audio_sub_count);
+  g_snprintf(buf, sizeof(buf), "%s (%d client%s%s%s)", status_line, n, n == 1 ? "" : "s",
+             iq > 0 ? ", IQ" : "", au > 0 ? ", audio" : "");
   return buf;
 }
 
@@ -663,20 +739,13 @@ void tci_notify_trx(gboolean mox) {
   tci_broadcast_text(line);
 }
 
-// --- IQ stream (audio thread tap in receiver.c:full_rx_buffer) --------------
+// --- outbound binary streams (audio thread taps in receiver.c) --------------
 
-void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) {
-  // Cheap gates first: server off, no subscribers, or not the active receiver
-  // (Phase B streams the active RX as TCI trx 0). Costs one atomic read when idle.
-  if (!g_atomic_int_get(&server_running)) return;
-  if (g_atomic_int_get(&iq_sub_count) <= 0) return;
-  if (rx == NULL || iq == NULL || nsamples <= 0) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
-
-  // Build the complete on-wire WebSocket frame once: WS header + 64-byte TCI
-  // header + interleaved float32 I/Q. length counts individual floats (2 per
-  // complex sample); channels = 2; format = float32; type = IQ.
-  guint32 nfloats = (guint32)nsamples * 2u;
+// Build the complete on-wire WS frame once (WS binary header + 64-byte TCI
+// header + interleaved float32 down-cast from `interleaved`) and broadcast to
+// every client subscribed to the given stream (`audio` picks audio_on vs iq_on).
+static void tci_stream_broadcast(int data_type, int sample_rate, int channels,
+                                 const double *interleaved, guint32 nfloats, gboolean audio) {
   size_t  payload = TCI_HDR_BYTES + (size_t)nfloats * sizeof(float);
   guint8  wshdr[10];
   size_t  wshlen = ws_write_header(wshdr, 0x2 /*binary*/, payload);
@@ -684,7 +753,7 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
   guint8 *frame = g_malloc(flen);
 
   memcpy(frame, wshdr, wshlen);
-  guint8 *th = frame + wshlen;                 // TCI header
+  guint8 *th = frame + wshlen;                 // 64-byte TCI header
   memset(th, 0, TCI_HDR_BYTES);
   st32le(th +  0, 0);                           // rx index (trx 0)
   st32le(th +  4, (guint32)sample_rate);        // sample_rate
@@ -692,17 +761,62 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
   st32le(th + 12, 0);                           // codec
   st32le(th + 16, 0);                           // crc
   st32le(th + 20, nfloats);                     // length (float count)
-  st32le(th + 24, TCI_STREAM_IQ);               // data_type
-  st32le(th + 28, 2);                           // channels (I, Q)
+  st32le(th + 24, (guint32)data_type);          // data_type
+  st32le(th + 28, (guint32)channels);           // channels
 
   float *fp = (float *)(th + TCI_HDR_BYTES);
-  for (int i = 0; i < nsamples * 2; i++) fp[i] = (float)iq[i];
+  for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
 
   g_mutex_lock(&clients_mutex);
-  for (int i = 0; i < TCI_MAX_CLIENTS; i++)
-    if (clients[i].fd >= 0 && g_atomic_int_get(&clients[i].iq_on))
-      client_send_framed_try(&clients[i], frame, flen);
+  for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
+    if (clients[i].fd < 0) continue;
+    gint want = audio ? g_atomic_int_get(&clients[i].audio_on)
+                      : g_atomic_int_get(&clients[i].iq_on);
+    if (want) client_send_framed_try(&clients[i], frame, flen);
+  }
   g_mutex_unlock(&clients_mutex);
 
   g_free(frame);
+}
+
+// Phase B: off-air I/Q (interleaved doubles, `nsamples` complex pairs). Gated so
+// it costs one atomic read when nobody subscribed. Active RX only (trx 0).
+void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) {
+  if (!g_atomic_int_get(&server_running)) return;
+  if (g_atomic_int_get(&iq_sub_count) <= 0) return;
+  if (rx == NULL || iq == NULL || nsamples <= 0) return;
+  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  tci_stream_broadcast(TCI_STREAM_IQ, sample_rate, 2, iq, (guint32)nsamples * 2u, FALSE);
+}
+
+// Phase C: demodulated RX audio (interleaved stereo doubles, `nstereo` frames).
+void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate) {
+  if (!g_atomic_int_get(&server_running)) return;
+  if (g_atomic_int_get(&audio_sub_count) <= 0) return;
+  if (rx == NULL || audio == NULL || nstereo <= 0) return;
+  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  tci_stream_broadcast(TCI_STREAM_RX_AUDIO, sample_rate, 2, audio, (guint32)nstereo * 2u, TRUE);
+}
+
+// --- TX audio ingest -> mic substitution (transmitter.c:add_mic_sample) ------
+
+// TRUE while a client is actively streaming TX audio and we are transmitting.
+// Self-clears TCI_TX_ACTIVE_US after the last frame (or when MOX drops), so the
+// real mic path is untouched unless a TCI client is driving TX right now.
+gboolean tci_tx_active(void) {
+  if (!g_atomic_int_get(&server_running)) return FALSE;
+  if (g_radio == NULL || !g_radio->mox) return FALSE;
+  return (g_get_monotonic_time() - tx_audio_last_us) < TCI_TX_ACTIVE_US;
+}
+
+// Pop one mono TX sample (0.0 on underrun). Called per-sample on the TX thread.
+float tci_tx_next_sample(void) {
+  float s = 0.0f;
+  g_mutex_lock(&tx_ring_mutex);
+  if (tx_ring_tail != tx_ring_head) {
+    s = tx_ring[tx_ring_tail];
+    tx_ring_tail = (tx_ring_tail + 1) % TCI_TX_RING;
+  }
+  g_mutex_unlock(&tx_ring_mutex);
+  return s;
 }

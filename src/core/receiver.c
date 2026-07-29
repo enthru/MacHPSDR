@@ -2339,6 +2339,9 @@ static void process_rx_buffer(RECEIVER *rx) {
 
   // Tap the clean demodulated audio (pre listen-volume) for recording.
   recorder_audio(rx, rx->audio_output_buffer, rx->output_samples);
+  // TCI (Phase C): stream the same 48 kHz demod audio to any audio_start client.
+  // No-op with no audio subscribers (single atomic read).
+  tci_audio_feed(rx, rx->audio_output_buffer, rx->output_samples, 48000);
 
 #ifdef FT8
   // Decoder tap: feed the active receiver's demodulated audio to the selected

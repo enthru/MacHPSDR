@@ -63,4 +63,16 @@ extern void tci_notify_trx(gboolean mox);   // PTT / MOX changed
 // the RX audio thread (receiver.c:full_rx_buffer). No-op with no IQ subscribers.
 extern void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate);
 
+// Phase C — RX audio out: feed one block of demodulated audio (interleaved
+// stereo doubles, `nstereo` frames at `sample_rate`) to any client that sent
+// audio_start. Called from the RX audio thread (receiver.c:process_rx_buffer).
+extern void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate);
+
+// Phase C — TX audio in: while a client streams TX audio and we transmit,
+// tci_tx_active() is TRUE and tci_tx_next_sample() yields the next mono mic
+// sample (0.0 on underrun). Consumed by transmitter.c:add_mic_sample(). Inert
+// (active=FALSE, mic untouched) unless a client is driving TX audio right now.
+extern gboolean tci_tx_active(void);
+extern float    tci_tx_next_sample(void);
+
 #endif
