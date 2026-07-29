@@ -2369,9 +2369,10 @@ static void create_visual(RADIO *r) {
     // rather than a bare strip. The drawing area fills the frame's content box.
     GtkWidget *mon_frame=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
     gtk_widget_set_name(mon_frame,"tx-monitor-frame");
-    gtk_widget_set_hexpand(r->transmitter->panadapter,TRUE);
+    // Keep the monitor at its natural width (no hexpand — in the horizontal
+    // bottom bar that would let it grab all the slack and balloon); just fill
+    // the frame's content box vertically.
     gtk_widget_set_vexpand(r->transmitter->panadapter,TRUE);
-    gtk_widget_set_halign(r->transmitter->panadapter,GTK_ALIGN_FILL);
     gtk_widget_set_valign(r->transmitter->panadapter,GTK_ALIGN_FILL);
     gtk_box_append(GTK_BOX(mon_frame),r->transmitter->panadapter);
     gtk_box_append(GTK_BOX(r->bottom_bar),
