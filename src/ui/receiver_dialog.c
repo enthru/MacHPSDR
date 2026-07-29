@@ -743,12 +743,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(adc_grid),adc1_b,1,0,1,1);
   }
 
+  // Per-RX sample-rate picker. SoapySDR (HackRF/RTL/Lime) is deliberately NOT
+  // shown here: it already has its own ADC-rate-aware RX-rate dropdown on the
+  // Radio page (soapy_rx_rate_cb) with the correct integer-multiple-of-48k
+  // rates, so this fixed 48k..768k set was a duplicate offering wrong values.
   switch(radio->discovered->protocol) {
     case PROTOCOL_2:
-#ifdef SOAPYSDR
-    case PROTOCOL_SOAPYSDR:
-      if(strcmp(radio->discovered->name,"sdrplay")!=0)
-#endif
       {
       int x=0;
       int y=0;
@@ -796,29 +796,22 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       select->choice=384000;
       g_signal_connect(sample_rate_384,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
-      if((radio->discovered->protocol==PROTOCOL_2)
-#ifdef SOAPYSDR
-          || (radio->discovered->protocol==PROTOCOL_SOAPYSDR)
-#endif
-      ) {
-        GtkWidget *sample_rate_768=gtk_check_button_new_with_label("768000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_768),GTK_CHECK_BUTTON(sample_rate_384));
-        gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_768), rx->sample_rate==768000);
-        gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_768,x,y++,1,1);
-        select=g_new0(SELECT,1);
-        select->rx=rx;
-        select->choice=768000;
-        g_signal_connect(sample_rate_768,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
+      // Only Protocol 2 reaches this block now, so 768k/1536k are unconditional.
+      GtkWidget *sample_rate_768=gtk_check_button_new_with_label("768000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_768),GTK_CHECK_BUTTON(sample_rate_384));
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_768), rx->sample_rate==768000);
+      gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_768,x,y++,1,1);
+      select=g_new0(SELECT,1);
+      select->rx=rx;
+      select->choice=768000;
+      g_signal_connect(sample_rate_768,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
 
-        if(radio->discovered->protocol==PROTOCOL_2) {
-          GtkWidget *sample_rate_1536=gtk_check_button_new_with_label("1536000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_1536),GTK_CHECK_BUTTON(sample_rate_768));
-          gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_1536), rx->sample_rate==1536000);
-          gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_1536,x,y++,1,1);
-          select=g_new0(SELECT,1);
-          select->rx=rx;
-          select->choice=1536000;
-          g_signal_connect(sample_rate_1536,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
-        }
-      }
+      GtkWidget *sample_rate_1536=gtk_check_button_new_with_label("1536000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_1536),GTK_CHECK_BUTTON(sample_rate_768));
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_1536), rx->sample_rate==1536000);
+      gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_1536,x,y++,1,1);
+      select=g_new0(SELECT,1);
+      select->rx=rx;
+      select->choice=1536000;
+      g_signal_connect(sample_rate_1536,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
     }
     break;
   }
