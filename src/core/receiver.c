@@ -1813,11 +1813,17 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
 // GTK4: GtkEventControllerScroll "scroll" handler. The signal carries no pointer
 // position, so use the coords the motion handler stashed; dy<0 == scroll up.
 // Accumulated surface-delta (macOS trackpad scrollingDeltaY ~= points) that
-// makes one tuning notch.  ~10 points is one classic "scroll line", so a
-// trackpad notch feels close to one mouse-wheel detent instead of the dozens of
-// raw precise events a single swipe fires.  Raise for a coarser (less
-// sensitive) trackpad, lower for finer.
-#define SCROLL_SURFACE_STEP 10.0
+// makes one tuning notch.  ~16 points is a bit more than one classic "scroll
+// line", so a trackpad notch feels close to one mouse-wheel detent instead of
+// the dozens of raw precise events a single swipe fires.  Raise for a coarser
+// (less sensitive) trackpad, lower for finer.
+#define SCROLL_SURFACE_STEP 16.0
+// Max tuning notches a single trackpad event may emit.  Without this cap a fast
+// flick crosses the threshold many times in one event and the callers multiply
+// the tuning step by |n|, so the dial "accelerates" and overshoots the target
+// frequency.  Capping to 1 gives a steady one-notch-per-event feel (raise for a
+// little flick-acceleration back).
+#define SCROLL_SURFACE_MAX_NOTCH 1
 
 int scroll_notches(GtkEventControllerScroll *controller, double dy) {
   if(dy==0.0) return 0;
@@ -1839,7 +1845,14 @@ int scroll_notches(GtkEventControllerScroll *controller, double dy) {
   if(((*acc)>0.0 && dy<0.0) || ((*acc)<0.0 && dy>0.0)) *acc=0.0;
   *acc+=dy;
   int notches=(int)((*acc)/SCROLL_SURFACE_STEP);
-  if(notches!=0) *acc-=notches*SCROLL_SURFACE_STEP;
+  if(notches!=0) {
+    // Keep only the sub-threshold remainder: discard any whole notches beyond
+    // the cap instead of banking them, so a fast flick neither accelerates the
+    // dial nor leaves a backlog that lags the next scroll.
+    *acc=fmod(*acc,SCROLL_SURFACE_STEP);
+    if(notches>SCROLL_SURFACE_MAX_NOTCH) notches=SCROLL_SURFACE_MAX_NOTCH;
+    else if(notches<-SCROLL_SURFACE_MAX_NOTCH) notches=-SCROLL_SURFACE_MAX_NOTCH;
+  }
   return notches;
 }
 
