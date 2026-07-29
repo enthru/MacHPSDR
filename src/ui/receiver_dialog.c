@@ -1377,6 +1377,10 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_homogeneous(GTK_GRID(cat_grid),FALSE);
   sui_style_group(cat_grid);
   gtk_frame_set_child(GTK_FRAME(cat_frame),cat_grid);
+  // Top-align: without this the frame fills the full column height (as tall as
+  // the left Audio/EQ/NR4/APF stack) and leaves a big empty area below its 3
+  // rows of controls. START makes it hug its content height.
+  gtk_widget_set_valign(cat_frame,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),cat_frame,col,row,1,1);
   row++;
 
