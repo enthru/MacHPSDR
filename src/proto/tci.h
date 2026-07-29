@@ -18,11 +18,13 @@
 */
 
 /*
- * TCI (Transceiver Control Interface, Expert Electronics) server — Phase A:
- * control only (VFO / mode / PTT + handshake) over a real WebSocket transport,
- * so standard TCI loggers/clients (Log4OM, N1MM+, SkookumLogger, …) can drive
- * and follow the radio. Spectrum/audio streaming (TCI binary frames) are later
- * phases and NOT implemented here.
+ * TCI (Transceiver Control Interface, Expert Electronics) server over a real
+ * WebSocket transport, so standard TCI loggers/clients (Log4OM, N1MM+,
+ * SkookumLogger, …) can drive and follow the radio. Control commands: VFO /
+ * modulation / trx (PTT) plus rit_enable/rit_offset, xit_enable/xit_offset,
+ * split_enable and if (CTUN demod offset) — all set-and-get, and pushed back via
+ * tci_notify_*() when changed locally. Binary streaming: iq_start (off-air I/Q),
+ * audio_start (48 kHz demod audio) and inbound TX audio. See tci.c.
  *
  * Threading: a background accept thread + one thread per client do all socket
  * I/O and never touch GTK. Inbound commands are dispatched to the GTK main
@@ -57,6 +59,7 @@ extern const char *tci_status(void);
 extern void tci_notify_vfo(RECEIVER *rx);   // frequency_a / frequency_b changed
 extern void tci_notify_mode(RECEIVER *rx);  // mode changed
 extern void tci_notify_trx(gboolean mox);   // PTT / MOX changed
+extern void tci_notify_state(RECEIVER *rx); // RIT / XIT / split changed
 
 // Phase B: feed one block of off-air I/Q (interleaved doubles, `nsamples`
 // complex pairs at `sample_rate`) to any client that sent iq_start. Called from

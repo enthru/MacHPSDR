@@ -37,6 +37,7 @@
 #include "radio.h"
 #include "mode.h"
 #include "ext.h"
+#include "vfo.h"
 #include "log.h"
 #include "tci.h"
 
@@ -355,6 +356,69 @@ static void dispatch_set_mox(gboolean state) {
   g_idle_add(ext_set_mox, m);
 }
 
+// TCI booleans are "true"/"false" (also accept "1"/"0").
+static gboolean tci_argbool(const char *s) {
+  return (!g_ascii_strcasecmp(s, "true") || !strcmp(s, "1"));
+}
+
+// Deferred RIT/XIT/split/IF state changes: mutated on the GTK main thread (like
+// ext.c's wrappers) since they touch RECEIVER/TRANSMITTER + WDSP + the VFO.
+typedef enum {
+  TCI_OP_RIT_ENABLE, TCI_OP_RIT_OFFSET,
+  TCI_OP_XIT_ENABLE, TCI_OP_XIT_OFFSET,
+  TCI_OP_SPLIT,      TCI_OP_IF
+} TCI_OP;
+
+typedef struct { TCI_OP op; gboolean b; gint64 v; } TCI_STATE_CMD;
+
+static gboolean tci_apply_state_idle(gpointer data) {
+  TCI_STATE_CMD *c = (TCI_STATE_CMD *)data;
+  RADIO *r = g_radio;
+  if (r != NULL && r->active_receiver != NULL) {
+    RECEIVER *rx = r->active_receiver;
+    g_mutex_lock(&rx->mutex);
+    switch (c->op) {
+      case TCI_OP_RIT_ENABLE:
+        rx->rit_enabled = c->b;
+        frequency_changed(rx);
+        break;
+      case TCI_OP_RIT_OFFSET:
+        rx->rit = c->v;
+        frequency_changed(rx);
+        break;
+      case TCI_OP_XIT_ENABLE:
+        if (r->transmitter != NULL) r->transmitter->xit_enabled = c->b;
+        break;
+      case TCI_OP_XIT_OFFSET:
+        if (r->transmitter != NULL) r->transmitter->xit = c->v;
+        break;
+      case TCI_OP_SPLIT:
+        rx->split = c->b ? SPLIT_ON : SPLIT_OFF;
+        if (r->transmitter != NULL)
+          transmitter_set_mode(r->transmitter, c->b ? rx->mode_b : rx->mode_a);
+        break;
+      case TCI_OP_IF:
+        // Place the demod point c->v Hz off the panorama centre (CTUN offset).
+        // A non-zero offset with plain tuning implies CTUN, so enable it.
+        if (c->v != 0 && !rx->ctun && !rx->freetune) rx->ctun = TRUE;
+        rx->ctun_frequency = rx->frequency_a + c->v;
+        frequency_changed(rx);
+        break;
+    }
+    update_vfo(rx);
+    g_mutex_unlock(&rx->mutex);
+  }
+  g_free(c);
+  return G_SOURCE_REMOVE;
+}
+
+static void tci_dispatch_state(TCI_OP op, gboolean b, gint64 v) {
+  if (g_radio == NULL) return;
+  TCI_STATE_CMD *c = g_new0(TCI_STATE_CMD, 1);
+  c->op = op; c->b = b; c->v = v;
+  g_idle_add(tci_apply_state_idle, c);
+}
+
 // Enable/disable this client's IQ subscription and keep the global gate count.
 static void client_set_iq(TCI_CLIENT *c, gboolean on) {
   gint was = g_atomic_int_get(&c->iq_on);
@@ -474,10 +538,78 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     char r[48];
     g_snprintf(r, sizeof(r), "audio_samplerate:%d;", TCI_AUDIO_RATE);
     client_send_text(c, r);
+  } else if (!strcmp(name, "rit_enable")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(TCI_OP_RIT_ENABLE, tci_argbool(args[1]), 0);
+    } else if (rx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "rit_offset")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(TCI_OP_RIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+    } else if (rx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "rit_offset:0,%lld;", (long long)rx->rit);
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "xit_enable")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(TCI_OP_XIT_ENABLE, tci_argbool(args[1]), 0);
+    } else {
+      gboolean en = (g_radio != NULL && g_radio->transmitter != NULL)
+                    ? g_radio->transmitter->xit_enabled : FALSE;
+      char r[48];
+      g_snprintf(r, sizeof(r), "xit_enable:0,%s;", en ? "true" : "false");
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "xit_offset")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(TCI_OP_XIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+    } else {
+      long long v = (g_radio != NULL && g_radio->transmitter != NULL)
+                    ? (long long)g_radio->transmitter->xit : 0;
+      char r[48];
+      g_snprintf(r, sizeof(r), "xit_offset:0,%lld;", v);
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "split_enable")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(TCI_OP_SPLIT, tci_argbool(args[1]), 0);
+    } else if (rx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "if")) {
+    // if:<rx>,<sub_rx>,<offset_hz> — demod offset within the panorama (CTUN).
+    // Only the main channel (sub_rx 0) is applied; a sub-rx request is acked.
+    if (nargs >= 3) {
+      int chan = atoi(args[1]);
+      gint64 off = g_ascii_strtoll(args[2], NULL, 10);
+      gint64 lim = (rx != NULL && rx->sample_rate > 0) ? rx->sample_rate / 2 : 24000;
+      if (off >  lim) off =  lim;
+      if (off < -lim) off = -lim;
+      if (chan == 0) {
+        tci_dispatch_state(TCI_OP_IF, FALSE, off);
+      } else {
+        char r[64];
+        g_snprintf(r, sizeof(r), "if:0,%d,%lld;", chan, (long long)off);
+        client_send_text(c, r);
+      }
+    } else if (rx != NULL) {
+      int chan = (nargs >= 2) ? atoi(args[1]) : 0;
+      long long off = (chan == 0 && (rx->ctun || rx->freetune))
+                      ? (long long)(rx->ctun_frequency - rx->frequency_a) : 0;
+      char r[64];
+      g_snprintf(r, sizeof(r), "if:0,%d,%lld;", chan, off);
+      client_send_text(c, r);
+    }
   } else {
-    // Everything else (if, split_enable, rx_enable, mute, audio_*, start, stop,
-    // …): echo as an ack so a request/response client doesn't hang. Phase A/B
-    // carry no IF/RIT/audio state, so this is intentionally a stub.
+    // Everything else (rx_enable, mute, drive, audio_*, start, stop, …): echo as
+    // an ack so a request/response client doesn't hang. Those fields aren't
+    // wired to radio state here, so this is intentionally a stub.
     char r[160];
     g_snprintf(r, sizeof(r), "%s;", token);
     client_send_text(c, r);
@@ -500,7 +632,13 @@ static void tci_send_handshake(TCI_CLIENT *c) {
   client_send_text(c, "trx_count:1;");
   client_send_text(c, "channels_count:2;");
   client_send_text(c, "vfo_limits:0,6000000000;");
-  client_send_text(c, "if_limits:-24000,24000;");
+  if (rx != NULL && rx->sample_rate > 0) {
+    char r[48];
+    g_snprintf(r, sizeof(r), "if_limits:%d,%d;", -rx->sample_rate / 2, rx->sample_rate / 2);
+    client_send_text(c, r);
+  } else {
+    client_send_text(c, "if_limits:-24000,24000;");
+  }
   client_send_text(c, "modulations_list:" TCI_MODLIST ";");
   {
     char r[48];
@@ -513,7 +651,23 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     client_send_text(c, r);
     g_snprintf(r, sizeof(r), "vfo:0,0,%lld;", (long long)rx->frequency_a);
     client_send_text(c, r);
+    g_snprintf(r, sizeof(r), "vfo:0,1,%lld;", (long long)rx->frequency_b);
+    client_send_text(c, r);
     g_snprintf(r, sizeof(r), "modulation:0,%s;", mode_to_tci(rx->mode_a));
+    client_send_text(c, r);
+    // Initial RIT / split state so a connecting logger starts in sync.
+    g_snprintf(r, sizeof(r), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+    client_send_text(c, r);
+    g_snprintf(r, sizeof(r), "rit_offset:0,%lld;", (long long)rx->rit);
+    client_send_text(c, r);
+    g_snprintf(r, sizeof(r), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+    client_send_text(c, r);
+  }
+  if (g_radio != NULL && g_radio->transmitter != NULL) {
+    char r[48];
+    g_snprintf(r, sizeof(r), "xit_enable:0,%s;", g_radio->transmitter->xit_enabled ? "true" : "false");
+    client_send_text(c, r);
+    g_snprintf(r, sizeof(r), "xit_offset:0,%lld;", (long long)g_radio->transmitter->xit);
     client_send_text(c, r);
   }
   client_send_text(c, "ready;");
@@ -737,6 +891,26 @@ void tci_notify_trx(gboolean mox) {
   char line[32];
   g_snprintf(line, sizeof(line), "trx:0,%s;", mox ? "true" : "false");
   tci_broadcast_text(line);
+}
+
+// RIT / split (RECEIVER) + XIT (TRANSMITTER) changed locally — push the full
+// small state set so a following logger stays synced. Called from actions.c.
+void tci_notify_state(RECEIVER *rx) {
+  if (!g_atomic_int_get(&server_running) || rx == NULL) return;
+  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  char line[64];
+  g_snprintf(line, sizeof(line), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+  tci_broadcast_text(line);
+  g_snprintf(line, sizeof(line), "rit_offset:0,%lld;", (long long)rx->rit);
+  tci_broadcast_text(line);
+  g_snprintf(line, sizeof(line), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+  tci_broadcast_text(line);
+  if (g_radio != NULL && g_radio->transmitter != NULL) {
+    g_snprintf(line, sizeof(line), "xit_enable:0,%s;", g_radio->transmitter->xit_enabled ? "true" : "false");
+    tci_broadcast_text(line);
+    g_snprintf(line, sizeof(line), "xit_offset:0,%lld;", (long long)g_radio->transmitter->xit);
+    tci_broadcast_text(line);
+  }
 }
 
 // --- outbound binary streams (audio thread taps in receiver.c) --------------

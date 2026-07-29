@@ -335,8 +335,9 @@ network, without a virtual serial or audio cable. Tick **Enable TCI server**,
 optionally change the **port** (default 40001), and point the client software at
 `ws://<this-computer>:40001`. The status line shows whether the server is
 listening and how many clients are connected. When a client changes the VFO,
-mode or PTT the radio follows, and when you tune or switch mode locally the
-change is pushed back to every connected client so they stay in sync. Several
+mode, PTT, RIT, XIT or split the radio follows, and when you tune, switch mode or
+change RIT/XIT/split locally the change is pushed back to every connected client
+so they stay in sync. Several
 clients may connect at once. A client may also request the **live I/Q stream**
 (`iq_start`): MacHPSDR then sends the off-air I/Q as TCI binary frames, so an
 external CW/RTTY skimmer or panadapter can work from this receiver without a

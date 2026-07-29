@@ -17,6 +17,7 @@
 #include "protocol2.h"
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
+#include "tci.h"
 #endif
 #include "actions.h"
 
@@ -482,10 +483,12 @@ int switch_action(void * data) {
     case RIT:
       rx->rit_enabled=!rx->rit_enabled;
       update_vfo(rx);
+      tci_notify_state(rx);
       break;
     case RIT_CLEAR:
       rx->rit=0;
       update_vfo(rx);
+      tci_notify_state(rx);
       break;
     case SAT:
       switch (rx->split) {
@@ -501,6 +504,7 @@ int switch_action(void * data) {
           break;
       }
       update_vfo(rx);
+      tci_notify_state(rx);
       break;
     case SNB:
       rx->snb=!rx->snb;
@@ -515,6 +519,7 @@ int switch_action(void * data) {
         if(radio->transmitter) transmitter_set_mode(radio->transmitter,rx->mode_a);
       }
       update_vfo(rx);
+      tci_notify_state(rx);
       break;
     case TUNE:
       if(radio->can_transmit) set_tune(radio,!radio->tune);
@@ -524,12 +529,14 @@ int switch_action(void * data) {
     case XIT:
       radio->transmitter->xit_enabled = !radio->transmitter->xit_enabled;
       update_vfo(rx);
+      tci_notify_state(rx);
       break;
     case XIT_CLEAR:
       if(radio->can_transmit && !isTransmitting(radio)) {
         radio->transmitter->xit = 0;
         radio->transmitter->xit_enabled = 0;
         update_vfo(rx);
+        tci_notify_state(rx);
       }
       break;
     case ZOOM_MINUS:
