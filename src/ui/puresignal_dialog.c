@@ -285,6 +285,10 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_grid_set_column_homogeneous(GTK_GRID(ps_grid),FALSE);
   sui_style_group(ps_grid);
   gtk_frame_set_child(GTK_FRAME(ps_frame),ps_grid);
+  // Stretch the Pure Signal frame to the tab width (== PA Calibration width, the
+  // widest sibling in the merged PA/Linearity page) instead of hugging the plot.
+  gtk_widget_set_hexpand(ps_frame,TRUE);
+  gtk_widget_set_halign(ps_frame,GTK_ALIGN_FILL);
   gtk_grid_attach(GTK_GRID(grid),ps_frame,col,row++,2,1);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable PureSignal");
@@ -304,9 +308,9 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   // graph, it doesn't need to swallow the whole page.
   gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(tx->ps),480);
   gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(tx->ps),180);
-  gtk_widget_set_hexpand(tx->ps,FALSE);
-  gtk_widget_set_vexpand(tx->ps,FALSE);
-  gtk_widget_set_halign(tx->ps,GTK_ALIGN_START);
+  gtk_widget_set_hexpand(tx->ps,TRUE);   // grow with the frame (PA-Calibration width)
+  gtk_widget_set_vexpand(tx->ps,FALSE);  // but keep the fixed 180px height
+  gtk_widget_set_halign(tx->ps,GTK_ALIGN_FILL);
   gtk_grid_attach(GTK_GRID(ps_grid),tx->ps,0,1,8,8);
 
   // Honest disclaimer: this PureSignal path is an unfinished prototype.
