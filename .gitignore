@@ -33,3 +33,6 @@ machpsdr_entitlements.plist
 
 # Internal roadmap (not for distribution)
 doc/TODO-parity.md
+
+# Claude Code project guidance (kept local, not distributed)
+CLAUDE.md
