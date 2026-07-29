@@ -283,7 +283,13 @@ $(JAVA_PROGRAM): $(JAVA_OBJS)
 	$(LINK) -shared $(NOEXECSTACK) $(LDFLAGS) -o $(JAVA_PROGRAM) $(JAVA_OBJS) $(JAVA_LIBS)
 
 .c.o:
-	$(COMPILE) $(OPTIONS) $(GTKOPTIONS) $(CFLAGS) -c -o $@ $<
+	$(COMPILE) $(OPTIONS) $(GTKOPTIONS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+# Header-dependency tracking: -MMD -MP emits a .d per object listing the headers
+# it #includes, so editing a header (e.g. RXA.h struct layout) recompiles every
+# dependent object.  Without this, a stale object built against an old struct
+# layout links into libwdsp and corrupts memory at runtime.
+-include $(OBJS:.o=.d) $(NR_OBJS:.o=.d)
 
 install-dirs:
 	mkdir -p $(LIBDIR) $(INCLUDEDIR)
@@ -305,8 +311,8 @@ release: $(PROGRAM)
 	cp $(PROGRAM) ../pihpsdr/release/pihpsdr
 
 clean:
-	-rm -f *.o
-	-rm -f $(NR_OBJS)
+	-rm -f *.o *.d
+	-rm -f $(NR_OBJS) $(NR_OBJS:.o=.d)
 	-rm -f $(PROGRAM)
 	-rm -f $(JAVA_PROGRAM)
 
