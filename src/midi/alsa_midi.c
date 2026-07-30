@@ -199,7 +199,7 @@ static void *midi_thread(void *arg) {
     }
 }
 
-void close_midi_device() {
+void close_midi_device(void) {
     int ret;
 
     log_info("%s\n",__FUNCTION__);
@@ -252,7 +252,7 @@ void configure_midi_device(gboolean state) {
   configure=state;
 }
 
-void get_midi_devices() {
+void get_midi_devices(void) {
 
     snd_ctl_t *ctl;
     snd_rawmidi_info_t *info;

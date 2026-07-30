@@ -8,5 +8,5 @@ typedef struct _midi_device {
 extern MIDI_DEVICE midi_devices[MAX_MIDI_DEVICES];
 extern int n_midi_devices;
 
-extern void get_midi_devices();
-extern void close_midi_device();
+extern void get_midi_devices(void);
+extern void close_midi_device(void);

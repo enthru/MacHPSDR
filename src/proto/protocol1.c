@@ -162,11 +162,11 @@ enum {
 static int state=SYNC_0;
 
 static GThread *receive_thread_id;
-static void start_protocol1_thread();
+static void start_protocol1_thread(void);
 static gpointer receive_thread(gpointer arg);
 static void process_ozy_input_buffer(unsigned char  *buffer);
 static void process_wideband_buffer(unsigned char  *buffer);
-void ozy_send_buffer();
+void ozy_send_buffer(void);
 
 static void protocol1_tx_scheduler_monitor(void);
 
@@ -177,7 +177,7 @@ static int metis_offset=8;
 static int metis_write(unsigned char ep,unsigned char* buffer,int length);
 static void metis_start_stop(int command);
 static void metis_send_buffer(unsigned char* buffer,int length);
-static void metis_restart();
+static void metis_restart(void);
 
 #define COMMON_MERCURY_FREQUENCY 0x80
 #define PENELOPE_MIC 0x80
@@ -192,7 +192,7 @@ static GThread *ozy_EP4_rx_thread_id;
 static GThread *ozy_EP6_rx_thread_id;
 static gpointer ozy_ep4_rx_thread(gpointer arg);
 static gpointer ozy_ep6_rx_thread(gpointer arg);
-static void start_usb_receive_threads();
+static void start_usb_receive_threads(void);
 static int ozyusb_write(char* buffer,int length);
 #define EP6_IN_ID  0x86                         // end point = 6, direction toward PC
 #define EP2_OUT_ID  0x02                        // end point = 2, direction from PC
@@ -202,12 +202,12 @@ static unsigned char ep6_inbuffer[EP6_BUFFER_SIZE];
 static unsigned char usb_buffer_block = 0;
 #endif
 
-void protocol1_stop() {
+void protocol1_stop(void) {
   metis_start_stop(0);
   running=FALSE;
 }
 
-void protocol1_run() {
+void protocol1_run(void) {
   log_info("protocol1_run\n");
 
   start_protocol1_thread();
@@ -222,7 +222,7 @@ void protocol1_run() {
 // In-place restart after a disconnect: stop the current receive thread, drop
 // the old socket and re-run the full start sequence (new socket + thread +
 // metis start command).  Runs on the GTK main thread.
-void protocol1_reconnect() {
+void protocol1_reconnect(void) {
   log_info("protocol1_reconnect\n");
   running=FALSE;
   if(receive_thread_id!=NULL) {
@@ -335,7 +335,7 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
 }
 #endif
 
-static void start_protocol1_thread() {
+static void start_protocol1_thread(void) {
   log_info("protocol1 starting receive thread: buffer_size=%d output_buffer_size=%d\n",radio->buffer_size,output_buffer_size);
 
   switch(radio->discovered->device) {
@@ -494,7 +494,7 @@ static gpointer receive_thread(gpointer arg) {
   return NULL;
 }
 
-static void process_control_bytes() {
+static void process_control_bytes(void) {
   gboolean previous_ptt;
   // Unused - commented in case used in future
   //gboolean previous_dot;
@@ -916,7 +916,7 @@ static void process_wideband_buffer(unsigned char  *buffer) {
   }
 }
 
-void ozy_send_buffer() {
+void ozy_send_buffer(void) {
   int i,j;
   int count;
   BAND *band;
@@ -1622,7 +1622,7 @@ static int metis_write(unsigned char ep,unsigned char* buffer,int length) {
   return length;
 }
 
-static void metis_restart() {
+static void metis_restart(void) {
 log_info("metis_restart\n");
   // reset metis frame
   metis_offset=8;
@@ -1682,6 +1682,6 @@ static void metis_send_buffer(unsigned char* buffer,int length) {
   }
 }
 
-gboolean protocol1_is_running() {
+gboolean protocol1_is_running(void) {
   return running;
 }

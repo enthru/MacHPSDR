@@ -154,7 +154,7 @@ static void  process_high_priority(unsigned char *buffer);
 static void  process_mic_data(int bytes,unsigned char *buffer);
 
 #ifdef INCLUDED
-static void protocol2_calc_buffers() {
+static void protocol2_calc_buffers(void) {
   switch(sample_rate) {
     case 48000:
       outputsamples=r->buffer_size;
@@ -178,7 +178,7 @@ static void protocol2_calc_buffers() {
 }
 #endif
 
-void filter_board_changed() {
+void filter_board_changed(void) {
     protocol2_general();
 }
 
@@ -192,7 +192,7 @@ void tuner_changed() {
 }
 */
 
-void cw_changed() {
+void cw_changed(void) {
 #ifdef LOCALCW
     // update the iambic keyer params
     if (radio->cw_keyer_internal == 0)
@@ -217,7 +217,7 @@ log_info("protocol2_start_wideband\n");
   protocol2_general();
 }
 
-void protocol2_stop_wideband() {
+void protocol2_stop_wideband(void) {
   protocol2_general();
 }
 
@@ -315,7 +315,7 @@ log_info("protocol2_init: high_priority_addr setup for port %d\n",HIGH_PRIORITY_
 
 }
 
-void protocol2_general() {
+void protocol2_general(void) {
     BAND *band;
 
     band=NULL;
@@ -377,7 +377,7 @@ void protocol2_general() {
     general_sequence++;
 }
 
-void protocol2_high_priority() {
+void protocol2_high_priority(void) {
     int r;
     BAND *band;
     int xvtr = 0; // IS THIS UNUSED?
@@ -893,7 +893,7 @@ log_info("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx
     high_priority_sequence++;
 }
 
-static void protocol2_transmit_specific() {
+static void protocol2_transmit_specific(void) {
     int mode;
 
     memset(transmit_specific_buffer, 0, sizeof(transmit_specific_buffer));
@@ -984,7 +984,7 @@ static void protocol2_transmit_specific() {
 
 }
 
-void protocol2_receive_specific() {
+void protocol2_receive_specific(void) {
   int i;
 
   memset(receive_specific_buffer, 0, sizeof(receive_specific_buffer));
@@ -1043,7 +1043,7 @@ void protocol2_receive_specific() {
     rx_specific_sequence++;
 }
 
-static void protocol2_start() {
+static void protocol2_start(void) {
     protocol2_transmit_specific();
     protocol2_receive_specific();
     protocol2_timer_thread_id = g_thread_new( "protocol2 timer", protocol2_timer_thread, NULL);
@@ -1056,21 +1056,21 @@ static void protocol2_start() {
 
 }
 
-void protocol2_stop() {
+void protocol2_stop(void) {
     running=0;
     protocol2_high_priority();
     usleep(100000); // 100 ms
     //_exit(0);
 }
 
-void protocol2_run() {
+void protocol2_run(void) {
     protocol2_high_priority();
 }
 
 // In-place restart after a disconnect: stop the current data thread and relaunch
 // protocol2_thread, which re-creates the socket and re-issues the general/start/
 // high-priority sequence (and its timer thread).  Runs on the GTK main thread.
-void protocol2_reconnect() {
+void protocol2_reconnect(void) {
     log_info("protocol2_reconnect\n");
     running=0;
     if(protocol2_thread_id!=NULL) {
@@ -1568,6 +1568,6 @@ log_info("protocol2_timer_thread\n");
   return NULL;
 }
 
-gboolean protocol2_is_running() {
+gboolean protocol2_is_running(void) {
   return running;
 }

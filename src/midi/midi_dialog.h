@@ -24,6 +24,6 @@ extern gchar *midi_device_name;
 
 extern GtkWidget *create_midi_dialog(RADIO *r);
 extern void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val);
-extern void midi_save_state();
-extern void midi_restore_state();
+extern void midi_save_state(void);
+extern void midi_restore_state(void);
 #endif

@@ -292,7 +292,7 @@ log_info("discover_receive_thread\n");
     return NULL;
 }
 
-void protocol1_discovery() {
+void protocol1_discovery(void) {
     struct ifaddrs *addrs,*ifa;
 
 log_info("protocol1_discovery\n");

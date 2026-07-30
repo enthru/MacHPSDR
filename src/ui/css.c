@@ -1068,7 +1068,7 @@ void css_set_theme(int idx) {
   g_free(full);
 }
 
-void load_css() {
+void load_css(void) {
   GdkDisplay *display;
 
   log_info("%s\n",__FUNCTION__);

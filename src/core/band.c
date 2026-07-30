@@ -339,13 +339,13 @@ BANDSTACK_ENTRY *bandstack_get_bandstack_entry(int band,int entry) {
     return &bandstack->entry[entry];
 }
 
-BANDSTACK_ENTRY *bandstack_entry_get_current() {
+BANDSTACK_ENTRY *bandstack_entry_get_current(void) {
     BANDSTACK *bandstack=bands[band].bandstack;
     BANDSTACK_ENTRY *entry=&bandstack->entry[bandstack->current_entry];
     return entry;
 }
 
-BANDSTACK_ENTRY *bandstack_entry_next() {
+BANDSTACK_ENTRY *bandstack_entry_next(void) {
     BANDSTACK *bandstack=bands[band].bandstack;
     bandstack->current_entry++;
     if(bandstack->current_entry>=bandstack->entries) {
@@ -355,7 +355,7 @@ BANDSTACK_ENTRY *bandstack_entry_next() {
     return entry;
 }
 
-BANDSTACK_ENTRY *bandstack_entry_previous() {
+BANDSTACK_ENTRY *bandstack_entry_previous(void) {
     BANDSTACK *bandstack=bands[band].bandstack;
     bandstack->current_entry--;
     if(bandstack->current_entry<0) {
@@ -366,11 +366,11 @@ BANDSTACK_ENTRY *bandstack_entry_previous() {
 }
 
 
-int band_get_current() {
+int band_get_current(void) {
     return band;
 }
 
-BAND *band_get_current_band() {
+BAND *band_get_current_band(void) {
     BAND *b=&bands[band];
     return b;
 }
@@ -385,7 +385,7 @@ BAND *band_set_current(int b) {
     return &bands[b];
 }
 
-void bandSaveState() {
+void bandSaveState(void) {
     char name[128];
     char value[128];
     BANDSTACK_ENTRY* entry;
@@ -562,7 +562,7 @@ void change_filters(void) {
   }
 }
 
-void bandRestoreState() {
+void bandRestoreState(void) {
     char* value;
     int b;
     int stack;

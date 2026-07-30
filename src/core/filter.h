@@ -43,5 +43,5 @@ enum {
 
 extern FILTER *filters[MODES];
 
-extern void filterSaveState();
-extern void filterRestoreState();
+extern void filterSaveState(void);
+extern void filterRestoreState(void);

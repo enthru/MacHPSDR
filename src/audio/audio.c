@@ -1287,7 +1287,7 @@ log_info("mic_read_thread: EXIT\n");
   return NULL;
 }
 
-void audio_get_cards() {
+void audio_get_cards(void) {
 }
 
 #ifndef __APPLE__

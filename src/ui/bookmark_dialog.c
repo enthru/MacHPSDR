@@ -112,7 +112,7 @@ static GtkColumnViewColumn *bm_col(const char *title, int colid) {
 
 static char *split_char[] = {"OFF","SPLIT","SAT","RSAT"};
 
-static void save_bookmarks() {
+static void save_bookmarks(void) {
   char filename[128];
   sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
@@ -156,7 +156,7 @@ static void save_bookmarks() {
   saveProperties(filename);
 }
 
-static void restore_bookmarks() {
+static void restore_bookmarks(void) {
   char filename[128];
   sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());

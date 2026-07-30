@@ -66,7 +66,7 @@ void print_device(int i) {
         discovered[i].info.network.interface_name);
 }
 
-void protocol2_discovery() {
+void protocol2_discovery(void) {
     struct ifaddrs *addrs,*ifa;
     getifaddrs(&addrs);
     ifa = addrs;

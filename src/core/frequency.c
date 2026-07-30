@@ -457,7 +457,7 @@ int getBand(long long frequency) {
     return result;
 }
 
-int canTransmit() {
+int canTransmit(void) {
     int result=0;
     if(info!=0) {
         result=info->transmit;

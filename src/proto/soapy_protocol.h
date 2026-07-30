@@ -22,13 +22,13 @@
 
 #define BUFFER_SIZE 1024
 
-SoapySDRDevice *get_soapy_device();
+SoapySDRDevice *get_soapy_device(void);
 
 void soapy_protocol_create_receiver(RECEIVER *rx);
 void soapy_protocol_start_receiver(RECEIVER *rx);
 
 void soapy_protocol_init(RADIO *r,int rx);
-void soapy_protocol_stop();
+void soapy_protocol_stop(void);
 gboolean soapy_protocol_reconnect(RECEIVER *rx);
 void soapy_protocol_set_rx_frequency(RECEIVER *rx);
 void soapy_protocol_set_rx_antenna(RECEIVER *rx,int ant);
@@ -41,8 +41,8 @@ void soapy_protocol_set_automatic_gain(RECEIVER *rx,gboolean mode);
 void soapy_protocol_create_transmitter(TRANSMITTER *tx);
 void soapy_protocol_start_transmitter(TRANSMITTER *tx);
 void soapy_protocol_stop_transmitter(TRANSMITTER *tx);
-void soapy_protocol_rx_pause();
-void soapy_protocol_rx_resume();
+void soapy_protocol_rx_pause(void);
+void soapy_protocol_rx_resume(void);
 void soapy_protocol_activate_tx(TRANSMITTER *tx);
 void soapy_protocol_deactivate_tx(TRANSMITTER *tx);
 void soapy_protocol_set_tx_drive(double drive);
@@ -53,5 +53,5 @@ void soapy_protocol_process_local_mic(RADIO *r);
 void soapy_protocol_iq_samples(float isample,float qsample);
 void soapy_protocol_set_mic_sample_rate(int rate);
 char *soapy_protocol_read_sensor(char *name);
-gboolean soapy_protocol_is_running();
+gboolean soapy_protocol_is_running(void);
 #endif

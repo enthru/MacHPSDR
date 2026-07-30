@@ -48,7 +48,7 @@ static gpointer protocol2_discovery_thread(gpointer data) {
   return NULL;
 }
 
-void discovery() {
+void discovery(void) {
 log_info("discovery\n");
   devices=0;
   // --faker: the fake device is the only thing we want; skip all real

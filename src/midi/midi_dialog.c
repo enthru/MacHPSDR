@@ -131,7 +131,7 @@ enum {
 };
 
 static int update(void *data);
-static void load_store();
+static void load_store(void);
 
 static gboolean midi_enable_cb(GtkWidget *widget,gpointer data) {
   RADIO *r=(RADIO *)data;
@@ -279,7 +279,7 @@ static void tree_selection_changed_cb (GObject *sel, GParamSpec *ps, gpointer da
   //}
 }
 
-static void find_current_cmd() {
+static void find_current_cmd(void) {
   struct desc *cmd;
   //g_print("%s:\n",__FUNCTION__);
   cmd=MidiCommandsTable.desc[thisNote];
@@ -439,7 +439,7 @@ static void add_store(int key,struct desc *cmd) {
   }
 }
 
-static void load_store() {
+static void load_store(void) {
   struct desc *cmd;
   g_list_store_remove_all(store);
   for(int i=0;i<128;i++) {
@@ -963,7 +963,7 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
   }
 }
 
-void midi_save_state() {
+void midi_save_state(void) {
   char name[80];
   char value[80];
   struct desc *cmd;
@@ -1040,7 +1040,7 @@ void midi_save_state() {
   }
 }
 
-void midi_restore_state() {
+void midi_restore_state(void) {
   char name[80];
   char *value;
   gint channels;

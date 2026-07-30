@@ -19,7 +19,7 @@
 
 #include <glib.h>
 
-extern void discovery();
+extern void discovery(void);
 
 // Guards the shared devices[] counter / discovered[] array while the Protocol 1
 // and Protocol 2 discovery receive threads run concurrently.

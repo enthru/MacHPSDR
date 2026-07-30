@@ -190,7 +190,7 @@ static void ReadMIDIdevice(const MIDIPacketList *pktlist, void *refCon, void *co
     } // j-loop through the list of packets
 }
 
-void close_midi_device() {
+void close_midi_device(void) {
     log_info("%s\n",__FUNCTION__);
 }
 
@@ -236,7 +236,7 @@ int register_midi_device(char *myname) {
     return ret;
 }
 
-void get_midi_devices() {
+void get_midi_devices(void) {
     int n;
     int i;
     CFStringRef pname;

@@ -57,30 +57,30 @@ extern unsigned int alex_forward_power;
 extern unsigned int alex_reverse_power;
 
 extern void protocol2_init(RADIO *radio);
-extern void protocol2_stop();
-extern void protocol2_run();
-extern void protocol2_reconnect();
+extern void protocol2_stop(void);
+extern void protocol2_run(void);
+extern void protocol2_reconnect(void);
 extern void protocol2_start_receiver(RECEIVER *r);
 extern void protocol2_stop_receiver(RECEIVER *r);
-extern void protocol2_high_priority();
-extern void protocol2_general();
-extern void protocol2_receive_specific();
+extern void protocol2_high_priority(void);
+extern void protocol2_general(void);
+extern void protocol2_receive_specific(void);
 
 extern void protocol2_start_wideband(WIDEBAND *w);
-extern void protocol2_stop_wideband();
+extern void protocol2_stop_wideband(void);
 
-extern void filter_board_changed();
-extern void pa_changed();
-extern void tuner_changed();
-extern void cw_changed();
+extern void filter_board_changed(void);
+extern void pa_changed(void);
+extern void tuner_changed(void);
+extern void cw_changed(void);
 
 extern void setMox(int state);
-extern int getMox();
+extern int getMox(void);
 extern void setTune(int state);
-extern int getTune();
+extern int getTune(void);
 
 extern void protocol2_process_local_mic(RADIO *r);
 extern void protocol2_audio_samples(RECEIVER *rx,short left_audio_sample,short right_audio_sample);
 extern void protocol2_iq_samples(int isample,int qsample);
-extern gboolean protocol2_is_running();
+extern gboolean protocol2_is_running(void);
 #endif

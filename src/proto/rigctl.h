@@ -7,9 +7,9 @@ extern void disable_rigctl(RECEIVER *rx);
 extern int launch_serial(RECEIVER *rx);
 extern void disable_serial(RECEIVER *rx);
 
-extern int   rigctlGetMode();
+extern int   rigctlGetMode(void);
 extern int   lookup_band(int);
-extern char * rigctlGetFilter();
+extern char * rigctlGetFilter(void);
 extern void set_freqB(long long);
 extern int set_alc(gpointer);
 

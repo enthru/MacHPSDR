@@ -1,4 +1,4 @@
-extern void load_css();
+extern void load_css(void);
 
 // Skins: swap the main-window/dialog palette at runtime.
 extern void css_set_theme(int idx);   // apply skin by index (clamped)

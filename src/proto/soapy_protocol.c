@@ -95,7 +95,7 @@ static gboolean tx_stream_active=FALSE;
 static double tx_gain_min=0.0;
 static double tx_gain_max=47.0;
 
-SoapySDRDevice *get_soapy_device() {
+SoapySDRDevice *get_soapy_device(void) {
   return soapy_device;
 }
 
@@ -463,7 +463,7 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
 
 // ---- Half-duplex RX pause/resume ------------------------------------------
 
-void soapy_protocol_rx_pause() {
+void soapy_protocol_rx_pause(void) {
   if(soapy_device==NULL) return;
   if(!rx_stream_active) return;
   rx_stream_active=FALSE;
@@ -472,7 +472,7 @@ void soapy_protocol_rx_pause() {
   SoapySDRDevice_deactivateStream(soapy_device,rx_stream[rx_channel],0,0LL);
 }
 
-void soapy_protocol_rx_resume() {
+void soapy_protocol_rx_resume(void) {
   if(soapy_device==NULL) return;
   if(rx_stream_active) return;
   size_t channel=rx_channel;
@@ -559,7 +559,7 @@ void soapy_protocol_set_tx_drive(double drive) {
 
 
 
-void soapy_protocol_stop() {
+void soapy_protocol_stop(void) {
 log_info("%s\n",__FUNCTION__);
   running=FALSE;
 log_info("%s: g_thread_join\n",__FUNCTION__);
@@ -792,6 +792,6 @@ char *soapy_protocol_read_sensor(char *name) {
   return SoapySDRDevice_readSensor(soapy_device, name);
 }
 
-gboolean soapy_protocol_is_running() {
+gboolean soapy_protocol_is_running(void) {
   return running;
 }

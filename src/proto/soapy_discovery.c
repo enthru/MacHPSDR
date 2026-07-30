@@ -267,7 +267,7 @@ log_info("Tx gains: \n");
 
 }
 
-void soapy_discovery() {
+void soapy_discovery(void) {
   size_t length;
   int i,j;
   SoapySDRKwargs input_args={};

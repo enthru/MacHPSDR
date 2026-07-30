@@ -89,7 +89,7 @@ static GtkWidget *dac0_antenna_combo_box;
 
 static GtkWidget *audio_backend_combo_box;
 
-static void radio_dialog_update_controls() {
+static void radio_dialog_update_controls(void) {
 	log_info("%s: model=%d\n",__FUNCTION__,radio->model);
   switch(radio->model) {
     case ANAN_10:

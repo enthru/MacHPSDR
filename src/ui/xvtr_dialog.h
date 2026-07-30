@@ -18,5 +18,5 @@
 */
 
 extern GtkWidget *create_xvtr_dialog(RADIO *radio);
-extern void save_xvtr();
+extern void save_xvtr(void);
 extern void lo_error_update(int band,long long offset);

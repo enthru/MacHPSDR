@@ -55,7 +55,7 @@ static GtkWidget *lo_error[BANDS+XVTRS];
 static GtkWidget *disable_pa[BANDS+XVTRS];
 static GtkWidget *pa_calibration[BANDS+XVTRS];
 
-void save_xvtr () {
+void save_xvtr (void) {
   int i;
   int b;
   const char *t;

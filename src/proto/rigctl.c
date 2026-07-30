@@ -83,8 +83,8 @@ int rigctl_enable=0;
 int parse_cmd (void *data);
 int connect_cnt = 0;
 
-int rigctlGetFilterLow();
-int rigctlGetFilterHigh();
+int rigctlGetFilterLow(void);
+int rigctlGetFilterHigh(void);
 int new_level;
 int active_transmitter = 0;
 int rigctl_busy = 0;  // Used to tell rigctl_menu that launch has already occured
@@ -293,7 +293,7 @@ static int dashsamples;
 // problem, and without too much "busy waiting". We just take a nap until 10 msec
 // before we have to act, and then wait several times for 1 msec until we can shoot.
 //
-void send_dash() {
+void send_dash(void) {
   int TimeToGo;
   for(;;) {
     TimeToGo=cw_key_up+cw_key_down;
@@ -311,7 +311,7 @@ void send_dash() {
   cw_key_up   = dotsamples;
 }
 
-void send_dot() {
+void send_dot(void) {
   int TimeToGo;
   for(;;) {
     TimeToGo=cw_key_up+cw_key_down;
