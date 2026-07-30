@@ -242,6 +242,7 @@ mode.c\
 filter.c\
 band.c\
 radio.c\
+radio_state.c\
 receiver.c\
 receiver_state.c\
 transmitter.c\
@@ -382,6 +383,7 @@ mode.o\
 filter.o\
 band.o\
 radio.o\
+radio_state.o\
 receiver.o\
 receiver_state.o\
 transmitter.o\
