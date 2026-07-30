@@ -284,6 +284,7 @@ radio_info.c\
 diversity_mixer.c\
 diversity_dialog.c\
 rigctl.c \
+rigctl_parse.c \
 bpsk.c \
 ringbuffer.c \
 hl2.c \
@@ -351,6 +352,7 @@ radio_info.h\
 diversity_mixer.h\
 diversity_dialog.h\
 rigctl.h \
+rigctl_internal.h \
 bpsk.h \
 ringbuffer.h \
 hl2.h \
@@ -421,6 +423,7 @@ radio_info.o\
 diversity_mixer.o\
 diversity_dialog.o\
 rigctl.o \
+rigctl_parse.o \
 bpsk.o \
 ringbuffer.o \
 hl2.o \
