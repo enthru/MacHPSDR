@@ -96,6 +96,14 @@ static void dxcc_status_text(char *buf, size_t n) {
 // red "✗ cty.dat not found" on failure) that stays until the next reload.
 typedef struct { GtkWidget *button, *bar, *result, *status; guint pulse_id; } dxcc_reload_ctx;
 
+// GClosureNotify-signature wrapper for freeing the closure data: casting g_free
+// (void(*)(void*)) straight to GClosureNotify (void(*)(void*,GClosure*)) is an
+// incompatible-function-type cast that clang flags; this matches the signature.
+static void free_closure_data(gpointer data, GClosure *closure) {
+  (void)closure;
+  g_free(data);
+}
+
 static gboolean dxcc_reload_pulse(gpointer p) {
   gtk_progress_bar_pulse(GTK_PROGRESS_BAR(((dxcc_reload_ctx *)p)->bar));
   return G_SOURCE_CONTINUE;
@@ -221,7 +229,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   dxcc_reload_ctx *dctx=g_new0(dxcc_reload_ctx,1);
   dctx->bar=dbar; dctx->result=dresult; dctx->status=dstatus; dctx->button=dreload;
   g_signal_connect_data(dreload,"clicked",G_CALLBACK(dxcc_reload_cb),dctx,
-                        (GClosureNotify)g_free,0);
+                        free_closure_data,0);
 
   // ---- Network logging (WSJT-X/JTDX UDP) ----
   GtkWidget *lframe=gtk_frame_new("Network Logging");

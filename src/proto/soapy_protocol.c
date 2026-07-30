@@ -421,12 +421,10 @@ log_info("%s: receive_thread: SoapySDRDevice_deactivateStream\n",__FUNCTION__);
 }
 
 void soapy_protocol_process_local_mic(RADIO *r) {
-  int b;
   int i;
   short sample;
 
 // always 48000 samples per second
-  b=0;
   for(i=0;i<r->local_microphone_buffer_size;i++) {
     add_mic_sample(r->transmitter,r->local_microphone_buffer[i]);
   }

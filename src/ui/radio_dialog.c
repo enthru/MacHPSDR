@@ -524,14 +524,6 @@ static void lna2_value_changed_cb(GtkWidget *widget, gpointer data) {
   }
 }
 
-static void enable_step_attenuation_cb(GtkWidget *widget,gpointer data) {
-  ADC *adc=(ADC *)data;
-  adc->enable_step_attenuation=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
-  if(radio->discovered->protocol==PROTOCOL_2) {
-    protocol2_high_priority();
-  }
-}
-
 static void freetune_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx = (RECEIVER *)data;
   gboolean enable = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));

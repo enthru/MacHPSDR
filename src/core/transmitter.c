@@ -1319,8 +1319,6 @@ void full_tx_buffer(TRANSMITTER *tx, gboolean force_send) {
   }
   #endif
   
-  int rv = 0;
-  int buf_underflow = 0;
   
   for (int j = 0; j < tx->p1_packet_size; j++) {  
     long isample = 0;
@@ -1329,10 +1327,8 @@ void full_tx_buffer(TRANSMITTER *tx, gboolean force_send) {
     
   
     g_mutex_lock((&tx->queue_mutex));
-    rv = queue_get(tx->p1_ringbuf, &isample);
-    if (rv < 0) buf_underflow++;
-    rv = queue_get(tx->p1_ringbuf, &qsample);   
-    if (rv < 0) buf_underflow++;    
+    queue_get(tx->p1_ringbuf, &isample);
+    queue_get(tx->p1_ringbuf, &qsample);   
     g_mutex_unlock((&tx->queue_mutex));
     
     #ifdef CWDAEMON

@@ -170,10 +170,6 @@ void wefax_decoder_set_autophase(gboolean on) { p_autophase = on; }
 void wefax_decoder_set_denoise(gboolean on) { p_denoise = on; }
 void wefax_decoder_set_invert(gboolean on) { p_invert = on; }
 
-static int cmp_double(const void *a, const void *b) {
-  double x = *(const double *)a, y = *(const double *)b;
-  return (x > y) - (x < y);
-}
 void wefax_decoder_start(void) { start_req = TRUE; }
 void wefax_decoder_reset(void) { reset_req = TRUE; }
 void   wefax_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }

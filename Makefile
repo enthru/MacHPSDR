@@ -149,17 +149,34 @@ MIDI_LIBS= -lasound
 endif
 endif
 
-# -std=gnu11: this codebase (inherited from LinHPSDR) uses many K&R-style empty
-# prototypes `void f()`. GCC 14+ defaults to C23, where `()` means `(void)` and
-# calling `f(x)` is a hard error; macOS clang defaults to a lenient C17. Pinning
-# gnu11 restores the "unspecified args" meaning of `()` so the build is identical
-# and warning-clean on both compilers, rather than error-per-callsite on Linux.
+# -std=gnu23: the codebase now uses explicit `void f(void)` prototypes
+# everywhere (the K&R empty `()` prototypes it inherited from LinHPSDR were all
+# converted), so C23's stricter reading of `()` as `(void)` — which is why the
+# build was previously pinned to gnu11 — no longer breaks anything. The only
+# remaining `()` are the two in vendored wdsp/wdsp.h (GetWDSPVersion,
+# wisdom_get_status), both genuinely no-arg and only ever called with no args,
+# so C23's ()->(void) is harmless there too.
+#
+# Warnings: -Wall -Wextra are on. The pervasive, idiomatic-noise categories are
+# suppressed so the build stays clean and real warnings aren't buried:
+#   -Wno-unused-parameter  GTK callbacks must match a fixed signature; hundreds
+#                          legitimately ignore `data`/`widget`.
+#   -Wno-unused-variable   many are config-gated (used only under a disabled
+#                          #ifdef like PURESIGNAL_P2/CWDAEMON), so blind removal
+#                          would break another build we can't verify here.
+#   -Wno-sign-compare / -Wno-missing-field-initializers  benign int/size_t loop
+#                          counters and partial `{0}` struct inits.
+# Everything -Wall/-Wextra flags outside those (uninitialised use, bad function-
+# pointer casts, dead functions, ...) is treated as a real finding and fixed.
+#
 # All deprecated GTK widget APIs (ComboBox/TreeView/Dialog families, etc.) have
 # been migrated off, including the last holdout gdk_cairo_set_source_pixbuf: the
 # waterfall / SSTV / WEFAX images now composite through the GtkSnapshot/GdkTexture
 # GPU pipeline via the GpuImage widget (gpu_image.c). The build is therefore
 # deprecation-clean and -Wno-deprecated-declarations is no longer needed.
-CFLAGS= -g -O3 -std=gnu11
+CFLAGS= -g -O3 -std=gnu23 -Wall -Wextra \
+        -Wno-unused-parameter -Wno-unused-variable \
+        -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \

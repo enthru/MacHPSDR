@@ -469,7 +469,9 @@ void protocol2_high_priority(void) {
       // tx
       if(radio->transmitter->rx!=NULL) {
         RECEIVER *rx=radio->transmitter->rx;
-        if(rx!=NULL) {
+        {   // rx is radio->transmitter->rx, already non-NULL above; bare block
+            // keeps txFrequency unconditionally assigned (was a redundant
+            // if(rx!=NULL) that left txFrequency uninitialised on the dead else)
           if(rx->split) {
             txFrequency=rx->frequency_b-rx->lo_b+rx->error_b;
             txFrequency+=radio_ppm_correction(rx->frequency_b-rx->lo_b);

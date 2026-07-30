@@ -922,59 +922,6 @@ void rit_cb(GtkWidget *menu_item,gpointer data) {
   g_free(choice);
 }
 
-static gboolean rit_b_press_event_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
-  RECEIVER *rx=(RECEIVER *)data;
-  GtkWidget *menu=gtk_menu_new();
-  GtkWidget *menu_item;
-  CHOICE *choice;
-  if(button==3) {  // RIGHT
-    menu=gtk_menu_new();
-
-    menu_item=gtk_menu_item_new_with_label("1Hz");
-    choice=g_new0(CHOICE,1);
-    choice->rx=rx;
-    choice->selection=1;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-
-    menu_item=gtk_menu_item_new_with_label("5Hz");
-    choice=g_new0(CHOICE,1);
-    choice->rx=rx;
-    choice->selection=5;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-
-    menu_item=gtk_menu_item_new_with_label("10Hz");
-    choice=g_new0(CHOICE,1);
-    choice->rx=rx;
-    choice->selection=10;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-
-    menu_item=gtk_menu_item_new_with_label("100Hz");
-    choice=g_new0(CHOICE,1);
-    choice->rx=rx;
-    choice->selection=100;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-
-    menu_item=gtk_menu_item_new_with_label("1000Hz");
-    choice=g_new0(CHOICE,1);
-    choice->rx=rx;
-    choice->selection=1000;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
-
-#if GTK_CHECK_VERSION(3,22,0)
-    gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
-#else
-    gtk_menu_popup(GTK_MENU(menu),NULL,NULL,NULL,NULL,button,event->time);
-#endif
-    return TRUE;
-  }
-  return FALSE;
-}
-
 static gboolean rit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   GtkWidget *menu=gtk_menu_new();
