@@ -22,20 +22,12 @@
 
 #define PROPERTY_VERSION 2.0
 
-typedef struct _PROPERTY PROPERTY;
-
-/* --------------------------------------------------------------------------*/
-/**
-* @brief Property structure
-*/
-struct _PROPERTY {
-    char* name;
-    char* value;
-    PROPERTY* next_property;
-};
-extern void initProperties();
+// The property store is a name->value string map. Get/set are O(1) (backed by
+// a GHashTable in property.c); the old singly-linked list made building the
+// store O(n^2) at save/restore time.
+extern void initProperties(void);
 extern void retainProperties(char* prefix);
-extern void releaseRetainedProperties();
+extern void releaseRetainedProperties(void);
 extern void loadProperties(char* filename);
 extern char* getProperty(char* name);
 extern void setProperty(char* name,char* value);
