@@ -474,6 +474,7 @@ extern void receiver_delete_notch(RECEIVER *rx, int idx);
 extern int  receiver_notch_at(RECEIVER *rx, gdouble f_hz);
 
 extern void receiver_save_state(RECEIVER *rx);
+extern void receiver_restore_state(RECEIVER *rx);
 extern void receiver_change_sample_rate(RECEIVER *rx,int sample_rate);
 extern void set_agc(RECEIVER *rx);
 extern void calculate_display_average(RECEIVER *rx);

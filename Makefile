@@ -243,6 +243,7 @@ filter.c\
 band.c\
 radio.c\
 receiver.c\
+receiver_state.c\
 transmitter.c\
 vfo.c\
 meter.c\
@@ -382,6 +383,7 @@ filter.o\
 band.o\
 radio.o\
 receiver.o\
+receiver_state.o\
 transmitter.o\
 vfo.o\
 meter.o\
