@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -40,6 +41,9 @@
 #include "vfo.h"
 #include "log.h"
 #include "tci.h"
+#ifdef SSTV
+  #include "cw_encoder.h"   // cw_tx_send_text / cw_tx_abort (CW keyer, SSTV-flag)
+#endif
 
 // Suppress SIGPIPE on a broken client socket: macOS uses the SO_NOSIGPIPE
 // sockopt, Linux uses the MSG_NOSIGNAL send flag.
@@ -75,8 +79,8 @@
 typedef struct {
   int    fd;        // -1 = free slot
   GMutex send_mtx;  // serialise all sends to fd
-  gint   iq_on;     // atomic: subscribed to the IQ stream (iq_start)
-  gint   audio_on;  // atomic: subscribed to the RX audio stream (audio_start)
+  gint   iq_mask;    // atomic: bitmask of rx indices subscribed to IQ (iq_start:<rx>)
+  gint   audio_mask; // atomic: bitmask of rx indices subscribed to RX audio (audio_start:<rx>)
 } TCI_CLIENT;
 
 static RADIO   *g_radio = NULL;
@@ -87,8 +91,8 @@ static int      listening_port = TCI_DEFAULT_PORT;
 
 static GMutex     clients_mutex;              // guards the clients[] table
 static TCI_CLIENT clients[TCI_MAX_CLIENTS];
-static gint       iq_sub_count = 0;           // atomic: # clients with iq_on
-static gint       audio_sub_count = 0;        // atomic: # clients with audio_on
+static gint       iq_sub_count = 0;           // atomic: # active (client,rx) IQ subscriptions
+static gint       audio_sub_count = 0;        // atomic: # active (client,rx) audio subscriptions
 
 // TX audio ingest: a mono float ring filled by client threads (from inbound TCI
 // TX-audio binary frames) and drained by the TX thread via tci_tx_next_sample().
@@ -99,6 +103,11 @@ static int      tx_ring_tail = 0;             // next read
 static gint64   tx_audio_last_us = 0;         // monotonic time of last TX-audio frame
 
 static char     status_line[96] = "stopped";
+
+// Requested RX/TX audio stream rate (Hz). 48000 = native fast path (no resample).
+// A client changes it with audio_samplerate:<rate>; the stream is shared, so the
+// last writer wins. RX-out is resampled 48k->this; TX-in is resampled this->48k.
+static volatile gint audio_stream_rate = TCI_AUDIO_RATE;
 
 // ---------------------------------------------------------------------------
 // low-level socket helpers
@@ -329,21 +338,61 @@ static int tci_to_mode(const char *s) {
 }
 
 // ---------------------------------------------------------------------------
+// multi-RX index helpers — a TCI "trx" is a *visible* receiver (show_rx). Hidden
+// receivers (diversity / PureSignal feedback) are not exposed. Indices are the
+// receiver's position among the visible ones (0-based), stable in array order.
+// ---------------------------------------------------------------------------
+
+static int tci_trx_count(void) {
+  if (g_radio == NULL) return 1;
+  int n = 0;
+  for (int i = 0; i < MAX_RECEIVERS; i++)
+    if (g_radio->receiver[i] != NULL && g_radio->receiver[i]->show_rx) n++;
+  return n > 0 ? n : 1;
+}
+
+// TCI index of a receiver, or -1 if it is hidden / not found.
+static int tci_rx_index(RECEIVER *rx) {
+  if (g_radio == NULL || rx == NULL) return -1;
+  int idx = 0;
+  for (int i = 0; i < MAX_RECEIVERS; i++) {
+    RECEIVER *r = g_radio->receiver[i];
+    if (r == NULL || !r->show_rx) continue;
+    if (r == rx) return idx;
+    idx++;
+  }
+  return -1;
+}
+
+// The visible receiver at TCI index `idx`, or NULL.
+static RECEIVER *tci_rx_at(int idx) {
+  if (g_radio == NULL || idx < 0) return NULL;
+  int n = 0;
+  for (int i = 0; i < MAX_RECEIVERS; i++) {
+    RECEIVER *r = g_radio->receiver[i];
+    if (r == NULL || !r->show_rx) continue;
+    if (n == idx) return r;
+    n++;
+  }
+  return NULL;
+}
+
+// ---------------------------------------------------------------------------
 // inbound command dispatch to the GTK main thread
 // ---------------------------------------------------------------------------
 
-static void dispatch_set_frequency(long long hz) {
-  if (g_radio == NULL || g_radio->active_receiver == NULL) return;
+static void dispatch_set_frequency(RECEIVER *rx, long long hz) {
+  if (rx == NULL) return;
   RX_FREQUENCY *f = g_new0(RX_FREQUENCY, 1);
-  f->rx = g_radio->active_receiver;
+  f->rx = rx;
   f->frequency = hz;
   g_idle_add(ext_set_frequency_a, f);
 }
 
-static void dispatch_set_mode(int mode) {
-  if (g_radio == NULL || g_radio->active_receiver == NULL) return;
+static void dispatch_set_mode(RECEIVER *rx, int mode) {
+  if (rx == NULL) return;
   MODE *m = g_new0(MODE, 1);
-  m->rx = g_radio->active_receiver;
+  m->rx = rx;
   m->mode_a = mode;   // ext_set_mode assigns rx->mode_a = m->mode_a on the GTK thread
   g_idle_add(ext_set_mode, m);
 }
@@ -369,13 +418,16 @@ typedef enum {
   TCI_OP_SPLIT,      TCI_OP_IF
 } TCI_OP;
 
-typedef struct { TCI_OP op; gboolean b; gint64 v; } TCI_STATE_CMD;
+typedef struct { TCI_OP op; int rx_index; gboolean b; gint64 v; } TCI_STATE_CMD;
 
 static gboolean tci_apply_state_idle(gpointer data) {
   TCI_STATE_CMD *c = (TCI_STATE_CMD *)data;
   RADIO *r = g_radio;
-  if (r != NULL && r->active_receiver != NULL) {
-    RECEIVER *rx = r->active_receiver;
+  // Resolve the target receiver on the GTK thread (race-free — delete_receiver
+  // also runs here); fall back to the active RX if the index is gone.
+  RECEIVER *rx = (r != NULL) ? tci_rx_at(c->rx_index) : NULL;
+  if (rx == NULL && r != NULL) rx = r->active_receiver;
+  if (r != NULL && rx != NULL) {
     g_mutex_lock(&rx->mutex);
     switch (c->op) {
       case TCI_OP_RIT_ENABLE:
@@ -412,38 +464,138 @@ static gboolean tci_apply_state_idle(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-static void tci_dispatch_state(TCI_OP op, gboolean b, gint64 v) {
+static void tci_dispatch_state(int rx_index, TCI_OP op, gboolean b, gint64 v) {
   if (g_radio == NULL) return;
   TCI_STATE_CMD *c = g_new0(TCI_STATE_CMD, 1);
-  c->op = op; c->b = b; c->v = v;
+  c->op = op; c->rx_index = rx_index; c->b = b; c->v = v;
   g_idle_add(tci_apply_state_idle, c);
 }
 
-// Enable/disable this client's IQ subscription and keep the global gate count.
-static void client_set_iq(TCI_CLIENT *c, gboolean on) {
-  gint was = g_atomic_int_get(&c->iq_on);
-  if (on && !was) { g_atomic_int_set(&c->iq_on, 1); g_atomic_int_inc(&iq_sub_count); }
-  else if (!on && was) {
-    g_atomic_int_set(&c->iq_on, 0);
-    g_atomic_int_add(&iq_sub_count, -1);
-  }
+// CW keyer integration (only when the CW encoder is compiled in — SSTV flag).
+// cw_tx_send_text() keys MOX and starts a GLib timeout, so it must run on the
+// GTK main thread; dispatch a strdup'd copy there.
+#ifdef SSTV
+static gboolean tci_cw_send_idle(gpointer data) {
+  char *text = (char *)data;
+  cw_tx_send_text(text);
+  g_free(text);
+  return G_SOURCE_REMOVE;
+}
+static gboolean tci_cw_stop_idle(gpointer data) {
+  (void)data;
+  cw_tx_abort();
+  return G_SOURCE_REMOVE;
+}
+#endif
+
+// Queue a CW message for transmission (no-op if the CW encoder isn't built).
+static void tci_dispatch_cw_send(const char *text) {
+#ifdef SSTV
+  g_idle_add(tci_cw_send_idle, g_strdup(text));
+#else
+  (void)text;
+#endif
+}
+static void tci_dispatch_cw_stop(void) {
+#ifdef SSTV
+  g_idle_add(tci_cw_stop_idle, NULL);
+#endif
+}
+
+// Set/clear this client's IQ subscription for one rx index (or all rx when
+// rx_index < 0), keeping the global gate count = total set bits across clients.
+static void client_set_iq(TCI_CLIENT *c, int rx_index, gboolean on) {
+  gint old = g_atomic_int_get(&c->iq_mask);
+  gint bits = (rx_index < 0) ? ~0 : (1 << rx_index);
+  gint nw = on ? (old | bits) : (old & ~bits);
+  if (nw == old) return;
+  g_atomic_int_set(&c->iq_mask, nw);
+  g_atomic_int_add(&iq_sub_count, __builtin_popcount((guint)(nw ^ old)) * (on ? 1 : -1));
 }
 
 // Same for the RX audio subscription.
-static void client_set_audio(TCI_CLIENT *c, gboolean on) {
-  gint was = g_atomic_int_get(&c->audio_on);
-  if (on && !was) { g_atomic_int_set(&c->audio_on, 1); g_atomic_int_inc(&audio_sub_count); }
-  else if (!on && was) {
-    g_atomic_int_set(&c->audio_on, 0);
-    g_atomic_int_add(&audio_sub_count, -1);
-  }
+static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
+  gint old = g_atomic_int_get(&c->audio_mask);
+  gint bits = (rx_index < 0) ? ~0 : (1 << rx_index);
+  gint nw = on ? (old | bits) : (old & ~bits);
+  if (nw == old) return;
+  g_atomic_int_set(&c->audio_mask, nw);
+  g_atomic_int_add(&audio_sub_count, __builtin_popcount((guint)(nw ^ old)) * (on ? 1 : -1));
 }
+
+// --- arbitrary-ratio audio resampler (windowed-sinc) ------------------------
+// Used ONLY when a client asks for an RX/TX audio rate other than 48 kHz; the
+// 48 kHz path never touches this (zero cost, zero risk to the tested fast path).
+// Each channel keeps its FIR history + fractional read pointer across blocks so
+// there is no click at block boundaries. Quality is fine for monitoring audio.
+#define TCI_RS_HALF 16                       // sinc half-width -> 32 taps
+#define TCI_RS_HIST (2 * TCI_RS_HALF)
+
+typedef struct {
+  int    rin, rout;
+  double step;                               // rin/rout (input samples per output)
+  double rp;                                 // read pointer into [hist | new]
+  float  hist[TCI_RS_HIST];
+} TCI_RESAMP;
+
+static void tci_resamp_reset(TCI_RESAMP *s, int rin, int rout) {
+  s->rin = rin; s->rout = rout;
+  s->step = (double)rin / (double)rout;
+  s->rp = (double)TCI_RS_HIST;               // history is zero-padded at start
+  memset(s->hist, 0, sizeof(s->hist));
+}
+
+static inline double tci_sinc(double x) {
+  if (x < 1e-9 && x > -1e-9) return 1.0;
+  double p = G_PI * x;
+  return sin(p) / p;
+}
+
+// Resample one channel (rin->rout). in[n_in] -> out[], returns sample count.
+// out_cap must be >= ceil(n_in*rout/rin)+2. n_in is a small audio block.
+static int tci_resamp_run(TCI_RESAMP *s, const float *in, int n_in, float *out, int out_cap) {
+  int W = TCI_RS_HIST + n_in;
+  float *w = g_newa(float, W);
+  memcpy(w, s->hist, TCI_RS_HIST * sizeof(float));
+  memcpy(w + TCI_RS_HIST, in, (size_t)n_in * sizeof(float));
+
+  double fc   = 0.5 * ((s->rout < s->rin) ? (double)s->rout / (double)s->rin : 1.0);
+  double gain = 2.0 * fc;
+  double limit = (double)(W - 1 - TCI_RS_HALF);   // need HALF future samples
+
+  int n_out = 0;
+  double rp = s->rp;
+  while (rp <= limit && n_out < out_cap) {
+    int i0 = (int)floor(rp);
+    double acc = 0.0;
+    for (int k = i0 - TCI_RS_HALF + 1; k <= i0 + TCI_RS_HALF; k++) {
+      double x   = rp - k;
+      double wnd = 0.5 + 0.5 * cos(G_PI * x / (double)TCI_RS_HALF);   // Hann
+      double h   = gain * tci_sinc(2.0 * fc * x) * wnd;
+      float  smp = (k >= 0 && k < W) ? w[k] : 0.0f;
+      acc += smp * h;
+    }
+    out[n_out++] = (float)acc;
+    rp += s->step;
+  }
+
+  memcpy(s->hist, w + (W - TCI_RS_HIST), TCI_RS_HIST * sizeof(float));
+  s->rp = rp - n_in;                         // reindex after dropping n_in front samples
+  if (s->rp < 0.0) s->rp = 0.0;
+  return n_out;
+}
+
+// Per-rx stereo RX-audio resamplers (touched only by that rx's audio thread) and
+// one mono TX-audio resampler (guarded by tx_ring_mutex).
+static TCI_RESAMP rs_rx[MAX_RECEIVERS][2];
+static TCI_RESAMP rs_tx;
 
 // Ingest one inbound TCI binary frame from a client. Only TX-audio (type 2,
 // float32) is consumed: its left channel is pushed into the mono TX ring for
 // add_mic_sample() to drain. Everything else is ignored.
 static void tci_ingest_binary(const guint8 *buf, size_t len) {
   if (len < TCI_HDR_BYTES + 4) return;
+  guint32 srate   = ((guint32)buf[ 4]) | ((guint32)buf[ 5]<<8) | ((guint32)buf[ 6]<<16) | ((guint32)buf[ 7]<<24);
   guint32 fmt     = ((guint32)buf[ 8]) | ((guint32)buf[ 9]<<8) | ((guint32)buf[10]<<16) | ((guint32)buf[11]<<24);
   guint32 dtype   = ((guint32)buf[24]) | ((guint32)buf[25]<<8) | ((guint32)buf[26]<<16) | ((guint32)buf[27]<<24);
   guint32 channels= ((guint32)buf[28]) | ((guint32)buf[29]<<8) | ((guint32)buf[30]<<16) | ((guint32)buf[31]<<24);
@@ -454,14 +606,38 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   const float *s = (const float *)(buf + TCI_HDR_BYTES);
   size_t nfloats = (len - TCI_HDR_BYTES) / sizeof(float);
   size_t stride  = channels;                          // take the left channel
+  size_t nmono   = nfloats / stride;
+  if (nmono == 0) return;
+
+  // Extract the left (mono) channel, then resample srate -> 48 kHz if needed.
+  // rs_tx + the ring are both guarded by tx_ring_mutex (client threads may race).
+  float *mono = g_new(float, nmono);
+  for (size_t i = 0, j = 0; j < nmono; i += stride, j++) mono[j] = s[i];
+
+  const float *push = mono;
+  int npush = (int)nmono;
+  float *res = NULL;
+  int want_rate = (srate > 0) ? (int)srate : TCI_AUDIO_RATE;
+
   g_mutex_lock(&tx_ring_mutex);
-  for (size_t i = 0; i + stride <= nfloats; i += stride) {
+  if (want_rate != TCI_AUDIO_RATE) {
+    if (rs_tx.rin != want_rate || rs_tx.rout != TCI_AUDIO_RATE)
+      tci_resamp_reset(&rs_tx, want_rate, TCI_AUDIO_RATE);
+    int cap = (int)((gint64)nmono * TCI_AUDIO_RATE / want_rate) + 4;
+    res = g_new(float, cap);
+    npush = tci_resamp_run(&rs_tx, mono, (int)nmono, res, cap);
+    push = res;
+  }
+  for (int i = 0; i < npush; i++) {
     int next = (tx_ring_head + 1) % TCI_TX_RING;
     if (next == tx_ring_tail) break;                  // ring full: drop the rest
-    tx_ring[tx_ring_head] = s[i];
+    tx_ring[tx_ring_head] = push[i];
     tx_ring_head = next;
   }
   g_mutex_unlock(&tx_ring_mutex);
+
+  g_free(mono);
+  g_free(res);
   tx_audio_last_us = g_get_monotonic_time();
 }
 
@@ -484,102 +660,128 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       args[nargs++] = g_strstrip(t);
   }
 
-  RECEIVER *rx = (g_radio != NULL) ? g_radio->active_receiver : NULL;
+  // Most commands carry a 0-based rx (trx) index in their first field. Resolve
+  // the addressed receiver. Commands whose first field is NOT an rx index
+  // (cw_macros_speed = wpm) simply ignore these.
+  //   req_index : the raw requested index (clamped to a valid bit range) — used
+  //               by stream subscriptions, which must NOT fall back to rx 0.
+  //   addr      : the exact addressed receiver, or NULL if it does not exist.
+  //   rx_index/trx : for control commands, which fall back to the active RX
+  //               (labelled index 0) when the addressed rx is absent.
+  int req_index = (nargs >= 1 && args[0] != NULL) ? atoi(args[0]) : 0;
+  if (req_index < 0 || req_index >= MAX_RECEIVERS) req_index = 0;
+  RECEIVER *addr = tci_rx_at(req_index);
+  int rx_index = (addr != NULL) ? req_index : 0;
+  RECEIVER *trx = (addr != NULL) ? addr
+                                 : ((g_radio != NULL) ? g_radio->active_receiver : NULL);
 
   if (!strcmp(name, "vfo") || !strcmp(name, "dds")) {
     if (nargs >= 3) {
-      dispatch_set_frequency(g_ascii_strtoll(args[2], NULL, 10));
-    } else if (rx != NULL) {
+      int ch = atoi(args[1]);
+      // VFO A is settable; VFO B has no setter here, so a chan-1 set is acked.
+      if (ch == 0) dispatch_set_frequency(trx, g_ascii_strtoll(args[2], NULL, 10));
+    } else if (trx != NULL) {
       int ch = (nargs >= 2) ? atoi(args[1]) : 0;
-      long long f = (ch == 1) ? (long long)rx->frequency_b : (long long)rx->frequency_a;
+      long long f = (ch == 1) ? (long long)trx->frequency_b : (long long)trx->frequency_a;
       char r[64];
-      g_snprintf(r, sizeof(r), "vfo:0,%d,%lld;", ch, f);
+      g_snprintf(r, sizeof(r), "vfo:%d,%d,%lld;", rx_index, ch, f);
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "modulation") || !strcmp(name, "trx_mode")) {
     if (nargs >= 2) {
       int m = tci_to_mode(args[1]);
-      if (m >= 0) dispatch_set_mode(m);
-    } else if (rx != NULL) {
+      if (m >= 0) dispatch_set_mode(trx, m);
+    } else if (trx != NULL) {
       char r[48];
-      g_snprintf(r, sizeof(r), "modulation:0,%s;", mode_to_tci(rx->mode_a));
+      g_snprintf(r, sizeof(r), "modulation:%d,%s;", rx_index, mode_to_tci(trx->mode_a));
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "trx")) {
+    // PTT is radio-global (one transmitter); the rx index is echoed back as-is.
     if (nargs >= 2) {
       gboolean on = (!g_ascii_strcasecmp(args[1], "true") || !strcmp(args[1], "1"));
       dispatch_set_mox(on);
     } else if (g_radio != NULL) {
       char r[32];
-      g_snprintf(r, sizeof(r), "trx:0,%s;", g_radio->mox ? "true" : "false");
+      g_snprintf(r, sizeof(r), "trx:%d,%s;", rx_index, g_radio->mox ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "iq_start")) {
-    client_set_iq(c, TRUE);
-    log_info("tci: iq_start (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&iq_sub_count));
+    if (addr != NULL) client_set_iq(c, req_index, TRUE);   // subscribe only to an existing rx
+    log_info("tci: iq_start rx=%d%s (fd=%d, subs=%d)\n", req_index,
+             addr ? "" : " (no such rx)", c->fd, g_atomic_int_get(&iq_sub_count));
   } else if (!strcmp(name, "iq_stop")) {
-    client_set_iq(c, FALSE);
-    log_info("tci: iq_stop (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&iq_sub_count));
+    client_set_iq(c, (nargs >= 1) ? req_index : -1, FALSE);
+    log_info("tci: iq_stop rx=%d (fd=%d, subs=%d)\n", req_index, c->fd, g_atomic_int_get(&iq_sub_count));
   } else if (!strcmp(name, "iq_samplerate") || !strcmp(name, "iq_sample_rate")) {
     // We stream at the receiver's native DDC rate; report it (a requested rate
     // is acknowledged but not honoured — the radio's rate is fixed here).
-    int rate = (rx != NULL) ? rx->sample_rate : 48000;
+    int rate = (trx != NULL) ? trx->sample_rate : 48000;
     char r[48];
     g_snprintf(r, sizeof(r), "iq_samplerate:%d;", rate);
     client_send_text(c, r);
   } else if (!strcmp(name, "audio_start")) {
-    client_set_audio(c, TRUE);
-    log_info("tci: audio_start (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&audio_sub_count));
+    if (addr != NULL) client_set_audio(c, req_index, TRUE);
+    log_info("tci: audio_start rx=%d%s (fd=%d, subs=%d)\n", req_index,
+             addr ? "" : " (no such rx)", c->fd, g_atomic_int_get(&audio_sub_count));
   } else if (!strcmp(name, "audio_stop")) {
-    client_set_audio(c, FALSE);
-    log_info("tci: audio_stop (fd=%d, subs=%d)\n", c->fd, g_atomic_int_get(&audio_sub_count));
+    client_set_audio(c, (nargs >= 1) ? req_index : -1, FALSE);
+    log_info("tci: audio_stop rx=%d (fd=%d, subs=%d)\n", req_index, c->fd, g_atomic_int_get(&audio_sub_count));
   } else if (!strcmp(name, "audio_samplerate") || !strcmp(name, "audio_sample_rate")) {
-    // RX audio (and expected TX audio) run at the native 48 kHz AF rate.
+    // RX/TX audio stream rate. A requested rate is honoured via a resampler
+    // (the native AF path is 48 kHz); 48000 is the zero-cost fast path.
+    if (nargs >= 1 && args[0] != NULL && atoi(args[0]) > 0) {
+      int req = atoi(args[0]);
+      if (req < 8000)  req = 8000;
+      if (req > 192000) req = 192000;
+      g_atomic_int_set(&audio_stream_rate, req);
+    }
     char r[48];
-    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", TCI_AUDIO_RATE);
+    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", g_atomic_int_get(&audio_stream_rate));
     client_send_text(c, r);
   } else if (!strcmp(name, "rit_enable")) {
     if (nargs >= 2) {
-      tci_dispatch_state(TCI_OP_RIT_ENABLE, tci_argbool(args[1]), 0);
-    } else if (rx != NULL) {
+      tci_dispatch_state(rx_index, TCI_OP_RIT_ENABLE, tci_argbool(args[1]), 0);
+    } else if (trx != NULL) {
       char r[48];
-      g_snprintf(r, sizeof(r), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+      g_snprintf(r, sizeof(r), "rit_enable:%d,%s;", rx_index, trx->rit_enabled ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "rit_offset")) {
     if (nargs >= 2) {
-      tci_dispatch_state(TCI_OP_RIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
-    } else if (rx != NULL) {
+      tci_dispatch_state(rx_index, TCI_OP_RIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+    } else if (trx != NULL) {
       char r[48];
-      g_snprintf(r, sizeof(r), "rit_offset:0,%lld;", (long long)rx->rit);
+      g_snprintf(r, sizeof(r), "rit_offset:%d,%lld;", rx_index, (long long)trx->rit);
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "xit_enable")) {
+    // XIT lives on the single transmitter; the rx index is echoed as-is.
     if (nargs >= 2) {
-      tci_dispatch_state(TCI_OP_XIT_ENABLE, tci_argbool(args[1]), 0);
+      tci_dispatch_state(rx_index, TCI_OP_XIT_ENABLE, tci_argbool(args[1]), 0);
     } else {
       gboolean en = (g_radio != NULL && g_radio->transmitter != NULL)
                     ? g_radio->transmitter->xit_enabled : FALSE;
       char r[48];
-      g_snprintf(r, sizeof(r), "xit_enable:0,%s;", en ? "true" : "false");
+      g_snprintf(r, sizeof(r), "xit_enable:%d,%s;", rx_index, en ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "xit_offset")) {
     if (nargs >= 2) {
-      tci_dispatch_state(TCI_OP_XIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+      tci_dispatch_state(rx_index, TCI_OP_XIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
     } else {
       long long v = (g_radio != NULL && g_radio->transmitter != NULL)
                     ? (long long)g_radio->transmitter->xit : 0;
       char r[48];
-      g_snprintf(r, sizeof(r), "xit_offset:0,%lld;", v);
+      g_snprintf(r, sizeof(r), "xit_offset:%d,%lld;", rx_index, v);
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "split_enable")) {
     if (nargs >= 2) {
-      tci_dispatch_state(TCI_OP_SPLIT, tci_argbool(args[1]), 0);
-    } else if (rx != NULL) {
+      tci_dispatch_state(rx_index, TCI_OP_SPLIT, tci_argbool(args[1]), 0);
+    } else if (trx != NULL) {
       char r[48];
-      g_snprintf(r, sizeof(r), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+      g_snprintf(r, sizeof(r), "split_enable:%d,%s;", rx_index, (trx->split != SPLIT_OFF) ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "if")) {
@@ -588,22 +790,48 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     if (nargs >= 3) {
       int chan = atoi(args[1]);
       gint64 off = g_ascii_strtoll(args[2], NULL, 10);
-      gint64 lim = (rx != NULL && rx->sample_rate > 0) ? rx->sample_rate / 2 : 24000;
+      gint64 lim = (trx != NULL && trx->sample_rate > 0) ? trx->sample_rate / 2 : 24000;
       if (off >  lim) off =  lim;
       if (off < -lim) off = -lim;
       if (chan == 0) {
-        tci_dispatch_state(TCI_OP_IF, FALSE, off);
+        tci_dispatch_state(rx_index, TCI_OP_IF, FALSE, off);
       } else {
         char r[64];
-        g_snprintf(r, sizeof(r), "if:0,%d,%lld;", chan, (long long)off);
+        g_snprintf(r, sizeof(r), "if:%d,%d,%lld;", rx_index, chan, (long long)off);
         client_send_text(c, r);
       }
-    } else if (rx != NULL) {
+    } else if (trx != NULL) {
       int chan = (nargs >= 2) ? atoi(args[1]) : 0;
-      long long off = (chan == 0 && (rx->ctun || rx->freetune))
-                      ? (long long)(rx->ctun_frequency - rx->frequency_a) : 0;
+      long long off = (chan == 0 && (trx->ctun || trx->freetune))
+                      ? (long long)(trx->ctun_frequency - trx->frequency_a) : 0;
       char r[64];
-      g_snprintf(r, sizeof(r), "if:0,%d,%lld;", chan, off);
+      g_snprintf(r, sizeof(r), "if:%d,%d,%lld;", rx_index, chan, off);
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "cw_msg")) {
+    // cw_msg:<rx>,<before>,<after>,<text> — transmit <text> via the CW encoder.
+    // Fields can be empty (before/after usually are) and <text> may itself
+    // contain commas, so parse positionally from the raw token rather than the
+    // comma-collapsed args[]. before/after (callsign-substitution markers) are
+    // not implemented — the literal text is sent (use the %C macro for own call).
+    const char *p = strchr(token, ':');
+    if (p != NULL) {
+      int commas = 0;
+      const char *text = NULL;
+      for (const char *q = p + 1; *q; q++) {
+        if (*q == ',') { if (++commas == 3) { text = q + 1; break; } }
+      }
+      if (text != NULL && *text) tci_dispatch_cw_send(text);
+    }
+  } else if (!strcmp(name, "cw_macros_stop") || !strcmp(name, "cw_stop")) {
+    tci_dispatch_cw_stop();
+  } else if (!strcmp(name, "cw_macros_speed")) {
+    if (nargs >= 1 && args[0] != NULL) {
+      int wpm = atoi(args[0]);
+      if (wpm >= 5 && wpm <= 60 && g_radio != NULL) g_radio->cw_keyer_speed = wpm;
+    } else if (g_radio != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "cw_macros_speed:%d;", g_radio->cw_keyer_speed);
       client_send_text(c, r);
     }
   } else {
@@ -629,7 +857,11 @@ static void tci_send_handshake(TCI_CLIENT *c) {
   client_send_text(c, "protocol:ExpertSDR3,1.9;");
   client_send_text(c, "device:MacHPSDR;");
   client_send_text(c, g_radio && g_radio->can_transmit ? "receive_only:false;" : "receive_only:true;");
-  client_send_text(c, "trx_count:1;");
+  {
+    char r[32];
+    g_snprintf(r, sizeof(r), "trx_count:%d;", tci_trx_count());
+    client_send_text(c, r);
+  }
   client_send_text(c, "channels_count:2;");
   client_send_text(c, "vfo_limits:0,6000000000;");
   if (rx != NULL && rx->sample_rate > 0) {
@@ -642,25 +874,31 @@ static void tci_send_handshake(TCI_CLIENT *c) {
   client_send_text(c, "modulations_list:" TCI_MODLIST ";");
   {
     char r[48];
-    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", TCI_AUDIO_RATE);
+    g_snprintf(r, sizeof(r), "audio_samplerate:%d;", g_atomic_int_get(&audio_stream_rate));
     client_send_text(c, r);
   }
   if (rx != NULL) {
-    char r[64];
+    char r[48];
     g_snprintf(r, sizeof(r), "iq_samplerate:%d;", rx->sample_rate);
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "vfo:0,0,%lld;", (long long)rx->frequency_a);
+  }
+  // Per-rx initial state so a connecting (multi-RX) logger starts fully in sync.
+  int ntrx = tci_trx_count();
+  for (int idx = 0; idx < ntrx; idx++) {
+    RECEIVER *t = tci_rx_at(idx);
+    if (t == NULL) continue;
+    char r[64];
+    g_snprintf(r, sizeof(r), "vfo:%d,0,%lld;", idx, (long long)t->frequency_a);
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "vfo:0,1,%lld;", (long long)rx->frequency_b);
+    g_snprintf(r, sizeof(r), "vfo:%d,1,%lld;", idx, (long long)t->frequency_b);
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "modulation:0,%s;", mode_to_tci(rx->mode_a));
+    g_snprintf(r, sizeof(r), "modulation:%d,%s;", idx, mode_to_tci(t->mode_a));
     client_send_text(c, r);
-    // Initial RIT / split state so a connecting logger starts in sync.
-    g_snprintf(r, sizeof(r), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+    g_snprintf(r, sizeof(r), "rit_enable:%d,%s;", idx, t->rit_enabled ? "true" : "false");
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "rit_offset:0,%lld;", (long long)rx->rit);
+    g_snprintf(r, sizeof(r), "rit_offset:%d,%lld;", idx, (long long)t->rit);
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+    g_snprintf(r, sizeof(r), "split_enable:%d,%s;", idx, (t->split != SPLIT_OFF) ? "true" : "false");
     client_send_text(c, r);
   }
   if (g_radio != NULL && g_radio->transmitter != NULL) {
@@ -679,8 +917,8 @@ static void tci_send_handshake(TCI_CLIENT *c) {
 
 static void clients_remove(TCI_CLIENT *c) {
   g_mutex_lock(&clients_mutex);
-  client_set_iq(c, FALSE);      // keep iq_sub_count balanced
-  client_set_audio(c, FALSE);   // keep audio_sub_count balanced
+  client_set_iq(c, -1, FALSE);      // clear all rx bits, keep iq_sub_count balanced
+  client_set_audio(c, -1, FALSE);   // clear all rx bits, keep audio_sub_count balanced
   c->fd = -1;
   g_mutex_unlock(&clients_mutex);
 }
@@ -781,8 +1019,8 @@ static gpointer tci_server_thread(gpointer data) {
     for (int i = 0; i < TCI_MAX_CLIENTS; i++)
       if (clients[i].fd < 0) {
         clients[i].fd = fd;
-        g_atomic_int_set(&clients[i].iq_on, 0);
-        g_atomic_int_set(&clients[i].audio_on, 0);
+        g_atomic_int_set(&clients[i].iq_mask, 0);
+        g_atomic_int_set(&clients[i].audio_mask, 0);
         slot = &clients[i];
         break;
       }
@@ -870,19 +1108,21 @@ const char *tci_status(void) {
 
 void tci_notify_vfo(RECEIVER *rx) {
   if (!g_atomic_int_get(&server_running) || rx == NULL) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  int idx = tci_rx_index(rx);
+  if (idx < 0) return;                         // hidden receiver: not a TCI trx
   char line[64];
-  g_snprintf(line, sizeof(line), "vfo:0,0,%lld;", (long long)rx->frequency_a);
+  g_snprintf(line, sizeof(line), "vfo:%d,0,%lld;", idx, (long long)rx->frequency_a);
   tci_broadcast_text(line);
-  g_snprintf(line, sizeof(line), "vfo:0,1,%lld;", (long long)rx->frequency_b);
+  g_snprintf(line, sizeof(line), "vfo:%d,1,%lld;", idx, (long long)rx->frequency_b);
   tci_broadcast_text(line);
 }
 
 void tci_notify_mode(RECEIVER *rx) {
   if (!g_atomic_int_get(&server_running) || rx == NULL) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  int idx = tci_rx_index(rx);
+  if (idx < 0) return;
   char line[48];
-  g_snprintf(line, sizeof(line), "modulation:0,%s;", mode_to_tci(rx->mode_a));
+  g_snprintf(line, sizeof(line), "modulation:%d,%s;", idx, mode_to_tci(rx->mode_a));
   tci_broadcast_text(line);
 }
 
@@ -897,18 +1137,19 @@ void tci_notify_trx(gboolean mox) {
 // small state set so a following logger stays synced. Called from actions.c.
 void tci_notify_state(RECEIVER *rx) {
   if (!g_atomic_int_get(&server_running) || rx == NULL) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
+  int idx = tci_rx_index(rx);
+  if (idx < 0) return;
   char line[64];
-  g_snprintf(line, sizeof(line), "rit_enable:0,%s;", rx->rit_enabled ? "true" : "false");
+  g_snprintf(line, sizeof(line), "rit_enable:%d,%s;", idx, rx->rit_enabled ? "true" : "false");
   tci_broadcast_text(line);
-  g_snprintf(line, sizeof(line), "rit_offset:0,%lld;", (long long)rx->rit);
+  g_snprintf(line, sizeof(line), "rit_offset:%d,%lld;", idx, (long long)rx->rit);
   tci_broadcast_text(line);
-  g_snprintf(line, sizeof(line), "split_enable:0,%s;", (rx->split != SPLIT_OFF) ? "true" : "false");
+  g_snprintf(line, sizeof(line), "split_enable:%d,%s;", idx, (rx->split != SPLIT_OFF) ? "true" : "false");
   tci_broadcast_text(line);
   if (g_radio != NULL && g_radio->transmitter != NULL) {
-    g_snprintf(line, sizeof(line), "xit_enable:0,%s;", g_radio->transmitter->xit_enabled ? "true" : "false");
+    g_snprintf(line, sizeof(line), "xit_enable:%d,%s;", idx, g_radio->transmitter->xit_enabled ? "true" : "false");
     tci_broadcast_text(line);
-    g_snprintf(line, sizeof(line), "xit_offset:0,%lld;", (long long)g_radio->transmitter->xit);
+    g_snprintf(line, sizeof(line), "xit_offset:%d,%lld;", idx, (long long)g_radio->transmitter->xit);
     tci_broadcast_text(line);
   }
 }
@@ -917,9 +1158,14 @@ void tci_notify_state(RECEIVER *rx) {
 
 // Build the complete on-wire WS frame once (WS binary header + 64-byte TCI
 // header + interleaved float32 down-cast from `interleaved`) and broadcast to
-// every client subscribed to the given stream (`audio` picks audio_on vs iq_on).
-static void tci_stream_broadcast(int data_type, int sample_rate, int channels,
-                                 const double *interleaved, guint32 nfloats, gboolean audio) {
+// every client subscribed to this rx's stream (`audio` picks audio_mask vs
+// iq_mask; only clients with rx_index's bit set receive it). `data` may be a
+// float source (`fsrc`) or double source (`interleaved`) — exactly one is used.
+static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, int channels,
+                                 const double *interleaved, const float *fsrc,
+                                 guint32 nfloats, gboolean audio) {
+  if (rx_index < 0 || rx_index >= TCI_MAX_CLIENTS * 4) return;   // bit index sanity
+  guint  rxbit = 1u << rx_index;
   size_t  payload = TCI_HDR_BYTES + (size_t)nfloats * sizeof(float);
   guint8  wshdr[10];
   size_t  wshlen = ws_write_header(wshdr, 0x2 /*binary*/, payload);
@@ -929,7 +1175,7 @@ static void tci_stream_broadcast(int data_type, int sample_rate, int channels,
   memcpy(frame, wshdr, wshlen);
   guint8 *th = frame + wshlen;                 // 64-byte TCI header
   memset(th, 0, TCI_HDR_BYTES);
-  st32le(th +  0, 0);                           // rx index (trx 0)
+  st32le(th +  0, (guint32)rx_index);           // rx index
   st32le(th +  4, (guint32)sample_rate);        // sample_rate
   st32le(th +  8, TCI_SAMPLE_FLOAT32);          // data_format
   st32le(th + 12, 0);                           // codec
@@ -939,14 +1185,15 @@ static void tci_stream_broadcast(int data_type, int sample_rate, int channels,
   st32le(th + 28, (guint32)channels);           // channels
 
   float *fp = (float *)(th + TCI_HDR_BYTES);
-  for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
+  if (fsrc != NULL) memcpy(fp, fsrc, (size_t)nfloats * sizeof(float));
+  else for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
 
   g_mutex_lock(&clients_mutex);
   for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
     if (clients[i].fd < 0) continue;
-    gint want = audio ? g_atomic_int_get(&clients[i].audio_on)
-                      : g_atomic_int_get(&clients[i].iq_on);
-    if (want) client_send_framed_try(&clients[i], frame, flen);
+    gint mask = audio ? g_atomic_int_get(&clients[i].audio_mask)
+                      : g_atomic_int_get(&clients[i].iq_mask);
+    if ((guint)mask & rxbit) client_send_framed_try(&clients[i], frame, flen);
   }
   g_mutex_unlock(&clients_mutex);
 
@@ -954,22 +1201,54 @@ static void tci_stream_broadcast(int data_type, int sample_rate, int channels,
 }
 
 // Phase B: off-air I/Q (interleaved doubles, `nsamples` complex pairs). Gated so
-// it costs one atomic read when nobody subscribed. Active RX only (trx 0).
+// it costs one atomic read when nobody subscribed. Streams per-rx (multi-RX): the
+// frame's rx index = the receiver's TCI index and only clients subscribed to
+// that index receive it.
 void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) {
   if (!g_atomic_int_get(&server_running)) return;
   if (g_atomic_int_get(&iq_sub_count) <= 0) return;
   if (rx == NULL || iq == NULL || nsamples <= 0) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
-  tci_stream_broadcast(TCI_STREAM_IQ, sample_rate, 2, iq, (guint32)nsamples * 2u, FALSE);
+  int idx = tci_rx_index(rx);
+  if (idx < 0) return;
+  tci_stream_broadcast(TCI_STREAM_IQ, idx, sample_rate, 2, iq, NULL, (guint32)nsamples * 2u, FALSE);
 }
 
-// Phase C: demodulated RX audio (interleaved stereo doubles, `nstereo` frames).
+// Phase C: demodulated RX audio (interleaved stereo doubles, `nstereo` frames at
+// `sample_rate`, natively 48 kHz). Per-rx (multi-RX). If a client asked for a
+// non-48k stream rate the block is resampled per channel first.
 void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate) {
   if (!g_atomic_int_get(&server_running)) return;
   if (g_atomic_int_get(&audio_sub_count) <= 0) return;
   if (rx == NULL || audio == NULL || nstereo <= 0) return;
-  if (g_radio != NULL && rx != g_radio->active_receiver) return;
-  tci_stream_broadcast(TCI_STREAM_RX_AUDIO, sample_rate, 2, audio, (guint32)nstereo * 2u, TRUE);
+  int idx = tci_rx_index(rx);
+  if (idx < 0 || idx >= MAX_RECEIVERS) return;
+
+  int target = g_atomic_int_get(&audio_stream_rate);
+  if (target <= 0 || target == sample_rate) {
+    tci_stream_broadcast(TCI_STREAM_RX_AUDIO, idx, sample_rate, 2, audio, NULL,
+                         (guint32)nstereo * 2u, TRUE);
+    return;
+  }
+
+  // Resample this rx's two channels sample_rate -> target (state per rx).
+  TCI_RESAMP *L = &rs_rx[idx][0], *R = &rs_rx[idx][1];
+  if (L->rin != sample_rate || L->rout != target) tci_resamp_reset(L, sample_rate, target);
+  if (R->rin != sample_rate || R->rout != target) tci_resamp_reset(R, sample_rate, target);
+
+  int cap = (int)((gint64)nstereo * target / sample_rate) + 4;
+  float *inL = g_new(float, nstereo), *inR = g_new(float, nstereo);
+  for (int i = 0; i < nstereo; i++) { inL[i] = (float)audio[2*i]; inR[i] = (float)audio[2*i+1]; }
+  float *outL = g_new(float, cap), *outR = g_new(float, cap);
+  int nL = tci_resamp_run(L, inL, nstereo, outL, cap);
+  int nR = tci_resamp_run(R, inR, nstereo, outR, cap);
+  int no = (nL < nR) ? nL : nR;             // stay interleave-aligned
+  if (no > 0) {
+    float *inter = g_new(float, (size_t)no * 2);
+    for (int i = 0; i < no; i++) { inter[2*i] = outL[i]; inter[2*i+1] = outR[i]; }
+    tci_stream_broadcast(TCI_STREAM_RX_AUDIO, idx, target, 2, NULL, inter, (guint32)no * 2u, TRUE);
+    g_free(inter);
+  }
+  g_free(inL); g_free(inR); g_free(outL); g_free(outR);
 }
 
 // --- TX audio ingest -> mic substitution (transmitter.c:add_mic_sample) ------

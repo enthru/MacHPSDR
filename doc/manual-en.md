@@ -338,15 +338,20 @@ listening and how many clients are connected. When a client changes the VFO,
 mode, PTT, RIT, XIT or split the radio follows, and when you tune, switch mode or
 change RIT/XIT/split locally the change is pushed back to every connected client
 so they stay in sync. Several
-clients may connect at once. A client may also request the **live I/Q stream**
+clients may connect at once, and if you run more than one receiver each is
+exposed as a separate TCI *trx* that a client can drive and stream independently.
+A client may also request the **live I/Q stream**
 (`iq_start`): MacHPSDR then sends the off-air I/Q as TCI binary frames, so an
 external CW/RTTY skimmer or panadapter can work from this receiver without a
 virtual audio cable — run the receiver at 96 or 192 kHz for this, since TCI only
 treats a stream above 48 kHz as I/Q. A client may also request the **RX audio
 stream** (`audio_start`) to receive the demodulated audio, and stream **TX audio**
 back so external digital-mode software can key and modulate the radio over TCI
-instead of a virtual audio cable (48 kHz). *The TX-audio path has not been tested
-on the air (no transmit hardware).*
+instead of a virtual audio cable. The audio streams default to 48 kHz but a
+client may ask for another rate (MacHPSDR resamples). A TCI client can also send
+CW: a `cw_msg` command keys the built-in keyer to transmit the text (speed from
+the CW settings, or set with `cw_macros_speed`). *The TX paths (audio and CW)
+have not been tested on the air (no transmit hardware).*
 
 ---
 
