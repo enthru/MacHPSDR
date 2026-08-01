@@ -316,9 +316,16 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   // Honest disclaimer: this PureSignal path is an unfinished prototype.
   GtkWidget *note=gtk_label_new(NULL);
   gtk_label_set_markup(GTK_LABEL(note),
-    "<small><i>Note: PureSignal here is an unfinished prototype — Protocol 1 only, "
-    "and its peak calibration is tuned mainly for the Hermes-Lite 2. "
-    "It has not been verified on hardware in this fork; use at your own risk.</i></small>");
+    "<small><i>Note: PureSignal here is an unfinished prototype. Protocol 1 is the "
+    "tested code path (peak calibration tuned mainly for the Hermes-Lite 2); "
+#ifdef PURESIGNAL_P2
+    "Protocol 2 support is now wired but experimental and completely unverified "
+    "against real hardware — the closed correction loop has never run on a P2 "
+    "radio with a feedback ADC. "
+#else
+    "Protocol 2 is not built in (enable PURESIGNAL_P2 to try the experimental path). "
+#endif
+    "None of this has been verified on hardware in this fork; use at your own risk.</i></small>");
   gtk_label_set_wrap(GTK_LABEL(note),TRUE);
   // Bound the wrap width so this long sentence doesn't stretch the whole page
   // (its single-line natural width was driving the tab wide).
@@ -327,10 +334,17 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   gtk_label_set_xalign(GTK_LABEL(note),0.0);
   gtk_grid_attach(GTK_GRID(grid),note,0,row++,2,1);
 
-  // PureSignal (adaptive predistortion) needs a Protocol-1 feedback ADC; the
-  // controls do nothing on any other protocol. Grey the interactive frame but
-  // leave the note above sensitive so it stays readable and explains why.
-  if(radio->discovered->protocol != PROTOCOL_1) {
+  // PureSignal (adaptive predistortion) needs a feedback ADC. Protocol 1 is the
+  // live path; Protocol 2 is only wired when built with PURESIGNAL_P2. Grey the
+  // interactive frame on any protocol the build can't drive, but leave the note
+  // above sensitive so it stays readable and explains why.
+  gboolean ps_supported = (radio->discovered->protocol == PROTOCOL_1);
+#ifdef PURESIGNAL_P2
+  if(radio->discovered->protocol == PROTOCOL_2) {
+    ps_supported = TRUE;
+  }
+#endif
+  if(!ps_supported) {
     gtk_widget_set_sensitive(ps_frame, FALSE);
   }
 
