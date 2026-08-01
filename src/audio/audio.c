@@ -1105,8 +1105,11 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
             break;
           case SND_PCM_FORMAT_S32_LE:
             long_buffer=(gint32 *)rx->local_audio_buffer;
-            long_buffer[rx->local_audio_buffer_offset*2]=(gint32)(left_sample*4294967295.0F);
-            long_buffer[(rx->local_audio_buffer_offset*2)+1]=(gint32)(right_sample*4294967295.0F);
+            // Full-scale for signed 32-bit is INT32_MAX (2147483647), not
+            // 4294967295 (that is UINT32_MAX — twice too large, so anything past
+            // half scale overflowed and wrapped into loud distortion).
+            long_buffer[rx->local_audio_buffer_offset*2]=(gint32)(left_sample*2147483647.0F);
+            long_buffer[(rx->local_audio_buffer_offset*2)+1]=(gint32)(right_sample*2147483647.0F);
             break;
           case SND_PCM_FORMAT_FLOAT_LE:
             float_buffer=(float *)rx->local_audio_buffer;
@@ -1114,7 +1117,11 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
             float_buffer[(rx->local_audio_buffer_offset*2)+1]=right_sample;
             break;
             
-          default: return -1;            
+          default:
+            // Unknown format: bail out, but release the lock first (the bare
+            // `return -1` here used to strand rx->local_audio_mutex held).
+            g_mutex_unlock(&rx->local_audio_mutex);
+            return -1;
         }
         rx->local_audio_buffer_offset++;
 

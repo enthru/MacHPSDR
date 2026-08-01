@@ -231,7 +231,12 @@ void update_waterfall(RECEIVER *rx) {
 
     for(i=0;i<width;i++) {
         sample=samples[i+offset]+radio->adc[rx->adc].attenuation;
-        if(i>1 || i<(width-1)) {
+        // Exclude the two edge pixels from the auto-level average: the last bin
+        // (i==width-1) holds the -200 dBm end marker the panadapter writes, and
+        // the condition was `||` (always true), so the marker was dragging the
+        // automatic waterfall_low down every frame. `&&` gives the intended
+        // interior-only mean over exactly width-2 samples (the divisor below).
+        if(i>0 && i<(width-1)) {
           average+=(int)sample;
         }
 

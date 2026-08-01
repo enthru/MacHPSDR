@@ -600,35 +600,56 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
           bins[i*H+yy]+=w*add;
         }
       }
-      cairo_surface_t *hs=cairo_image_surface_create(CAIRO_FORMAT_RGB24, display_width, display_height);
+      // Heat-colour lookup table: the per-pixel colour is a pure function of the
+      // occupancy (gamma-lifted, then the 5-stop ramp), so bake both into a
+      // 256-entry LUT built once. This replaces a powf()+hist_heat_rgb() per
+      // pixel (~display_width*display_height calls every frame), which was the
+      // heatmap's dominant cost. Each entry is the CAIRO_FORMAT_RGB24 byte order
+      // B,G,R for that occupancy bucket. Gamma note: lift the occupancy so even a
+      // modestly-dwelt pixel (noise floor ~0.2-0.4) reads green/yellow while a
+      // steady signal (->1) burns red; NO peak normalisation (a lone outlier
+      // would wash the cloud back to blue).
+      static gboolean heat_lut_ready=FALSE;
+      static unsigned char heat_lut[256][3];   // [occupancy bucket] = {B,G,R}
+      if(!heat_lut_ready) {
+        for(int li=0;li<256;li++) {
+          double rr,gg,bb;
+          hist_heat_rgb(powf((float)li/255.0f,0.40f),&rr,&gg,&bb);
+          heat_lut[li][0]=(unsigned char)(bb*255.0);
+          heat_lut[li][1]=(unsigned char)(gg*255.0);
+          heat_lut[li][2]=(unsigned char)(rr*255.0);
+        }
+        heat_lut_ready=TRUE;
+      }
+      // Reuse a cached blit surface across frames (matches the guarded dims);
+      // receiver_init_analyzer drops it on resize so it is re-made once here.
+      cairo_surface_t *hs=rx->panadapter_histogram_surface;
+      if(hs==NULL) {
+        hs=cairo_image_surface_create(CAIRO_FORMAT_RGB24, display_width, display_height);
+        rx->panadapter_histogram_surface=hs;
+      }
       unsigned char *hd=cairo_image_surface_get_data(hs);
       int stride=cairo_image_surface_get_stride(hs);
       double bgr=0.09,bgg=0.09,bgb=0.10; css_rgb("SPECTRUM_BG",&bgr,&bgg,&bgb);
+      unsigned char bgb8=(unsigned char)(bgb*255.0), bgg8=(unsigned char)(bgg*255.0), bgr8=(unsigned char)(bgr*255.0);
       for(int y=0;y<display_height;y++) {
         unsigned char *row=hd+y*stride;
         for(int xx=0;xx<display_width;xx++) {
           float d=bins[xx*H+y];   // absolute occupancy 0..1 (fraction of recent frames lit)
-          if(d>1.0f) d=1.0f;
-          double rr,gg,bb;
-          if(d<=0.015f) { rr=bgr; gg=bgg; bb=bgb; }   // essentially unvisited -> background
-          else {
-            // Gamma-lift the absolute occupancy so even a modestly-dwelt pixel
-            // (e.g. the noise floor, ~0.2-0.4) reads green/yellow while a steady
-            // signal (->1) burns red. NO peak normalisation - that let a lone
-            // outlier pixel wash the whole cloud back to blue.
-            hist_heat_rgb(powf(d,0.40f),&rr,&gg,&bb);
+          if(d<=0.015f) {         // essentially unvisited -> background
+            row[xx*4+0]=bgb8; row[xx*4+1]=bgg8; row[xx*4+2]=bgr8; row[xx*4+3]=0;
+          } else {
+            int li=(int)(d*255.0f); if(li>255) li=255;   // also clamps d>1
+            row[xx*4+0]=heat_lut[li][0];
+            row[xx*4+1]=heat_lut[li][1];
+            row[xx*4+2]=heat_lut[li][2];
+            row[xx*4+3]=0;
           }
-          // CAIRO_FORMAT_RGB24 is native-endian 0xXXRRGGBB -> bytes B,G,R,X.
-          row[xx*4+0]=(unsigned char)(bb*255.0);
-          row[xx*4+1]=(unsigned char)(gg*255.0);
-          row[xx*4+2]=(unsigned char)(rr*255.0);
-          row[xx*4+3]=0;
         }
       }
       cairo_surface_mark_dirty(hs);
       cairo_set_source_surface(cr, hs, 0.0, 0.0);
       cairo_paint(cr);
-      cairo_surface_destroy(hs);
     }
 
     long long frequency=rx->frequency_a;

@@ -69,7 +69,7 @@ void save_xvtr (void) {
     BAND *xvtr=band_get_band(i);
     BANDSTACK *bandstack=xvtr->bandstack;
     t=gtk_editable_get_text(GTK_EDITABLE(title[i]));
-    strcpy(xvtr->title,t);
+    g_strlcpy(xvtr->title,t,sizeof(xvtr->title));
     if(strlen(t)!=0) {
       minf=gtk_editable_get_text(GTK_EDITABLE(min_frequency[i]));
       xvtr->frequencyMin=(long long)(atof(minf)*1000000.0);

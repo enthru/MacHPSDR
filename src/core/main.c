@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 #include <semaphore.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
@@ -625,6 +626,12 @@ int main(int argc, char **argv) {
   char text[1024];
   int rc;
   const char *homedir;
+
+  // Never take SIGPIPE from a write() to a peer that closed its end: the rigctl
+  // CAT server and the DX-cluster client both write to sockets that can vanish,
+  // and the default SIGPIPE disposition would kill the whole app. (TCI already
+  // guards per-socket via SO_NOSIGPIPE/MSG_NOSIGNAL; this covers the rest.)
+  signal(SIGPIPE, SIG_IGN);
 
   // Log verbosity: environment first (MACHPSDR_LOG=debug|info|error), then the
   // command line below can override it. Default stays INFO (see log.c).

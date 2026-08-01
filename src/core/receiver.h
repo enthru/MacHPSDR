@@ -266,6 +266,7 @@ typedef struct _receiver {
   gfloat  *panadapter_histogram_bins;   // density buffer, sized W*H (screen coords), row index = i*H + yrow
   gint     panadapter_histogram_w;      // width the bins buffer was allocated for
   gint     panadapter_histogram_h;      // height the bins buffer was allocated for
+  cairo_surface_t *panadapter_histogram_surface;  // cached RGB24 blit surface (reused across frames; reallocated with the bins)
 
   gboolean panadapter_phase;        // I/Q vectorscope display mode (replaces the trace)
   gint     panadapter_phase_mode;   // 0=dots (Phase), 1=lines (Phase2)

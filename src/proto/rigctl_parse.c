@@ -177,7 +177,15 @@ static void send_resp(COMMAND *cmd,char * msg) {
   int length=strlen(msg);
   int written=0;
   while(written<length) {
-    written+=write(cmd->fd,&msg[written],length-written);   
+    ssize_t n=write(cmd->fd,&msg[written],length-written);
+    if(n<=0) {
+      // A failed write() returns -1; the old `written+=n` then spun forever on a
+      // dead/errored fd — and this runs on the GTK main thread, so it froze the
+      // whole UI. Retry on EINTR, otherwise give up on this response.
+      if(n<0 && errno==EINTR) continue;
+      break;
+    }
+    written+=(int)n;
   }
 }
 

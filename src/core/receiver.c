@@ -735,7 +735,7 @@ static gboolean key_is_q(guint keyval, guint keycode) {
 
 // GTK4: GtkEventControllerKey "key-pressed" handler (returns TRUE if handled).
 gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
-  log_info("Pressed: %s\n", gdk_keyval_name(keyval));
+  log_debug("Pressed: %s\n", gdk_keyval_name(keyval));
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
   // key_is_q() matches the physical Q key on any keyboard layout (e.g. Cmd-й on
@@ -778,7 +778,7 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
 
 // GTK4: GtkEventControllerKey "key-released" handler (void).
 void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
-  log_info("Released: %s\n", gdk_keyval_name(keyval));
+  log_debug("Released: %s\n", gdk_keyval_name(keyval));
   switch(keyval) {
     case GDK_KEY_space:
       set_mox(radio,FALSE);
@@ -1499,14 +1499,17 @@ static void process_rx_buffer(RECEIVER *rx) {
     if(left_sample  >  1.0) left_sample  =  1.0; else if(left_sample  < -1.0) left_sample  = -1.0;
     if(right_sample >  1.0) right_sample =  1.0; else if(right_sample < -1.0) right_sample = -1.0;
 
-    left_audio_sample=(short)(left_sample*32767.0);
-    right_audio_sample=(short)(right_sample*32767.0);
-
-
+    // Mute-while-transmitting must zero BOTH the local (float) path and the
+    // radio (short) path. This used to sit after the short conversion below, so
+    // it only silenced local audio while the shorts sent to the radio kept
+    // playing — audible in the radio's headphones in duplex TX. Zero first.
     if (isTransmitting(radio) && (rx->mute_while_transmitting)) {
       left_sample=0;
       right_sample=0;
     }
+
+    left_audio_sample=(short)(left_sample*32767.0);
+    right_audio_sample=(short)(right_sample*32767.0);
 
     if(rx->local_audio) {
       audio_write(rx,(float)left_sample,(float)right_sample);
@@ -2028,6 +2031,13 @@ void receiver_init_analyzer(RECEIVER *rx) {
   if(rx->panadapter_histogram_bins!=NULL) {
     g_free(rx->panadapter_histogram_bins);
     rx->panadapter_histogram_bins=NULL;
+  }
+  // The cached heatmap blit surface is sized to the bins; drop it here so the
+  // panadapter re-creates it once at the new dimensions (was created/destroyed
+  // every frame before it was cached).
+  if(rx->panadapter_histogram_surface!=NULL) {
+    cairo_surface_destroy(rx->panadapter_histogram_surface);
+    rx->panadapter_histogram_surface=NULL;
   }
   rx->panadapter_histogram_w=0;
   rx->panadapter_histogram_h=0;

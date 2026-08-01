@@ -617,7 +617,12 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   const float *push = mono;
   int npush = (int)nmono;
   float *res = NULL;
+  // Clamp the client-supplied sample rate: an unvalidated tiny srate makes the
+  // resampler's output capacity (nmono*48000/srate) overflow int and abort the
+  // whole app in g_new(). srate==0 falls back to the native 48 kHz fast path.
   int want_rate = (srate > 0) ? (int)srate : TCI_AUDIO_RATE;
+  if(want_rate < 8000)   want_rate = 8000;
+  if(want_rate > 192000) want_rate = 192000;
 
   g_mutex_lock(&tx_ring_mutex);
   if (want_rate != TCI_AUDIO_RATE) {
@@ -1166,6 +1171,24 @@ static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, i
                                  guint32 nfloats, gboolean audio) {
   if (rx_index < 0 || rx_index >= TCI_MAX_CLIENTS * 4) return;   // bit index sanity
   guint  rxbit = 1u << rx_index;
+
+  // Cheap pre-scan: if no connected client is subscribed to THIS rx's stream,
+  // skip building the frame entirely (the malloc + double->float conversion of a
+  // whole IQ/audio block). The global sub-count gate already handled "nobody
+  // subscribed to anything"; this covers the multi-RX case where clients follow
+  // other receivers. A client subscribing between this check and the send below
+  // just misses one block — harmless.
+  gboolean any = FALSE;
+  g_mutex_lock(&clients_mutex);
+  for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
+    if (clients[i].fd < 0) continue;
+    gint mask = audio ? g_atomic_int_get(&clients[i].audio_mask)
+                      : g_atomic_int_get(&clients[i].iq_mask);
+    if ((guint)mask & rxbit) { any = TRUE; break; }
+  }
+  g_mutex_unlock(&clients_mutex);
+  if (!any) return;
+
   size_t  payload = TCI_HDR_BYTES + (size_t)nfloats * sizeof(float);
   guint8  wshdr[10];
   size_t  wshlen = ws_write_header(wshdr, 0x2 /*binary*/, payload);

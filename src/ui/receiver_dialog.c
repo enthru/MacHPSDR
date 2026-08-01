@@ -657,7 +657,7 @@ static void rigctl_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void cat_serial_enable_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(rx->serial_port_entry)));
+  g_strlcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(rx->serial_port_entry)),sizeof(rx->rigctl_serial_port));
   rx->rigctl_serial_enable=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->rigctl_serial_enable) {
     launch_serial(rx);
@@ -668,7 +668,7 @@ static void cat_serial_enable_cb(GtkWidget *widget, gpointer data) {
 
 static void cat_serial_port_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  strcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(widget)));
+  g_strlcpy(rx->rigctl_serial_port,gtk_editable_get_text(GTK_EDITABLE(widget)),sizeof(rx->rigctl_serial_port));
 }
 
 static void cat_baudrate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {

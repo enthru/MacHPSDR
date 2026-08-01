@@ -591,6 +591,11 @@ static void rigctl_client(RECEIVER *rx) {
   rigctl->socket_running=TRUE;
   while(rigctl->socket_running && (numbytes=recv(rigctl->socket_fd , cmd_input , MAXDATASIZE-2 , 0)) > 0 ) {
     for(i=0;i<numbytes;i++) {
+      // Guard against a run of bytes with no ';' terminator: a real CAT command
+      // is a few dozen chars, so anything approaching MAXDATASIZE is junk (or a
+      // hostile client). Discard the accumulated garbage rather than write past
+      // the buffer (a heap overflow before this guard was added).
+      if(command_index >= MAXDATASIZE-1) command_index=0;
       command[command_index]=cmd_input[i];
       command_index++;
       if(cmd_input[i]==';') {
@@ -607,6 +612,9 @@ static void rigctl_client(RECEIVER *rx) {
       }
     }
   }
+  // The current (still-accumulating) buffer was never handed to a COMMAND, so
+  // free it here rather than leak MAXDATASIZE bytes on every disconnect.
+  g_free(command);
   rx->cat_client_connected = FALSE;
   
 perror("recv");
@@ -687,6 +695,9 @@ static gpointer serial_server(gpointer data) {
      log_info("%s: starting serial_server: fd=%d\n",__FUNCTION__,rigctl->serial_fd);
      while(rigctl->serial_running && (numbytes=read(rigctl->serial_fd , cmd_input , MAXDATASIZE-2)) > 0 ) {
       for(i=0;i<numbytes;i++) {
+        // Same overflow guard as the socket path: drop an unterminated run that
+        // would otherwise write past the MAXDATASIZE buffer.
+        if(command_index >= MAXDATASIZE-1) command_index=0;
         command[command_index]=cmd_input[i];
         command_index++;
         if(cmd_input[i]==';') {
@@ -704,6 +715,7 @@ static gpointer serial_server(gpointer data) {
         }
       }
     }
+  g_free(command);   // free the still-accumulating buffer (never handed to a COMMAND)
   close(rigctl->serial_fd);
   return NULL;
 }
