@@ -77,8 +77,9 @@ endif
 # the closed predistortion loop has NEVER been run against a real Protocol-2
 # radio with a feedback ADC, so convergence is unproven (see the big comment in
 # protocol2.c).  Requires PURESIGNAL above (shared machinery lives there).
-# Off by default; set to PURESIGNAL_P2 only if you have P2 hardware to debug on.
-PURESIGNAL_P2_INCLUDE=
+# Enabled so the P2 controls are live; the runtime path stays inert unless the
+# operator turns PureSignal on with a P2 radio connected. Comment out to drop it.
+PURESIGNAL_P2_INCLUDE=PURESIGNAL_P2
 ifeq ($(PURESIGNAL_P2_INCLUDE),PURESIGNAL_P2)
 PURESIGNAL_OPTIONS+=-D PURESIGNAL_P2
 endif
