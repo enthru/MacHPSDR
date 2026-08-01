@@ -1660,7 +1660,15 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
   // ext = carried-over history (hist_n complex) ++ this block's downmixed
   // samples (n complex), so the FIR window at output position p can always
   // reach back hist_n samples even right at the start of the block.
-  gfloat *ext = g_new(gfloat, 2*(hist_n+n));
+  // Persistent grow-on-demand scratch (never freed, matching scope_iq's
+  // lifecycle) so the audio thread doesn't g_new/g_free every block.
+  int cap_ext = hist_n + n;
+  if(rx->scope_tuned_ext_cap < cap_ext) {
+    g_free(rx->scope_tuned_ext);
+    rx->scope_tuned_ext = g_new(gfloat, 2*cap_ext);
+    rx->scope_tuned_ext_cap = cap_ext;
+  }
+  gfloat *ext = rx->scope_tuned_ext;
   memcpy(ext, rx->scope_fir_hist, sizeof(gfloat)*2*hist_n);
 
   double ph = rx->scope_nco_ph;
@@ -1677,7 +1685,12 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
   rx->scope_nco_ph = ph;
 
   int cap = rx->scope_iq_cap;
-  gfloat *out = g_new(gfloat, 2*n);
+  if(rx->scope_tuned_out_cap < n) {
+    g_free(rx->scope_tuned_out);
+    rx->scope_tuned_out = g_new(gfloat, 2*n);
+    rx->scope_tuned_out_cap = n;
+  }
+  gfloat *out = rx->scope_tuned_out;
   int nout = 0;
   for(int p=0; p<n && nout<cap; p+=D) {
     double y_re=0.0, y_im=0.0;
@@ -1697,13 +1710,11 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
   // recent hist_n samples of the stream).
   memcpy(rx->scope_fir_hist, &ext[n*2], sizeof(gfloat)*2*hist_n);
   rx->scope_fir_hist_n = hist_n;
-  g_free(ext);
 
   g_mutex_lock(&rx->scope_mutex);
   memcpy(rx->scope_iq, out, sizeof(gfloat)*2*nout);
   rx->scope_iq_n = nout;
   g_mutex_unlock(&rx->scope_mutex);
-  g_free(out);
 }
 
 // Vectorscope tap: snapshot the genuine off-air I/Q (same tap point as the

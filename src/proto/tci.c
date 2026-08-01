@@ -633,11 +633,16 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
     npush = tci_resamp_run(&rs_tx, mono, (int)nmono, res, cap);
     push = res;
   }
+  // Single-consumer (audio thread) reads head/tail lock-free, so publish the
+  // slot write BEFORE advancing head (g_atomic_int_set is a full barrier).
+  // Producers are serialised by tx_ring_mutex, so head increments don't race.
+  int head = tx_ring_head;
   for (int i = 0; i < npush; i++) {
-    int next = (tx_ring_head + 1) % TCI_TX_RING;
-    if (next == tx_ring_tail) break;                  // ring full: drop the rest
-    tx_ring[tx_ring_head] = push[i];
-    tx_ring_head = next;
+    int next = (head + 1) % TCI_TX_RING;
+    if (next == g_atomic_int_get(&tx_ring_tail)) break;  // ring full: drop the rest
+    tx_ring[head] = push[i];
+    g_atomic_int_set(&tx_ring_head, next);
+    head = next;
   }
   g_mutex_unlock(&tx_ring_mutex);
 
@@ -1287,12 +1292,14 @@ gboolean tci_tx_active(void) {
 
 // Pop one mono TX sample (0.0 on underrun). Called per-sample on the TX thread.
 float tci_tx_next_sample(void) {
+  // Lock-free single-consumer read off the audio (hot) path: producers publish
+  // head atomically after the slot write, so reading head atomically then the
+  // slot is safe without taking tx_ring_mutex per sample.
   float s = 0.0f;
-  g_mutex_lock(&tx_ring_mutex);
-  if (tx_ring_tail != tx_ring_head) {
-    s = tx_ring[tx_ring_tail];
-    tx_ring_tail = (tx_ring_tail + 1) % TCI_TX_RING;
+  int tail = tx_ring_tail;                             // only this thread writes tail
+  if (tail != g_atomic_int_get(&tx_ring_head)) {
+    s = tx_ring[tail];
+    g_atomic_int_set(&tx_ring_tail, (tail + 1) % TCI_TX_RING);
   }
-  g_mutex_unlock(&tx_ring_mutex);
   return s;
 }

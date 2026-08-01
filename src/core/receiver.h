@@ -286,6 +286,10 @@ typedef struct _receiver {
   gint     scope_fir_rate_cached;   // sample_rate the current taps were built for
   gfloat  *scope_fir_hist;          // carry-over of last (ntaps-1) downmixed complex samples, interleaved
   gint     scope_fir_hist_n;        // valid complex samples in scope_fir_hist
+  gfloat  *scope_tuned_ext;         // tuned-scope scratch: history++block, interleaved (runtime only, grow-on-demand)
+  gint     scope_tuned_ext_cap;     // capacity of scope_tuned_ext in complex samples
+  gfloat  *scope_tuned_out;         // tuned-scope scratch: decimated output, interleaved (runtime only, grow-on-demand)
+  gint     scope_tuned_out_cap;     // capacity of scope_tuned_out in complex samples
 
   GtkWidget *waterfall;
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
