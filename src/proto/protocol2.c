@@ -147,7 +147,7 @@ static gpointer protocol2_timer_thread(gpointer data);
 static void  process_iq_data(RECEIVER *rx,unsigned char *buffer);
 static void  process_wideband_data(WIDEBAND *w,unsigned char *buffer);
 #ifdef PURESIGNAL_P2
-static void  process_ps_iq_data(RECEIVER *rx);
+static void  process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer);
 #endif
 static void  process_command_response(unsigned char *buffer);
 static void  process_high_priority(unsigned char *buffer);
@@ -1015,26 +1015,52 @@ void protocol2_receive_specific(void) {
   }
 
 #ifdef PURESIGNAL_P2
-    if((radio->transmitter->puresignal != NULL) && isTransmitting(radio)) {
-      int ps_rate=192000;
+    // --- PureSignal feedback DDCs (EXPERIMENTAL / UNVERIFIED, see below) ------
+    // During a PureSignal TX two extra DDCs carry the feedback the correction
+    // loop needs: the DUC/pre-PA reference (what we asked the radio to send) and
+    // the post-PA/ADC feedback (what the amplifier actually produced).  Reuse
+    // the two RECEIVERs the transmitter already points at (rx_puresignal_txfbk /
+    // rx_puresignal_rxfbk, set in transmitter_set_ps) rather than inventing new
+    // dedicated feedback receiver structs (which this fork, unlike pihpsdr, does
+    // not have).  Both DDCs run at the feedback receiver's sample rate and the
+    // post-PA DDC is sync-slaved to the DUC DDC so the two streams stay
+    // sample-aligned when process_ps_iq_data() pairs them into pscc().
+    //
+    // UNVERIFIED: the exact P2 sync-register layout, the feedback DDC indices
+    // and the feedback rate are hardware-specific and have never been checked
+    // against a real Orion2/ANAN P2 radio.  If the loop misbehaves, this block
+    // and the discovery-time ps_tx_fdbk_chan assignment are the first suspects.
+    if((radio->transmitter!=NULL) && (radio->transmitter->puresignal != NULL)
+        && isTransmitting(radio)) {
+      RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk; // DUC / pre-PA reference
+      RECEIVER *rxfbk=radio->transmitter->rx_puresignal_rxfbk; // post-PA / ADC feedback
+      if(txfbk!=NULL && rxfbk!=NULL) {
+        int ps_rate=txfbk->sample_rate;   // feedback rate (e.g. 192000)
+        int ct=txfbk->channel;            // DUC feedback DDC index
+        int cr=rxfbk->channel;            // post-PA feedback DDC index
 
-      receive_specific_buffer[5]|=radio->dither<<radio->receiver[i]->channel; // dither enable
-      receive_specific_buffer[6]|=radio->random<<radio->receiver[i]->channel; // random enable
-      receive_specific_buffer[17+(radio->receiver[i]->channel*6)]=radio->receiver[PS_RX_FEEDBACK]->adc;
-      receive_specific_buffer[18+(radio->receiver[i]->channel*6)]=((ps_rate/1000)>>8)&0xFF;
-      receive_specific_buffer[19+(radio->receiver[i]->channel*6)]=(ps_rate/1000)&0xFF;
-      receive_specific_buffer[22+(radio->receiver[i]->channel*6)]=24;
+        // post-PA / ADC feedback DDC
+        receive_specific_buffer[5]|=radio->adc[rxfbk->adc].dither<<cr;
+        receive_specific_buffer[6]|=radio->adc[rxfbk->adc].random<<cr;
+        receive_specific_buffer[17+(cr*6)]=rxfbk->adc;
+        receive_specific_buffer[18+(cr*6)]=((ps_rate/1000)>>8)&0xFF;
+        receive_specific_buffer[19+(cr*6)]=(ps_rate/1000)&0xFF;
+        receive_specific_buffer[22+(cr*6)]=24;
 
-      radio->receiver[i]->channel=radio->receiver[PS_TX_FEEDBACK]->channel;
-      receive_specific_buffer[5]|=radio->dither<<radio->receiver[i]->channel; // dither enable
-      receive_specific_buffer[6]|=radio->random<<radio->receiver[i]->channel; // random enable
-      receive_specific_buffer[17+(radio->receiver[i]->channel*6)]=radio->receiver[PS_TX_FEEDBACK]->adc;
-      receive_specific_buffer[18+(radio->receiver[i]->channel*6)]=((ps_rate/1000)>>8)&0xFF;
-      receive_specific_buffer[19+(radio->receiver[i]->channel*6)]=(ps_rate/1000)&0xFF;
-      receive_specific_buffer[22+(radio->receiver[i]->channel*6)]=24;
-      receive_specific_buffer[1363]=0x02; // sync DDC1 to DDC0
+        // DUC / pre-PA reference DDC
+        receive_specific_buffer[5]|=radio->adc[txfbk->adc].dither<<ct;
+        receive_specific_buffer[6]|=radio->adc[txfbk->adc].random<<ct;
+        receive_specific_buffer[17+(ct*6)]=txfbk->adc;
+        receive_specific_buffer[18+(ct*6)]=((ps_rate/1000)>>8)&0xFF;
+        receive_specific_buffer[19+(ct*6)]=(ps_rate/1000)&0xFF;
+        receive_specific_buffer[22+(ct*6)]=24;
 
-      receive_specific_buffer[7]|=1; // DDC enable
+        // sync the post-PA DDC to the DUC DDC (byte 1363 is the DDC0 sync map
+        // in the P2 spec; one sync byte per DDC follows it).
+        receive_specific_buffer[1363+cr]=(1<<ct);
+
+        receive_specific_buffer[7]|=(1<<ct)|(1<<cr); // enable both feedback DDCs
+      }
     }
 #endif
 
@@ -1207,6 +1233,27 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
             case RX_IQ_TO_HOST_PORT_6:
             case RX_IQ_TO_HOST_PORT_7:
               ddc=sourceport-RX_IQ_TO_HOST_PORT_0;
+#ifdef PURESIGNAL_P2
+              // While a PureSignal TX is running the two feedback DDCs arrive on
+              // their own IQ ports; steer them into the feedback pairing path
+              // instead of the normal per-receiver demod. (UNVERIFIED — the
+              // feedback DDC indices are hardware-specific.)
+              if(isTransmitting(radio) && radio->transmitter!=NULL
+                  && radio->transmitter->puresignal!=NULL) {
+                RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk;
+                RECEIVER *rxfbk=radio->transmitter->rx_puresignal_rxfbk;
+                if(txfbk!=NULL && ddc==txfbk->channel) {
+                  process_ps_iq_data(txfbk,buffer);
+                  free(buffer);
+                  break;
+                }
+                if(rxfbk!=NULL && ddc==rxfbk->channel) {
+                  process_ps_iq_data(rxfbk,buffer);
+                  free(buffer);
+                  break;
+                }
+              }
+#endif
               if(ddc>=radio->discovered->supported_receivers)  {
                 log_info("unexpected iq data from ddc %d\n",ddc);
               } else {
@@ -1302,93 +1349,57 @@ static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
 }
 
 #ifdef PURESIGNAL_P2
-static void process_ps_iq_data(RECEIVER *rx) {
-  long sequence;
-  long long timestamp;
-  int bitspersample;
-  int samplesperframe;
-  int b;
-  int leftsample0;
-  int rightsample0;
-  double leftsampledouble0;
-  double rightsampledouble0;
-  int leftsample1;
-  int rightsample1;
-  double leftsampledouble1;
-  double rightsampledouble1;
-  unsigned char *buffer;
+// Decode one feedback-DDC packet (single 24-bit I/Q stream) into its feedback
+// receiver's iq_input_buffer, then — once the DUC/reference buffer is full —
+// hand the paired reference + post-PA blocks to WDSP's pscc() correction pass.
+//
+// This is the P2 analogue of add_ps_iq_samples() (transmitter.c), but the two
+// feedback streams arrive as two SEPARATE synced DDC packet streams rather than
+// interleaved in one Protocol-1 frame, so each is accumulated independently and
+// the DUC stream drives the pscc() trigger.  The post-PA (rxfbk) stream is
+// assumed to advance in lock-step because its DDC is sync-slaved to the DUC DDC
+// in protocol2_receive_specific().
+//
+// UNVERIFIED: never run against a real P2 feedback ADC.  If the correction loop
+// diverges, suspect (a) the two streams drifting out of lock-step here, (b) the
+// I/Q sign/scaling convention, or (c) the sync-register setup upstream.
+static void process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer) {
+  TRANSMITTER *tx=radio->transmitter;
+  if(tx==NULL) return;
 
-  int min_sample0;
-  int max_sample0;
-  int min_sample1;
-  int max_sample1;
+  int samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
+  int b=16;
 
-  buffer=iq_buffer[rx->channel];
+  for(int i=0;i<samplesperframe;i++) {
+    int isample  = (int)((signed char) buffer[b++])<<16;
+    isample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
+    isample     |= (int)((unsigned char)buffer[b++]&0xFF);
+    int qsample  = (int)((signed char) buffer[b++])<<16;
+    qsample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
+    qsample     |= (int)((unsigned char)buffer[b++]&0xFF);
 
-  sequence=((buffer[0]&0xFF)<<24)+((buffer[1]&0xFF)<<16)+((buffer[2]&0xFF)<<8)+(buffer[3]&0xFF);
+    double id=(double)isample/8388607.0; // 24-bit
+    double qd=(double)qsample/8388607.0;
 
-  if(rx->iq_sequence!=sequence) {
-    //fprintf(stderr,"rx %d sequence error: expected %ld got %ld\n",rx->id,rx->iq_sequence,sequence);
-    rx->iq_sequence=sequence;
-  }
-  rx->iq_sequence++;
-
-  timestamp=((long long)(buffer[4]&0xFF)<<56)+((long long)(buffer[5]&0xFF)<<48)+((long long)(buffer[6]&0xFF)<<40)+((long long)(buffer[7]&0xFF)<<32);
-  ((long long)(buffer[8]&0xFF)<<24)+((long long)(buffer[9]&0xFF)<<16)+((long long)(buffer[10]&0xFF)<<8)+(long long)(buffer[11]&0xFF);
-  bitspersample=((buffer[12]&0xFF)<<8)+(buffer[13]&0xFF);
-  samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
-
-//fprintf(stderr,"process_ps_iq_data: rx=%d seq=%ld bitspersample=%d samplesperframe=%d\n",rx->channel, sequence,bitspersample,samplesperframe);
-  b=16;
-  int i;
-  for(i=0;i<samplesperframe;i+=2) {
-    leftsample0   = (int)((signed char) buffer[b++])<<16;
-    leftsample0  |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    leftsample0  |= (int)((unsigned char)buffer[b++]&0xFF);
-    rightsample0  = (int)((signed char)buffer[b++]) << 16;
-    rightsample0 |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    rightsample0 |= (int)((unsigned char)buffer[b++]&0xFF);
-
-    leftsampledouble0=(double)leftsample0/8388607.0; // for 24 bits
-    rightsampledouble0=(double)rightsample0/8388607.0; // for 24 bits
-
-    leftsample1   = (int)((signed char) buffer[b++])<<16;
-    leftsample1  |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    leftsample1  |= (int)((unsigned char)buffer[b++]&0xFF);
-    rightsample1  = (int)((signed char)buffer[b++]) << 16;
-    rightsample1 |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    rightsample1 |= (int)((unsigned char)buffer[b++]&0xFF);
-
-    leftsampledouble1=(double)leftsample1/8388607.0; // for 24 bits
-    rightsampledouble1=(double)rightsample1/8388607.0; // for 24 bits
-
-    add_ps_iq_samples(radio->transmitter, leftsampledouble0,rightsampledouble0,leftsampledouble1,rightsampledouble1);
-
-//fprintf(stderr,"%06x,%06x %06x,%06x\n",leftsample0,rightsample0,leftsample1,rightsample1);
-/*
-    if(i==0) {
-      min_sample0=leftsample0;
-      max_sample0=leftsample0;
-      min_sample1=leftsample1;
-      max_sample1=leftsample1;
-    } else {
-      if(leftsample0<min_sample0) {
-        min_sample0=leftsample0;
-      }
-      if(leftsample0>max_sample0) {
-        max_sample0=leftsample0;
-      }
-      if(leftsample1<min_sample1) {
-        min_sample1=leftsample1;
-      }
-      if(leftsample1>max_sample1) {
-        max_sample1=leftsample1;
-      }
+    if(fbk->samples < fbk->buffer_size) {
+      fbk->iq_input_buffer[fbk->samples*2]   = id;
+      fbk->iq_input_buffer[fbk->samples*2+1] = qd;
+      fbk->samples++;
     }
-*/
-  }
-//fprintf(stderr,"0 - min=%d max=%d  1 - min=%d max=%d\n",min_sample0,max_sample0,min_sample1,max_sample1);
 
+    // The DUC/reference stream drives the correction pass: when its block is
+    // complete, run pscc() with both blocks and reset the pair.
+    if(fbk==tx->rx_puresignal_txfbk && fbk->samples>=fbk->buffer_size) {
+      RECEIVER *rxfbk=tx->rx_puresignal_rxfbk;
+      if(rxfbk!=NULL && rxfbk->samples>=fbk->buffer_size && isTransmitting(radio)) {
+        pscc(tx->channel, fbk->buffer_size,
+             tx->rx_puresignal_txfbk->iq_input_buffer,
+             rxfbk->iq_input_buffer);
+      }
+      fbk->samples=0;
+      if(rxfbk!=NULL) rxfbk->samples=0;
+    }
+  }
 }
 #endif
 

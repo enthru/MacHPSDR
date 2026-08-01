@@ -179,7 +179,16 @@ void ps_change_tx_attenuation(PSIGNAL *ps, int att_diff) {
     }
     else {
       radio->transmitter->attenuation = new_att;
-      //TODO protocol2
+      // Protocol 2: the TX-time ADC0 attenuation is sent as
+      // high_priority_buffer_to_radio[1443] = transmitter->attenuation
+      // (protocol2.c), so the new value is picked up on the next high-priority
+      // frame.  Push one out immediately so the feedback-ADC gain tracks the
+      // correction loop without waiting for the periodic update.
+#ifdef PURESIGNAL_P2
+      if(radio->discovered!=NULL && radio->discovered->protocol==PROTOCOL_2) {
+        protocol2_high_priority();
+      }
+#endif
     }
 
     ps->state=1;

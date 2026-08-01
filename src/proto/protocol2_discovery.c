@@ -283,6 +283,22 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
                     discovered[devices].supported_receivers=buffer[20]&0xFF;
                     discovered[devices].supported_transmitters=1;
 
+                    // PureSignal feedback DDC pair (Protocol-2 path is
+                    // EXPERIMENTAL / UNVERIFIED — see protocol2.c).  Mirrors the
+                    // Protocol-1 convention: ps_tx_fdbk_chan is the DUC/reference
+                    // DDC and (ps_tx_fdbk_chan - 1) the post-PA feedback DDC.
+                    // -1 disables PureSignal on devices without a feedback ADC.
+                    // The exact channel for real P2 hardware is UNVERIFIED; 4
+                    // follows the P1 Orion2/ANAN-7000/8000 assignment.
+                    switch(discovered[devices].device) {
+                        case NEW_DEVICE_ORION2:
+                            discovered[devices].ps_tx_fdbk_chan=4;
+                            break;
+                        default:
+                            discovered[devices].ps_tx_fdbk_chan=-1;
+                            break;
+                    }
+
                     version=buffer[13]&0xFF;
                     sprintf(discovered[devices].software_version,"%d",version);
                     for(i=0;i<6;i++) {

@@ -72,6 +72,17 @@ PURESIGNAL_OBJS= \
 puresignal.o
 endif
 
+# PureSignal for Protocol 2 (feedback-DDC path).  EXPERIMENTAL / UNVERIFIED:
+# it compiles and is wired end-to-end (two synced feedback DDCs -> pscc()), but
+# the closed predistortion loop has NEVER been run against a real Protocol-2
+# radio with a feedback ADC, so convergence is unproven (see the big comment in
+# protocol2.c).  Requires PURESIGNAL above (shared machinery lives there).
+# Off by default; set to PURESIGNAL_P2 only if you have P2 hardware to debug on.
+PURESIGNAL_P2_INCLUDE=
+ifeq ($(PURESIGNAL_P2_INCLUDE),PURESIGNAL_P2)
+PURESIGNAL_OPTIONS+=-D PURESIGNAL_P2
+endif
+
 # FT8 receive decoder (and, later, TX).  Uses the vendored ft8_lib (MIT) under
 # ft8_lib/.  Comment out FT8_INCLUDE to build without FT8 support.
 FT8_INCLUDE=FT8
