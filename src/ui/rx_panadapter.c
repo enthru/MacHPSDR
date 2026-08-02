@@ -171,6 +171,23 @@ static void n_text(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,
   gtk_snapshot_restore(s);
 }
 
+// Draw 12px text over a solid background box (baseline at x, base_y) so the dB /
+// frequency graticule lines don't strike through the label and make it hard to
+// read. The box is padded 1px around the glyph bounds. Uses the cached layout.
+static void n_text_boxed(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,
+                         const GdkRGBA *c,const GdkRGBA *bg,const char *txt,double *out_w) {
+  PangoLayout *l=label12(widget,txt);
+  int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
+  if(out_w) *out_w=(double)pw;
+  double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  n_rect(s,x-1.0,top-1.0,(double)pw+2.0,(double)ph+2.0,bg);
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)x,(float)top);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+}
+
 // Draw text at an arbitrary size (ad-hoc layout, for the rare non-12px path).
 static void n_text_sz(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,double size,
                       const GdkRGBA *c,const char *txt) {
@@ -1070,9 +1087,11 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
 
   GdkRGBA dark=skin_rgba(DARK_LINES,1.0);
   GdkRGBA text_b=skin_rgba(TEXT_B,1.0);
+  GdkRGBA label_bg=bgstrip;  // same as the scale strip → box is seamless, just hides the graticule under each number
   int db_step = rx->panadapter_step>0 ? rx->panadapter_step : 20;
   {
-    // Batch all dB gridlines into one dashed stroke.
+    // Batch all dB gridlines into one dashed stroke, appended BEFORE the labels
+    // so each boxed number renders on top of the graticule (no line through it).
     GskPathBuilder *b=gsk_path_builder_new();
     gboolean any=FALSE;
     for(i=rx->panadapter_high;i>=rx->panadapter_low;i--) {
@@ -1081,11 +1100,6 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
         gsk_path_builder_move_to(b,0.0f,(float)y);
         gsk_path_builder_line_to(b,(float)display_width,(float)y);
         any=TRUE;
-        if(db_step>3 || (abs(i)/db_step)%3==0) {
-          const GdkRGBA *lc = rx->panadapter_gradient ? &text_b : &dark;
-          sprintf(temp," %d",i);
-          n_text(snapshot,widget,5,y-4,lc,temp,NULL);
-        }
       }
     }
     GskPath *p=gsk_path_builder_free_to_path(b);
@@ -1096,6 +1110,15 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       gsk_stroke_free(st);
     }
     gsk_path_unref(p);
+    // dB numbers on top, each over a solid background box.
+    for(i=rx->panadapter_high;i>=rx->panadapter_low;i--) {
+      if(abs(i)%db_step==0 && (db_step>3 || (abs(i)/db_step)%3==0)) {
+        double y=(double)(rx->panadapter_high-i)*dbm_per_line;
+        const GdkRGBA *lc = rx->panadapter_gradient ? &text_b : &dark;
+        sprintf(temp," %d",i);
+        n_text_boxed(snapshot,widget,5,y-4,lc,&label_bg,temp,NULL);
+      }
+    }
   }
 
   // ---- frequency scale (bottom) -------------------------------------------
