@@ -1077,7 +1077,8 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       double px = (double)display_width - tw - 6.0;
       if(px < 42.0) px = 42.0;
       GdkRGBA cyan=nrgba(0.55,0.85,1.0,0.9);
-      n_text(snapshot,widget,px,14.0,&cyan,pb,NULL);
+      GdkRGBA blk=nrgba(0.0,0.0,0.0,1.0);
+      n_text_boxed(snapshot,widget,px,14.0,&cyan,&blk,pb,NULL);
     }
   }
 
@@ -1314,7 +1315,8 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     char fbuf[48];
     snprintf(fbuf,sizeof(fbuf),"FPS %.0f  build %.2fms", pan_fps_ema, pan_build_ema);
     GdkRGBA fc=nrgba(1.0,0.9,0.2,0.95);
-    n_text(snapshot,widget,48,26,&fc,fbuf,NULL);
+    GdkRGBA fbg=nrgba(0.0,0.0,0.0,1.0);
+    n_text_boxed(snapshot,widget,48,26,&fc,&fbg,fbuf,NULL);
     double _bt=pan_now_ms()-_build_t0;
     pan_build_ema = pan_build_ema>0.0 ? pan_build_ema*0.9+_bt*0.1 : _bt;
   }
