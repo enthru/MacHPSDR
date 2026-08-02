@@ -438,7 +438,17 @@ static gpointer dxcluster_thread_func(gpointer data) {
       if (!sent_login &&
           (str_ci_contains(buf, "login:") || str_ci_contains(buf, "callsign") ||
            str_ci_contains(buf, "your call") || str_ci_contains(buf, "enter your call"))) {
-        dxcluster_send_login(fd);
+        if (cfg_login[0] != '\0') {
+          dxcluster_send_login(fd);
+        } else {
+          // The cluster is waiting at its login prompt but neither the cluster
+          // Login call nor the station call is configured, so we have nothing to
+          // send and no spots will ever arrive. Surface it in the status readout
+          // instead of silently hanging "connected".
+          set_status("connected - set a Login call");
+          log_error("dxcluster: login prompt seen but no callsign configured; "
+                    "set 'Login call' (Configure -> Network) or the station call (FT8 page)\n");
+        }
         sent_login = TRUE;
       }
 
