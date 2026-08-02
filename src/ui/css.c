@@ -523,6 +523,27 @@ static const char css_body[]=
 "    background-color: @ACCENT_B;\n"
 "    border-color: @OFF_WHITE;\n"
 "  }\n"
+/* I/Q Player scrub bar: the default GTK trough is near-black, so the
+   not-yet-played part of the track vanished against the black area below the
+   waterfall. Give the whole trough a visible @SURFACE fill + border; the
+   played portion is the @ACCENT_A highlight, the thumb an off-white knob. */
+"  #iq-seek trough {\n"
+"    background-color: @SURFACE;\n"
+"    border-color: @BORDER;\n"
+"    border-style: solid;\n"
+"    border-width: 1px;\n"
+"    border-radius: 4px;\n"
+"    min-height: 6px;\n"
+"    box-shadow: none;\n"
+"    }\n"
+"  #iq-seek highlight {\n"
+"    background-color: @ACCENT_A;\n"
+"    border-radius: 4px;\n"
+"    }\n"
+"  #iq-seek slider {\n"
+"    background-color: @OFF_WHITE;\n"
+"    border-radius: 50%;\n"
+"    }\n"
 "  #info-warning {\n"
 "    border-radius: 5px;\n"
 "    border-style: none;\n"
