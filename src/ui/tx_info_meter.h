@@ -25,7 +25,9 @@ typedef struct _txmeter {
   char *label;
   gdouble meter_max;
   gdouble meter_min;
-  
+  gdouble cur_value;   // last value/peak published by update_tx_info_meter, for the builder
+  gdouble cur_peak;
+
 } TXMETER;
 
 extern TXMETER *create_tx_info_meter(void);

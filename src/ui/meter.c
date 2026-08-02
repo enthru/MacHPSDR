@@ -34,33 +34,34 @@
 #include "main.h"
 #include "vfo.h"
 #include "level_meter.h"
+#include "pana_view.h"
 
 typedef struct _choice {
   RECEIVER *rx;
   int selection;
 } CHOICE;
 
-// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
-// the backing store is an off-screen image surface (no GdkWindow).
-static void meter_resize_cb(GtkDrawingArea *area,int meter_width,int meter_height,gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  if (rx->meter_surface) {
-    cairo_surface_destroy (rx->meter_surface);
-    rx->meter_surface=NULL;
-  }
-  if(meter_width>0 && meter_height>0) {
-    rx->meter_surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,meter_width,meter_height);
-  }
-}
+// S-meter peak-hold ("smax"), decayed once per frame in update_meter() and read
+// by the snapshot builder. Shared across meters as in the original (one meter
+// updates at a time); main-thread only.
+static double s_meter_smax=0;
 
+static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,gpointer data);
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void meter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  if(rx->meter_surface!=NULL) {
-    cairo_set_source_surface (cr, rx->meter_surface, 0.0, 0.0);
-    cairo_paint (cr);
+// Append a stroked circular arc (cx,cy,r) from a0..a1 rad as a short polyline.
+static void meter_arc(GtkSnapshot *snapshot,double cx,double cy,double r,double a0,double a1,double lw,const GdkRGBA *c) {
+  int seg=(int)(fabs(a1-a0)/0.05)+2;   // ~0.05 rad segments -> smooth
+  GskPathBuilder *b=gsk_path_builder_new();
+  for(int k=0;k<=seg;k++) {
+    double a=a0+(a1-a0)*(double)k/(double)seg;
+    double px=cx+r*cos(a), py=cy+r*sin(a);
+    if(k==0) gsk_path_builder_move_to(b,(float)px,(float)py);
+    else     gsk_path_builder_line_to(b,(float)px,(float)py);
   }
+  GskPath *p=gsk_path_builder_free_to_path(b);
+  GskStroke *st=gsk_stroke_new((float)lw);
+  gtk_snapshot_append_stroke(snapshot,p,st,c);
+  gsk_stroke_free(st); gsk_path_unref(p);
 }
 
 // A menu-item button in the choice popover applies its selection and dismisses.
@@ -101,10 +102,7 @@ static void meter_pressed_cb(GtkGestureClick *gesture,int n_press,double x,doubl
 
 GtkWidget *create_meter_visual(RECEIVER *rx) {
 
-  GtkWidget *meter = gtk_drawing_area_new ();
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(meter),meter_draw_cb,(gpointer)rx,NULL);
-  g_signal_connect (meter,"resize", G_CALLBACK (meter_resize_cb), (gpointer)rx);
+  GtkWidget *meter = pana_view_new(meter_build,(gpointer)rx);
 
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
@@ -115,26 +113,13 @@ GtkWidget *create_meter_visual(RECEIVER *rx) {
 
 }
 
+// Per-frame STATE (fps timer): update the needle ballistics + the S-meter peak
+// hold, then queue a GPU redraw. All drawing is in meter_build().
 void update_meter(RECEIVER *rx) {
-  char sf[32];
-  cairo_t *cr;
-
-  int meter_width=gtk_widget_get_width (rx->meter);
-  int meter_height=gtk_widget_get_height (rx->meter);
-
-  cr = cairo_create (rx->meter_surface);
-
-  SetColour(cr, BACKGROUND);
-  cairo_paint (cr);
-  cairo_set_font_size(cr, 12);
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-  
   double attenuation = radio->adc[rx->adc].attenuation;
-
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
       attenuation = attenuation * -1;
   }
-
   double level=rx->meter_db+attenuation;
 
   // --- Analog-meter ballistics -------------------------------------------
@@ -142,17 +127,13 @@ void update_meter(RECEIVER *rx) {
   // frame, so it moves like a mechanical S-meter. The strength is the per-RX
   // "Meter smoothing" setting (0 = off/instant .. 100 = max); it scales the
   // decay time constant (0..0.5 s), with a fast attack kept at 1/5 of decay so
-  // rising signals catch up quickly while peaks linger and settle. The
-  // per-frame coefficients are derived from those time constants so the feel
-  // stays consistent regardless of the receiver's display fps.
-  double needle_level;
+  // rising signals catch up quickly while peaks linger and settle.
   int smoothing = rx->meter_smoothing;
   if(smoothing < 0)   smoothing = 0;
   if(smoothing > 100) smoothing = 100;
   if(smoothing == 0) {
     rx->meter_needle_db = level;     // no smoothing: track exactly
     rx->meter_needle_init = 1;
-    needle_level = level;
   } else {
     int fps = rx->fps > 0 ? rx->fps : 20;
     double t_decay  = 0.5 * ((double)smoothing / 100.0);  // seconds to ~63% falling
@@ -166,134 +147,98 @@ void update_meter(RECEIVER *rx) {
       double a = (level > rx->meter_needle_db) ? a_attack : a_decay;
       rx->meter_needle_db += (level - rx->meter_needle_db) * a;
     }
-    needle_level = rx->meter_needle_db;
   }
 
-  double offset=210.0;
+  // S-meter peak hold ("smax") with the same fps-scaled decay as before.
+  double sl=level+127.0;
+  if(sl<0) sl=0;
+  if(sl>s_meter_smax)  s_meter_smax=sl;
+  else if(sl>54)       s_meter_smax = s_meter_smax-((s_meter_smax-sl)/(3*rx->fps));
+  else                 s_meter_smax = s_meter_smax-((s_meter_smax-sl)/(rx->fps/2));
+
+  if(rx->meter!=NULL) gtk_widget_queue_draw(rx->meter);
+}
+
+// Snapshot builder: emit the analog S-meter as GSK nodes.
+static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  GtkWidget *widget=rx->meter;
+  char sf[32];
   int i;
-  double x;
-  double y;
-  double angle;
-  double radians;
+
+  if(meter_width<=0 || meter_height<=0) return;
+
+  GdkRGBA bg=skin_rgba(BACKGROUND,1.0);
+  lm_fill(snapshot,0,0,meter_width,meter_height,&bg);
+
+  double attenuation = radio->adc[rx->adc].attenuation;
+  if(radio->discovered->device==DEVICE_HERMES_LITE2) attenuation = attenuation * -1;
+  double level=rx->meter_db+attenuation;          // dBm readout
+  double needle_level=rx->meter_needle_db;
+
+  double offset=210.0;
   double cx=(double)meter_width-100.0;
   double cy=100.0;
   double radius=cy-20.0;
 
-  cairo_set_line_width(cr, 1.0);
-  SetColour(cr, OFF_WHITE);
-  cairo_arc(cr, cx, cy, radius, 216.0*M_PI/180.0, 324.0*M_PI/180.0);
-  cairo_stroke(cr);
+  GdkRGBA offwhite=skin_rgba(OFF_WHITE,1.0);
+  GdkRGBA warn=skin_rgba(WARNING,1.0);
+  GdkRGBA darktext=skin_rgba(DARK_TEXT,1.0);
 
-  cairo_set_line_width(cr, 2.5);
-  SetColour(cr, WARNING);        // S9+ overload zone
-  cairo_arc(cr, cx, cy, radius+2, 264.0*M_PI/180.0, 324.0*M_PI/180.0);
-  cairo_stroke(cr);
+  // dial arc + S9+ overload zone
+  meter_arc(snapshot,cx,cy,radius,216.0*M_PI/180.0,324.0*M_PI/180.0,1.0,&offwhite);
+  meter_arc(snapshot,cx,cy,radius+2,264.0*M_PI/180.0,324.0*M_PI/180.0,2.5,&warn);
 
-  cairo_set_line_width(cr, 1.0);
-
+  // ticks 1..9 (odd = major bright + number, even = minor dim)
   for(i=1;i<10;i++) {
-    angle=((double)i*6.0)+offset;
-    radians=angle*M_PI/180.0;
-
+    double angle=((double)i*6.0)+offset;
+    double rad=angle*M_PI/180.0, ca=cos(rad), sa=sin(rad);
     if((i%2)==1) {
-      SetColour(cr, OFF_WHITE);   // major ticks + numbers: bright
-      cairo_arc(cr, cx, cy, radius+4, radians, radians);
-      cairo_get_current_point(cr, &x, &y);
-      cairo_arc(cr, cx, cy, radius, radians, radians);
-      cairo_line_to(cr, x, y);
-      cairo_stroke(cr);
+      lm_line(snapshot, cx+radius*ca, cy+radius*sa, cx+(radius+4)*ca, cy+(radius+4)*sa, 1.0, &offwhite);
       sprintf(sf,"%d",i);
-      cairo_arc(cr, cx, cy, radius+5, radians, radians);
-      cairo_get_current_point(cr, &x, &y);
-      cairo_new_path(cr);
-      x-=4.0;
-      cairo_move_to(cr, x, y);
-      cairo_show_text(cr, sf);
+      lm_text(snapshot,widget, cx+(radius+5)*ca-4.0, cy+(radius+5)*sa, 12, &offwhite, sf, FALSE);
     } else {
-      SetColour(cr, DARK_TEXT);   // minor ticks: dimmed
-      cairo_arc(cr, cx, cy, radius+2, radians, radians);
-      cairo_get_current_point(cr, &x, &y);
-      cairo_arc(cr, cx, cy, radius, radians, radians);
-      cairo_line_to(cr, x, y);
-      cairo_stroke(cr);
+      lm_line(snapshot, cx+radius*ca, cy+radius*sa, cx+(radius+2)*ca, cy+(radius+2)*sa, 1.0, &darktext);
     }
-    cairo_new_path(cr);
   }
 
-  SetColour(cr, OFF_WHITE);   // +20/+40/+60 major ticks + labels
+  // +20/+40/+60 major ticks + labels
   for(i=20;i<=60;i+=20) {
-    angle=((double)i+54.0)+offset;
-    radians=angle*M_PI/180.0;
-    cairo_arc(cr, cx, cy, radius+4, radians, radians);
-    cairo_get_current_point(cr, &x, &y);
-    cairo_arc(cr, cx, cy, radius, radians, radians);
-    cairo_line_to(cr, x, y);
-    cairo_stroke(cr);
-
+    double angle=((double)i+54.0)+offset;
+    double rad=angle*M_PI/180.0, ca=cos(rad), sa=sin(rad);
+    lm_line(snapshot, cx+radius*ca, cy+radius*sa, cx+(radius+4)*ca, cy+(radius+4)*sa, 1.0, &offwhite);
     sprintf(sf,"+%d",i);
-    cairo_arc(cr, cx, cy, radius+5, radians, radians);
-    cairo_get_current_point(cr, &x, &y);
-    cairo_new_path(cr);
-    x-=4.0;
-    cairo_move_to(cr, x, y);
-    cairo_show_text(cr, sf);
-    cairo_new_path(cr);
+    lm_text(snapshot,widget, cx+(radius+5)*ca-4.0, cy+(radius+5)*sa, 12, &offwhite, sf, FALSE);
   }
 
-  cairo_set_line_width(cr, 2.0);
-  SetColour(cr, TEXT_B);   // themed accent needle
+  // needle + pivot hub
+  GdkRGBA tb=skin_rgba(TEXT_B,1.0);
+  double nrad=(needle_level+127.0+offset)*M_PI/180.0;
+  lm_line(snapshot, cx+(radius+8)*cos(nrad), cy+(radius+8)*sin(nrad), cx, cy, 2.0, &tb);
+  {
+    GskPathBuilder *b=gsk_path_builder_new();
+    gsk_path_builder_add_circle(b,&GRAPHENE_POINT_INIT((float)cx,(float)cy),3.0f);
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    gtk_snapshot_append_fill(snapshot,p,GSK_FILL_RULE_WINDING,&tb);
+    gsk_path_unref(p);
+  }
 
-  angle=needle_level+127.0+offset;
-  radians=angle*M_PI/180.0;
-  cairo_arc(cr, cx, cy, radius+8, radians, radians);
-  cairo_line_to(cr, cx, cy);
-  cairo_stroke(cr);
-  // pivot hub
-  cairo_arc(cr, cx, cy, 3.0, 0.0, 2.0*M_PI);
-  cairo_fill(cr);
-
-  SetColour(cr, TEXT_A);
+  // dBm readout
+  GdkRGBA ta=skin_rgba(TEXT_A,1.0);
   sprintf(sf,"%d dBm %s",(int)level,rx->smeter==RXA_S_AV?"Av":"Pk");
-  cairo_move_to(cr, meter_width-130, meter_height-2);
-  cairo_show_text(cr, sf);
+  lm_text(snapshot,widget, meter_width-130, meter_height-2, 12, &ta, sf, FALSE);
 
-  SetColour(cr, TEXT_C);
-  cairo_set_font_size(cr, 36);
-
-  static double smax;
-
-  level=level+127;
-  if (level<0) {
-    level=0;
-  }
-  if (level>smax) {
-    smax=level;
-  } else {
-    if (level>54) {
-      smax=smax-((smax-level)/(3*rx->fps));
-    } else {
-      smax = smax-((smax-level)/(rx->fps/2));
-    }
-  }
-  i=(int)(smax/6);
-  if(i>9) {
-    i=9;
-  }
-
+  // S-number + optional +dB, from the peak-hold smax
+  GdkRGBA tc=skin_rgba(TEXT_C,1.0);
+  double smax=s_meter_smax;
+  i=(int)(smax/6); if(i>9) i=9;
   sprintf(sf,"S%d", i);
-  cairo_move_to(cr, meter_width-250, meter_height-20);
-  cairo_show_text(cr, sf);
+  lm_text(snapshot,widget, meter_width-250, meter_height-20, 36, &tc, sf, FALSE);
 
   i=(int)smax;
   if(i>54) {
     i=i-54;
-    cairo_set_font_size(cr, 20);
-    sprintf(sf, "+%d", i);
-    cairo_move_to(cr, meter_width-210, (meter_height/2)+5);
-    cairo_show_text(cr, sf);
+    sprintf(sf,"+%d", i);
+    lm_text(snapshot,widget, meter_width-210, (meter_height/2)+5, 20, &tc, sf, FALSE);
   }
-
-  cairo_destroy(cr);
-  gtk_widget_queue_draw (rx->meter);
-
 }

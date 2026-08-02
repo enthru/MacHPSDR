@@ -34,36 +34,33 @@
 #include "mic_gain.h"
 #include "vfo.h"
 #include "level_meter.h"
+#include "pana_view.h"
 
 
 static char *title="Microphone Gain";
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void mic_gain_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
-  cairo_text_extents_t extents;
+// GPU render-node builder (PanaView).
+static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
+  GtkWidget *widget=radio->mic_gain;
   char t[32];
 
   double bar_width=(double)width-10;
 
-  double v=radio->transmitter->mic_gain+10.0; // move from rabd -10..50 to range 0..60
+  double v=radio->transmitter->mic_gain+10.0; // move from range -10..50 to range 0..60
   double x = (bar_width/60.0)*v;
 
-  level_meter_draw(cr, x, width, height, TEXT_A);
+  level_meter_draw_node(snapshot, x, width, height, TEXT_A);
 
   // 0 dB marker
-  SetColour(cr, WARNING);
+  GdkRGBA warn=skin_rgba(WARNING,1.0);
   x=(10.0/60.0)*(double)bar_width;
-  cairo_move_to(cr,x+5.0,(double)(height/2)-8.0);
-  cairo_line_to(cr,x+5.0,height/2-1);
-  cairo_stroke(cr);  
-  
-  SetColour(cr, TEXT_B);
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);  
-  cairo_set_font_size(cr,10);
-  cairo_text_extents(cr, title, &extents);
+  lm_line(snapshot,x+5.0,(double)(height/2)-8.0,x+5.0,height/2-1,1.0,&warn);
+
+  GdkRGBA tb=skin_rgba(TEXT_B,1.0);
   sprintf(t,"%s (%ddB)",title,(int)radio->transmitter->mic_gain);
-  cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
-  cairo_show_text(cr,t);
+  // centred by the title's width (matching the old cairo layout).
+  double lw=lm_measure(widget,10,title);
+  lm_text(snapshot,widget,(5+width/2)-lw/2.0,height-2,10,&tb,t,FALSE);
 }
 
 // GTK4: GtkGestureClick "pressed" handler (x in widget coords).
@@ -96,12 +93,10 @@ static gboolean mic_gain_scroll_cb(GtkEventControllerScroll *controller,double d
 
 GtkWidget *create_mic_gain(TRANSMITTER *tx) {
 
-  radio->mic_gain=gtk_drawing_area_new();
+  radio->mic_gain=pana_view_new(mic_gain_build,(gpointer)tx);
   gtk_widget_set_size_request(radio->mic_gain, 170, 34);
   // GTK4: a persistent resize cursor replaces the GTK3 enter/leave dance.
   gtk_widget_set_cursor_from_name(radio->mic_gain,"ew-resize");
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(radio->mic_gain),mic_gain_draw_cb,(gpointer)tx,NULL);
 
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);

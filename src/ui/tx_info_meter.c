@@ -32,48 +32,38 @@
 
 #include "level_meter.h"
 #include "radio.h"
+#include "pana_view.h"
 
 #include "tx_info_meter.h"
 
-// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
-// off-screen image surface (no GdkWindow to back a similar surface).
-static void tx_info_meter_resize_cb(GtkDrawingArea *area, int width, int height, gpointer data) {
-  TXMETER *tx_meter = (TXMETER *)data;
+// GPU render-node builder (PanaView). Reads the value/peak stashed on the meter
+// by update_tx_info_meter().
+static void tx_info_meter_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
+  TXMETER *meter=(TXMETER *)data;
+  GtkWidget *widget=meter->tx_meter_drawing;
+  if(width<=0 || height<=0) return;
 
-  if(tx_meter->tx_info_meter_surface) {
-    cairo_surface_destroy(tx_meter->tx_info_meter_surface);
-    tx_meter->tx_info_meter_surface = NULL;
-  }
+  int bar_width=width-10;
+  double value_plot=(bar_width/meter->meter_max)*meter->cur_value;
+  level_meter_draw_node(snapshot, value_plot, width, height, INFO_ON);
 
-  if(tx_meter->tx_meter_drawing != NULL && width>0 && height>0) {
-    tx_meter->tx_info_meter_surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+  // peak marker
+  GdkRGBA warn=skin_rgba(WARNING,1.0);
+  double peak_plot=(bar_width/meter->meter_max)*meter->cur_peak;
+  lm_line(snapshot,peak_plot+5.0,1,peak_plot+5.0,height/2,1.0,&warn);
 
-    cairo_t *cr;
-    cr = cairo_create(tx_meter->tx_info_meter_surface);
-    SetColour(cr, BACKGROUND);
-    cairo_paint (cr);
-    cairo_destroy(cr);
-  }
-}
+  GdkRGBA tb=skin_rgba(TEXT_B,1.0);
+  lm_text(snapshot,widget,5+width/2,height-2,10,&tb,meter->label,TRUE);
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void tx_info_meter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
-  TXMETER *tx_meter = (TXMETER *)data;
-
-  if(tx_meter->tx_info_meter_surface != NULL) {
-    cairo_set_source_surface(cr, tx_meter->tx_info_meter_surface, 0.0, 0.0);
-    cairo_paint(cr);
-  }
+  char text[32];
+  if(meter->cur_peak < 10.0) sprintf(text,"%2.2f",meter->cur_peak);
+  else                       sprintf(text,"%2.0f",meter->cur_peak);
+  lm_text(snapshot,widget,3*(width/4),height-2,10,&tb,text,FALSE);
 }
 
 GtkWidget *create_tx_meter(TXMETER *tx_meter) {
-  tx_meter->tx_meter_drawing = gtk_drawing_area_new();
-
+  tx_meter->tx_meter_drawing = pana_view_new(tx_info_meter_build,(gpointer)tx_meter);
   gtk_widget_set_size_request(tx_meter->tx_meter_drawing, 252, 50);
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx_meter->tx_meter_drawing), tx_info_meter_draw_cb, (gpointer)tx_meter, NULL);
-  g_signal_connect(tx_meter->tx_meter_drawing, "resize", G_CALLBACK(tx_info_meter_resize_cb), (gpointer)tx_meter);
-
   return tx_meter->tx_meter_drawing;
 }
 
@@ -93,51 +83,10 @@ TXMETER *create_tx_info_meter(void) {
 }
 
 void update_tx_info_meter(TXMETER *meter, gdouble value, gdouble peak) {
-  int i;
-  double x;
-  cairo_text_extents_t extents;
-
-  if(meter->tx_info_meter_surface != NULL) {
-    cairo_t *cr;
-    cr = cairo_create(meter->tx_info_meter_surface);
-
-    int width = gtk_widget_get_width(meter->tx_meter_drawing);
-    int height = gtk_widget_get_height(meter->tx_meter_drawing);
-    
-    int bar_width = width-10;
-
-    double value_plot = (bar_width / meter->meter_max) * value;
-    level_meter_draw(cr, value_plot, width, height, INFO_ON);    
-    
-    // Peak value
-    SetColour(cr, WARNING);
-    double peak_plot = (bar_width / meter->meter_max) * peak;
-    cairo_move_to(cr, peak_plot+5.0, 1);
-    cairo_line_to(cr, peak_plot+5.0, height/2);
-    cairo_stroke(cr);
-    
-    SetColour(cr, TEXT_B);    
-    cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);    
-    cairo_set_font_size(cr,10);
-    cairo_text_extents(cr, meter->label, &extents);
-    cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
-    cairo_show_text(cr, meter->label);
-
-    cairo_set_font_size(cr,10);
-    
-    // Display the value as numbers on the display
-    char text[32];
-    if (peak < 10.0) {
-      sprintf(text,"%2.2f", peak);
-    } else {
-      sprintf(text,"%2.0f", peak);
-    }
-    cairo_text_extents(cr, text, &extents);
-    cairo_move_to(cr, (3*(width/4)), height-2);
-    cairo_show_text(cr, text);
-
-
-    cairo_destroy(cr);
+  // Publish the readings for the snapshot builder, then queue the GPU redraw.
+  meter->cur_value = value;
+  meter->cur_peak  = peak;
+  if(meter->tx_meter_drawing != NULL) {
     gtk_widget_queue_draw(meter->tx_meter_drawing);
   }
 }

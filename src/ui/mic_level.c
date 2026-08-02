@@ -33,32 +33,25 @@
 #include "mic_level.h"
 #include "vfo.h"
 #include "level_meter.h"
+#include "pana_view.h"
 
 static char *title="Microphone Level";
 
-// Draw directly (same style as mic_gain / drive) instead of a cached surface,
-// so the meter looks identical to the other two.
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void mic_level_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
-  cairo_text_extents_t extents;
+// GPU render-node builder (PanaView). Same look as the old cairo draw.
+static void mic_level_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
+  GtkWidget *widget=radio->mic_level;
   int bar_width=width-10;
 
   double peak=radio->vox_peak*(double)bar_width;
-  level_meter_draw(cr, peak, width, height, TEXT_B);
+  level_meter_draw_node(snapshot, peak, width, height, TEXT_B);
 
   // Vox threshold marker
-  SetColour(cr, WARNING);
+  GdkRGBA warn=skin_rgba(WARNING,1.0);
   double threshold=radio->vox_threshold*(double)bar_width;
-  cairo_move_to(cr,threshold+5.0,1);
-  cairo_line_to(cr,threshold+5.0,height/2);
-  cairo_stroke(cr);
+  lm_line(snapshot,threshold+5.0,1,threshold+5.0,height/2,1.0,&warn);
 
-  SetColour(cr, TEXT_B);
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-  cairo_set_font_size(cr,10);
-  cairo_text_extents(cr, title, &extents);
-  cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
-  cairo_show_text(cr,title);
+  GdkRGBA tb=skin_rgba(TEXT_B,1.0);
+  lm_text(snapshot,widget,5+width/2,height-2,10,&tb,title,TRUE);
 }
 
 // GTK4: GtkGestureClick "pressed" handler (x in widget coords).
@@ -89,11 +82,9 @@ static gboolean mic_level_scroll_cb(GtkEventControllerScroll *controller,double 
 GtkWidget *create_mic_level(TRANSMITTER *tx) {
 
   radio->mic_level_surface=NULL;
-  radio->mic_level=gtk_drawing_area_new();
+  radio->mic_level=pana_view_new(mic_level_build,(gpointer)tx);
   gtk_widget_set_size_request(radio->mic_level, 170, 34);
   gtk_widget_set_cursor_from_name(radio->mic_level,"ew-resize");
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(radio->mic_level),mic_level_draw_cb,(gpointer)tx,NULL);
 
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);

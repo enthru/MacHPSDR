@@ -59,6 +59,90 @@ GdkRGBA skin_rgba(const int colour, const double alpha) {
   return (GdkRGBA){(float)r,(float)g,(float)b,(float)alpha};
 }
 
+// ---- GSK render-node helpers (shared by the GPU meter widgets) -------------
+void lm_fill(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c) {
+  if(w<=0.0||h<=0.0) return;
+  graphene_rect_t r=GRAPHENE_RECT_INIT((float)x,(float)y,(float)w,(float)h);
+  gtk_snapshot_append_color(s,c,&r);
+}
+void lm_rrect(GtkSnapshot *s,double x,double y,double w,double h,double radius,const GdkRGBA *c) {
+  if(w<=0.0||h<=0.0) return;
+  graphene_rect_t r=GRAPHENE_RECT_INIT((float)x,(float)y,(float)w,(float)h);
+  GskRoundedRect rr; gsk_rounded_rect_init_from_rect(&rr,&r,(float)radius);
+  gtk_snapshot_push_rounded_clip(s,&rr);
+  gtk_snapshot_append_color(s,c,&r);
+  gtk_snapshot_pop(s);
+}
+void lm_line(GtkSnapshot *s,double x1,double y1,double x2,double y2,double lw,const GdkRGBA *c) {
+  GskPathBuilder *b=gsk_path_builder_new();
+  gsk_path_builder_move_to(b,(float)x1,(float)y1);
+  gsk_path_builder_line_to(b,(float)x2,(float)y2);
+  GskPath *p=gsk_path_builder_free_to_path(b);
+  GskStroke *st=gsk_stroke_new((float)lw);
+  gtk_snapshot_append_stroke(s,p,st,c);
+  gsk_stroke_free(st); gsk_path_unref(p);
+}
+// Text with BASELINE at (x, base_y). If center, x is the horizontal centre.
+void lm_text(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,double size,
+             const GdkRGBA *c,const char *txt,gboolean center) {
+  PangoLayout *l=gtk_widget_create_pango_layout(widget,txt);
+  PangoFontDescription *fd=pango_font_description_new();
+  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
+  pango_layout_set_font_description(l,fd);
+  pango_font_description_free(fd);
+  int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
+  double tx = center ? x-(double)pw/2.0 : x;
+  double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)tx,(float)top);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+  g_object_unref(l);
+}
+
+// Advance width of a Noto Sans label (to replace cairo_text_extents).
+double lm_measure(GtkWidget *widget,double size,const char *txt) {
+  PangoLayout *l=gtk_widget_create_pango_layout(widget,txt);
+  PangoFontDescription *fd=pango_font_description_new();
+  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
+  pango_layout_set_font_description(l,fd);
+  pango_font_description_free(fd);
+  int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
+  g_object_unref(l);
+  return (double)pw;
+}
+
+// GSK-node version of level_meter_draw(): flat-dark horizontal meter — a dark
+// rounded track with a solid rounded accent fill up to x and a top gloss.
+void level_meter_draw_node(GtkSnapshot *s,double x,int width,int height,const int fill) {
+  const double pad=5.0, th=9.0;
+  double tw=(double)width-2.0*pad;
+  double ty=(double)(height/2)-th-1.0;
+  if(ty<2.0) ty=2.0;
+
+  GdkRGBA bg=skin_rgba(BACKGROUND,1.0);
+  lm_fill(s,0,0,width,height,&bg);
+
+  double gr=0.06,gg=0.06,gb=0.07;
+  if(css_rgb("BACKGROUND",&gr,&gg,&gb)) { gr*=0.72; gg*=0.72; gb*=0.72; }
+  GdkRGBA track={(float)gr,(float)gg,(float)gb,1.0f};
+  lm_rrect(s,pad,ty,tw,th,3.0,&track);
+
+  double fe=x;
+  if(fe<pad)      fe=pad;
+  if(fe>pad+tw)   fe=pad+tw;
+  double fw=fe-pad;
+  if(fw>=1.0) {
+    GdkRGBA fc=skin_rgba(fill,1.0);
+    lm_rrect(s,pad,ty,fw,th,3.0,&fc);
+    GdkRGBA gloss={1.0f,1.0f,1.0f,0.10f};
+    lm_rrect(s,pad,ty,fw,th/2.0,2.0,&gloss);
+  }
+}
+
 void set_stop_pattern(cairo_pattern_t *pat, const int colour, const double pc) {
   const char *name; double r,g,b;
   skin_colour(colour,&name,&r,&g,&b);

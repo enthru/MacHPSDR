@@ -41,6 +41,7 @@
 #endif
 #include "vfo.h"
 #include "level_meter.h"
+#include "pana_view.h"
 
 // On SoapySDR (e.g. HackRF) the drive slider maps onto the hardware TX gain,
 // exactly like the RX gain slider - there is no digital drive scaling.
@@ -54,27 +55,22 @@ static inline void drive_level_apply(TRANSMITTER *tx) {
 
 static char *title="Drive";
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void drive_level_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
-  cairo_text_extents_t extents;
+// GPU render-node builder (PanaView).
+static void drive_level_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
+  GtkWidget *widget=radio->drive_level;
   char t[32];
 
   double bar_width=(double)width-10;
 
-  cairo_set_line_width(cr,1.0);
-
   double v=radio->transmitter->drive;
   double x=(bar_width/100.0)*v;
-  
-  level_meter_draw(cr, x, width, height, BOX_ON);
-  
-  SetColour(cr, TEXT_B);
-  cairo_select_font_face(cr, "w", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);  
-  cairo_set_font_size(cr,10);
-  cairo_text_extents(cr, title, &extents);
+
+  level_meter_draw_node(snapshot, x, width, height, BOX_ON);
+
+  GdkRGBA tb=skin_rgba(TEXT_B,1.0);
   sprintf(t,"%s (%d%%)",title,(int)radio->transmitter->drive);
-  cairo_move_to(cr,(5+width/2)-(extents.width/2.0),height-2);
-  cairo_show_text(cr,t);
+  double lw=lm_measure(widget,10,title);
+  lm_text(snapshot,widget,(5+width/2)-lw/2.0,height-2,10,&tb,t,FALSE);
 }
 
 // GTK4: GtkGestureClick "pressed" handler (x in widget coords).
@@ -116,11 +112,9 @@ static gboolean drive_level_scroll_cb(GtkEventControllerScroll *controller,doubl
 
 GtkWidget *create_drive_level(TRANSMITTER *tx) {
 
-  radio->drive_level=gtk_drawing_area_new();
+  radio->drive_level=pana_view_new(drive_level_build,(gpointer)tx);
   gtk_widget_set_size_request(radio->drive_level, 170, 34);
   gtk_widget_set_cursor_from_name(radio->drive_level,"ew-resize");
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(radio->drive_level),drive_level_draw_cb,(gpointer)tx,NULL);
 
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);
