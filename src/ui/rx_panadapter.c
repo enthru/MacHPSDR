@@ -1061,27 +1061,6 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   }
 #endif
 
-  // ---- I/Q Player readout (top-right) -------------------------------------
-  if(radio->discovered->protocol==PROTOCOL_FAKE) {
-    double elapsed_s, total_s, bw_hz;
-    if(fake_protocol_playback(&elapsed_s, &total_s, &bw_hz)) {
-      char pb[64];
-      int e=(int)elapsed_s, t=(int)total_s;
-      if(bw_hz>=1e6)
-        snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.2f MHz",
-                 e/60,e%60,t/60,t%60,bw_hz/1e6);
-      else
-        snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.1f kHz",
-                 e/60,e%60,t/60,t%60,bw_hz/1e3);
-      double tw=n_measure(widget,pb);
-      double px = (double)display_width - tw - 6.0;
-      if(px < 42.0) px = 42.0;
-      GdkRGBA cyan=nrgba(0.55,0.85,1.0,0.9);
-      GdkRGBA blk=nrgba(0.0,0.0,0.0,1.0);
-      n_text_boxed(snapshot,widget,px,14.0,&cyan,&blk,pb,NULL);
-    }
-  }
-
   // ---- dB graticule + labels (left scale) ---------------------------------
   GdkRGBA bgstrip=css_rgba("SPECTRUM_BG",0.09,0.09,0.10,1.0);
   n_rect(snapshot,0,0,40,display_height,&bgstrip);
@@ -1308,6 +1287,29 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   if(radio->cluster_enable && radio->cluster_spots_show &&
      (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
     receiver_draw_cluster_spots_nodes(snapshot, widget, rx, display_width);
+  }
+
+  // ---- I/Q Player readout (top-right, drawn ON TOP so the graticule doesn't
+  //      strike through it — the black box only hides the ruling if it, and the
+  //      text, come after the dB/frequency gridline strokes) -----------------
+  if(radio->discovered->protocol==PROTOCOL_FAKE) {
+    double elapsed_s, total_s, bw_hz;
+    if(fake_protocol_playback(&elapsed_s, &total_s, &bw_hz)) {
+      char pb[64];
+      int e=(int)elapsed_s, t=(int)total_s;
+      if(bw_hz>=1e6)
+        snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.2f MHz",
+                 e/60,e%60,t/60,t%60,bw_hz/1e6);
+      else
+        snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.1f kHz",
+                 e/60,e%60,t/60,t%60,bw_hz/1e3);
+      double tw=n_measure(widget,pb);
+      double px = (double)display_width - tw - 6.0;
+      if(px < 42.0) px = 42.0;
+      GdkRGBA cyan=nrgba(0.55,0.85,1.0,0.9);
+      GdkRGBA blk=nrgba(0.0,0.0,0.0,1.0);
+      n_text_boxed(snapshot,widget,px,14.0,&cyan,&blk,pb,NULL);
+    }
   }
 
   // ---- FPS / build-time readout (diagnostic, drawn on top) ----------------
