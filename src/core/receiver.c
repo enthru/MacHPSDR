@@ -1978,17 +1978,43 @@ static void close_button_cb(GtkWidget *widget, gpointer data) {
   receiver_close((RECEIVER *)data);
 }
 
-// I/Q Player scrub bar drag: seek the recording to the bar's fraction. Fires
-// only on user interaction (change-value, not value-changed), so the periodic
-// timer's gtk_range_set_value() — which reflects playback — can never loop back
-// into a seek. Set a short guard window so the timer doesn't fight the drag.
-static gboolean iq_seek_change_cb(GtkRange *range, GtkScrollType scroll, double value, gpointer data) {
-  RECEIVER *rx=(RECEIVER *)data;
-  if(value<0.0) value=0.0;
-  if(value>1.0) value=1.0;
-  fake_protocol_seek(radio, value);
+// I/Q Player scrub bar — seek helper. Move the thumb to `frac` (0..1) and seek
+// the recording there. gtk_range_set_value() emits only "value-changed" (which
+// is unconnected), NOT "change-value", so this never loops back into another
+// seek. A short guard window keeps the periodic timer (which also calls
+// set_value to reflect playback) from fighting the user's interaction.
+static void iq_seek_to(RECEIVER *rx, double frac) {
+  if(frac<0.0) frac=0.0;
+  if(frac>1.0) frac=1.0;
+  gtk_range_set_value(GTK_RANGE(rx->iq_seek), frac);
+  fake_protocol_seek(radio, frac);
   rx->iq_seek_guard_us = g_get_monotonic_time() + 300000;   // 300 ms
-  return FALSE;   // let GtkRange apply `value` to the thumb
+}
+
+// Absolute-position press/drag on the scrub bar: a click anywhere JUMPS to that
+// point (not the default GtkScale trough-click, which pages a step toward the
+// pointer and so rewinds on a click behind the thumb). Runs in the CAPTURE
+// phase and claims the sequence so GtkRange's own paging/drag never fires; a
+// single click is a begin with no updates, a drag streams updates.
+static void iq_seek_frac_at(GtkGesture *g, double x, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  int w=gtk_widget_get_width(rx->iq_seek);
+  if(w>0) iq_seek_to(rx, x/(double)w);
+}
+static void iq_seek_drag_begin(GtkGestureDrag *g, double x, double y, gpointer data) {
+  gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+  iq_seek_frac_at(GTK_GESTURE(g), x, data);
+}
+static void iq_seek_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data) {
+  double sx=0.0, sy=0.0;
+  gtk_gesture_drag_get_start_point(g, &sx, &sy);
+  iq_seek_frac_at(GTK_GESTURE(g), sx+ox, data);
+}
+// Keyboard (arrow keys) / scroll-wheel still reach the range and emit
+// change-value — route those through the seek too.
+static gboolean iq_seek_change_cb(GtkRange *range, GtkScrollType scroll, double value, gpointer data) {
+  iq_seek_to((RECEIVER *)data, value);
+  return TRUE;   // handled — we already moved the thumb + sought
 }
 
 static void create_visual(RECEIVER *rx) {
@@ -2079,6 +2105,12 @@ static void create_visual(RECEIVER *rx) {
     gtk_widget_set_tooltip_text(rx->iq_seek, "Seek the I/Q recording");
     gtk_widget_set_visible(rx->iq_seek, FALSE);
     g_signal_connect(rx->iq_seek, "change-value", G_CALLBACK(iq_seek_change_cb), rx);
+    // Absolute-position click/drag (jump to the pointer, not page-step).
+    GtkGesture *iq_drag=gtk_gesture_drag_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(iq_drag), GTK_PHASE_CAPTURE);
+    g_signal_connect(iq_drag, "drag-begin",  G_CALLBACK(iq_seek_drag_begin),  rx);
+    g_signal_connect(iq_drag, "drag-update", G_CALLBACK(iq_seek_drag_update), rx);
+    gtk_widget_add_controller(rx->iq_seek, GTK_EVENT_CONTROLLER(iq_drag));
     gtk_grid_attach(GTK_GRID(rx->table), rx->iq_seek, 0, 3, 7, 1);
   }
 
