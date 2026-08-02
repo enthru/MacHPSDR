@@ -191,49 +191,56 @@ static double n_measure(GtkWidget *widget,const char *txt) {
   return (double)pw;
 }
 
-// Cap on the stroked-trace vertex count. On a wide/fullscreen window the trace
-// otherwise has one vertex per pixel column (thousands), and the GSK stroker
-// re-tessellates all of them into geometry every frame on the CPU — the dominant
-// per-frame cost that tanks the FPS at fullscreen. Above this many columns the
-// trace is decimated to a per-bucket min/max envelope: the per-bucket MAX keeps
-// narrow carriers (a signal peak = smallest y), the MIN keeps the noise floor, so
-// it stays visually faithful while the vertex count is bounded regardless of
-// monitor width. At/below the cap the trace is 1 vertex/column, unchanged.
-#define PAN_TRACE_BUCKETS 1024
+// The spectrum trace is drawn as per-column vertical `append_color` rects, NOT a
+// stroked/filled GskPath. On the macOS GL renderer (the only GPU renderer in the
+// stock gtk4 build) a stroked/filled path spanning the whole panadapter is
+// rasterised on a slow path whose cost scales with the trace's bbox AREA — so the
+// FPS drops as the window gets taller (measured: build stays ~0.3 ms but FPS
+// 60->40 as the panadapter grows), and with the phosphor on (which suppresses the
+// trace) it is smooth. append_color rects are the renderer's native fast path
+// (batched instanced quads, no tessellation, no cairo fallback), so the trace
+// cost stops scaling with area. Each column i draws a 1px-wide rect covering the
+// vertical span between this sample and the previous (a connected line) or, when
+// filled, down to the baseline.
 
-// Emit a spectrum trace for `samples` into builder b: move_to (0, base_y) then the
-// (decimated) trace vertices. add_db = attenuation + panadapter_calibration,
-// y_clamp = the bottom (panadapter_height-20) the trace is clamped to.
-static void pan_trace_verts(GskPathBuilder *b, const float *samples, int offset,
+// Amplitude t in [0,1] (0 = bottom/green .. S9 = red) -> the S9 green/orange/
+// yellow/red gradient colour, for the per-column gradient trace.
+static GdkRGBA pan_grad_rgba(double t, double S9) {
+  if(t<0.0) t=0.0; if(t>1.0) t=1.0;
+  double a=S9/3.0, c=2.0*S9/3.0, r,g,b;
+  if(t<=a)       { double u=(a>0.0)?t/a:0.0;             r=u;   g=1.0-0.35*u; b=0.0; } // green->orange
+  else if(t<=c)  { double u=((c-a)>0.0)?(t-a)/(c-a):0.0; r=1.0; g=0.65+0.35*u; b=0.0; } // orange->yellow
+  else if(t<=S9) { double u=((S9-c)>0.0)?(t-c)/(S9-c):0.0;r=1.0; g=1.0-u;      b=0.0; } // yellow->red
+  else           {                                       r=1.0; g=0.0;        b=0.0; } // red
+  return nrgba(r,g,b,1.0);
+}
+
+// Draw a spectrum trace for `samples` as vertical color rects. base_y = the
+// baseline (display_height-20), y_clamp = the bottom clamp (panadapter_height-20),
+// add_db = attenuation + panadapter_calibration. gradient!=0 colours each column
+// by amplitude (S9 in [0,1]); otherwise `solid` is used. filled draws each column
+// down to base_y instead of connecting to the previous sample.
+static void pan_trace_rects(GtkSnapshot *snapshot, const float *samples, int offset,
                             int display_width, double add_db, double pan_high,
-                            double dbm_per_line, double base_y, double y_clamp) {
-  gsk_path_builder_move_to(b, 0.0f, (float)base_y);
-  if(display_width <= PAN_TRACE_BUCKETS) {
-    for(int i=1;i<display_width;i++) {
-      double s=(double)samples[i+offset]+add_db;
-      double y=floor((pan_high - s)*dbm_per_line);
-      if(y>=y_clamp) y=y_clamp;
-      gsk_path_builder_line_to(b,(float)i,(float)y);
+                            double dbm_per_line, double base_y, double y_clamp,
+                            gboolean gradient, double S9, GdkRGBA solid, gboolean filled) {
+  double y_prev=0.0; gboolean have_prev=FALSE;
+  for(int i=1;i<display_width;i++) {
+    double s=(double)samples[i+offset]+add_db;
+    double y=floor((pan_high - s)*dbm_per_line);
+    if(y>=y_clamp) y=y_clamp;
+    if(y<0.0) y=0.0;
+    GdkRGBA c = gradient ? pan_grad_rgba(1.0 - y/base_y, S9) : solid;
+    if(filled) {
+      double h=base_y-y; if(h<0.0) h=0.0;
+      n_rect(snapshot,(double)i,y,1.0,h,&c);
+    } else {
+      double top = have_prev ? (y<y_prev?y:y_prev) : y;
+      double h   = have_prev ? fabs(y-y_prev) : 0.0;
+      if(h<LINE_WIDTH) h=LINE_WIDTH;
+      n_rect(snapshot,(double)i,top,1.0,h,&c);
     }
-    return;
-  }
-  int W=display_width-1;   // the trace spans columns 1..display_width-1
-  for(int k=0;k<PAN_TRACE_BUCKETS;k++) {
-    int i0=1+(int)((long long)k*W/PAN_TRACE_BUCKETS);
-    int i1=1+(int)((long long)(k+1)*W/PAN_TRACE_BUCKETS);
-    if(i1<=i0) i1=i0+1;
-    if(i1>display_width) i1=display_width;
-    double smin=1e30, smax=-1e30;
-    for(int i=i0;i<i1;i++) {
-      double s=(double)samples[i+offset]+add_db;
-      if(s<smin) smin=s;
-      if(s>smax) smax=s;
-    }
-    double xk=(double)((i0+i1-1)/2);
-    double y_hi=floor((pan_high - smax)*dbm_per_line); if(y_hi>=y_clamp) y_hi=y_clamp; // signal peak
-    double y_lo=floor((pan_high - smin)*dbm_per_line); if(y_lo>=y_clamp) y_lo=y_clamp; // noise floor
-    gsk_path_builder_line_to(b,(float)xk,(float)y_hi);
-    gsk_path_builder_line_to(b,(float)xk,(float)y_lo);
+    y_prev=y; have_prev=TRUE;
   }
 }
 
@@ -1213,48 +1220,24 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // When the phosphor is on it IS the spectrum display, so skip the ordinary
   // line/fill (it would paint a solid colour over the graded cloud).
   if(!rx->panadapter_histogram) {
-    // Build the trace polyline (decimated on wide windows); close it when filled
-    // (matches the old cairo close_path + fill_preserve + stroke).
-    GskPathBuilder *b=gsk_path_builder_new();
-    pan_trace_verts(b, samples, offset, display_width,
-                    attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
-                    dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
-    if(filled) gsk_path_builder_close(b);
-    GskPath *path=gsk_path_builder_free_to_path(b);
+    double add_db  = attenuation+radio->panadapter_calibration;
+    double base_y  = (double)(display_height-20);
+    double y_clamp = (double)(rx->panadapter_height-20);
 
+    gboolean gradient=FALSE; double S9v=1.0;
+    GdkRGBA solid;
     if(rx->panadapter_single_color == 0) {
       if(rx->panadapter_gradient) {
-        // Green -> orange -> yellow -> red by amplitude (S9-referenced).
+        gradient=TRUE;
         double S9=-73; if(rx->frequency_a>30000000LL) S9=-93;
-        S9 = floor((rx->panadapter_high - S9)
-                   * (double)(rx->panadapter_height-20)
-                        / (rx->panadapter_high - rx->panadapter_low));
+        S9 = floor((rx->panadapter_high - S9)*(double)(rx->panadapter_height-20)
+                   / (rx->panadapter_high - rx->panadapter_low));
         S9 = 1.0-(S9/(double)(rx->panadapter_height-20));
         if(S9<0.03) S9=0.03; if(S9>1.0) S9=1.0;
-        GskColorStop stops[4]={
-          {0.0f,          nrgba(0.0,1.0,0.0,1.0)},
-          {(float)(S9/3.0),     nrgba(1.0,0.65,0.0,1.0)},
-          {(float)(S9/3.0*2.0), nrgba(1.0,1.0,0.0,1.0)},
-          {(float)S9,     nrgba(1.0,0.0,0.0,1.0)},
-        };
-        graphene_point_t p0=GRAPHENE_POINT_INIT(0.0f,(float)(rx->panadapter_height-20));
-        graphene_point_t p1=GRAPHENE_POINT_INIT(0.0f,0.0f);
-        if(filled) {
-          gtk_snapshot_push_fill(snapshot,path,GSK_FILL_RULE_WINDING);
-          gtk_snapshot_append_linear_gradient(snapshot,&full,&p0,&p1,stops,4);
-          gtk_snapshot_pop(snapshot);
-        }
-        GskStroke *st=gsk_stroke_new((float)LINE_WIDTH);
-        gtk_snapshot_push_stroke(snapshot,path,st);
-        gtk_snapshot_append_linear_gradient(snapshot,&full,&p0,&p1,stops,4);
-        gtk_snapshot_pop(snapshot);
-        gsk_stroke_free(st);
+        S9v=S9;
+        solid=nrgba(1.0,1.0,1.0,0.5);
       } else {
-        GdkRGBA wh=nrgba(1.0,1.0,1.0,0.5);
-        if(filled) gtk_snapshot_append_fill(snapshot,path,GSK_FILL_RULE_WINDING,&wh);
-        GskStroke *st=gsk_stroke_new((float)LINE_WIDTH);
-        gtk_snapshot_append_stroke(snapshot,path,st,&wh);
-        gsk_stroke_free(st);
+        solid=nrgba(1.0,1.0,1.0, filled?0.5:0.9);   // white
       }
     } else {
       // Single-colour trace (user's choice, or the skin accent for default 1).
@@ -1270,46 +1253,31 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
         case 9: sr=0.0;   sg=0.9;   sb=0.9;   break;
         case 1: default: css_rgb("ACCENT_A",&sr,&sg,&sb); break;
       }
-      if(filled) {
-        GdkRGBA fillc=nrgba(sr,sg,sb,0.5);
-        gtk_snapshot_append_fill(snapshot,path,GSK_FILL_RULE_WINDING,&fillc);
-      }
-      GdkRGBA strokec=nrgba(sr,sg,sb,1.0);
-      GskStroke *st=gsk_stroke_new((float)LINE_WIDTH);
-      gtk_snapshot_append_stroke(snapshot,path,st,&strokec);
-      gsk_stroke_free(st);
+      solid=nrgba(sr,sg,sb, filled?0.5:1.0);
+    }
 
-      // Diversity gain-cal hidden-RX overlay (turquoise).
-      if (radio->divmixer[rx->dmix_id] != NULL) {
-        if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error) && samples_hidden_rx!=NULL) {
-          GskPathBuilder *hb=gsk_path_builder_new();
-          pan_trace_verts(hb, samples_hidden_rx, offset, display_width,
-                          attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
-                          dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
-          GskPath *hp=gsk_path_builder_free_to_path(hb);
-          GdkRGBA tq=nrgba(0.259,0.960,0.950,1.0);
-          GskStroke *hst=gsk_stroke_new((float)LINE_WIDTH);
-          gtk_snapshot_append_stroke(snapshot,hp,hst,&tq);
-          gsk_stroke_free(hst);
-          gsk_path_unref(hp);
-        }
+    pan_trace_rects(snapshot, samples, offset, display_width, add_db,
+                    (double)rx->panadapter_high, dbm_per_line, base_y, y_clamp,
+                    gradient, S9v, solid, filled);
+
+    // Diversity gain-cal hidden-RX overlay (turquoise line).
+    if (radio->divmixer[rx->dmix_id] != NULL) {
+      if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error) && samples_hidden_rx!=NULL) {
+        GdkRGBA tq=nrgba(0.259,0.960,0.950,1.0);
+        pan_trace_rects(snapshot, samples_hidden_rx, offset, display_width, add_db,
+                        (double)rx->panadapter_high, dbm_per_line, base_y, y_clamp,
+                        FALSE, 1.0, tq, FALSE);
       }
     }
-    gsk_path_unref(path);
   }
 
   // ---- peak-hold trace (line only, on top) --------------------------------
   if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
-    GskPathBuilder *b=gsk_path_builder_new();
-    pan_trace_verts(b, rx->panadapter_peaks, offset, display_width,
-                    attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
-                    dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
-    GskPath *p=gsk_path_builder_free_to_path(b);
     GdkRGBA pk=nrgba(0.95,0.95,0.95,0.85);
-    GskStroke *st=gsk_stroke_new((float)LINE_WIDTH);
-    gtk_snapshot_append_stroke(snapshot,p,st,&pk);
-    gsk_stroke_free(st);
-    gsk_path_unref(p);
+    pan_trace_rects(snapshot, rx->panadapter_peaks, offset, display_width,
+                    attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
+                    dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20),
+                    FALSE, 1.0, pk, FALSE);
   }
 
   // ---- DX cluster spot overlay (GSK nodes — no full-window append_cairo) ----
