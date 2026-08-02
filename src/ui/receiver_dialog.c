@@ -631,6 +631,14 @@ static void rx_eq_value_changed_cb (GtkWidget *widget, gpointer data) {
   SetRXAGrphEQ10(rx->channel, rx->equalizer);
 }
 
+// Reset every band slider to 0 dB (flat). Each set fires value-changed, which
+// updates rx->equalizer[] and re-pushes SetRXAGrphEQ10, so no extra WDSP call.
+static void rx_eq_reset_cb (GtkWidget *widget, gpointer data) {
+  GtkWidget **scales = g_object_get_data(G_OBJECT(widget),"eq_scales");
+  if(!scales) return;
+  for(int i=0;i<11;i++) gtk_range_set_value(GTK_RANGE(scales[i]),0.0);
+}
+
 
 static void cat_debug_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
@@ -1001,7 +1009,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), rx->enable_equalizer);
   g_signal_connect(enable_b,"toggled",G_CALLBACK(enable_cb),rx);
-  gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,11,1);
+  gtk_grid_attach(GTK_GRID(equalizer_grid),enable_b,0,0,10,1);
+
+  GtkWidget *rx_eq_reset_b=gtk_button_new_with_label("Reset");
+  gtk_widget_set_tooltip_text(rx_eq_reset_b,"Reset all bands to 0 dB (flat)");
+  gtk_grid_attach(GTK_GRID(equalizer_grid),rx_eq_reset_b,10,0,1,1);
+  GtkWidget **rx_eq_scales=g_new0(GtkWidget*,11);
 
   const char *eq_band_labels[11]={"Pre","32","63","125","250","500","1k","2k","4k","8k","16k"};
   for(int i=0;i<11;i++) {
@@ -1016,6 +1029,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_widget_add_css_class(scale,"eq-scale");
     g_object_set_data(G_OBJECT(scale),"eq_band",GINT_TO_POINTER(i));
     g_signal_connect(scale,"value-changed",G_CALLBACK(rx_eq_value_changed_cb),rx);
+    rx_eq_scales[i]=scale;
     gtk_grid_attach(GTK_GRID(equalizer_grid),scale,i,2,1,10);
     gtk_widget_set_size_request(scale,16,220);
     // Only the leftmost band carries the dB scale; the rest get no marks so the
@@ -1027,6 +1041,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       }
     }
   }
+  g_object_set_data_full(G_OBJECT(rx_eq_reset_b),"eq_scales",rx_eq_scales,g_free);
+  g_signal_connect(rx_eq_reset_b,"clicked",G_CALLBACK(rx_eq_reset_cb),rx);
 
   col++;
   row=0;
