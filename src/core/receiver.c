@@ -192,22 +192,27 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
 #endif
 
-// TRUE while an active decoder is tapping this RX's demod audio. In that case the
-// WDSP noise-reduction blocks (NR/NR2/NR3/NR4) are held OFF: they reshape the
-// waveform for the human ear and degrade machine decoding of the digital modes
-// (FT8/FT4/SSTV/WEFAX/CW). The operator's rx->nr* selection is left untouched (the
-// VFO still shows it) — only the WDSP Run flag is suppressed, so audible NR
-// returns the instant decoding stops. NB/ANF/SNB are unaffected.
-static inline gboolean nr_off_for_decode(RECEIVER *rx) {
+// TRUE when this RX's WDSP noise-reduction blocks (NR/NR2/NR3/NR4) must be held
+// OFF. Two independent cases:
+//   1. The mode is a DATA mode (DIGU/DIGL) — these carry digital signals fed to a
+//      modem/decoder or external software (VAC/TCI), where NR only distorts the
+//      waveform and is never wanted, whether or not a built-in decoder is running.
+//   2. A decoder is actively tapping the demod audio (FT8/FT4/SSTV/WEFAX/CW),
+//      including in the CW/FM modes where NR is otherwise fine for listening.
+// The operator's rx->nr* selection is left untouched (the VFO still shows it) —
+// only the WDSP Run flag is suppressed, so audible NR returns as soon as the mode
+// leaves DIGU/DIGL and no decoder is running. NB/ANF/SNB are unaffected.
+static inline gboolean nr_suppressed(RECEIVER *rx) {
+  if(rx->mode_a==DIGU || rx->mode_a==DIGL) return TRUE;
 #ifdef DECODERS
   return decoder_taps_audio(rx);
 #else
-  (void)rx; return FALSE;
+  return FALSE;
 #endif
 }
 
 void update_noise(RECEIVER *rx) {
-  gboolean nr_off = nr_off_for_decode(rx);
+  gboolean nr_off = nr_suppressed(rx);
   SetEXTANBRun(rx->channel, rx->nb);
   SetEXTNOBRun(rx->channel, rx->nb2);
   SetRXAANRRun(rx->channel, nr_off ? 0 : rx->nr);
@@ -1367,11 +1372,12 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // Guard against early calls before the WDSP channel exists (create_receiver
   // sets the gain itself).
   if(rx->channel>=0) receiver_set_volume(rx);
-  // Likewise re-evaluate the noise-reduction suppression: a mode change can take
-  // this RX into or out of a decoder-tapped mode (nr_off_for_decode), so push the
-  // NR Run flags again — held off while decoding, restored to rx->nr* otherwise.
-  if(rx->channel>=0) update_noise(rx);
 #endif
+  // Re-evaluate NR suppression: a mode change can take this RX into or out of a
+  // data mode (DIGU/DIGL) or a decoder-tapped mode (nr_suppressed), so push the NR
+  // Run flags again — held off there, restored to the operator's rx->nr* otherwise.
+  // Not gated on DECODERS: the DIGU/DIGL rule applies regardless of decoder builds.
+  if(rx->channel>=0) update_noise(rx);
 #ifdef FT8
   // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
@@ -2658,9 +2664,9 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetEXTANBRun(rx->channel, rx->nb);
   SetEXTNOBRun(rx->channel, rx->nb2);
 
-  // Hold NR off if a decoder is already tapping this RX at channel-init (e.g. a
-  // restored DIGU config with a decoder selected) — same rule as update_noise().
-  gboolean nr_off = nr_off_for_decode(rx);
+  // Hold NR off at channel-init for a data mode (DIGU/DIGL) or a decoder-tapped
+  // mode (e.g. a restored DIGU config) — same rule as update_noise().
+  gboolean nr_off = nr_suppressed(rx);
   SetRXAEMNRPosition(rx->channel, rx->nr_agc);
   SetRXAEMNRgainMethod(rx->channel, rx->nr2_gain_method);
   SetRXAEMNRnpeMethod(rx->channel, rx->nr2_npe_method);
