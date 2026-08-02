@@ -2629,8 +2629,9 @@ int parse_cmd(void *data) {
             send_resp(cmd,reply);
           } else if(command[3]==';') {
             rx->anf=atoi(&command[2]);
-            SetRXAANFRun(rx->channel, rx->anf);
-            update_vfo(rx);
+            // Route through update_noise() so the data-mode / decode bypass gate
+            // applies (ANF is held off in DIGU/DIGL and while decoding).
+            update_noise(rx);
           }
           break;
         default:

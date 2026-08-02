@@ -192,17 +192,22 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
 #endif
 
-// TRUE when this RX's WDSP noise-reduction blocks (NR/NR2/NR3/NR4) must be held
-// OFF. Two independent cases:
-//   1. The mode is a DATA mode (DIGU/DIGL) — these carry digital signals fed to a
-//      modem/decoder or external software (VAC/TCI), where NR only distorts the
-//      waveform and is never wanted, whether or not a built-in decoder is running.
-//   2. A decoder is actively tapping the demod audio (FT8/FT4/SSTV/WEFAX/CW),
-//      including in the CW/FM modes where NR is otherwise fine for listening.
-// The operator's rx->nr* selection is left untouched (the VFO still shows it) —
-// only the WDSP Run flag is suppressed, so audible NR returns as soon as the mode
-// leaves DIGU/DIGL and no decoder is running. NB/ANF/SNB are unaffected.
-static inline gboolean nr_suppressed(RECEIVER *rx) {
+// TRUE when this RX needs the CLEANEST possible signal, so every WDSP block that
+// alters the waveform for the human ear is bypassed: the noise blankers (NB/NB2),
+// all four noise-reduction algorithms (NR/NR2/NR3/NR4), the auto-notch (ANF), the
+// spectral noise blanker (SNB) and the manual notches (MNF, see
+// receiver_notch_sync). Only what decoding actually needs is left running —
+// demodulation, the passband filter and AGC. Two cases:
+//   1. A DATA mode (DIGU/DIGL) — these carry digital signals fed to a modem/decoder
+//      or external software (VAC/TCI); the processing only corrupts the stream and
+//      is never wanted, whether or not a built-in decoder is running.
+//   2. A decoder is actively tapping the demod audio (FT8/FT4/SSTV/WEFAX/CW) — this
+//      also covers the CW and FM modes, where the processing is otherwise fine for
+//      listening but must step aside while decoding.
+// The operator's rx->nr*/anf/nb/snb/notch selections are left untouched (the VFO
+// still shows them) — only the WDSP Run flags are suppressed, so everything returns
+// the instant the mode leaves DIGU/DIGL and no decoder is running.
+static inline gboolean bypass_stream_dsp(RECEIVER *rx) {
   if(rx->mode_a==DIGU || rx->mode_a==DIGL) return TRUE;
 #ifdef DECODERS
   return decoder_taps_audio(rx);
@@ -212,20 +217,20 @@ static inline gboolean nr_suppressed(RECEIVER *rx) {
 }
 
 void update_noise(RECEIVER *rx) {
-  gboolean nr_off = nr_suppressed(rx);
-  SetEXTANBRun(rx->channel, rx->nb);
-  SetEXTNOBRun(rx->channel, rx->nb2);
-  SetRXAANRRun(rx->channel, nr_off ? 0 : rx->nr);
-  SetRXAEMNRRun(rx->channel, nr_off ? 0 : rx->nr2);
-  SetRXARNNRRun(rx->channel, nr_off ? 0 : rx->nr3);
-  SetRXASBNRRun(rx->channel, nr_off ? 0 : rx->nr4);
+  gboolean bypass = bypass_stream_dsp(rx);
+  SetEXTANBRun(rx->channel, bypass ? 0 : rx->nb);
+  SetEXTNOBRun(rx->channel, bypass ? 0 : rx->nb2);
+  SetRXAANRRun(rx->channel, bypass ? 0 : rx->nr);
+  SetRXAEMNRRun(rx->channel, bypass ? 0 : rx->nr2);
+  SetRXARNNRRun(rx->channel, bypass ? 0 : rx->nr3);
+  SetRXASBNRRun(rx->channel, bypass ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);
   SetRXASBNRwhiteningFactor(rx->channel, (float)rx->nr4_whitening);
   SetRXASBNRnoiseRescale(rx->channel, (float)rx->nr4_rescale);
   SetRXASBNRpostFilterThreshold(rx->channel, (float)rx->nr4_postfilter);
-  SetRXAANFRun(rx->channel, rx->anf);
-  SetRXASNBARun(rx->channel, rx->snb);
+  SetRXAANFRun(rx->channel, bypass ? 0 : rx->anf);
+  SetRXASNBARun(rx->channel, bypass ? 0 : rx->snb);
   update_vfo(rx);
 }
 
@@ -262,7 +267,10 @@ void receiver_notch_sync(RECEIVER *rx) {
     if(rx->notch[i].active) any_active=1;
   }
   RXANBPSetTuneFrequency(rx->channel, (double)rx->frequency_a);
-  RXANBPSetNotchesRun(rx->channel, any_active?1:0);
+  // Manual notches also alter the stream, so hold them off in the data modes /
+  // while decoding (bypass_stream_dsp) — the notch list is kept (still persisted
+  // and shown), only the WDSP run flag is cleared, restored on leaving.
+  RXANBPSetNotchesRun(rx->channel, (any_active && !bypass_stream_dsp(rx)) ? 1 : 0);
 }
 
 // Append a notch at absolute RF fcenter with given width; returns index or -1 if full.
@@ -1373,11 +1381,15 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // sets the gain itself).
   if(rx->channel>=0) receiver_set_volume(rx);
 #endif
-  // Re-evaluate NR suppression: a mode change can take this RX into or out of a
-  // data mode (DIGU/DIGL) or a decoder-tapped mode (nr_suppressed), so push the NR
-  // Run flags again — held off there, restored to the operator's rx->nr* otherwise.
-  // Not gated on DECODERS: the DIGU/DIGL rule applies regardless of decoder builds.
-  if(rx->channel>=0) update_noise(rx);
+  // Re-evaluate stream-DSP bypass: a mode change can take this RX into or out of a
+  // data mode (DIGU/DIGL) or a decoder-tapped mode (bypass_stream_dsp), so re-push
+  // the NB/NR/ANF/SNB run flags (update_noise) and the manual-notch run flag
+  // (receiver_notch_sync) — held off there, restored otherwise. Not gated on
+  // DECODERS: the DIGU/DIGL rule applies regardless of decoder builds.
+  if(rx->channel>=0) {
+    update_noise(rx);
+    receiver_notch_sync(rx);
+  }
 #ifdef FT8
   // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
   // active receiver enters/leaves DIGU.  GTK-thread context here, unlike the
@@ -2661,29 +2673,30 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 
   set_agc(rx);
 
-  SetEXTANBRun(rx->channel, rx->nb);
-  SetEXTNOBRun(rx->channel, rx->nb2);
+  // Hold every stream-altering block off at channel-init for a data mode
+  // (DIGU/DIGL) or a decoder-tapped mode (e.g. a restored DIGU config) — same rule
+  // as update_noise()/receiver_notch_sync().
+  gboolean bypass = bypass_stream_dsp(rx);
+  SetEXTANBRun(rx->channel, bypass ? 0 : rx->nb);
+  SetEXTNOBRun(rx->channel, bypass ? 0 : rx->nb2);
 
-  // Hold NR off at channel-init for a data mode (DIGU/DIGL) or a decoder-tapped
-  // mode (e.g. a restored DIGU config) — same rule as update_noise().
-  gboolean nr_off = nr_suppressed(rx);
   SetRXAEMNRPosition(rx->channel, rx->nr_agc);
   SetRXAEMNRgainMethod(rx->channel, rx->nr2_gain_method);
   SetRXAEMNRnpeMethod(rx->channel, rx->nr2_npe_method);
-  SetRXAEMNRRun(rx->channel, nr_off ? 0 : rx->nr2);
+  SetRXAEMNRRun(rx->channel, bypass ? 0 : rx->nr2);
   SetRXAEMNRaeRun(rx->channel, rx->nr2_ae);
 
   SetRXAANRVals(rx->channel, 64, 16, 16e-4, 10e-7); // defaults
-  SetRXAANRRun(rx->channel, nr_off ? 0 : rx->nr);
-  SetRXARNNRRun(rx->channel, nr_off ? 0 : rx->nr3);
-  SetRXASBNRRun(rx->channel, nr_off ? 0 : rx->nr4);
+  SetRXAANRRun(rx->channel, bypass ? 0 : rx->nr);
+  SetRXARNNRRun(rx->channel, bypass ? 0 : rx->nr3);
+  SetRXASBNRRun(rx->channel, bypass ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);
   SetRXASBNRwhiteningFactor(rx->channel, (float)rx->nr4_whitening);
   SetRXASBNRnoiseRescale(rx->channel, (float)rx->nr4_rescale);
   SetRXASBNRpostFilterThreshold(rx->channel, (float)rx->nr4_postfilter);
-  SetRXAANFRun(rx->channel, rx->anf);
-  SetRXASNBARun(rx->channel, rx->snb);
+  SetRXAANFRun(rx->channel, bypass ? 0 : rx->anf);
+  SetRXASNBARun(rx->channel, bypass ? 0 : rx->snb);
 
   // Apply any restored manual notches now that the WDSP channel exists.
   receiver_notch_sync(rx);
