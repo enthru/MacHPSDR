@@ -177,6 +177,52 @@ static double n_measure(GtkWidget *widget,const char *txt) {
   return (double)pw;
 }
 
+// Cap on the stroked-trace vertex count. On a wide/fullscreen window the trace
+// otherwise has one vertex per pixel column (thousands), and the GSK stroker
+// re-tessellates all of them into geometry every frame on the CPU — the dominant
+// per-frame cost that tanks the FPS at fullscreen. Above this many columns the
+// trace is decimated to a per-bucket min/max envelope: the per-bucket MAX keeps
+// narrow carriers (a signal peak = smallest y), the MIN keeps the noise floor, so
+// it stays visually faithful while the vertex count is bounded regardless of
+// monitor width. At/below the cap the trace is 1 vertex/column, unchanged.
+#define PAN_TRACE_BUCKETS 1024
+
+// Emit a spectrum trace for `samples` into builder b: move_to (0, base_y) then the
+// (decimated) trace vertices. add_db = attenuation + panadapter_calibration,
+// y_clamp = the bottom (panadapter_height-20) the trace is clamped to.
+static void pan_trace_verts(GskPathBuilder *b, const float *samples, int offset,
+                            int display_width, double add_db, double pan_high,
+                            double dbm_per_line, double base_y, double y_clamp) {
+  gsk_path_builder_move_to(b, 0.0f, (float)base_y);
+  if(display_width <= PAN_TRACE_BUCKETS) {
+    for(int i=1;i<display_width;i++) {
+      double s=(double)samples[i+offset]+add_db;
+      double y=floor((pan_high - s)*dbm_per_line);
+      if(y>=y_clamp) y=y_clamp;
+      gsk_path_builder_line_to(b,(float)i,(float)y);
+    }
+    return;
+  }
+  int W=display_width-1;   // the trace spans columns 1..display_width-1
+  for(int k=0;k<PAN_TRACE_BUCKETS;k++) {
+    int i0=1+(int)((long long)k*W/PAN_TRACE_BUCKETS);
+    int i1=1+(int)((long long)(k+1)*W/PAN_TRACE_BUCKETS);
+    if(i1<=i0) i1=i0+1;
+    if(i1>display_width) i1=display_width;
+    double smin=1e30, smax=-1e30;
+    for(int i=i0;i<i1;i++) {
+      double s=(double)samples[i+offset]+add_db;
+      if(s<smin) smin=s;
+      if(s>smax) smax=s;
+    }
+    double xk=(double)((i0+i1-1)/2);
+    double y_hi=floor((pan_high - smax)*dbm_per_line); if(y_hi>=y_clamp) y_hi=y_clamp; // signal peak
+    double y_lo=floor((pan_high - smin)*dbm_per_line); if(y_lo>=y_clamp) y_lo=y_clamp; // noise floor
+    gsk_path_builder_line_to(b,(float)xk,(float)y_hi);
+    gsk_path_builder_line_to(b,(float)xk,(float)y_lo);
+  }
+}
+
 static gboolean resize_timeout(void *data) {
   RECEIVER *rx=(RECEIVER *)data;
 
@@ -1064,16 +1110,12 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // When the phosphor is on it IS the spectrum display, so skip the ordinary
   // line/fill (it would paint a solid colour over the graded cloud).
   if(!rx->panadapter_histogram) {
-    // Build the trace polyline; close it when filled (matches the old cairo
-    // close_path + fill_preserve + stroke).
+    // Build the trace polyline (decimated on wide windows); close it when filled
+    // (matches the old cairo close_path + fill_preserve + stroke).
     GskPathBuilder *b=gsk_path_builder_new();
-    gsk_path_builder_move_to(b,0.0f,(float)(display_height-20));
-    for(i=1;i<display_width;i++) {
-      double s2=(double)samples[i+offset]+attenuation+radio->panadapter_calibration;
-      s2 = floor((rx->panadapter_high - s2) *dbm_per_line);
-      if (s2 >= rx->panadapter_height-20) s2 = rx->panadapter_height-20;
-      gsk_path_builder_line_to(b,(float)i,(float)s2);
-    }
+    pan_trace_verts(b, samples, offset, display_width,
+                    attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
+                    dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
     if(filled) gsk_path_builder_close(b);
     GskPath *path=gsk_path_builder_free_to_path(b);
 
@@ -1138,13 +1180,9 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       if (radio->divmixer[rx->dmix_id] != NULL) {
         if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error) && samples_hidden_rx!=NULL) {
           GskPathBuilder *hb=gsk_path_builder_new();
-          gsk_path_builder_move_to(hb,0.0f,(float)(display_height-20));
-          for(i=1;i<display_width;i++) {
-            double s2h=(double)samples_hidden_rx[i+offset]+attenuation+radio->panadapter_calibration;
-            s2h=floor((rx->panadapter_high - s2h)*dbm_per_line);
-            if(s2h >= rx->panadapter_height-20) s2h=rx->panadapter_height-20;
-            gsk_path_builder_line_to(hb,(float)i,(float)s2h);
-          }
+          pan_trace_verts(hb, samples_hidden_rx, offset, display_width,
+                          attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
+                          dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
           GskPath *hp=gsk_path_builder_free_to_path(hb);
           GdkRGBA tq=nrgba(0.259,0.960,0.950,1.0);
           GskStroke *hst=gsk_stroke_new((float)LINE_WIDTH);
@@ -1160,13 +1198,9 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // ---- peak-hold trace (line only, on top) --------------------------------
   if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
     GskPathBuilder *b=gsk_path_builder_new();
-    gsk_path_builder_move_to(b,0.0f,(float)(display_height-20));
-    for(i=1;i<display_width;i++) {
-      double ph=(double)rx->panadapter_peaks[i+offset]+attenuation+radio->panadapter_calibration;
-      ph=floor((rx->panadapter_high - ph)*dbm_per_line);
-      if(ph >= rx->panadapter_height-20) ph=rx->panadapter_height-20;
-      gsk_path_builder_line_to(b,(float)i,(float)ph);
-    }
+    pan_trace_verts(b, rx->panadapter_peaks, offset, display_width,
+                    attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
+                    dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20));
     GskPath *p=gsk_path_builder_free_to_path(b);
     GdkRGBA pk=nrgba(0.95,0.95,0.95,0.85);
     GskStroke *st=gsk_stroke_new((float)LINE_WIDTH);
