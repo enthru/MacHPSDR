@@ -43,6 +43,8 @@
 #include "protocol2.h"
 #include "audio.h"
 #include "band.h"
+#include "level_meter.h"
+#include "pana_view.h"
 
 static int deltadb=0;
 static gboolean running=FALSE;
@@ -62,123 +64,72 @@ static int info[INFO_SIZE];
 static int save_ps_auto;
 static int save_ps_single;
 
-// Set the Cairo source to a skin palette color, falling back to the given RGB
-// if the active skin has no such name (see css.c / css_rgb).
-static void ps_source(cairo_t *cr, const char *name, double fr, double fg, double fb) {
+// Skin palette colour by name -> GdkRGBA (fallback to the given RGB).
+static GdkRGBA ps_rgba(const char *name, double fr, double fg, double fb) {
   double r=fr,g=fg,b=fb;
   css_rgb(name,&r,&g,&b);
-  cairo_set_source_rgb(cr,r,g,b);
+  return (GdkRGBA){(float)r,(float)g,(float)b,1.0f};
 }
 
-// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event";
-// off-screen image surface (no GdkWindow to back a similar surface).
-static void ps_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(tx->ps_surface) {
-    cairo_surface_destroy(tx->ps_surface);
-    tx->ps_surface=NULL;
-  }
-  if(width<=0 || height<=0) return;
-  tx->ps_surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,width,height);
+static double ps_last_pk=0;   // last peak, published by update_ps() for the builder
+static void ps_build(GtkSnapshot *snapshot,int width,int height,gpointer data);
 
-  cairo_t *cr;
-  cr = cairo_create (tx->ps_surface);
-  ps_source(cr, "SURFACE", 0.16, 0.16, 0.19); // matches config-dialog theme
-  cairo_paint (cr);
-  cairo_destroy(cr);
-}
-
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void ps_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(tx->ps_surface!=NULL) {
-    cairo_set_source_surface(cr,tx->ps_surface,0.0,0.0);
-    cairo_paint(cr);
-  }
-}
-
+// Per-update STATE: publish the peak reading, then queue the GPU redraw. The
+// info[] block is a file static the builder reads directly.
 static void update_ps(TRANSMITTER *tx,double pk) {
-  cairo_t *cr;
+  ps_last_pk=pk;
+  if(tx->ps!=NULL) gtk_widget_queue_draw(tx->ps);
+}
+
+// GPU render-node builder (PanaView) — the PureSignal feedback readout (text only).
+static void ps_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  GtkWidget *widget=tx->ps;
   char text[32];
 
-  if(tx->ps_surface!=NULL) {
-    cr=cairo_create (tx->ps_surface);
-    ps_source(cr,"SURFACE",0.16,0.16,0.19); // skin surface background
-    cairo_paint(cr);
+  GdkRGBA surf=ps_rgba("SURFACE",0.16,0.16,0.19);
+  lm_fill(snapshot,0,0,width,height,&surf);
 
-    cairo_set_font_size(cr,12);
-    if(info[FEEDBACK]>181)  {
-      ps_source(cr,"OFF_WHITE",0.89,0.89,0.91); // good feedback level
-    } else if(info[FEEDBACK]>128)  {
-      ps_source(cr,"ACCENT_A",0.0,1.0,0.0);
-    } else if(info[FEEDBACK]>90)  {
-      ps_source(cr,"INFO_ON",0.0,1.0,1.0);
-    } else {
-      ps_source(cr,"WARNING",1.0,0.0,0.0);   // too low
-    }
-    cairo_move_to(cr,5,12);
-    sprintf(text,"Feedback Level: %d",info[FEEDBACK]);
-    cairo_show_text(cr,text);
+  GdkRGBA fb;
+  if(info[FEEDBACK]>181)       fb=ps_rgba("OFF_WHITE",0.89,0.89,0.91); // good feedback level
+  else if(info[FEEDBACK]>128)  fb=ps_rgba("ACCENT_A",0.0,1.0,0.0);
+  else if(info[FEEDBACK]>90)   fb=ps_rgba("INFO_ON",0.0,1.0,1.0);
+  else                         fb=ps_rgba("WARNING",1.0,0.0,0.0);      // too low
+  sprintf(text,"Feedback Level: %d",info[FEEDBACK]);
+  lm_text(snapshot,widget,5,12,12,&fb,text,FALSE);
 
-    ps_source(cr,"OFF_WHITE",0.89,0.89,0.91);
+  GdkRGBA ow=ps_rgba("OFF_WHITE",0.89,0.89,0.91);
 
-    cairo_move_to(cr,5,24);
-    sprintf(text,"Correction Count: %d",info[COR_CNT]);
-    cairo_show_text(cr,text);
+  sprintf(text,"Correction Count: %d",info[COR_CNT]);
+  lm_text(snapshot,widget,5,24,12,&ow,text,FALSE);
 
-    cairo_move_to(cr,5,36);
-    sprintf(text,"Sln Chk: %d",info[SLN_CHK]);
-    cairo_show_text(cr,text);
+  sprintf(text,"Sln Chk: %d",info[SLN_CHK]);
+  lm_text(snapshot,widget,5,36,12,&ow,text,FALSE);
 
-    cairo_move_to(cr,5,48);
-    sprintf(text,"Dg Cnt: %d",info[DG_CNT]);
-    cairo_show_text(cr,text);
+  sprintf(text,"Dg Cnt: %d",info[DG_CNT]);
+  lm_text(snapshot,widget,5,48,12,&ow,text,FALSE);
 
-    cairo_move_to(cr,5,60);
-    switch(info[STATUS]) {
-      case 0:
-        cairo_show_text(cr,"STATUS: RESET");
-        break;
-      case 1:
-        cairo_show_text(cr,"STATUS: WAIT");
-        break;
-      case 2:
-        cairo_show_text(cr,"STATUS: MOXDELAY");
-        break;
-      case 3:
-        cairo_show_text(cr,"STATUS: SETUP");
-        break;
-      case 4:
-        cairo_show_text(cr,"STATUS: COLLECT");
-        break;
-      case 5:
-        cairo_show_text(cr,"STATUS: MOXCHECK");
-        break;
-      case 6:
-        cairo_show_text(cr,"STATUS: CALC");
-        break;
-      case 7:
-        cairo_show_text(cr,"STATUS: DELAY");
-        break;
-      case 8:
-        cairo_show_text(cr,"STATUS: STAY ON");
-        break;
-      case 9:
-        cairo_show_text(cr,"STATUS: TURN ON");
-        break;
-      default:
-        sprintf(text, "STATUS: UNKNOWN %d",info[STATUS]);
-        cairo_show_text(cr,text);
-        break;
-    }
-
-    cairo_move_to(cr,5,72);
-    sprintf(text,"Peak: %f",pk);
-    cairo_show_text(cr,text);
-
-    cairo_destroy (cr);
-    gtk_widget_queue_draw(tx->ps);
+  const char *st=NULL;
+  switch(info[STATUS]) {
+    case 0: st="STATUS: RESET"; break;
+    case 1: st="STATUS: WAIT"; break;
+    case 2: st="STATUS: MOXDELAY"; break;
+    case 3: st="STATUS: SETUP"; break;
+    case 4: st="STATUS: COLLECT"; break;
+    case 5: st="STATUS: MOXCHECK"; break;
+    case 6: st="STATUS: CALC"; break;
+    case 7: st="STATUS: DELAY"; break;
+    case 8: st="STATUS: STAY ON"; break;
+    case 9: st="STATUS: TURN ON"; break;
+    default:
+      sprintf(text,"STATUS: UNKNOWN %d",info[STATUS]);
+      st=text;
+      break;
   }
+  lm_text(snapshot,widget,5,60,12,&ow,st,FALSE);
+
+  sprintf(text,"Peak: %f",ps_last_pk);
+  lm_text(snapshot,widget,5,72,12,&ow,text,FALSE);
 }
 
 static gboolean info_timeout(gpointer arg) {
@@ -300,14 +251,10 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   g_signal_connect(twotone_b,"toggled",G_CALLBACK(twotone_cb),tx);
   gtk_grid_attach(GTK_GRID(ps_grid),twotone_b,1,0,1,1);
 
-  tx->ps=gtk_drawing_area_new();
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx->ps),ps_draw_cb,(gpointer)tx,NULL);
-  g_signal_connect (tx->ps,"resize",G_CALLBACK(ps_resize_cb),(gpointer)tx);
+  tx->ps=pana_view_new(ps_build,(gpointer)tx);
   // Bound the feedback plot to a modest fixed size (it had none, so it ballooned
-  // to fill the tab). Left-aligned, no expand — this is an unfinished prototype
-  // graph, it doesn't need to swallow the whole page.
-  gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(tx->ps),480);
-  gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(tx->ps),180);
+  // to fill the tab). This is an unfinished prototype graph.
+  gtk_widget_set_size_request(tx->ps,480,180);
   gtk_widget_set_hexpand(tx->ps,TRUE);   // grow with the frame (PA-Calibration width)
   gtk_widget_set_vexpand(tx->ps,FALSE);  // but keep the fixed 180px height
   gtk_widget_set_halign(tx->ps,GTK_ALIGN_FILL);
