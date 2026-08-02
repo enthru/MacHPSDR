@@ -835,13 +835,6 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     }
 #endif
 
-    // DX cluster spot overlay (shared with the waterfall): a short tick +
-    // callsign for each in-span spot, colour-keyed by DXCC entity. Drawn here on
-    // the panadapter when cluster_spots_on is 0 (panadapter) or 2 (both).
-    if(radio->cluster_enable && radio->cluster_spots_show &&
-       (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
-      receiver_draw_cluster_spots(cr, rx, display_width);
-    }
 
     // I/Q Player readout: while the fake device is looping a recording, print the
     // elapsed/total playback time and the recording's bandwidth in the top-right
@@ -1230,6 +1223,14 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         cairo_line_to(cr, (double)i, ph);
       }
       cairo_stroke(cr);
+    }
+
+    // DX cluster spot overlay (shared with the waterfall) — drawn LAST so the
+    // graticule, dB/freq scales and trace never paint over the callsign labels.
+    // Rendered here when cluster_spots_on is 0 (panadapter) or 2 (both).
+    if(radio->cluster_enable && radio->cluster_spots_show &&
+       (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
+      receiver_draw_cluster_spots(cr, rx, display_width);
     }
 
     cairo_destroy (cr);
