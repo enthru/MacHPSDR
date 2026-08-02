@@ -40,4 +40,9 @@ int fake_protocol_set_iq_file(RADIO *r, const char *path);
  * the GTK thread. */
 int fake_protocol_playback(double *elapsed_s, double *total_s, double *bw_hz);
 
+/* Seek the looped I/Q recording to `fraction` (0..1) of its length. Returns 1
+ * on success, 0 when no file is playing. Serialised against the feed thread via
+ * r->delete_rx_mutex; call from the GTK main thread. */
+int fake_protocol_seek(RADIO *r, double fraction);
+
 #endif

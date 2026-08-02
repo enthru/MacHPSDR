@@ -293,6 +293,8 @@ typedef struct _receiver {
   gint     scope_tuned_out_cap;     // capacity of scope_tuned_out in complex samples
 
   GtkWidget *waterfall;
+  GtkWidget *iq_seek;        // I/Q Player scrub bar (PROTOCOL_FAKE, RX0 only; else NULL)
+  gint64 iq_seek_guard_us;   // monotonic deadline: suppress timer-driven bar updates while the user scrubs
   GtkWidget *wf_hpaned;      // horizontal split of the waterfall row (main | FT8)
   GtkWidget *ft8_waterfall;  // FT8 band waterfall, 1/3 right (NULL unless DIGU)
   gint waterfall_width;

@@ -1149,6 +1149,21 @@ static gboolean update_timer_cb(void *data) {
     update_tx_panadapter(radio);
   }
 
+  // I/Q Player scrub bar: show it only while a file is playing and follow the
+  // playback position. set_value emits "value-changed" (unconnected), NOT
+  // "change-value", so this never triggers a seek. Skipped during the post-drag
+  // guard window so the timer doesn't yank the thumb out from under the user.
+  if(rx->iq_seek!=NULL) {
+    double el, tot, bw;
+    if(fake_protocol_playback(&el, &tot, &bw) && tot>0.0) {
+      if(!gtk_widget_get_visible(rx->iq_seek)) gtk_widget_set_visible(rx->iq_seek, TRUE);
+      if(g_get_monotonic_time() > rx->iq_seek_guard_us)
+        gtk_range_set_value(GTK_RANGE(rx->iq_seek), el/tot);
+    } else if(gtk_widget_get_visible(rx->iq_seek)) {
+      gtk_widget_set_visible(rx->iq_seek, FALSE);
+    }
+  }
+
   return TRUE;
 }
 
@@ -1963,6 +1978,19 @@ static void close_button_cb(GtkWidget *widget, gpointer data) {
   receiver_close((RECEIVER *)data);
 }
 
+// I/Q Player scrub bar drag: seek the recording to the bar's fraction. Fires
+// only on user interaction (change-value, not value-changed), so the periodic
+// timer's gtk_range_set_value() — which reflects playback — can never loop back
+// into a seek. Set a short guard window so the timer doesn't fight the drag.
+static gboolean iq_seek_change_cb(GtkRange *range, GtkScrollType scroll, double value, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(value<0.0) value=0.0;
+  if(value>1.0) value=1.0;
+  fake_protocol_seek(radio, value);
+  rx->iq_seek_guard_us = g_get_monotonic_time() + 300000;   // 300 ms
+  return FALSE;   // let GtkRange apply `value` to the thumb
+}
+
 static void create_visual(RECEIVER *rx) {
 
   rx->dialog=NULL;
@@ -2037,6 +2065,22 @@ static void create_visual(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(rx->table), rx->wf_hpaned, 0, 1, 7, 2);
   gtk_widget_set_hexpand(rx->wf_hpaned, TRUE);
   gtk_widget_set_vexpand(rx->wf_hpaned, TRUE);
+
+  // I/Q Player scrub bar: a transport slider under the waterfall to seek within
+  // the looped recording. Only for the fake ("I/Q Player") device's primary RX;
+  // hidden until a file is actually playing (see update_timer_cb).
+  rx->iq_seek=NULL;
+  rx->iq_seek_guard_us=0;
+  if(radio->discovered->protocol==PROTOCOL_FAKE && rx->channel==0) {
+    rx->iq_seek=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.0005);
+    gtk_scale_set_draw_value(GTK_SCALE(rx->iq_seek), FALSE);
+    gtk_widget_set_name(rx->iq_seek, "iq-seek");
+    gtk_widget_set_hexpand(rx->iq_seek, TRUE);
+    gtk_widget_set_tooltip_text(rx->iq_seek, "Seek the I/Q recording");
+    gtk_widget_set_visible(rx->iq_seek, FALSE);
+    g_signal_connect(rx->iq_seek, "change-value", G_CALLBACK(iq_seek_change_cb), rx);
+    gtk_grid_attach(GTK_GRID(rx->table), rx->iq_seek, 0, 3, 7, 1);
+  }
 
   gtk_widget_set_size_request(rx->table, -1, 180);
   // Make sure the panel grows to fill the container on window resize (otherwise

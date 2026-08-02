@@ -495,6 +495,25 @@ int fake_protocol_playback(double *elapsed_s, double *total_s, double *bw_hz) {
   return 1;
 }
 
+int fake_protocol_seek(RADIO *r, double fraction) {
+  // Jump the file read cursor to `fraction` (0..1) of the recording. Same
+  // locking discipline as set_iq_file: mutate the per-receiver cursors under
+  // r->delete_rx_mutex (the lock the feed thread holds around each block), so
+  // no torn read / mid-block jump. iq_data/iq_frames are GTK-thread-owned.
+  if(iq_data == NULL || iq_frames <= 0) return 0;
+  if(fraction < 0.0) fraction = 0.0;
+  if(fraction > 1.0) fraction = 1.0;
+  double target = fraction * (double)iq_frames;
+  if(target >= (double)iq_frames) target = (double)iq_frames - 1.0;
+  if(target < 0.0) target = 0.0;
+  g_mutex_lock(&r->delete_rx_mutex);
+  for(int i=0;i<8;i++) { iq_pos[i] = target; mix_phase[i] = 0.0; }
+  fake_play_pos_frames = target;
+  memset(aa_z, 0, sizeof(aa_z));   // clear AA-filter history so the jump doesn't click
+  g_mutex_unlock(&r->delete_rx_mutex);
+  return 1;
+}
+
 int fake_protocol_is_running(void) {
   return fake_running;
 }
