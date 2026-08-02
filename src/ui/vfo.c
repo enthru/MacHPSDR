@@ -1958,28 +1958,39 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(agc_b_pressed_cb),rx); gtk_widget_add_controller(v->agc_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->agc_b);
 
+  // RIT button + value packed into one bordered "value group" (spacing 0): the
+  // toggle button (left-rounded, flush to the group's top/left/bottom edges)
+  // and the offset value share a single outer rounded rectangle.
+  GtkWidget *rit_group=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+  gtk_widget_set_name(rit_group,"vfo-value-group");
+  gtk_box_append(GTK_BOX(vfo_row_ctl),rit_group);
+
   v->rit_b=gtk_toggle_button_new_with_label("RIT");
-  gtk_widget_set_name(v->rit_b,"vfo-toggle");
+  gtk_widget_set_name(v->rit_b,"vfo-toggle-seg");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->rit_b),rx->rit_enabled);
   g_signal_connect(v->rit_b, "toggled", G_CALLBACK(rit_b_cb),rx);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(rit_b_press_cb),rx); gtk_widget_add_controller(v->rit_b,GTK_EVENT_CONTROLLER(_g)); }
-  gtk_box_append(GTK_BOX(vfo_row_ctl),v->rit_b);
+  gtk_box_append(GTK_BOX(rit_group),v->rit_b);
 
   sprintf(temp,"%+05lld",rx->rit);
   v->rit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->rit_value,"rit-value");
 
-  gtk_box_append(GTK_BOX(vfo_row_ctl),v->rit_value);
+  gtk_box_append(GTK_BOX(rit_group),v->rit_value);
   vfo_attach_ctl(v->rit_value, rx, NULL, NULL, NULL, G_CALLBACK(rit_b_scroll_event_cb));
 
+  GtkWidget *xit_group=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+  gtk_widget_set_name(xit_group,"vfo-value-group");
+  gtk_box_append(GTK_BOX(vfo_row_ctl),xit_group);
+
   v->xit_b=gtk_toggle_button_new_with_label("XIT");
-  gtk_widget_set_name(v->xit_b,"vfo-toggle");
+  gtk_widget_set_name(v->xit_b,"vfo-toggle-seg");
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->xit_b),radio->transmitter->xit_enabled);
   }
   g_signal_connect(v->xit_b, "toggled", G_CALLBACK(xit_b_cb),rx);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(xit_b_press_cb),rx); gtk_widget_add_controller(v->xit_b,GTK_EVENT_CONTROLLER(_g)); }
-  gtk_box_append(GTK_BOX(vfo_row_ctl),v->xit_b);
+  gtk_box_append(GTK_BOX(xit_group),v->xit_b);
 
 
   if(radio->transmitter!=NULL) {
@@ -1990,7 +2001,7 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   v->xit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->xit_value,"xit-value");
 
-  gtk_box_append(GTK_BOX(vfo_row_ctl),v->xit_value);
+  gtk_box_append(GTK_BOX(xit_group),v->xit_value);
   vfo_attach_ctl(v->xit_value, rx, NULL, NULL, NULL, G_CALLBACK(xit_b_scroll_event_cb));
 
   v->ctun_b=gtk_toggle_button_new_with_label("CTUN");
