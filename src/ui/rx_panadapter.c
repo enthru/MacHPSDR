@@ -781,12 +781,19 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       }
 
       // Row-pack the labels: each row remembers the right edge of its last label;
-      // a spot takes the first row that clears it, else the least-full row.
-      cairo_set_font_size(cr, 10);
+      // a spot takes the first row that clears it, else the least-full row. Font
+      // size + label background colour are operator-configurable (Configure ->
+      // Network); the background is drawn behind each callsign so it stays
+      // readable over the trace.
+      double fs=(double)radio->cluster_spots_font;
+      if(fs<7.0) fs=7.0; if(fs>28.0) fs=28.0;       // clamp to a sane range
+      cairo_set_font_size(cr, fs);
+      double bg_r=radio->cluster_spots_bg_r, bg_g=radio->cluster_spots_bg_g,
+             bg_b=radio->cluster_spots_bg_b, bg_a=radio->cluster_spots_bg_a;
       #define SPOT_LABEL_ROWS 8
       double row_right[SPOT_LABEL_ROWS];
       for(int r=0;r<SPOT_LABEL_ROWS;r++) row_right[r]=-1e9;
-      const double row_h=11.0, base_y=13.0;
+      const double row_h=fs+1.0, base_y=fs+3.0;
 
       for(int a=0;a<nv;a++) {
         double x=vis[a].x;
@@ -805,11 +812,21 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
         double sr,sg,sb;
         cluster_spot_rgb(s->entity,&sr,&sg,&sb);
+        // tick reaching down to this spot's own label row
         cairo_set_source_rgba(cr, sr, sg, sb, 0.9);
         cairo_set_line_width(cr, 1.0);
         cairo_move_to(cr, x, 0.0);
-        cairo_line_to(cr, x, ty-8.0);               // tick reaches its own label row
+        cairo_line_to(cr, x, ty+te.y_bearing);
         cairo_stroke(cr);
+        // background box behind the callsign (skip if fully transparent)
+        if(bg_a>0.0) {
+          cairo_set_source_rgba(cr, bg_r, bg_g, bg_b, bg_a);
+          cairo_rectangle(cr, x+2.0+te.x_bearing-1.0, ty+te.y_bearing-1.0,
+                          te.width+2.0, te.height+2.0);
+          cairo_fill(cr);
+        }
+        // callsign text on top
+        cairo_set_source_rgba(cr, sr, sg, sb, 0.95);
         cairo_move_to(cr, x+2.0, ty);
         cairo_show_text(cr, s->call);
       }
