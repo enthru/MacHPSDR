@@ -482,6 +482,7 @@ static const char css_body[]=
 "  #afgain-scale trough block.filled {\n"
 "    border-color: @ACCENT_A;\n"
 "    color: @ACCENT_A;\n"
+"    border-radius: 4px;\n"
 "    }\n"
 "  #squelch-text {\n"
 "    font-family: Noto Sans;\n"
@@ -502,6 +503,7 @@ static const char css_body[]=
 "  #squelch-scale trough block.filled {\n"
 "    border-color: @ACCENT_A;\n"
 "    color: @ACCENT_A;\n"
+"    border-radius: 4px;\n"
 "    }\n"
 "  #agcgain-text {\n"
 "    font-family: Noto Sans;\n"
@@ -522,6 +524,7 @@ static const char css_body[]=
 "  #agcgain-scale trough block.filled  {\n"
 "    background-color: @ACCENT_B;\n"
 "    border-color: @OFF_WHITE;\n"
+"    border-radius: 4px;\n"
 "  }\n"
 /* I/Q Player scrub bar: the default GTK trough is near-black, so the
    not-yet-played part of the track vanished against the black area below the
