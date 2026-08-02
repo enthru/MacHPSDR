@@ -1334,6 +1334,16 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->cluster_spots_bg_b=atof(value);
   value=getProperty("radio.cluster_spots_bg_a");
   if(value!=NULL) r->cluster_spots_bg_a=atof(value);
+  value=getProperty("radio.cluster_spots_fg_dxcc");
+  if(value!=NULL) r->cluster_spots_fg_dxcc=atoi(value);
+  value=getProperty("radio.cluster_spots_fg_r");
+  if(value!=NULL) r->cluster_spots_fg_r=atof(value);
+  value=getProperty("radio.cluster_spots_fg_g");
+  if(value!=NULL) r->cluster_spots_fg_g=atof(value);
+  value=getProperty("radio.cluster_spots_fg_b");
+  if(value!=NULL) r->cluster_spots_fg_b=atof(value);
+  value=getProperty("radio.cluster_spots_fg_a");
+  if(value!=NULL) r->cluster_spots_fg_a=atof(value);
   value=getProperty("radio.tci_enable");
   if(value!=NULL) r->tci_enable=atoi(value);
   value=getProperty("radio.tci_port");
@@ -2371,6 +2381,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->cluster_spots_bg_g = 0.0;
   r->cluster_spots_bg_b = 0.0;
   r->cluster_spots_bg_a = 0.85;
+  r->cluster_spots_fg_dxcc = TRUE; // default: colour label+tick by DXCC entity
+  r->cluster_spots_fg_r = 1.0;   // fixed label colour (used when fg_dxcc is off): white
+  r->cluster_spots_fg_g = 1.0;
+  r->cluster_spots_fg_b = 1.0;
+  r->cluster_spots_fg_a = 0.95;
 
   r->tci_enable = FALSE;
   r->tci_port = TCI_DEFAULT_PORT;

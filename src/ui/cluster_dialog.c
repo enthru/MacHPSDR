@@ -93,6 +93,21 @@ static void bg_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
   r->cluster_spots_bg_a=c->alpha;
 }
 
+static void fg_dxcc_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->cluster_spots_fg_dxcc=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
+}
+
+static void fg_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
+  (void)pspec;
+  RADIO *r=(RADIO *)data;
+  const GdkRGBA *c=gtk_color_dialog_button_get_rgba(GTK_COLOR_DIALOG_BUTTON(obj));
+  r->cluster_spots_fg_r=c->red;
+  r->cluster_spots_fg_g=c->green;
+  r->cluster_spots_fg_b=c->blue;
+  r->cluster_spots_fg_a=c->alpha;
+}
+
 static void host_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   g_strlcpy(r->cluster_host,gtk_editable_get_text(GTK_EDITABLE(w)),sizeof(r->cluster_host));
@@ -116,45 +131,67 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   sui_style_group(grid);
   gtk_frame_set_child(GTK_FRAME(frame),grid);
 
+  // Rows are placed with a running counter so inserting/removing controls never
+  // requires renumbering the ones below (which repeatedly went wrong by hand).
+  int row=0;
+
   GtkWidget *info=gtk_label_new("Connect to a telnet DX cluster and overlay decoded spots on\n"
-                                "the RX panadapter, colour-keyed by DXCC entity. Left-click a\n"
-                                "spot marker to tune the RX to its exact frequency.");
+                                "the RX panadapter and/or waterfall, colour-keyed by DXCC entity.\n"
+                                "Left-click a spot marker to tune the RX to its exact frequency.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12);
-  gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);
+  gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
 
   GtkWidget *en=gtk_check_button_new_with_label("Connect to DX cluster");
   gtk_check_button_set_active(GTK_CHECK_BUTTON(en),r->cluster_enable);
-  gtk_grid_attach(GTK_GRID(grid),en,0,1,2,1);
+  gtk_grid_attach(GTK_GRID(grid),en,0,row++,2,1);
   g_signal_connect(en,"toggled",G_CALLBACK(enable_cb),r);
 
   GtkWidget *sh=gtk_check_button_new_with_label("Show spots");
   gtk_check_button_set_active(GTK_CHECK_BUTTON(sh),r->cluster_spots_show);
-  gtk_grid_attach(GTK_GRID(grid),sh,0,2,2,1);
+  gtk_grid_attach(GTK_GRID(grid),sh,0,row++,2,1);
   g_signal_connect(sh,"toggled",G_CALLBACK(spots_show_cb),r);
 
   GtkWidget *on_lbl=gtk_label_new("Show spots on:");
   gtk_widget_set_halign(on_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),on_lbl,0,3,1,1);
+  gtk_grid_attach(GTK_GRID(grid),on_lbl,0,row,1,1);
   const char *on_opts[]={"Panadapter","Waterfall","Both",NULL};
   GtkWidget *on_dd=gtk_drop_down_new_from_strings(on_opts);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(on_dd),
                              (r->cluster_spots_on>=0 && r->cluster_spots_on<=2)?r->cluster_spots_on:0);
   gtk_widget_set_halign(on_dd,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),on_dd,1,3,1,1);
+  gtk_grid_attach(GTK_GRID(grid),on_dd,1,row++,1,1);
   g_signal_connect(on_dd,"notify::selected",G_CALLBACK(spots_on_cb),r);
 
   GtkWidget *font_lbl=gtk_label_new("Spot label font (px):");
   gtk_widget_set_halign(font_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),font_lbl,0,4,1,1);
+  gtk_grid_attach(GTK_GRID(grid),font_lbl,0,row,1,1);
   GtkWidget *font=gtk_spin_button_new_with_range(7,28,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(font),r->cluster_spots_font);
-  gtk_grid_attach(GTK_GRID(grid),font,1,4,1,1);
+  gtk_grid_attach(GTK_GRID(grid),font,1,row++,1,1);
   g_signal_connect(font,"value-changed",G_CALLBACK(font_cb),r);
+
+  GtkWidget *dxcc=gtk_check_button_new_with_label("Colour label by DXCC entity");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dxcc),r->cluster_spots_fg_dxcc);
+  gtk_grid_attach(GTK_GRID(grid),dxcc,0,row++,2,1);
+  g_signal_connect(dxcc,"toggled",G_CALLBACK(fg_dxcc_cb),r);
+
+  GtkWidget *fg_lbl=gtk_label_new("Spot label text colour:");
+  gtk_widget_set_halign(fg_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),fg_lbl,0,row,1,1);
+  GdkRGBA fg={ (float)r->cluster_spots_fg_r, (float)r->cluster_spots_fg_g,
+               (float)r->cluster_spots_fg_b, (float)r->cluster_spots_fg_a };
+  GtkColorDialog *fcd=gtk_color_dialog_new();
+  gtk_color_dialog_set_with_alpha(fcd,TRUE);
+  GtkWidget *fg_btn=gtk_color_dialog_button_new(fcd);   // takes ownership of fcd
+  gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(fg_btn),&fg);
+  gtk_widget_set_halign(fg_btn,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),fg_btn,1,row++,1,1);
+  g_signal_connect(fg_btn,"notify::rgba",G_CALLBACK(fg_cb),r);
 
   GtkWidget *bg_lbl=gtk_label_new("Spot label background:");
   gtk_widget_set_halign(bg_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),bg_lbl,0,5,1,1);
+  gtk_grid_attach(GTK_GRID(grid),bg_lbl,0,row,1,1);
   GdkRGBA bg={ (float)r->cluster_spots_bg_r, (float)r->cluster_spots_bg_g,
                (float)r->cluster_spots_bg_b, (float)r->cluster_spots_bg_a };
   GtkColorDialog *cd=gtk_color_dialog_new();
@@ -162,45 +199,45 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   GtkWidget *bg_btn=gtk_color_dialog_button_new(cd);   // takes ownership of cd
   gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(bg_btn),&bg);
   gtk_widget_set_halign(bg_btn,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),bg_btn,1,5,1,1);
+  gtk_grid_attach(GTK_GRID(grid),bg_btn,1,row++,1,1);
   g_signal_connect(bg_btn,"notify::rgba",G_CALLBACK(bg_cb),r);
 
   GtkWidget *host_lbl=gtk_label_new("Host / IP:");
   gtk_widget_set_halign(host_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),host_lbl,0,6,1,1);
+  gtk_grid_attach(GTK_GRID(grid),host_lbl,0,row,1,1);
   GtkWidget *host=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(host),sizeof(r->cluster_host)-1);
   gtk_editable_set_width_chars(GTK_EDITABLE(host),22);
   gtk_editable_set_text(GTK_EDITABLE(host),r->cluster_host);
-  gtk_grid_attach(GTK_GRID(grid),host,1,6,1,1);
+  gtk_grid_attach(GTK_GRID(grid),host,1,row++,1,1);
   g_signal_connect(host,"changed",G_CALLBACK(host_cb),r);
 
   GtkWidget *port_lbl=gtk_label_new("Port:");
   gtk_widget_set_halign(port_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),port_lbl,0,7,1,1);
+  gtk_grid_attach(GTK_GRID(grid),port_lbl,0,row,1,1);
   GtkWidget *port=gtk_spin_button_new_with_range(1,65535,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(port),r->cluster_port);
-  gtk_grid_attach(GTK_GRID(grid),port,1,7,1,1);
+  gtk_grid_attach(GTK_GRID(grid),port,1,row++,1,1);
   g_signal_connect(port,"value-changed",G_CALLBACK(port_cb),r);
 
   GtkWidget *login_lbl=gtk_label_new("Login call:");
   gtk_widget_set_halign(login_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),login_lbl,0,8,1,1);
+  gtk_grid_attach(GTK_GRID(grid),login_lbl,0,row,1,1);
   GtkWidget *login=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(login),sizeof(r->cluster_login)-1);
   gtk_editable_set_width_chars(GTK_EDITABLE(login),12);
   gtk_editable_set_text(GTK_EDITABLE(login),r->cluster_login);
-  gtk_grid_attach(GTK_GRID(grid),login,1,8,1,1);
+  gtk_grid_attach(GTK_GRID(grid),login,1,row++,1,1);
   g_signal_connect(login,"changed",G_CALLBACK(login_cb),r);
 
   GtkWidget *login_hint=gtk_label_new("(blank = use station call, from the FT8 page)");
   gtk_widget_set_halign(login_hint,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),login_hint,0,9,2,1);
+  gtk_grid_attach(GTK_GRID(grid),login_hint,0,row++,2,1);
 
   cluster_status_label=gtk_label_new("Status: disconnected");
   gtk_widget_set_halign(cluster_status_label,GTK_ALIGN_START);
   gtk_widget_set_margin_top(cluster_status_label,8);
-  gtk_grid_attach(GTK_GRID(grid),cluster_status_label,0,10,2,1);
+  gtk_grid_attach(GTK_GRID(grid),cluster_status_label,0,row++,2,1);
   cluster_status_refresh();
 
   if(cluster_poll_id!=0) g_source_remove(cluster_poll_id);

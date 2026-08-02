@@ -398,10 +398,18 @@ void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width) {
     double ty=base_y + row*row_h;
     row_right[row]=x+te.width+2.0;
 
-    double sr,sg,sb;
-    cluster_spot_rgb(s->entity,&sr,&sg,&sb);
+    // Label + tick colour: by DXCC entity (default) or the operator's fixed
+    // colour when "colour by DXCC entity" is off.
+    double sr,sg,sb,sa;
+    if(radio->cluster_spots_fg_dxcc) {
+      cluster_spot_rgb(s->entity,&sr,&sg,&sb);
+      sa=0.95;
+    } else {
+      sr=radio->cluster_spots_fg_r; sg=radio->cluster_spots_fg_g;
+      sb=radio->cluster_spots_fg_b; sa=radio->cluster_spots_fg_a;
+    }
     // tick reaching down to this spot's own label row
-    cairo_set_source_rgba(cr, sr, sg, sb, 0.9);
+    cairo_set_source_rgba(cr, sr, sg, sb, sa*0.95);
     cairo_set_line_width(cr, 1.0);
     cairo_move_to(cr, x, 0.0);
     cairo_line_to(cr, x, ty+te.y_bearing);
@@ -414,7 +422,7 @@ void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width) {
       cairo_fill(cr);
     }
     // callsign text on top
-    cairo_set_source_rgba(cr, sr, sg, sb, 0.95);
+    cairo_set_source_rgba(cr, sr, sg, sb, sa);
     cairo_move_to(cr, x+2.0, ty);
     cairo_show_text(cr, s->call);
   }

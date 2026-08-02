@@ -145,6 +145,8 @@ typedef struct _radio {
   // spot-label background colour (drawn behind each callsign so it stays
   // readable over the trace); RGBA as 4 doubles to keep GdkRGBA out of radio.h
   double   cluster_spots_bg_r, cluster_spots_bg_g, cluster_spots_bg_b, cluster_spots_bg_a;
+  gboolean cluster_spots_fg_dxcc; // TRUE: colour label+tick by DXCC entity; FALSE: use the fixed fg below
+  double   cluster_spots_fg_r, cluster_spots_fg_g, cluster_spots_fg_b, cluster_spots_fg_a; // fixed label colour
   // TCI (Expert Electronics) control server over WebSocket (see tci.c). Phase A
   // = control only (VFO/mode/PTT). Persisted in radio_save_state.
   gboolean tci_enable;          // run the TCI server
