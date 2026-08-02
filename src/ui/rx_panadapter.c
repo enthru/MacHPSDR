@@ -45,6 +45,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wdsp.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> //inet_addr
@@ -91,6 +92,19 @@ static inline GdkRGBA nrgba(double r,double g,double b,double a) {
 static inline GdkRGBA css_rgba(const char *name,double r,double g,double b,double a) {
   css_rgb(name,&r,&g,&b); return nrgba(r,g,b,a);
 }
+
+// FPS / frame-time readout, gated by MACHPSDR_FPS (a diagnostic overlay drawn on
+// the panadapter). Measures the real render rate (this builder runs once per
+// presented frame) and how long the node-tree build takes on the CPU — if FPS is
+// low but build is small, the cost is in the GSK/GL render of the nodes.
+static inline double pan_now_ms(void) {
+  struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+  return (double)t.tv_sec*1000.0 + (double)t.tv_nsec/1e6;
+}
+static int pan_fps_show=-1;          // -1 = unread, else 0/1 from env
+static double pan_fps_ema=0.0;       // smoothed frames/sec
+static double pan_build_ema=0.0;     // smoothed node-build ms
+static double pan_fps_last=0.0;      // last frame timestamp
 
 // Solid/translucent filled rectangle.
 static void n_rect(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c) {
@@ -788,6 +802,19 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
 
   if(display_width<=0 || display_height<=1) return;
 
+  // FPS/frame-time diagnostic (MACHPSDR_FPS). This builder runs once per presented
+  // frame, so the delta between calls is the real render period.
+  if(pan_fps_show<0) pan_fps_show = getenv("MACHPSDR_FPS")!=NULL;
+  double _build_t0=0.0;
+  if(pan_fps_show) {
+    double t=pan_now_ms();
+    if(pan_fps_last>0.0) {
+      double dt=t-pan_fps_last;
+      if(dt>0.0) { double inst=1000.0/dt; pan_fps_ema = pan_fps_ema>0.0 ? pan_fps_ema*0.9+inst*0.1 : inst; }
+    }
+    pan_fps_last=t; _build_t0=t;
+  }
+
   int offset=rx->pan;
   float *samples=rx->pixel_samples;
   if(samples==NULL) return;
@@ -1289,5 +1316,15 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   if(radio->cluster_enable && radio->cluster_spots_show &&
      (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
     receiver_draw_cluster_spots_nodes(snapshot, widget, rx, display_width);
+  }
+
+  // ---- FPS / build-time readout (diagnostic, drawn on top) ----------------
+  if(pan_fps_show) {
+    char fbuf[48];
+    snprintf(fbuf,sizeof(fbuf),"FPS %.0f  build %.2fms", pan_fps_ema, pan_build_ema);
+    GdkRGBA fc=nrgba(1.0,0.9,0.2,0.95);
+    n_text(snapshot,widget,48,26,&fc,fbuf,NULL);
+    double _bt=pan_now_ms()-_build_t0;
+    pan_build_ema = pan_build_ema>0.0 ? pan_build_ema*0.9+_bt*0.1 : _bt;
   }
 }
