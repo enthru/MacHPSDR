@@ -188,13 +188,32 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   receiver_update_title(rx);
 }
 
+#ifdef DECODERS
+static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
+#endif
+
+// TRUE while an active decoder is tapping this RX's demod audio. In that case the
+// WDSP noise-reduction blocks (NR/NR2/NR3/NR4) are held OFF: they reshape the
+// waveform for the human ear and degrade machine decoding of the digital modes
+// (FT8/FT4/SSTV/WEFAX/CW). The operator's rx->nr* selection is left untouched (the
+// VFO still shows it) — only the WDSP Run flag is suppressed, so audible NR
+// returns the instant decoding stops. NB/ANF/SNB are unaffected.
+static inline gboolean nr_off_for_decode(RECEIVER *rx) {
+#ifdef DECODERS
+  return decoder_taps_audio(rx);
+#else
+  (void)rx; return FALSE;
+#endif
+}
+
 void update_noise(RECEIVER *rx) {
+  gboolean nr_off = nr_off_for_decode(rx);
   SetEXTANBRun(rx->channel, rx->nb);
   SetEXTNOBRun(rx->channel, rx->nb2);
-  SetRXAANRRun(rx->channel, rx->nr);
-  SetRXAEMNRRun(rx->channel, rx->nr2);
-  SetRXARNNRRun(rx->channel, rx->nr3);
-  SetRXASBNRRun(rx->channel, rx->nr4);
+  SetRXAANRRun(rx->channel, nr_off ? 0 : rx->nr);
+  SetRXAEMNRRun(rx->channel, nr_off ? 0 : rx->nr2);
+  SetRXARNNRRun(rx->channel, nr_off ? 0 : rx->nr3);
+  SetRXASBNRRun(rx->channel, nr_off ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);
   SetRXASBNRwhiteningFactor(rx->channel, (float)rx->nr4_whitening);
@@ -1348,6 +1367,10 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   // Guard against early calls before the WDSP channel exists (create_receiver
   // sets the gain itself).
   if(rx->channel>=0) receiver_set_volume(rx);
+  // Likewise re-evaluate the noise-reduction suppression: a mode change can take
+  // this RX into or out of a decoder-tapped mode (nr_off_for_decode), so push the
+  // NR Run flags again — held off while decoding, restored to rx->nr* otherwise.
+  if(rx->channel>=0) update_noise(rx);
 #endif
 #ifdef FT8
   // Show/hide the embedded FT8 QSO panel (and gate a second receiver) when the
@@ -2635,16 +2658,19 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetEXTANBRun(rx->channel, rx->nb);
   SetEXTNOBRun(rx->channel, rx->nb2);
 
+  // Hold NR off if a decoder is already tapping this RX at channel-init (e.g. a
+  // restored DIGU config with a decoder selected) — same rule as update_noise().
+  gboolean nr_off = nr_off_for_decode(rx);
   SetRXAEMNRPosition(rx->channel, rx->nr_agc);
   SetRXAEMNRgainMethod(rx->channel, rx->nr2_gain_method);
   SetRXAEMNRnpeMethod(rx->channel, rx->nr2_npe_method);
-  SetRXAEMNRRun(rx->channel, rx->nr2);
+  SetRXAEMNRRun(rx->channel, nr_off ? 0 : rx->nr2);
   SetRXAEMNRaeRun(rx->channel, rx->nr2_ae);
 
   SetRXAANRVals(rx->channel, 64, 16, 16e-4, 10e-7); // defaults
-  SetRXAANRRun(rx->channel, rx->nr);
-  SetRXARNNRRun(rx->channel, rx->nr3);
-  SetRXASBNRRun(rx->channel, rx->nr4);
+  SetRXAANRRun(rx->channel, nr_off ? 0 : rx->nr);
+  SetRXARNNRRun(rx->channel, nr_off ? 0 : rx->nr3);
+  SetRXASBNRRun(rx->channel, nr_off ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);
   SetRXASBNRwhiteningFactor(rx->channel, (float)rx->nr4_whitening);

@@ -1138,6 +1138,11 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   // nothing (and the waterfall would stay blank).
   if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
     receiver_set_volume(r->active_receiver);
+  // Turning a decoder on holds this RX's noise reduction off (NR distorts the
+  // waveform a decoder needs); turning it off restores the operator's NR. Only
+  // the WDSP Run flags change — rx->nr* (and the VFO NR indicator) are untouched.
+  if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
+    update_noise(r->active_receiver);
   radio_ft8_panel_sync(r);   // close the QSO panel if we left FT8/FT4
 #ifdef SSTV
   radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV

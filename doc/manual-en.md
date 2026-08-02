@@ -169,6 +169,12 @@ the current mode: **DIGU / DIGL** offers **Off / FT8 / FT4 / SSTV / WEFAX**; **N
 **Off / SSTV**. The image decoders (SSTV, WEFAX) are covered in §8; FT8/FT4 below.
 The choice is remembered between sessions.
 
+While a decoder is running, **noise reduction (NR/NR2/NR3/NR4) is automatically
+bypassed** for that receiver — the denoisers are tuned for the ear and would
+distort the waveform the decoder needs. Your NR selection stays set (the VFO
+still shows it) and takes effect again the moment you stop decoding. Noise blanker
+(NB/NB2) and the notch filters are left as you set them.
+
 MacHPSDR has a built-in FT8/FT4 engine (no external WSJT-X needed): pick **FT8** or
 **FT4** from the selector with the active receiver in **DIGU**.
 
