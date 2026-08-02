@@ -534,6 +534,82 @@ void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width) {
   dxcluster_unlock();
 }
 
+// GSK-node version of the DX-cluster overlay, for the panadapter. Mirrors the
+// cairo layout above but emits nodes (tick line, background rect, callsign text)
+// so it costs no full-window append_cairo offscreen surface + CPU raster + upload
+// per frame — the big per-frame cost on the GL renderer when the cluster is on
+// at fullscreen. The waterfall keeps the cairo version (its GpuImage overlay is
+// cairo). Uses lm_* helpers (level_meter.c) via label metrics from pango.
+static void receiver_draw_cluster_spots_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
+                                              RECEIVER *rx, int display_width) {
+  if(rx->hz_per_pixel==0.0) return;
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a - half) + (long long)((double)rx->pan*rx->hz_per_pixel);
+
+  dxcluster_lock();
+  int ns=dxcluster_count();
+  struct { double x; const DX_SPOT *s; } vis[DXCLUSTER_MAX_SPOTS];
+  int nv=0;
+  for(int i=0;i<ns;i++) {
+    const DX_SPOT *s=dxcluster_spot(i);
+    if(s==NULL) continue;
+    double x=((double)s->freq - (double)min_display)/rx->hz_per_pixel;
+    if(x<0.0 || x>(double)display_width) continue;
+    vis[nv].x=x; vis[nv].s=s; nv++;
+  }
+  for(int a=1;a<nv;a++) {
+    double kx=vis[a].x; const DX_SPOT *ks=vis[a].s; int b=a-1;
+    while(b>=0 && vis[b].x>kx) { vis[b+1]=vis[b]; b--; }
+    vis[b+1].x=kx; vis[b+1].s=ks;
+  }
+
+  double fs=(double)radio->cluster_spots_font;
+  if(fs<7.0) fs=7.0; if(fs>28.0) fs=28.0;
+  double bg_r=radio->cluster_spots_bg_r, bg_g=radio->cluster_spots_bg_g,
+         bg_b=radio->cluster_spots_bg_b, bg_a=radio->cluster_spots_bg_a;
+  #define SPOT_LABEL_ROWS 8
+  double row_right[SPOT_LABEL_ROWS];
+  for(int r=0;r<SPOT_LABEL_ROWS;r++) row_right[r]=-1e9;
+  const double row_h=fs+1.0, base_y=fs+3.0;
+  const double text_top=fs*0.80;   // approx ascent above the baseline (for tick end + bg box)
+
+  for(int a=0;a<nv;a++) {
+    double x=vis[a].x;
+    const DX_SPOT *s=vis[a].s;
+    double tw=lm_measure(widget, fs, s->call);
+
+    int row=0, bestrow=0; double best=1e18;
+    for(row=0;row<SPOT_LABEL_ROWS;row++) {
+      if(row_right[row]<best) { best=row_right[row]; bestrow=row; }
+      if(x > row_right[row]+3.0) break;
+    }
+    if(row>=SPOT_LABEL_ROWS) row=bestrow;
+    double ty=base_y + row*row_h;
+    row_right[row]=x+tw+2.0;
+
+    double sr,sg,sb,sa;
+    if(radio->cluster_spots_fg_dxcc) {
+      cluster_spot_rgb(s->entity,&sr,&sg,&sb); sa=0.95;
+    } else {
+      sr=radio->cluster_spots_fg_r; sg=radio->cluster_spots_fg_g;
+      sb=radio->cluster_spots_fg_b; sa=radio->cluster_spots_fg_a;
+    }
+    // tick from the top down to the top of this spot's own label row
+    GdkRGBA tick=nrgba(sr,sg,sb,sa*0.95);
+    lm_line(snapshot, x, 0.0, x, ty-text_top, 1.0, &tick);
+    // background box behind the callsign
+    if(bg_a>0.0) {
+      GdkRGBA bg=nrgba(bg_r,bg_g,bg_b,bg_a);
+      lm_fill(snapshot, x+2.0-1.0, ty-text_top-1.0, tw+2.0, fs+2.0, &bg);
+    }
+    // callsign text
+    GdkRGBA txt=nrgba(sr,sg,sb,sa);
+    lm_text(snapshot, widget, x+2.0, ty, fs, &txt, s->call, FALSE);
+  }
+  #undef SPOT_LABEL_ROWS
+  dxcluster_unlock();
+}
+
 static gboolean first_time=TRUE;
 
 // Phosphor / "digital phosphor" persistence heatmap. EMA occupancy per cell (the
@@ -1209,11 +1285,9 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     gsk_path_unref(p);
   }
 
-  // ---- DX cluster spot overlay (shared cairo impl via a small cairo node) --
+  // ---- DX cluster spot overlay (GSK nodes — no full-window append_cairo) ----
   if(radio->cluster_enable && radio->cluster_spots_show &&
      (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
-    cairo_t *cr=gtk_snapshot_append_cairo(snapshot,&full);
-    receiver_draw_cluster_spots(cr, rx, display_width);
-    cairo_destroy(cr);
+    receiver_draw_cluster_spots_nodes(snapshot, widget, rx, display_width);
   }
 }
