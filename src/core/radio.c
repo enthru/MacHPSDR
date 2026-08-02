@@ -1324,6 +1324,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) { strncpy(r->cluster_login,value,sizeof(r->cluster_login)-1); r->cluster_login[sizeof(r->cluster_login)-1]='\0'; }
   value=getProperty("radio.cluster_spots_font");
   if(value!=NULL) r->cluster_spots_font=atoi(value);
+  value=getProperty("radio.cluster_spots_on");
+  if(value!=NULL) r->cluster_spots_on=atoi(value);
   value=getProperty("radio.cluster_spots_bg_r");
   if(value!=NULL) r->cluster_spots_bg_r=atof(value);
   value=getProperty("radio.cluster_spots_bg_g");
@@ -2364,6 +2366,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->cluster_port = 7373;
   r->cluster_login[0] = '\0';
   r->cluster_spots_font = 10;
+  r->cluster_spots_on = 0;       // default: panadapter (existing behaviour)
   r->cluster_spots_bg_r = 0.0;   // default: opaque black behind the callsign
   r->cluster_spots_bg_g = 0.0;
   r->cluster_spots_bg_b = 0.0;

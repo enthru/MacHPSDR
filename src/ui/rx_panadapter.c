@@ -341,6 +341,87 @@ static void cluster_spot_rgb(int entity, double *r, double *g, double *b) {
   *r=r1+m; *g=g1+m; *b=b1+m;
 }
 
+// Row-packed DX-cluster spot overlay, shared by the panadapter surface and the
+// waterfall's cairo overlay. min_display is recomputed from rx so the same
+// absolute-RF -> x mapping the trace uses applies on either widget; font size +
+// label background colour come from the persisted RADIO settings.
+void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width) {
+  if(rx->hz_per_pixel==0.0) return;
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a - half) + (long long)((double)rx->pan*rx->hz_per_pixel);
+
+  dxcluster_lock();
+  int ns=dxcluster_count();
+
+  // Collect the in-span spots and sort them left-to-right so callsign labels can
+  // be packed into stacked rows deterministically. Without this, several spots
+  // at nearly the same frequency (a pileup, or an FT8 watering hole) overprint
+  // their labels at one y and smear into an unreadable blob.
+  struct { double x; const DX_SPOT *s; } vis[DXCLUSTER_MAX_SPOTS];
+  int nv=0;
+  for(int i=0;i<ns;i++) {
+    const DX_SPOT *s=dxcluster_spot(i);
+    if(s==NULL) continue;
+    double x=((double)s->freq - (double)min_display)/rx->hz_per_pixel;
+    if(x<0.0 || x>(double)display_width) continue;
+    vis[nv].x=x; vis[nv].s=s; nv++;
+  }
+  for(int a=1;a<nv;a++) {                       // insertion sort by x
+    double kx=vis[a].x; const DX_SPOT *ks=vis[a].s; int b=a-1;
+    while(b>=0 && vis[b].x>kx) { vis[b+1]=vis[b]; b--; }
+    vis[b+1].x=kx; vis[b+1].s=ks;
+  }
+
+  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  double fs=(double)radio->cluster_spots_font;
+  if(fs<7.0) fs=7.0; if(fs>28.0) fs=28.0;       // clamp to a sane range
+  cairo_set_font_size(cr, fs);
+  double bg_r=radio->cluster_spots_bg_r, bg_g=radio->cluster_spots_bg_g,
+         bg_b=radio->cluster_spots_bg_b, bg_a=radio->cluster_spots_bg_a;
+  #define SPOT_LABEL_ROWS 8
+  double row_right[SPOT_LABEL_ROWS];
+  for(int r=0;r<SPOT_LABEL_ROWS;r++) row_right[r]=-1e9;
+  const double row_h=fs+1.0, base_y=fs+3.0;
+
+  for(int a=0;a<nv;a++) {
+    double x=vis[a].x;
+    const DX_SPOT *s=vis[a].s;
+    cairo_text_extents_t te;
+    cairo_text_extents(cr, s->call, &te);
+
+    int row=0, bestrow=0; double best=1e18;
+    for(row=0;row<SPOT_LABEL_ROWS;row++) {
+      if(row_right[row]<best) { best=row_right[row]; bestrow=row; }
+      if(x > row_right[row]+3.0) break;
+    }
+    if(row>=SPOT_LABEL_ROWS) row=bestrow;       // all rows busy: least-bad
+    double ty=base_y + row*row_h;
+    row_right[row]=x+te.width+2.0;
+
+    double sr,sg,sb;
+    cluster_spot_rgb(s->entity,&sr,&sg,&sb);
+    // tick reaching down to this spot's own label row
+    cairo_set_source_rgba(cr, sr, sg, sb, 0.9);
+    cairo_set_line_width(cr, 1.0);
+    cairo_move_to(cr, x, 0.0);
+    cairo_line_to(cr, x, ty+te.y_bearing);
+    cairo_stroke(cr);
+    // background box behind the callsign (skip if fully transparent)
+    if(bg_a>0.0) {
+      cairo_set_source_rgba(cr, bg_r, bg_g, bg_b, bg_a);
+      cairo_rectangle(cr, x+2.0+te.x_bearing-1.0, ty+te.y_bearing-1.0,
+                      te.width+2.0, te.height+2.0);
+      cairo_fill(cr);
+    }
+    // callsign text on top
+    cairo_set_source_rgba(cr, sr, sg, sb, 0.95);
+    cairo_move_to(cr, x+2.0, ty);
+    cairo_show_text(cr, s->call);
+  }
+  #undef SPOT_LABEL_ROWS
+  dxcluster_unlock();
+}
+
 void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   int i;
   int x1,x2;
@@ -754,85 +835,12 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     }
 #endif
 
-    // DX cluster spot overlay: a short tick + callsign for each spot whose RF
-    // falls in the visible span, colour-keyed by DXCC entity. Click-to-tune
-    // hit-testing against these spots lives in receiver.c (receiver_pressed_cb).
-    if(radio->cluster_enable && radio->cluster_spots_show) {
-      dxcluster_lock();
-      int ns=dxcluster_count();
-
-      // Collect the in-span spots and sort them left-to-right so callsign labels
-      // can be packed into stacked rows deterministically. Without this, several
-      // spots at nearly the same frequency (a pileup, or an FT8 watering hole)
-      // overprint their labels at one y and smear into an unreadable blob.
-      struct { double x; const DX_SPOT *s; } vis[DXCLUSTER_MAX_SPOTS];
-      int nv=0;
-      for(i=0;i<ns;i++) {
-        const DX_SPOT *s=dxcluster_spot(i);
-        if(s==NULL) continue;
-        double x=((double)s->freq - (double)min_display)/rx->hz_per_pixel;
-        if(x<0.0 || x>(double)display_width) continue;
-        vis[nv].x=x; vis[nv].s=s; nv++;
-      }
-      for(int a=1;a<nv;a++) {                       // insertion sort by x
-        double kx=vis[a].x; const DX_SPOT *ks=vis[a].s; int b=a-1;
-        while(b>=0 && vis[b].x>kx) { vis[b+1]=vis[b]; b--; }
-        vis[b+1].x=kx; vis[b+1].s=ks;
-      }
-
-      // Row-pack the labels: each row remembers the right edge of its last label;
-      // a spot takes the first row that clears it, else the least-full row. Font
-      // size + label background colour are operator-configurable (Configure ->
-      // Network); the background is drawn behind each callsign so it stays
-      // readable over the trace.
-      double fs=(double)radio->cluster_spots_font;
-      if(fs<7.0) fs=7.0; if(fs>28.0) fs=28.0;       // clamp to a sane range
-      cairo_set_font_size(cr, fs);
-      double bg_r=radio->cluster_spots_bg_r, bg_g=radio->cluster_spots_bg_g,
-             bg_b=radio->cluster_spots_bg_b, bg_a=radio->cluster_spots_bg_a;
-      #define SPOT_LABEL_ROWS 8
-      double row_right[SPOT_LABEL_ROWS];
-      for(int r=0;r<SPOT_LABEL_ROWS;r++) row_right[r]=-1e9;
-      const double row_h=fs+1.0, base_y=fs+3.0;
-
-      for(int a=0;a<nv;a++) {
-        double x=vis[a].x;
-        const DX_SPOT *s=vis[a].s;
-        cairo_text_extents_t te;
-        cairo_text_extents(cr, s->call, &te);
-
-        int row=0, bestrow=0; double best=1e18;
-        for(row=0;row<SPOT_LABEL_ROWS;row++) {
-          if(row_right[row]<best) { best=row_right[row]; bestrow=row; }
-          if(x > row_right[row]+3.0) break;
-        }
-        if(row>=SPOT_LABEL_ROWS) row=bestrow;       // all rows busy: least-bad
-        double ty=base_y + row*row_h;
-        row_right[row]=x+te.width+2.0;
-
-        double sr,sg,sb;
-        cluster_spot_rgb(s->entity,&sr,&sg,&sb);
-        // tick reaching down to this spot's own label row
-        cairo_set_source_rgba(cr, sr, sg, sb, 0.9);
-        cairo_set_line_width(cr, 1.0);
-        cairo_move_to(cr, x, 0.0);
-        cairo_line_to(cr, x, ty+te.y_bearing);
-        cairo_stroke(cr);
-        // background box behind the callsign (skip if fully transparent)
-        if(bg_a>0.0) {
-          cairo_set_source_rgba(cr, bg_r, bg_g, bg_b, bg_a);
-          cairo_rectangle(cr, x+2.0+te.x_bearing-1.0, ty+te.y_bearing-1.0,
-                          te.width+2.0, te.height+2.0);
-          cairo_fill(cr);
-        }
-        // callsign text on top
-        cairo_set_source_rgba(cr, sr, sg, sb, 0.95);
-        cairo_move_to(cr, x+2.0, ty);
-        cairo_show_text(cr, s->call);
-      }
-      #undef SPOT_LABEL_ROWS
-      cairo_set_font_size(cr, 12);                  // restore panadapter default
-      dxcluster_unlock();
+    // DX cluster spot overlay (shared with the waterfall): a short tick +
+    // callsign for each in-span spot, colour-keyed by DXCC entity. Drawn here on
+    // the panadapter when cluster_spots_on is 0 (panadapter) or 2 (both).
+    if(radio->cluster_enable && radio->cluster_spots_show &&
+       (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
+      receiver_draw_cluster_spots(cr, rx, display_width);
     }
 
     // I/Q Player readout: while the fake device is looping a recording, print the

@@ -176,6 +176,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.cluster_login",radio->cluster_login);
   sprintf(value,"%d",radio->cluster_spots_font);
   setProperty("radio.cluster_spots_font",value);
+  sprintf(value,"%d",radio->cluster_spots_on);
+  setProperty("radio.cluster_spots_on",value);
   sprintf(value,"%f",radio->cluster_spots_bg_r);
   setProperty("radio.cluster_spots_bg_r",value);
   sprintf(value,"%f",radio->cluster_spots_bg_g);

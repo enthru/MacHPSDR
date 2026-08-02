@@ -32,6 +32,7 @@
 #include "waterfall.h"
 #include "waterfall_theme.h"
 #include "gpu_image.h"
+#include "rx_panadapter.h"
 #include "main.h"
 
 static int colorLowR=0; // black
@@ -134,6 +135,13 @@ static void waterfall_overlay_cb(cairo_t *cr,int cwidth,int cheight,gpointer dat
     cairo_move_to(cr, centre, 0.0);
     cairo_line_to(cr, centre, height);
     cairo_stroke(cr);
+
+    // DX-cluster spots on the waterfall (top edge = newest), when the operator
+    // routed them here: cluster_spots_on 1 (waterfall) or 2 (both).
+    if(radio->cluster_enable && radio->cluster_spots_show &&
+       (radio->cluster_spots_on==1 || radio->cluster_spots_on==2)) {
+      receiver_draw_cluster_spots(cr, rx, cwidth);
+    }
   }
 }
 

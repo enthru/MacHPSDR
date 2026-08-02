@@ -141,6 +141,7 @@ typedef struct _radio {
   gint     cluster_port;
   char     cluster_login[16];   // login call (empty => use station_call)
   gint     cluster_spots_font;  // spot-label font size in px (overlay)
+  gint     cluster_spots_on;    // where to draw: 0=panadapter, 1=waterfall, 2=both
   // spot-label background colour (drawn behind each callsign so it stays
   // readable over the trace); RGBA as 4 doubles to keep GdkRGBA out of radio.h
   double   cluster_spots_bg_r, cluster_spots_bg_g, cluster_spots_bg_b, cluster_spots_bg_a;
