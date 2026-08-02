@@ -51,6 +51,14 @@ void SetColour(cairo_t *cr, const int colour) {
   cairo_set_source_rgb(cr,r,g,b);
 }
 
+// Same skin-palette lookup as SetColour(), but returned as a GdkRGBA for the
+// GSK render-node code paths (panadapters) that no longer use a cairo_t.
+GdkRGBA skin_rgba(const int colour, const double alpha) {
+  const char *name; double r,g,b;
+  skin_colour(colour,&name,&r,&g,&b);
+  return (GdkRGBA){(float)r,(float)g,(float)b,(float)alpha};
+}
+
 void set_stop_pattern(cairo_pattern_t *pat, const int colour, const double pc) {
   const char *name; double r,g,b;
   skin_colour(colour,&name,&r,&g,&b);

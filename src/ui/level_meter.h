@@ -21,6 +21,9 @@ extern gboolean level_meter_draw(cairo_t *cr, double x, int width, int height, c
 
 extern void SetColour(cairo_t *cr, const int colour);
 
+// Skin-palette colour as a GdkRGBA (for GSK render-node code that has no cairo_t).
+extern GdkRGBA skin_rgba(const int colour, const double alpha);
+
 enum {
   BACKGROUND=0,
   OFF_WHITE=1,

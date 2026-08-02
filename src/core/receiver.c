@@ -2098,7 +2098,14 @@ void receiver_init_analyzer(RECEIVER *rx) {
   // regardless of zoom. Only allocate once the widget is actually sized; a
   // later resize_timeout re-runs receiver_init_analyzer() and reallocs.
   if(rx->panadapter_width>0 && rx->panadapter_height>0) {
-    rx->panadapter_histogram_bins=g_new0(float,rx->panadapter_width*rx->panadapter_height);
+    // Phosphor accumulates at HALF resolution; the GPU upscales the texture with
+    // a linear filter at draw time. The occupancy cloud is soft, so half-res is
+    // visually ~indistinguishable while the two O(area) CPU loops (decay +
+    // colour-map, in update_rx_panadapter) do 1/4 the work — matters maximised.
+    // _w/_h stay the FULL widget dims (the resize guard compares against them);
+    // the half dims are derived as (_w+1)/2 x (_h+1)/2 everywhere.
+    int hw=(rx->panadapter_width+1)/2, hh=(rx->panadapter_height+1)/2;
+    rx->panadapter_histogram_bins=g_new0(float,hw*hh);
     rx->panadapter_histogram_w=rx->panadapter_width;
     rx->panadapter_histogram_h=rx->panadapter_height;
   }

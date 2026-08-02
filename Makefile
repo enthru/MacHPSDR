@@ -410,6 +410,7 @@ wideband_panadapter.o\
 wideband_waterfall.o\
 waterfall.o\
 gpu_image.o\
+pana_view.o\
 protocol1.o\
 fake_protocol.o\
 protocol2.o\

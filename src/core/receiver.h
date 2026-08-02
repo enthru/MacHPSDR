@@ -245,7 +245,8 @@ typedef struct _receiver {
   gint panadapter_resize_width;
   gint panadapter_resize_height;
   guint panadapter_resize_timer;
-  cairo_surface_t *panadapter_surface;
+  cairo_surface_t *panadapter_surface;   // legacy: no longer allocated (GSK render-node path); kept NULL
+  gboolean pan_running;                  // last protocol "running" state, published by the fps timer for the snapshot builder
 
   gint panadapter_low;
   gint panadapter_high;
