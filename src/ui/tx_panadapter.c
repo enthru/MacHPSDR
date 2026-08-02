@@ -17,10 +17,18 @@
 *
 */
 
+/*
+ * TX "monitor" panadapter — GPU-rendered via GSK render nodes (PanaView),
+ * matching the RX panadapter.  update_tx_panadapter() keeps the one piece of
+ * per-frame STATE (the SWR exponential average) and queues a redraw; the
+ * tx_pana_build() snapshot builder emits the nodes.
+ */
+
 #include <gtk/gtk.h>
 #include "log.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "mode.h"
 #include "discovered.h"
@@ -38,25 +46,74 @@
 #include "configure_dialog.h"
 #include "css.h"
 #include "main.h"
+#include "pana_view.h"
 
-// Set the Cairo source to a skin palette color (fallback if the name is absent).
-static void txpan_rgb(cairo_t *cr, const char *name, double r, double g, double b) {
-  css_rgb(name,&r,&g,&b);
-  cairo_set_source_rgb(cr,r,g,b);
-}
-
-// Draw text so its RIGHT edge sits at right_x (baseline at y). Used for the
-// W/SWR/ALC readouts so an extra digit (e.g. ALC >= 10 dB) grows the text
-// leftward instead of pushing the trailing "dB" off the right edge of the pane.
-static void txpan_text_right(cairo_t *cr, double right_x, double y, const char *s) {
-  cairo_text_extents_t ext;
-  cairo_text_extents(cr, s, &ext);
-  cairo_move_to(cr, right_x - ext.width - ext.x_bearing, y);
-  cairo_show_text(cr, s);
-}
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
 #endif
+
+// ---- GSK render-node helpers (skin colour + rect/line/text) ----------------
+static GdkRGBA txn_css(const char *name,double r,double g,double b,double a) {
+  css_rgb(name,&r,&g,&b); return (GdkRGBA){(float)r,(float)g,(float)b,(float)a};
+}
+static void txn_rect(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c) {
+  if(w<=0.0||h<=0.0) return;
+  graphene_rect_t r=GRAPHENE_RECT_INIT((float)x,(float)y,(float)w,(float)h);
+  gtk_snapshot_append_color(s,c,&r);
+}
+static void txn_line(GtkSnapshot *s,double x1,double y1,double x2,double y2,double lw,const GdkRGBA *c) {
+  GskPathBuilder *b=gsk_path_builder_new();
+  gsk_path_builder_move_to(b,(float)x1,(float)y1);
+  gsk_path_builder_line_to(b,(float)x2,(float)y2);
+  GskPath *p=gsk_path_builder_free_to_path(b);
+  GskStroke *st=gsk_stroke_new((float)lw);
+  gtk_snapshot_append_stroke(s,p,st,c);
+  gsk_stroke_free(st); gsk_path_unref(p);
+}
+static PangoLayout *txn_layout(GtkWidget *w,double size,const char *txt) {
+  PangoLayout *l=gtk_widget_create_pango_layout(w,txt);
+  PangoFontDescription *fd=pango_font_description_new();
+  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
+  pango_layout_set_font_description(l,fd);
+  pango_font_description_free(fd);
+  return l;
+}
+// text with BASELINE at (x, base_y) — matches cairo move_to+show_text.
+static void txn_text(GtkSnapshot *s,GtkWidget *w,double x,double base_y,double size,const GdkRGBA *c,const char *txt) {
+  PangoLayout *l=txn_layout(w,size,txt);
+  double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)x,(float)top);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+  g_object_unref(l);
+}
+// text with its TOP-LEFT at (x, top_y) — used for the frequency so tall digits
+// are not clipped by the top edge.
+static void txn_text_top(GtkSnapshot *s,GtkWidget *w,double x,double top_y,double size,const GdkRGBA *c,const char *txt) {
+  PangoLayout *l=txn_layout(w,size,txt);
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)x,(float)top_y);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+  g_object_unref(l);
+}
+// text whose RIGHT edge sits at right_x (baseline at base_y). Used for the
+// W/SWR/ALC readouts so an extra digit grows the text leftward.
+static void txn_text_right(GtkSnapshot *s,GtkWidget *w,double right_x,double base_y,double size,const GdkRGBA *c,const char *txt) {
+  PangoLayout *l=txn_layout(w,size,txt);
+  int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
+  double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)(right_x-(double)pw),(float)top);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+  g_object_unref(l);
+}
 
 // GTK4: GtkGestureClick "pressed" handler. The button is read from the gesture.
 static void transmitter_pressed_cb(GtkGestureClick *gesture,int n_press,double x,double y,gpointer data) {
@@ -76,50 +133,24 @@ static void transmitter_pressed_cb(GtkGestureClick *gesture,int n_press,double x
 }
 
 void update_tx_panadapter(RADIO *r);
+static void tx_pana_build(GtkSnapshot *snapshot, int width, int height, gpointer data);
 
-// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
-static void tx_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
+// PanaView "resize" signal (same signature as the old GtkDrawingArea one).
+static void tx_panadapter_resize_cb(GtkWidget *area,int width,int height,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   tx->panadapter_width=width;
   tx->panadapter_height=height;
   if(tx->panadapter_width>1 && tx->panadapter_height>1) {
-  if(tx->panadapter_surface) {
-    cairo_surface_destroy(tx->panadapter_surface);
-  }
-  log_info("tx_panadapter_resize: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
-  /* The analyzer is zoomed onto the TX_MONITOR_SPAN_HZ window (see
-     transmitter_init_analyzer), so one pixel per screen column suffices — the
-     whole pixel budget lands inside the visible window. (Previously pixels was
-     width*3/width*12 across the full span and the draw cropped the centre.) */
-  tx->pixels=tx->panadapter_width;
-  if(tx->panadapter!=NULL) {
-    // GTK4: off-screen image surface (no GdkWindow to back a similar surface).
-    tx->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
-                                       tx->panadapter_width,
-                                       tx->panadapter_height);
-    cairo_t *cr;
-    cr = cairo_create (tx->panadapter_surface);
-    txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
-    cairo_paint (cr);
-    cairo_destroy(cr);
-    transmitter_init_analyzer(tx);
-    /* The surface was just recreated blank. The periodic RX-loop refresh is
-       gated on !tx->updated, which is only reset in the Soapy path — so on
-       non-Soapy devices (e.g. fake) it would stay blank until MOX/freq change.
-       Repaint now so every resize refreshes immediately. */
-    update_tx_panadapter(radio);
-  }
-  }
-}
-
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void tx_panadapter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpointer data) {
-  TRANSMITTER *tx=(TRANSMITTER *)data;
-  txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
-  cairo_paint(cr);
-  if(tx->panadapter_surface!=NULL) {
-    cairo_set_source_surface (cr, tx->panadapter_surface, 0.0, 0.0);
-    cairo_paint (cr);
+    log_info("tx_panadapter_resize: width=%d height=%d\n",tx->panadapter_width,tx->panadapter_height);
+    /* The analyzer is zoomed onto the TX_MONITOR_SPAN_HZ window, so one pixel per
+       screen column suffices — the whole pixel budget lands inside the window. */
+    tx->pixels=tx->panadapter_width;
+    if(tx->panadapter!=NULL) {
+      transmitter_init_analyzer(tx);
+      /* Repaint now so every resize refreshes immediately (the periodic RX-loop
+         refresh is gated on !tx->updated, only reset in the Soapy path). */
+      update_tx_panadapter(radio);
+    }
   }
 }
 
@@ -128,10 +159,9 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
   tx->panadapter_width=0;
   tx->panadapter_height=0;
   tx->panadapter_surface=NULL;
-  tx->panadapter=gtk_drawing_area_new();
+  tx->panadapter=pana_view_new(tx_pana_build,(gpointer)tx);
   gtk_widget_set_size_request(tx->panadapter, 300, 120);
 
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(tx->panadapter),tx_panadapter_draw_cb,(gpointer)tx,NULL);
   g_signal_connect(tx->panadapter,"resize",G_CALLBACK(tx_panadapter_resize_cb),(gpointer)tx);
 
   // GTK4: click via a gesture controller (button masks are gone).
@@ -143,249 +173,163 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
   return tx->panadapter;
 }
 
+// Per-frame STATE (fps timer / event callers): update the SWR exponential
+// average while transmitting, then queue a redraw. All drawing is in tx_pana_build.
 void update_tx_panadapter(RADIO *r) {
   TRANSMITTER *tx=r->transmitter;
-  int width=gtk_widget_get_width(tx->panadapter);
-  int height=gtk_widget_get_height(tx->panadapter);
+  if(tx==NULL || tx->panadapter==NULL) return;
+
+  if(isTransmitting(radio) && tx->fwd > 1E-1) {
+    double reflection_coefficient = sqrt(tx->rev/tx->fwd);
+    double this_swr;
+    if (1 - reflection_coefficient == 0.0) this_swr = 9999.9;
+    else this_swr = (1 + reflection_coefficient) / (1 - reflection_coefficient);
+    if (this_swr < 0.0) this_swr=1.0;
+    double alpha = 0.7;                 // exponential moving average
+    tx->swr = (alpha * this_swr) + (1 - alpha) * tx->swr;
+  }
+
+  tx->updated=TRUE;
+  gtk_widget_queue_draw(tx->panadapter);
+}
+
+// Snapshot builder: emit the whole TX monitor scene as GSK nodes.
+static void tx_pana_build(GtkSnapshot *snapshot, int width, int height, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  GtkWidget *widget=tx->panadapter;
+  if(width<=0 || height<=1) return;
+
   float *samples=tx->pixel_samples;
-  /* Screen scale follows the fixed monitor span (the analyzer is zoomed onto it),
-     so the filter overlay/grid stay consistent with the signal trace below. */
   double hz_per_pixel=TX_MONITOR_SPAN_HZ/(double)(width>0?width:1);
   char text[32];
   int i;
 
-  if(tx->panadapter_surface!=NULL) {
-    cairo_t *cr;
-    cr = cairo_create (tx->panadapter_surface);
-    cairo_set_line_width(cr, 1.0);
+  // background
+  GdkRGBA surf=txn_css("SURFACE",0.16,0.16,0.19,1.0);
+  txn_rect(snapshot,0,0,width,height,&surf);
 
-    txpan_rgb(cr,"SURFACE",0.16,0.16,0.19);
-    //cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,height);
-    //cairo_pattern_add_color_stop_rgba(pat,1.0,0.1,0.1,0.1,0.5);
-    //cairo_pattern_add_color_stop_rgba(pat,0.0,0.5,0.5,0.5,0.5);
-    cairo_rectangle(cr, 0,0,width,height);
-    //cairo_set_source (cr, pat);
-    cairo_fill(cr);
-    //cairo_pattern_destroy(pat);
+  double dbm_per_line=(double)height/((double)tx->panadapter_high-(double)tx->panadapter_low);
+  GdkRGBA body=txn_css("OFF_WHITE",0.9,0.9,0.9,1.0);   // labels, follow the skin
 
-    double dbm_per_line=(double)height/((double)tx->panadapter_high-(double)tx->panadapter_low);
+  // filter passband
+  GdkRGBA filt=(GdkRGBA){0.5f,0.5f,0.5f,0.75f};
+  double filter_left=(double)width/2.0+((double)tx->actual_filter_low/hz_per_pixel);
+  double filter_right=(double)width/2.0+((double)tx->actual_filter_high/hz_per_pixel);
+  txn_rect(snapshot,filter_left,20.0,filter_right-filter_left,(double)height-20.0,&filt);
 
-    txpan_rgb(cr,"OFF_WHITE",0.9,0.9,0.9);   // body text, follows the skin (readable on SURFACE)
-    cairo_set_line_width(cr, 1.0);
-    cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 12);   // levels (dBm scale) -15%
-    char v[32];
-
-    // filter
-    cairo_set_source_rgba (cr, 0.5, 0.5, 0.5, 0.75);
-    double filter_left=(double)width/2.0+((double)tx->actual_filter_low/hz_per_pixel);
-    double filter_right=(double)width/2.0+((double)tx->actual_filter_high/hz_per_pixel);
-    cairo_rectangle(cr, filter_left, 20.0, filter_right-filter_left, (double)height-20.0);
-    cairo_fill(cr);
-
-    // levels
+  // dBm level graticule + labels
+  {
+    GskPathBuilder *b=gsk_path_builder_new();
+    gboolean any=FALSE;
     for(i=tx->panadapter_high;i>=tx->panadapter_low;i--) {
-      int mod=abs(i)%20;
-      if(mod==0) {
-        double y = (double)(tx->panadapter_high-i)*dbm_per_line;
-        cairo_move_to(cr,0.0,y);
-        cairo_line_to(cr,(double)width,y);
-  
-        sprintf(v,"%d dBm",i);
-        cairo_move_to(cr, 1, y-4);   // lift the label clear of the graticule line
-        cairo_show_text(cr, v);
+      if(abs(i)%20==0) {
+        double y=(double)(tx->panadapter_high-i)*dbm_per_line;
+        gsk_path_builder_move_to(b,0.0f,(float)y);
+        gsk_path_builder_line_to(b,(float)width,(float)y);
+        any=TRUE;
+        sprintf(text,"%d dBm",i);
+        txn_text(snapshot,widget,1,y-4,12,&body,text);
       }
     }
-    cairo_stroke(cr);
-
-    // cursor
-    SetColour(cr, TEXT_A);
-    cairo_set_line_width(cr, 1.0);
-    cairo_move_to(cr,(double)(width/2.0),20.0);
-    cairo_line_to(cr,(double)(width/2.0),(double)height);
-    cairo_stroke(cr);
-
-    if(tx->rx->mode_a==CWU || tx->rx->mode_a==CWL) {
-      SetColour(cr, TEXT_B);
-      double cw_frequency=filter_left+((filter_right-filter_left)/2.0);
-      cairo_move_to(cr,cw_frequency,20.0);
-      cairo_line_to(cr,cw_frequency,(double)height);
-      cairo_stroke(cr);
-    }
-    
-    // signal
-    if(isTransmitting(radio)) {
-/*
-      int offset=tx->pixels/3;
-      if(radio->discovered->protocol==PROTOCOL_2) {
-        offset=(tx->pixels/24)*11;
-      }
-*/
-      /* The analyzer already produced tx->pixels bins spanning exactly the
-         TX_MONITOR_SPAN_HZ window (carrier-centred), so map the pixel array
-         straight onto the screen columns. Linearly interpolate the fractional
-         position so it stays smooth even if the widget was resized since the
-         analyzer was last configured (tx->pixels != width). */
-      int np=tx->pixels;
-      if(np<2) np=2;
-      /* Tie the trace ends to the graph floor (cosmetic, as before). */
-      samples[0]=-200.0;
-      samples[np-1]=-200.0;
-
-      double span_den=(width>1)?(double)(width-1):1.0;
-      for(i=0;i<width;i++) {
-        double fidx=(double)i*(double)(np-1)/span_den;
-        int i0=(int)floor(fidx);
-        if(i0<0) i0=0;
-        if(i0>np-2) i0=np-2;
-        double frac=fidx-(double)i0;
-        double v=(double)samples[i0]*(1.0-frac)+(double)samples[i0+1]*frac;
-        double y=floor((tx->panadapter_high - v)
-                            * (double)height
-                            / (tx->panadapter_high - tx->panadapter_low));
-        if(i==0) cairo_move_to(cr, 0.0, y);
-        else     cairo_line_to(cr, (double)i, y);
-      }
-
-      /*
-      if(radio->display_filled) {
-        cairo_close_path (cr);
-        cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,height);
-        //cairo_pattern_add_color_stop_rgba(pat,1.0,0.1,0.0,0.0,0.5);
-        //cairo_pattern_add_color_stop_rgba(pat,0.0,0.5,0.0,0.0,0.5);
-        
-        cairo_set_source (cr, pat);
-        cairo_fill_preserve(cr);
-        cairo_pattern_destroy(pat);
-      }
-      */
-      
-      SetColour(cr, BACKGROUND);
-      cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-      cairo_set_line_width(cr, 1.0);
-      cairo_stroke(cr);
-      
-      cairo_set_font_size(cr, 16);
-      // Right-align the readouts to the pane edge so a wider value (e.g. two
-      // digits of W, SWR or ALC) grows leftward instead of clipping on the right.
-      double readout_right=(double)width-4.0;
-
-      SetColour(cr, TEXT_A);
-      sprintf(text,"%.1f W",tx->fwd);
-      txpan_text_right(cr, readout_right, 34, text);
-  
-      // Won't show SWR if power out is less than
-      // 100 mW, potentially improve this in the future?
-      if (tx->fwd > 1E-1) {
-         double this_swr;
-         double reflection_coefficient = sqrt(tx->rev/tx->fwd);
-         if (1 - reflection_coefficient == 0.0) {
-           this_swr = 9999.9;
-         }
-         else {
-           this_swr = (1 + reflection_coefficient) / (1 - reflection_coefficient);
-         }
-        if (this_swr < 0.0) this_swr=1.0;
-        
-        // Exponential moving average filter
-        double alpha = 0.7;
-        tx->swr = (alpha * this_swr) + (1 - alpha) * tx->swr;
-        
-        sprintf(text,"SWR: %1.1f:1", tx->swr);
-        txpan_text_right(cr, readout_right, 56, text);
-      }
-  
-      if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
-        sprintf(text,"ALC: %2.1f dB",tx->alc);
-        txpan_text_right(cr, readout_right, 80, text);
-      }
-
-      if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
-        if(tx->leveler) {
-          sprintf(text,"LVL: %2.1f dB",tx->lvlr_gain);
-          txpan_text_right(cr, readout_right, 104, text);
-        }
-        if(tx->cfc_run) {
-          sprintf(text,"CFC: %2.1f dB",tx->cfc_gain);
-          txpan_text_right(cr, readout_right, 128, text);
-        }
-        if(tx->compressor) {
-          sprintf(text,"COMP: %2.1f dB",tx->comp_pk);
-          txpan_text_right(cr, readout_right, 152, text);
-        }
-      }
-    }
-
-    // frequency
-    if(tx->rx!=NULL) {
-      long long f=tx->rx->frequency_a+tx->rx->ctun_offset-tx->rx->lo_tx;
-      if(tx->rx->split) {
-        f=tx->rx->frequency_b;
-      }
-      char temp[32];
-      sprintf(temp,"%5lld.%03lld.%03lld",f/(long long)1000000,(f%(long long)1000000)/(long long)1000,f%(long long)1000);
-      if(isTransmitting(radio)) {
-        SetColour(cr, WARNING);
-      } else {
-        if(tx->rx->split) {
-          SetColour(cr, TEXT_A);
-        } else {
-          SetColour(cr, TEXT_B);          
-        }
-      }
-      cairo_set_font_size(cr, 21);   // frequency
-      // Place the baseline at the font ascent (+1 px) so the tall digits aren't
-      // clipped by the top edge (a fixed baseline of 15 cut the ascenders off).
-      cairo_font_extents_t ffe;
-      cairo_font_extents(cr, &ffe);
-      cairo_move_to(cr,((double)width/2.0)+2.0, ffe.ascent+1.0);
-      cairo_show_text(cr, temp);
-    }
-    
-    if(radio->discovered->device==DEVICE_HERMES_LITE2) {   
-      cairo_set_font_size(cr, 12);       
-      SetColour(cr, TEXT_A);
-      sprintf(text,"%2.0f degC",tx->temperature);
-      cairo_move_to(cr, 220, height-8);
-      cairo_show_text(cr, text);
-    }
-#ifdef SOAPYSDR
-    if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {   
-      if(radio->discovered->info.soapy.has_temp) {
-        cairo_set_font_size(cr, 12);       
-        SetColour(cr, TEXT_A);
-        int y=height-40;
-        for (size_t i = 0; i < radio->discovered->info.soapy.sensors; i++) {
-          if(strstr(radio->discovered->info.soapy.sensor[i],"temp")!=NULL) {
-            char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[i]);
-            int v=(int)atof(value);
-            if(strcmp(radio->discovered->info.soapy.sensor[i],"xadc_temp0")==0) {
-              sprintf(text,"zynq = %dC",v);
-            } else if(strcmp(radio->discovered->info.soapy.sensor[i],"ad9361-phy_temp0")==0) {
-              sprintf(text,"pluto = %dC",v);
-            } else {
-              sprintf(text,"%s = %dC",radio->discovered->info.soapy.sensor[i],v);;
-            }
-            cairo_move_to(cr, width-(width/4), y);
-            cairo_show_text(cr, text);
-            y+=15;
-          } else if(strcmp(radio->discovered->info.soapy.sensor[i],"adm1177_voltage0")==0) {
-            char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[i]);
-            double v=atof(value);
-            sprintf(text,"volts = %0.1fv",v);
-            cairo_move_to(cr, width-(width/4), y);
-            cairo_show_text(cr, text);
-            y+=15;
-          }
-        }
-      }
-    }
-#endif
-
-    cairo_stroke(cr);    
-    cairo_destroy(cr);
-    gtk_widget_queue_draw(tx->panadapter);
-
-    tx->updated=TRUE;
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    if(any) { GskStroke *st=gsk_stroke_new(1.0f); gtk_snapshot_append_stroke(snapshot,p,st,&body); gsk_stroke_free(st); }
+    gsk_path_unref(p);
   }
+
+  // cursor
+  GdkRGBA ta=skin_rgba(TEXT_A,1.0);
+  txn_line(snapshot,(double)(width/2.0),20.0,(double)(width/2.0),(double)height,1.0,&ta);
+
+  if(tx->rx->mode_a==CWU || tx->rx->mode_a==CWL) {
+    GdkRGBA tb=skin_rgba(TEXT_B,1.0);
+    double cw_frequency=filter_left+((filter_right-filter_left)/2.0);
+    txn_line(snapshot,cw_frequency,20.0,cw_frequency,(double)height,1.0,&tb);
+  }
+
+  // signal trace (red) + readouts, only while transmitting
+  if(isTransmitting(radio)) {
+    int np=tx->pixels;
+    if(np<2) np=2;
+    samples[0]=-200.0;
+    samples[np-1]=-200.0;
+
+    double span_den=(width>1)?(double)(width-1):1.0;
+    GskPathBuilder *b=gsk_path_builder_new();
+    for(i=0;i<width;i++) {
+      double fidx=(double)i*(double)(np-1)/span_den;
+      int i0=(int)floor(fidx);
+      if(i0<0) i0=0;
+      if(i0>np-2) i0=np-2;
+      double frac=fidx-(double)i0;
+      double v=(double)samples[i0]*(1.0-frac)+(double)samples[i0+1]*frac;
+      double y=floor((tx->panadapter_high - v)*(double)height/(tx->panadapter_high - tx->panadapter_low));
+      if(i==0) gsk_path_builder_move_to(b,0.0f,(float)y);
+      else     gsk_path_builder_line_to(b,(float)i,(float)y);
+    }
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    GdkRGBA red=(GdkRGBA){1.0f,0.0f,0.0f,1.0f};
+    GskStroke *st=gsk_stroke_new(1.0f);
+    gtk_snapshot_append_stroke(snapshot,p,st,&red);
+    gsk_stroke_free(st); gsk_path_unref(p);
+
+    // Right-aligned readouts to the pane edge.
+    double readout_right=(double)width-4.0;
+    sprintf(text,"%.1f W",tx->fwd);
+    txn_text_right(snapshot,widget,readout_right,34,16,&ta,text);
+
+    if (tx->fwd > 1E-1) {   // SWR (tx->swr is the EMA maintained in update_tx_panadapter)
+      sprintf(text,"SWR: %1.1f:1", tx->swr);
+      txn_text_right(snapshot,widget,readout_right,56,16,&ta,text);
+    }
+    if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
+      sprintf(text,"ALC: %2.1f dB",tx->alc);
+      txn_text_right(snapshot,widget,readout_right,80,16,&ta,text);
+      if(tx->leveler)    { sprintf(text,"LVL: %2.1f dB",tx->lvlr_gain); txn_text_right(snapshot,widget,readout_right,104,16,&ta,text); }
+      if(tx->cfc_run)    { sprintf(text,"CFC: %2.1f dB",tx->cfc_gain);  txn_text_right(snapshot,widget,readout_right,128,16,&ta,text); }
+      if(tx->compressor) { sprintf(text,"COMP: %2.1f dB",tx->comp_pk);  txn_text_right(snapshot,widget,readout_right,152,16,&ta,text); }
+    }
+  }
+
+  // frequency
+  if(tx->rx!=NULL) {
+    long long f=tx->rx->frequency_a+tx->rx->ctun_offset-tx->rx->lo_tx;
+    if(tx->rx->split) f=tx->rx->frequency_b;
+    char temp[32];
+    sprintf(temp,"%5lld.%03lld.%03lld",f/(long long)1000000,(f%(long long)1000000)/(long long)1000,f%(long long)1000);
+    GdkRGBA fc;
+    if(isTransmitting(radio))      fc=skin_rgba(WARNING,1.0);
+    else if(tx->rx->split)         fc=skin_rgba(TEXT_A,1.0);
+    else                           fc=skin_rgba(TEXT_B,1.0);
+    // top-left at (centre+2, 1) so the tall 21px digits aren't clipped by the top.
+    txn_text_top(snapshot,widget,((double)width/2.0)+2.0,1.0,21,&fc,temp);
+  }
+
+  if(radio->discovered->device==DEVICE_HERMES_LITE2) {
+    sprintf(text,"%2.0f degC",tx->temperature);
+    txn_text(snapshot,widget,220,height-8,12,&ta,text);
+  }
+#ifdef SOAPYSDR
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    if(radio->discovered->info.soapy.has_temp) {
+      int y=height-40;
+      for (size_t si = 0; si < radio->discovered->info.soapy.sensors; si++) {
+        if(strstr(radio->discovered->info.soapy.sensor[si],"temp")!=NULL) {
+          char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[si]);
+          int v=(int)atof(value);
+          if(strcmp(radio->discovered->info.soapy.sensor[si],"xadc_temp0")==0) sprintf(text,"zynq = %dC",v);
+          else if(strcmp(radio->discovered->info.soapy.sensor[si],"ad9361-phy_temp0")==0) sprintf(text,"pluto = %dC",v);
+          else sprintf(text,"%s = %dC",radio->discovered->info.soapy.sensor[si],v);
+          txn_text(snapshot,widget,width-(width/4),y,12,&ta,text);
+          y+=15;
+        } else if(strcmp(radio->discovered->info.soapy.sensor[si],"adm1177_voltage0")==0) {
+          char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[si]);
+          double v=atof(value);
+          sprintf(text,"volts = %0.1fv",v);
+          txn_text(snapshot,widget,width-(width/4),y,12,&ta,text);
+          y+=15;
+        }
+      }
+    }
+  }
+#endif
 }

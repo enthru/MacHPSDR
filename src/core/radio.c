@@ -160,7 +160,7 @@ log_info("radio_start\n");
 // unless transmitting, so it has to be repainted explicitly.
 void radio_refresh_skin(RADIO *r) {
   if(r==NULL) return;
-  if(r->transmitter!=NULL && r->transmitter->panadapter_surface!=NULL) {
+  if(r->transmitter!=NULL && r->transmitter->panadapter!=NULL) {
     update_tx_panadapter(r);
   }
 }

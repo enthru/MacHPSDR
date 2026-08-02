@@ -17,6 +17,13 @@
 *
 */
 
+/*
+ * Wideband panadapter — GPU-rendered via GSK render nodes (PanaView), matching
+ * the RX/TX panadapters.  GetPixels() is done by the caller (wideband.c) before
+ * update_wideband_panadapter(), which now just queues a redraw; wb_pana_build()
+ * emits the nodes.
+ */
+
 #include <gtk/gtk.h>
 #include <math.h>
 #include <stdlib.h>
@@ -39,8 +46,48 @@
 #include "radio.h"
 #include "main.h"
 #include "vfo.h"
+#include "pana_view.h"
 
-#define GRADIANT
+// ---- GSK render-node helpers (FreeMono bold labels, like the old cairo) -----
+static void wbn_rect(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c) {
+  if(w<=0.0||h<=0.0) return;
+  graphene_rect_t r=GRAPHENE_RECT_INIT((float)x,(float)y,(float)w,(float)h);
+  gtk_snapshot_append_color(s,c,&r);
+}
+static void wbn_line(GtkSnapshot *s,double x1,double y1,double x2,double y2,double lw,const GdkRGBA *c) {
+  GskPathBuilder *b=gsk_path_builder_new();
+  gsk_path_builder_move_to(b,(float)x1,(float)y1);
+  gsk_path_builder_line_to(b,(float)x2,(float)y2);
+  GskPath *p=gsk_path_builder_free_to_path(b);
+  GskStroke *st=gsk_stroke_new((float)lw);
+  gtk_snapshot_append_stroke(s,p,st,c);
+  gsk_stroke_free(st); gsk_path_unref(p);
+}
+static PangoLayout *wbn_layout(GtkWidget *w,const char *txt) {
+  PangoLayout *l=gtk_widget_create_pango_layout(w,txt);
+  PangoFontDescription *fd=pango_font_description_new();
+  pango_font_description_set_family(fd,"FreeMono");
+  pango_font_description_set_weight(fd,PANGO_WEIGHT_BOLD);
+  pango_font_description_set_absolute_size(fd,12*PANGO_SCALE);
+  pango_layout_set_font_description(l,fd);
+  pango_font_description_free(fd);
+  return l;
+}
+// text with BASELINE at (x, base_y). Returns advance width via out_w.
+static void wbn_text(GtkSnapshot *s,GtkWidget *w,double x,double base_y,const GdkRGBA *c,const char *txt,double *out_w) {
+  PangoLayout *l=wbn_layout(w,txt);
+  int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
+  if(out_w) *out_w=(double)pw;
+  double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  gtk_snapshot_save(s);
+  graphene_point_t pt=GRAPHENE_POINT_INIT((float)x,(float)top);
+  gtk_snapshot_translate(s,&pt);
+  gtk_snapshot_append_layout(s,l,c);
+  gtk_snapshot_restore(s);
+  g_object_unref(l);
+}
+
+static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpointer data);
 
 static gboolean resize_timeout(void *data) {
   WIDEBAND *w=(WIDEBAND *)data;
@@ -51,42 +98,13 @@ static gboolean resize_timeout(void *data) {
 
   wideband_init_analyzer(w);
 
-  if (w->panadapter_surface) {
-    cairo_surface_destroy (w->panadapter_surface);
-  }
-
-  if(w->panadapter!=NULL && w->panadapter_width>0 && w->panadapter_height>0) {
-    // GTK4: off-screen image surface (no GdkWindow to back a similar surface).
-    w->panadapter_surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
-                                       w->panadapter_width,
-                                       w->panadapter_height);
-
-    /* Initialize the surface to black */
-    cairo_t *cr;
-    cr = cairo_create (w->panadapter_surface);
-#ifdef GRADIANT
-    cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,w->panadapter_height);
-    cairo_pattern_add_color_stop_rgba(pat,1.0,0.1,0.1,0.1,0.5);
-    cairo_pattern_add_color_stop_rgba(pat,0.0,0.5,0.5,0.5,0.5);
-    cairo_rectangle(cr, 0,0,w->panadapter_width,w->panadapter_height);
-    cairo_set_source (cr, pat);
-    cairo_fill(cr);
-    cairo_pattern_destroy(pat);
-#else
-    cairo_set_source_rgb (cr, 0.2, 0.2, 0.2);
-    //cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
-    cairo_paint (cr);
-#endif
-    cairo_destroy(cr);
-  }
-
+  // GSK render-node path: no off-screen panadapter_surface to (re)allocate.
   w->panadapter_resize_timer=-1;
-
   return FALSE;
 }
 
-// GTK4: GtkDrawingArea "resize" signal replaces GTK3 "configure-event".
-static void wideband_panadapter_resize_cb(GtkDrawingArea *area,int width,int height,gpointer data) {
+// PanaView "resize" signal (same signature as the old GtkDrawingArea one).
+static void wideband_panadapter_resize_cb(GtkWidget *area,int width,int height,gpointer data) {
   WIDEBAND *w=(WIDEBAND *)data;
   if(width!=w->panadapter_width || height!=w->panadapter_height) {
     w->panadapter_resize_width=width;
@@ -98,21 +116,6 @@ static void wideband_panadapter_resize_cb(GtkDrawingArea *area,int width,int hei
   }
 }
 
-// GTK4: draw func signature is (area, cr, width, height, data).
-static void wideband_panadapter_draw_cb(GtkDrawingArea *area,cairo_t *cr,int cwidth,int cheight,gpointer data) {
-  WIDEBAND *w=(WIDEBAND *)data;
-  if(w->panadapter_surface!=NULL) {
-    cairo_set_source_surface (cr, w->panadapter_surface, 0.0, 0.0);
-    cairo_paint (cr);
-  }
-}
-
-/*
-static gboolean wideband_panadapter_press_event_cb(GtkWidget *widget,GdkEventButton *event,gpointer data) {
-  return TRUE;
-}
-*/
-
 GtkWidget *create_wideband_panadapter(WIDEBAND *w) {
   GtkWidget *panadapter;
 
@@ -121,9 +124,7 @@ GtkWidget *create_wideband_panadapter(WIDEBAND *w) {
   w->panadapter_surface=NULL;
   w->panadapter_resize_timer=-1;
 
-  panadapter = gtk_drawing_area_new ();
-
-  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(panadapter),wideband_panadapter_draw_cb,(gpointer)w,NULL);
+  panadapter = pana_view_new(wb_pana_build,(gpointer)w);
   g_signal_connect(panadapter,"resize",G_CALLBACK(wideband_panadapter_resize_cb),(gpointer)w);
 
   // GTK4: pointer input via event controllers (button masks are gone).
@@ -144,123 +145,110 @@ GtkWidget *create_wideband_panadapter(WIDEBAND *w) {
   return panadapter;
 }
 
+// The caller (wideband.c) fetches fresh pixels via GetPixels() before this; here
+// we just queue the GPU redraw.
 void update_wideband_panadapter(WIDEBAND *w) {
+  if(w->panadapter!=NULL) gtk_widget_queue_draw(w->panadapter);
+}
+
+// Snapshot builder: emit the wideband scene as GSK nodes.
+static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  GtkWidget *widget=w->panadapter;
   long i;
-  float *samples;
-  cairo_text_extents_t extents;
-  gdouble hz_per_pixel;
-  gdouble x;
+  double x;
 
-  int display_height=gtk_widget_get_height (w->panadapter);
+  int display_height=cheight;
+  if(display_height<=1 || cwidth<=0) return;
+  if(w->pixels<=0 || w->pixel_samples==NULL) return;
 
-  if(display_height<=1) return;
+  double hz_per_pixel=(double)61440000/(double)w->pixels;
+  float *samples=w->pixel_samples;
 
-  hz_per_pixel=(gdouble)61440000/(gdouble)w->pixels;
-    
-  samples=w->pixel_samples;
+  // background: opaque dark base + the translucent grey->dark gradient wash.
+  GdkRGBA base=(GdkRGBA){0.05f,0.05f,0.05f,1.0f};
+  wbn_rect(snapshot,0,0,cwidth,cheight,&base);
+  {
+    graphene_rect_t r=GRAPHENE_RECT_INIT(0,0,(float)cwidth,(float)cheight);
+    GskColorStop stops[2]={ {0.0f,(GdkRGBA){0.5f,0.5f,0.5f,0.5f}}, {1.0f,(GdkRGBA){0.1f,0.1f,0.1f,0.5f}} };
+    graphene_point_t p0=GRAPHENE_POINT_INIT(0.0f,0.0f), p1=GRAPHENE_POINT_INIT(0.0f,(float)cheight);
+    gtk_snapshot_append_linear_gradient(snapshot,&r,&p0,&p1,stops,2);
+  }
 
-  //clear_panadater_surface();
-  cairo_t *cr;
-  cr = cairo_create (w->panadapter_surface);
-  cairo_set_line_width(cr, 1.0);
-#ifdef GRADIANT
-    cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,w->panadapter_height);
-    cairo_pattern_add_color_stop_rgba(pat,1.0,0.1,0.1,0.1,0.5);
-    cairo_pattern_add_color_stop_rgba(pat,0.0,0.5,0.5,0.5,0.5);
-    cairo_rectangle(cr, 0,0,w->panadapter_width,w->panadapter_height);
-    cairo_set_source (cr, pat);
-    cairo_fill(cr);
-    cairo_pattern_destroy(pat);
-#else
-    cairo_set_source_rgb (cr, 0.2, 0.2, 0.2);
-    cairo_rectangle(cr,0,0,w->panadapter_width,w->panadapter_height);
-    cairo_fill(cr);
-#endif
-
-
-  // plot the levels
-  cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+  GdkRGBA white=(GdkRGBA){1.0f,1.0f,1.0f,1.0f};
   double dbm_per_line=(double)w->panadapter_height/((double)w->panadapter_high-(double)w->panadapter_low);
-  cairo_set_line_width(cr, 1.0);
-  cairo_select_font_face(cr, "FreeMono", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-  cairo_set_font_size(cr, 12);
-  char v[32];
 
-  for(i=w->panadapter_high;i>=w->panadapter_low;i--) {
-    int mod=labs(i)%20;
-    if(mod==0) {
-      double y = (double)(w->panadapter_high-i)*dbm_per_line;
-      cairo_move_to(cr,0.0,y);
-      cairo_line_to(cr,(double)w->panadapter_width,y);
-
-      sprintf(v,"%ld dBm",i);
-      cairo_move_to(cr, 1, y);  
-      cairo_show_text(cr, v);
-    }
-  }
-  cairo_stroke(cr);
-
-
-  for(i=5000000;i<61440000;i+=5000000) {
-    x=(gdouble)i/hz_per_pixel;
-    cairo_set_line_width(cr, 1.0);
-    cairo_move_to(cr,x,10.0);
-    cairo_line_to(cr,x,(double)display_height);
-
-    cairo_select_font_face(cr, "FreeMono",
-                        CAIRO_FONT_SLANT_NORMAL,
-                        CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 12);
+  // dBm level graticule + labels
+  {
+    GskPathBuilder *b=gsk_path_builder_new();
+    gboolean any=FALSE;
     char v[32];
-    sprintf(v,"%0ld",i/1000000);
-    cairo_text_extents(cr, v, &extents);
-    cairo_move_to(cr,x-(extents.width/2.0), 10.0);  
-    cairo_show_text(cr, v);
+    for(i=w->panadapter_high;i>=w->panadapter_low;i--) {
+      if(labs(i)%20==0) {
+        double y=(double)(w->panadapter_high-i)*dbm_per_line;
+        gsk_path_builder_move_to(b,0.0f,(float)y);
+        gsk_path_builder_line_to(b,(float)w->panadapter_width,(float)y);
+        any=TRUE;
+        sprintf(v,"%ld dBm",i);
+        wbn_text(snapshot,widget,1,y,&white,v,NULL);
+      }
+    }
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    if(any) { GskStroke *st=gsk_stroke_new(1.0f); gtk_snapshot_append_stroke(snapshot,p,st,&white); gsk_stroke_free(st); }
+    gsk_path_unref(p);
   }
-  cairo_stroke(cr);
 
-  // cursor
+  // 5 MHz frequency markers + labels
+  {
+    GskPathBuilder *b=gsk_path_builder_new();
+    gboolean any=FALSE;
+    char v[32];
+    for(i=5000000;i<61440000;i+=5000000) {
+      x=(double)i/hz_per_pixel;
+      gsk_path_builder_move_to(b,(float)x,10.0f);
+      gsk_path_builder_line_to(b,(float)x,(float)display_height);
+      any=TRUE;
+      sprintf(v,"%0ld",i/1000000);
+      PangoLayout *ml=wbn_layout(widget,v); int pw=0,ph=0; pango_layout_get_pixel_size(ml,&pw,&ph); g_object_unref(ml);
+      wbn_text(snapshot,widget,x-(double)pw/2.0,10.0,&white,v,NULL);   // centre on the marker
+    }
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    if(any) { GskStroke *st=gsk_stroke_new(1.0f); gtk_snapshot_append_stroke(snapshot,p,st,&white); gsk_stroke_free(st); }
+    gsk_path_unref(p);
+  }
+
+  // cursor (active RX frequency)
   if(radio->active_receiver!=NULL) {
-    cairo_set_source_rgb (cr, 1.0, 0.0, 0.0);
-    cairo_set_line_width(cr, 1.0);
-    x=(gdouble)radio->active_receiver->frequency_a/hz_per_pixel;
-    cairo_move_to(cr,x,0.0);
-    cairo_line_to(cr,x,(double)display_height);
-    cairo_stroke(cr);
+    GdkRGBA red=(GdkRGBA){1.0f,0.0f,0.0f,1.0f};
+    x=(double)radio->active_receiver->frequency_a/hz_per_pixel;
+    wbn_line(snapshot,x,0.0,x,(double)display_height,1.0,&red);
   }
 
-  // signal
-  double s1,s2;
+  // signal trace
   samples[w->pixels]=-200.0;
   samples[(w->pixels*2)-1]=-200.0;
 
-  s1=(double)samples[w->pixels];
-  s1 = floor((w->panadapter_high - s1)
-                        * (double) display_height
-                        / (w->panadapter_high - w->panadapter_low));
-  cairo_move_to(cr, 0.0, s1);
+  GskPathBuilder *b=gsk_path_builder_new();
+  double s1=(double)samples[w->pixels];
+  s1=floor((w->panadapter_high - s1)*(double)display_height/(w->panadapter_high - w->panadapter_low));
+  gsk_path_builder_move_to(b,0.0f,(float)s1);
   for(i=1;i<w->pixels;i++) {
-    s2=(double)samples[i+w->pixels];
-    s2 = floor((w->panadapter_high - s2)
-                            * (double) display_height
-                            / (w->panadapter_high - w->panadapter_low));
-    cairo_line_to(cr, (double)i, s2);
+    double s2=(double)samples[i+w->pixels];
+    s2=floor((w->panadapter_high - s2)*(double)display_height/(w->panadapter_high - w->panadapter_low));
+    gsk_path_builder_line_to(b,(float)i,(float)s2);
   }
+  if(radio->display_filled) gsk_path_builder_close(b);
+  GskPath *p=gsk_path_builder_free_to_path(b);
 
   if(radio->display_filled) {
-    cairo_close_path (cr);
-    cairo_pattern_t *pat=cairo_pattern_create_linear(0.0,0.0,0.0,w->panadapter_height);
-    cairo_pattern_add_color_stop_rgba(pat,0.0,0.0,0.0,1.0,0.5);
-    cairo_pattern_add_color_stop_rgba(pat,1.0,1.0,1.0,1.0,0.5);
-    cairo_set_source (cr, pat);
-    cairo_fill_preserve(cr);
-    cairo_pattern_destroy(pat);
+    graphene_rect_t r=GRAPHENE_RECT_INIT(0,0,(float)cwidth,(float)cheight);
+    GskColorStop stops[2]={ {0.0f,(GdkRGBA){0.0f,0.0f,1.0f,0.5f}}, {1.0f,(GdkRGBA){1.0f,1.0f,1.0f,0.5f}} };
+    graphene_point_t p0=GRAPHENE_POINT_INIT(0.0f,0.0f), p1=GRAPHENE_POINT_INIT(0.0f,(float)w->panadapter_height);
+    gtk_snapshot_push_fill(snapshot,p,GSK_FILL_RULE_WINDING);
+    gtk_snapshot_append_linear_gradient(snapshot,&r,&p0,&p1,stops,2);
+    gtk_snapshot_pop(snapshot);
   }
-  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-  cairo_set_line_width(cr, 1.0);
-  cairo_stroke(cr);
-
-  cairo_destroy (cr);
-  gtk_widget_queue_draw (w->panadapter);
-
+  GskStroke *st=gsk_stroke_new(1.0f);
+  gtk_snapshot_append_stroke(snapshot,p,st,&white);
+  gsk_stroke_free(st); gsk_path_unref(p);
 }
