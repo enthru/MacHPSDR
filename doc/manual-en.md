@@ -18,9 +18,10 @@ general terms; it is not a per-button reference.
 ```
 
 On start MacHPSDR shows a **device-selection dialog** listing every radio it
-found. Pick one to open it. With `--faker` the dialog is skipped and a synthetic
-"Fake Noise SDR" starts straight away — useful for trying the UI without
-hardware.
+found. Pick one to open it. The list always ends with an **"I/Q Player"** entry —
+a hardware-free player for a recorded I/Q file (see §13); select it to try the UI
+or replay a capture without a radio. With `--faker` the dialog is skipped and the
+I/Q Player starts straight away.
 
 Running the `.app` bundle: double-click `MacHPSDR.app`, or, to pass flags,
 call its launcher directly
@@ -370,12 +371,17 @@ bookmark dialog; bookmarks can also appear as markers on the panadapter.
 
 ---
 
-## 13. Testing without hardware (fake device)
+## 13. Testing without hardware (I/Q Player)
 
-`--faker` starts a synthetic SDR that loops a 16-bit stereo I/Q WAV through the
-full RX/decoder chain. Pass a file (`--faker ft8.wav`) or set `MACHPSDR_FAKE_IQ`;
-with no file it falls back to `iq.wav`. The recording is resampled to the
-receiver rate and auto-centred to baseband, then looped. If the sideband is
-inverted, tick **Swap I & Q** in the radio dialog to mirror the spectrum live.
-This is the recommended way to try FT8 decoding, the recorder replay, and the UI
-without a radio.
+The synthetic SDR is offered in the device list as **"I/Q Player"** (always last):
+select it and click **Start Radio**. It loops a 16-bit stereo I/Q WAV through the
+full RX/decoder chain, or plays a synthetic noise+tones test signal when no file
+is set. **Choose the file in Configure → Radio** (the *I/Q Player* frame:
+*Choose I/Q File…* / *Synthetic*) — the choice is remembered and can be swapped
+**live while it plays**. You can also pass a file on the command line with
+`--faker ft8.wav` (this skips the selection dialog) or set `MACHPSDR_FAKE_IQ`; the
+command-line file takes precedence, and with no source it falls back to `iq.wav`.
+The recording is resampled to the receiver rate and auto-centred to baseband, then
+looped. If the sideband is inverted, tick **Swap I & Q** in the radio dialog to
+mirror the spectrum live. This is the recommended way to try FT8 decoding, the
+recorder replay, and the UI without a radio.

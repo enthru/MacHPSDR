@@ -44,6 +44,7 @@
 #include "audio.h"
 #include "settings_ui.h"
 #include "receiver_dialog.h"
+#include "fake_protocol.h"
 //#include "rigctl.h"
 
 static GtkWidget *filter_board_combo_box;
@@ -507,6 +508,75 @@ static void iqswap_changed_cb(GtkWidget *widget, gpointer data) {
   r->iqswap=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
+// ---- I/Q Player (fake device) file chooser -------------------------------
+// Shows the basename of the currently-selected recording, or a note that the
+// synthetic generator is active.
+static void iq_player_set_label(GtkWidget *lbl, RADIO *r) {
+  if(lbl==NULL) return;
+  if(r->iq_player_file[0]) {
+    char *base=g_path_get_basename(r->iq_player_file);
+    gtk_label_set_text(GTK_LABEL(lbl),base);
+    g_free(base);
+  } else {
+    gtk_label_set_text(GTK_LABEL(lbl),"(synthetic noise + tones)");
+  }
+}
+
+// The chooser is async and its native window can outlive a Configure dialog the
+// user closes underneath it, so the status label is tracked via a weak pointer
+// (nulled if the label widget is destroyed) rather than a bare cached pointer.
+typedef struct { RADIO *r; GtkWidget *lbl; } IqPlayerCtx;
+
+static void iq_player_file_done(GObject *src, GAsyncResult *res, gpointer data) {
+  IqPlayerCtx *ctx=(IqPlayerCtx *)data;
+  GFile *gf=gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src),res,NULL);
+  if(gf!=NULL) {
+    char *path=g_file_get_path(gf);
+    g_object_unref(gf);
+    if(path!=NULL && fake_protocol_set_iq_file(ctx->r,path)) {
+      g_strlcpy(ctx->r->iq_player_file,path,sizeof(ctx->r->iq_player_file));
+      iq_player_set_label(ctx->lbl,ctx->r);   // no-op if the label was destroyed
+    }
+    g_free(path);
+  }
+  if(ctx->lbl!=NULL) g_object_remove_weak_pointer(G_OBJECT(ctx->lbl),(gpointer *)&ctx->lbl);
+  g_free(ctx);
+}
+
+static void iq_player_choose_cb(GtkWidget *widget, gpointer data) {
+  IqPlayerCtx *ctx=g_new0(IqPlayerCtx,1);
+  ctx->r=(RADIO *)data;
+  ctx->lbl=g_object_get_data(G_OBJECT(widget),"iq-player-label");
+  if(ctx->lbl!=NULL) g_object_add_weak_pointer(G_OBJECT(ctx->lbl),(gpointer *)&ctx->lbl);
+
+  GtkWidget *top=GTK_WIDGET(gtk_widget_get_root(widget));
+  GtkFileDialog *dlg=gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg,"Choose I/Q recording (16-bit stereo WAV)");
+  GtkFileFilter *filt=gtk_file_filter_new();
+  gtk_file_filter_set_name(filt,"WAV I/Q recordings");
+  gtk_file_filter_add_pattern(filt,"*.wav");
+  gtk_file_filter_add_pattern(filt,"*.WAV");
+  GListStore *filters=g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters,filt);
+  g_object_unref(filt);
+  gtk_file_dialog_set_filters(dlg,G_LIST_MODEL(filters));
+  g_object_unref(filters);
+  if(ctx->r->iq_player_file[0]) {
+    GFile *cur=g_file_new_for_path(ctx->r->iq_player_file);
+    gtk_file_dialog_set_initial_file(dlg,cur);
+    g_object_unref(cur);
+  }
+  gtk_file_dialog_open(dlg,GTK_WINDOW(top),NULL,iq_player_file_done,ctx);
+  g_object_unref(dlg);
+}
+
+static void iq_player_clear_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->iq_player_file[0]='\0';
+  fake_protocol_set_iq_file(r,NULL);
+  iq_player_set_label(g_object_get_data(G_OBJECT(widget),"iq-player-label"),r);
+}
+
 static void attenuation_value_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   adc->attenuation=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
@@ -706,6 +776,36 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 #endif
+
+  // I/Q Player: the fake ("I/Q Player") device loops a WAV recording. Let the
+  // operator pick which file to play — live-swappable while it runs — or fall
+  // back to the synthetic noise+tones generator. Only shown for PROTOCOL_FAKE.
+  if(radio->discovered->protocol==PROTOCOL_FAKE) {
+    GtkWidget *iq_frame=gtk_frame_new("I/Q Player");
+    GtkWidget *iq_grid=gtk_grid_new();
+    gtk_grid_set_row_homogeneous(GTK_GRID(iq_grid),FALSE);
+    gtk_grid_set_column_homogeneous(GTK_GRID(iq_grid),FALSE);
+    sui_style_group(iq_grid);
+    gtk_frame_set_child(GTK_FRAME(iq_frame),iq_grid);
+    gtk_grid_attach(GTK_GRID(grid),iq_frame,col,row++,1,1);
+
+    GtkWidget *iq_lbl=gtk_label_new(NULL);
+    gtk_widget_set_halign(iq_lbl,GTK_ALIGN_START);
+    iq_player_set_label(iq_lbl,radio);
+
+    GtkWidget *iq_choose=gtk_button_new_with_label("Choose I/Q File…");
+    g_object_set_data(G_OBJECT(iq_choose),"iq-player-label",iq_lbl);
+    g_signal_connect(iq_choose,"clicked",G_CALLBACK(iq_player_choose_cb),radio);
+    gtk_grid_attach(GTK_GRID(iq_grid),iq_choose,0,0,1,1);
+
+    GtkWidget *iq_clear=gtk_button_new_with_label("Synthetic");
+    gtk_widget_set_tooltip_text(iq_clear,"Play the built-in synthetic noise + tones instead of a file");
+    g_object_set_data(G_OBJECT(iq_clear),"iq-player-label",iq_lbl);
+    g_signal_connect(iq_clear,"clicked",G_CALLBACK(iq_player_clear_cb),radio);
+    gtk_grid_attach(GTK_GRID(iq_grid),iq_clear,1,0,1,1);
+
+    gtk_grid_attach(GTK_GRID(iq_grid),iq_lbl,2,0,1,1);
+  }
 
 
   adc0_frame=gtk_frame_new("ADC-0");

@@ -118,8 +118,10 @@ static inline double cubic4(double ym1, double y0, double y1, double y2, double 
 }
 
 // Minimal RIFF/WAVE reader: 16-bit PCM, 2 channels (I,Q). Loads the whole file
-// into memory as floats. Returns 1 on success.
-static int fake_load_iq(const char *path) {
+// into memory as a freshly-malloc'd float array (interleaved I,Q, ~[-1,1]) and
+// returns it via the out-params WITHOUT touching any global playback state, so
+// it is safe to call while the feed thread is streaming. Returns 1 on success.
+static int fake_read_iq(const char *path, float **out_data, long *out_frames, double *out_rate) {
   FILE *f = fopen(path, "rb");
   if(!f) return 0;
   unsigned char hdr[12];
@@ -158,13 +160,27 @@ static int fake_load_iq(const char *path) {
   fseek(f, data_off, SEEK_SET);
   if(fread(raw,1,(size_t)frames*4,f)!=(size_t)frames*4) { free(raw); fclose(f); return 0; }
   fclose(f);
-  iq_data = (float *)malloc((size_t)frames * 2 * sizeof(float));
-  if(!iq_data) { free(raw); return 0; }
-  for(long i=0;i<frames*2;i++) iq_data[i] = (float)raw[i] / 32768.0f;
+  float *data = (float *)malloc((size_t)frames * 2 * sizeof(float));
+  if(!data) { free(raw); return 0; }
+  for(long i=0;i<frames*2;i++) data[i] = (float)raw[i] / 32768.0f;
   free(raw);
+  *out_data = data;
+  *out_frames = frames;
+  *out_rate = (double)rate;
+  return 1;
+}
+
+// Init-time loader: read the file and commit it straight into the global
+// playback state (feed thread not yet running, so no locking needed).
+static int fake_load_iq(const char *path) {
+  float *data; long frames; double rate;
+  if(!fake_read_iq(path, &data, &frames, &rate)) return 0;
+  free(iq_data);
+  iq_data = data;
   iq_frames = frames;
-  iq_rate = (double)rate;
+  iq_rate = rate;
   for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+  aa_fs = 0.0;                                      // force AA-filter redesign
 
   // Carrier de-rotation offset. By default we do NOT shift the recording: an
   // SDR I/Q capture already has the signal of interest at (or very near) DC,
@@ -191,7 +207,10 @@ int enable_fake = 0;
 const char *fake_iq_file = NULL;
 
 void fake_discovery(void) {
-  if(!enable_fake) return;
+  // The "I/Q Player" pseudo-device is always offered in the device-selection
+  // list (appended last, after any real radios — see discovery.c), so the user
+  // can play back an I/Q recording without the --faker command-line flag. With
+  // --faker it is still the only device discovered.
   if(devices >= MAX_DEVICES) return;
 
   DISCOVERED *d = &discovered[devices];
@@ -199,7 +218,7 @@ void fake_discovery(void) {
 
   d->protocol = PROTOCOL_FAKE;
   d->device = DEVICE_HERMES;
-  strcpy(d->name, "Fake Noise SDR");
+  strcpy(d->name, "I/Q Player");
   strcpy(d->software_version, "1.0");
   d->status = STATE_AVAILABLE;
   d->supported_receivers = 2;
@@ -385,9 +404,11 @@ static gpointer fake_thread_fn(gpointer data) {
 
 void fake_protocol_init(RADIO *r) {
   // Which I/Q recording to loop.  Precedence: the `--faker <file>` argument,
-  // then the MACHPSDR_FAKE_IQ env var, then the default iq.wav.  Any 16-bit
-  // stereo I/Q WAV works, e.g. `--faker ft8.wav` to drive the FT8 decoder.
+  // then the file chosen in Configure -> Radio (persisted on RADIO), then the
+  // MACHPSDR_FAKE_IQ env var, then the default iq.wav.  Any 16-bit stereo I/Q
+  // WAV works, e.g. `--faker ft8.wav` to drive the FT8 decoder.
   const char *iq_file = fake_iq_file;
+  if(iq_file==NULL || iq_file[0]=='\0') iq_file = r->iq_player_file[0] ? r->iq_player_file : NULL;
   if(iq_file==NULL || iq_file[0]=='\0') iq_file = getenv("MACHPSDR_FAKE_IQ");
   if(iq_file==NULL || iq_file[0]=='\0') iq_file = FAKE_IQ_FILE;
 
@@ -409,6 +430,41 @@ void fake_protocol_init(RADIO *r) {
 
 void fake_protocol_stop(void) {
   fake_running = 0;
+}
+
+int fake_protocol_set_iq_file(RADIO *r, const char *path) {
+  // Empty/NULL path => go back to the synthetic noise+tones generator.
+  if(path==NULL || path[0]=='\0') {
+    g_mutex_lock(&r->delete_rx_mutex);
+    free(iq_data);
+    iq_data = NULL; iq_frames = 0; iq_rate = 0.0;
+    for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+    aa_fs = 0.0;
+    g_mutex_unlock(&r->delete_rx_mutex);
+    log_info("fake: I/Q playback stopped, using synthetic noise+tones\n");
+    return 1;
+  }
+
+  // Read the whole file into a fresh buffer OUTSIDE the lock (the feed thread
+  // keeps streaming the old buffer meanwhile), then swap it in under the same
+  // mutex the feed thread holds around each block. If the read fails, the
+  // current playback is left running untouched.
+  float *data; long frames; double rate;
+  if(!fake_read_iq(path, &data, &frames, &rate)) {
+    log_error("fake: could not load I/Q file '%s' (need 16-bit stereo WAV)\n", path);
+    return 0;
+  }
+
+  g_mutex_lock(&r->delete_rx_mutex);
+  free(iq_data);
+  iq_data = data; iq_frames = frames; iq_rate = rate;
+  for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+  aa_fs = 0.0;                                      // force AA-filter redesign
+  g_mutex_unlock(&r->delete_rx_mutex);
+
+  log_info("fake: now playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
+           path, rate, frames, rate>0.0 ? (double)frames/rate : 0.0);
+  return 1;
 }
 
 int fake_protocol_is_running(void) {

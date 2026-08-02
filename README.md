@@ -62,7 +62,7 @@ feature additions.
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
-| **Fake device** | Run with no hardware and loop back a recorded I/Q file. |
+| **I/Q Player** | Play back a recorded I/Q WAV with no hardware — pick **"I/Q Player"** in the device list (always offered, last), then choose the file in **Configure → Radio** (live-swappable while it runs; empty ⇒ synthetic test signal). Also `--faker <file>` from the CLI. |
 
 ---
 
@@ -415,14 +415,20 @@ you've dialled in.
   no longer opens hidden behind the terminal you launched it from — most
   noticeable with `--faker`, which skips the device-selection dialog.
 
-- **Test device.** A built-in *Fake Noise SDR* runs the app with no hardware
-  connected (receive, transmit, spectrum, demodulation) and can play back a
-  recorded I/Q file. Hidden by default; enable it with `--faker`.
+- **Test device / I/Q Player.** A built-in synthetic SDR runs the app with no
+  hardware connected (receive, transmit, spectrum, demodulation) and can play
+  back a recorded I/Q file. It is now **always offered in the device-selection
+  list as "I/Q Player"** (listed last, after any real radios) — no CLI flag
+  needed. Select it and click **Start Radio** to open it; with no file chosen it
+  plays a synthetic noise+tones test signal.
 
-- **I/Q file player for the fake device.** The `--faker` device can loop any
-  16-bit stereo I/Q WAV instead of the built-in noise+tones. Pass the file
-  directly — `./machpsdr --faker ft8.wav` (or set `MACHPSDR_FAKE_IQ=…`); with no
-  argument it falls back to `iq.wav`. The recording's sample rate is resampled to
+- **I/Q file player.** Choose the WAV to loop in **Configure → Radio** (the
+  **I/Q Player** frame: *Choose I/Q File…* / *Synthetic*). The choice is
+  remembered and can be **swapped live while it plays**. You can also pass a file
+  on the command line — `./machpsdr --faker ft8.wav` (skips the selection dialog;
+  or set `MACHPSDR_FAKE_IQ=…`); the CLI file takes precedence over the saved one,
+  and with no source it falls back to `iq.wav`. Any 16-bit stereo I/Q WAV works.
+  The recording's sample rate is resampled to
   the receiver's rate and its carrier auto-centred to baseband, then looped. A
   6th-order Butterworth low-pass band-limits the resampled stream so the
   panadapter shows the file's own bandwidth rather than resampling images. If the

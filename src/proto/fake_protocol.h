@@ -27,4 +27,11 @@ void fake_protocol_init(RADIO *r);
 void fake_protocol_stop(void);
 int fake_protocol_is_running(void);
 
+/* Live-swap the I/Q recording the fake ("I/Q Player") device is looping while
+ * it is running. `path` NULL/empty switches back to the synthetic noise+tones
+ * generator. Returns 1 on success, 0 if the file could not be loaded (in which
+ * case the current playback is left untouched). Safe to call from the GTK main
+ * thread — the swap is serialised against the feed thread via r->delete_rx_mutex. */
+int fake_protocol_set_iq_file(RADIO *r, const char *path);
+
 #endif

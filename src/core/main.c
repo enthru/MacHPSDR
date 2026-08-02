@@ -253,6 +253,8 @@ log_info("discovered: %d device=%d\n",i,discovered[i].device);
       } else if(d->protocol==PROTOCOL_SOAPYSDR) {
         strcpy(protocol,"SoapySDR");
 #endif
+      } else if(d->protocol==PROTOCOL_FAKE) {
+        strcpy(protocol,"Player");
       } else {
         strcpy(protocol,"UNKNOWN");
       }
@@ -432,8 +434,10 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
           d->info.network.mac_address[4],
           d->info.network.mac_address[5]);
         strcpy(ip,inet_ntoa(d->info.network.address.sin_addr));
-        if(d->protocol==0) {
+        if(d->protocol==PROTOCOL_1) {
           strcpy(protocol,"P1");
+        } else if(d->protocol==PROTOCOL_FAKE) {
+          strcpy(protocol,"Player");
         } else {
           strcpy(protocol,"P2");
         }

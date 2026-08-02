@@ -318,6 +318,10 @@ typedef struct _radio {
 
   gboolean iqswap;
 
+  // I/Q Player (fake device): path of the WAV recording to loop, chosen in
+  // Configure -> Radio. Empty => synthetic noise+tones. Persisted.
+  char iq_player_file[512];
+
   gint which_audio;
   gint which_audio_backend;
 
