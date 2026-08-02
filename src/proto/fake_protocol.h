@@ -34,4 +34,10 @@ int fake_protocol_is_running(void);
  * thread — the swap is serialised against the feed thread via r->delete_rx_mutex. */
 int fake_protocol_set_iq_file(RADIO *r, const char *path);
 
+/* Playback status for the panadapter overlay. Returns 1 and fills the non-NULL
+ * out-params (elapsed/total seconds into the looped recording, and the file's
+ * bandwidth in Hz) when an I/Q file is playing; 0 for synthetic/idle. Call from
+ * the GTK thread. */
+int fake_protocol_playback(double *elapsed_s, double *total_s, double *bw_hz);
+
 #endif

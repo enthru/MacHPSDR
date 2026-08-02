@@ -37,6 +37,7 @@
 #include "transmitter.h"
 #include "wideband.h"
 #include "discovered.h"
+#include "fake_protocol.h"
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
@@ -774,6 +775,32 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
         cairo_show_text(cr, s->call);
       }
       dxcluster_unlock();
+    }
+
+    // I/Q Player readout: while the fake device is looping a recording, print the
+    // elapsed/total playback time and the recording's bandwidth in the top-right
+    // corner. Drawn through the same overlay path as the DX spots (a display-only
+    // read of state the feed thread publishes, repainted by the fps timer).
+    if(radio->discovered->protocol==PROTOCOL_FAKE) {
+      double elapsed_s, total_s, bw_hz;
+      if(fake_protocol_playback(&elapsed_s, &total_s, &bw_hz)) {
+        char pb[64];
+        int e=(int)elapsed_s, t=(int)total_s;
+        if(bw_hz>=1e6)
+          snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.2f MHz",
+                   e/60,e%60,t/60,t%60,bw_hz/1e6);
+        else
+          snprintf(pb,sizeof(pb),"IQ %d:%02d / %d:%02d   BW %.1f kHz",
+                   e/60,e%60,t/60,t%60,bw_hz/1e3);
+        cairo_set_font_size(cr, 12);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, pb, &ext);
+        double px = (double)display_width - ext.width - 6.0;
+        if(px < 42.0) px = 42.0;   // keep clear of the left dB scale strip
+        cairo_set_source_rgba(cr, 0.55, 0.85, 1.0, 0.9);   // light cyan
+        cairo_move_to(cr, px, 14.0);
+        cairo_show_text(cr, pb);
+      }
     }
 
     cairo_set_line_width (cr, LINE_WIDTH);

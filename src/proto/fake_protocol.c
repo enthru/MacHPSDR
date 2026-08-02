@@ -54,6 +54,12 @@ static double  iq_offset = 0.0;    // recorded carrier offset from centre (Hz)
 static double  iq_pos[8] = {0};    // per-receiver fractional read cursor (loops)
 static double  mix_phase[8] = {0}; // per-receiver de-rotation phase (centres station)
 
+// Playback position for the on-panadapter readout (elapsed time), published by
+// the feed thread from the file-reading channel's cursor and read on the GTK
+// draw thread. A torn double read is a harmless cosmetic glitch for one frame,
+// so no lock is taken (mirrors how the DX-spot overlay is a display-only read).
+static volatile double fake_play_pos_frames = 0.0;
+
 // Diversity replay: a diversity hidden RX is fed the SAME I/Q as its visual
 // partner (so the two streams are coherent/identical, not two independent reads
 // of the file). The most-recently-fed channel's samples are stashed here and
@@ -180,6 +186,7 @@ static int fake_load_iq(const char *path) {
   iq_frames = frames;
   iq_rate = rate;
   for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+  fake_play_pos_frames = 0.0;
   aa_fs = 0.0;                                      // force AA-filter redesign
 
   // Carrier de-rotation offset. By default we do NOT shift the recording: an
@@ -365,6 +372,10 @@ static gpointer fake_thread_fn(gpointer data) {
         add_iq_samples(rx, i_sample, q_sample);
       }
       if(store) { fake_replay_ch = rx->channel; fake_replay_n = n; }
+      // Publish the elapsed-time cursor from the channel that actually read the
+      // file (the file-reading path advances iq_pos[ch]; a diversity replay
+      // channel does not, so guard on `store` to avoid reporting its stale 0).
+      if(iq_data && store) fake_play_pos_frames = iq_pos[ch];
 
       // While keyed, feed the TX DSP a synthetic mic tone so tx_panadapter
       // shows a signal. Only for the receiver bound to the transmitter, paced
@@ -439,6 +450,7 @@ int fake_protocol_set_iq_file(RADIO *r, const char *path) {
     free(iq_data);
     iq_data = NULL; iq_frames = 0; iq_rate = 0.0;
     for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+    fake_play_pos_frames = 0.0;
     aa_fs = 0.0;
     g_mutex_unlock(&r->delete_rx_mutex);
     log_info("fake: I/Q playback stopped, using synthetic noise+tones\n");
@@ -459,11 +471,27 @@ int fake_protocol_set_iq_file(RADIO *r, const char *path) {
   free(iq_data);
   iq_data = data; iq_frames = frames; iq_rate = rate;
   for(int i=0;i<8;i++) { iq_pos[i] = 0.0; mix_phase[i] = 0.0; }
+  fake_play_pos_frames = 0.0;
   aa_fs = 0.0;                                      // force AA-filter redesign
   g_mutex_unlock(&r->delete_rx_mutex);
 
   log_info("fake: now playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
            path, rate, frames, rate>0.0 ? (double)frames/rate : 0.0);
+  return 1;
+}
+
+int fake_protocol_playback(double *elapsed_s, double *total_s, double *bw_hz) {
+  // iq_data/iq_frames/iq_rate are only ever written on the GTK thread
+  // (fake_protocol_init before the feed thread starts, or set_iq_file), which is
+  // also the thread that calls this, so reading them here is race-free; only the
+  // position cursor is cross-thread (benign, see fake_play_pos_frames).
+  if(iq_data == NULL || iq_frames <= 0 || iq_rate <= 0.0) return 0;
+  double pos = fake_play_pos_frames;
+  if(pos < 0.0) pos = 0.0;
+  if(pos > (double)iq_frames) pos = (double)iq_frames;
+  if(elapsed_s) *elapsed_s = pos / iq_rate;
+  if(total_s)   *total_s   = (double)iq_frames / iq_rate;
+  if(bw_hz)     *bw_hz     = iq_rate;               // complex sample rate == span
   return 1;
 }
 
