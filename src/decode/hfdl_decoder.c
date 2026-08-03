@@ -39,6 +39,7 @@
 
 #include "hfdl_decoder.h"
 #include "hfdl_demod.h"
+#include "hfdl_fec.h"
 #include "log.h"
 
 // Scratch for one block of conditioned baseband output (interleaved float I/Q).
@@ -102,8 +103,10 @@ void hfdl_decoder_set_enabled(gboolean on) {
              liquid_libversion());
     if (do_echo) {
       g_printerr("[HFDL] enabled (liquid-dsp %s)\n", liquid_libversion());
-      if (g_getenv("MACHPSDR_HFDL_SELFTEST"))
+      if (g_getenv("MACHPSDR_HFDL_SELFTEST")) {
         g_printerr("[HFDL] demod selftest: %s\n", hfdl_demod_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] fec selftest:   %s\n", hfdl_fec_selftest() ? "PASS" : "FAIL");
+      }
     }
   } else if (!on && was) {
     demod_free();
