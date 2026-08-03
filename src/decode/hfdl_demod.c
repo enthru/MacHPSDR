@@ -25,6 +25,7 @@
 #include <glib.h>
 #include <math.h>
 #include <complex.h>
+#include <stdint.h>
 #include <liquid/liquid.h>
 
 #include "hfdl_demod.h"
@@ -41,6 +42,41 @@ static const float hfdl_matched_filter[HFDL_MF_TAPS_CNT] = {
    0.03138375667422348f,  0.01148231492068473f, -0.0170974647427123f
 };
 
+// Costas carrier-recovery loop — ported verbatim from dumphfdl src/hfdl.c (its
+// own small 2nd-order loop, not liquid's costas). alpha/beta are the loop gains.
+typedef struct {
+  float phi;    // instantaneous phase
+  float dphi;   // phase increment (frequency estimate)
+  float alpha;  // proportional gain
+  float beta;   // integral gain
+  float err;    // last phase error
+} hfdl_costas;
+
+static void costas_init(hfdl_costas *c) {
+  c->phi = c->dphi = c->err = 0.f;
+  c->alpha = 0.1f;
+  c->beta = 0.047f * c->alpha * c->alpha;
+}
+static inline float branchless_limit(float x, float limit) {
+  float x1 = fabsf(x + limit);
+  float x2 = fabsf(x - limit);
+  x1 -= x2;
+  return 0.5f * x1;
+}
+static inline void costas_execute(hfdl_costas *c, float complex in, float complex *out) {
+  *out = in * cexpf(-I * c->phi);
+}
+static inline void costas_adjust(hfdl_costas *c, float err) {
+  c->err = branchless_limit(err, 1.0f);
+  c->phi += c->alpha * c->err;
+  c->dphi += c->beta * c->err;
+}
+static inline void costas_step(hfdl_costas *c) {
+  c->phi += c->dphi;
+  if (c->phi > (float)M_PI)       c->phi -= 2.f * (float)M_PI;
+  else if (c->phi < -(float)M_PI) c->phi += 2.f * (float)M_PI;
+}
+
 struct hfdl_demod {
   double        input_rate;    // off-air complex sample rate (Hz)
   float         resamp_rate;   // HFDL_BASEBAND_RATE / input_rate
@@ -52,6 +88,11 @@ struct hfdl_demod {
   int            mix_cap;      // capacity of mix (complex samples)
   float complex *rs;           // scratch: resampled block
   int            rs_cap;       // capacity of rs (complex samples)
+  // symbol-recovery stage (phase 2b)
+  symsync_crcf  ss;            // symbol-timing recovery (SPS in, 2/symbol out)
+  hfdl_costas   loop;          // carrier recovery
+  modem         mbpsk;         // BPSK slicer (decision-directed phase error)
+  unsigned long ss_idx;        // symsync output index (odd = decision instant)
 };
 
 hfdl_demod *hfdl_demod_create(double input_rate) {
@@ -79,6 +120,19 @@ hfdl_demod *hfdl_demod_create(double input_rate) {
   agc_crcf_set_bandwidth(d->agc, 0.01f);
 
   d->mf = firfilt_crcf_create((float *)hfdl_matched_filter, HFDL_MF_TAPS_CNT);
+
+  // Symbol recovery (phase 2b): symsync (Kaiser, SPS in, 2/symbol out) + Costas
+  // + BPSK slicer — all params from dumphfdl hfdl_channel_create().
+  d->ss = symsync_crcf_create_kaiser(HFDL_SPS, 3, 0.9f, 16);
+  symsync_crcf_set_lf_bw(d->ss, 0.001f);
+  // One output per symbol. (dumphfdl runs symsync at 2/symbol and gates on the
+  // odd index — but that 2× rate exists only to feed its LMS equalizer's
+  // fractional processing; with no equalizer in this phase, 1/symbol is the
+  // correct, unambiguous decision instant. Revisit when the equalizer lands.)
+  symsync_crcf_set_output_rate(d->ss, 1);
+  costas_init(&d->loop);
+  d->mbpsk = modem_create(LIQUID_MODEM_BPSK);
+  d->ss_idx = 0;
   return d;
 }
 
@@ -88,6 +142,8 @@ void hfdl_demod_destroy(hfdl_demod *d) {
   if (d->resampler) msresamp_crcf_destroy(d->resampler);
   if (d->agc)       agc_crcf_destroy(d->agc);
   if (d->mf)        firfilt_crcf_destroy(d->mf);
+  if (d->ss)        symsync_crcf_destroy(d->ss);
+  if (d->mbpsk)     modem_destroy(d->mbpsk);
   g_free(d->mix);
   g_free(d->rs);
   g_free(d);
@@ -139,6 +195,36 @@ int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
       warned_trunc = TRUE;
       log_error("hfdl_demod: output truncated at %d (nrs=%u) — dropping symbols\n",
                 max_out, nrs);
+    }
+  }
+  return nout;
+}
+
+int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
+                       float *out_syms, int max_out) {
+  if (d == NULL || baseband == NULL || nbb <= 0 || out_syms == NULL || max_out <= 0)
+    return 0;
+  int nout = 0;
+  for (int j = 0; j < nbb; j++) {
+    float complex in = baseband[2 * j] + baseband[2 * j + 1] * I;
+    float complex sy[8];
+    unsigned int np = 0;
+    symsync_crcf_execute(d->ss, &in, 1, sy, &np);
+    for (unsigned int i = 0; i < np; i++, d->ss_idx++) {
+      // Carrier recovery: advance the loop, de-rotate this symsync output (one
+      // per symbol — the decision instant).
+      costas_step(&d->loop);
+      float complex r;
+      costas_execute(&d->loop, sy[i], &r);
+      // Decision-directed BPSK: the modem's phase error drives the Costas loop.
+      unsigned int bits = 0;
+      modem_demodulate(d->mbpsk, r, &bits);
+      costas_adjust(&d->loop, modem_get_demodulator_phase_error(d->mbpsk));
+      if (nout < max_out) {
+        out_syms[2 * nout]     = crealf(r);
+        out_syms[2 * nout + 1] = cimagf(r);
+        nout++;
+      }
     }
   }
   return nout;
@@ -196,5 +282,79 @@ gboolean hfdl_demod_selftest(void) {
 
   g_free(iq); g_free(out);
   hfdl_demod_destroy(d);
-  return ok;
+
+  // (c) End-to-end BPSK recovery through the WHOLE chain. Synthesize RRC-shaped
+  // BPSK at 1800 baud directly in the 5400-S/s domain (SPS=3), upconvert onto
+  // the +1440 Hz carrier (plus a small offset to exercise Costas), then run it
+  // through hfdl_demod_process() (downmix + unity resample + matched filter) →
+  // hfdl_demod_symbols() (symsync + Costas + BPSK). TX pulse = the same RRC
+  // matched filter, so TX⊛RX = raised cosine → ISI-free at symbol instants.
+  // Assert a low BER after the loops settle, resolving the pipeline delay and
+  // BPSK's inherent 180° phase ambiguity.
+  const double fs2 = HFDL_BASEBAND_RATE;   // 5400 = symbol rate × integer SPS
+  hfdl_demod *d2 = hfdl_demod_create(fs2);
+  if (d2 == NULL) return FALSE;
+
+  const int NS = 4000;                      // symbols
+  int *txbits = g_new(int, NS);
+  firinterp_crcf fi = firinterp_crcf_create(HFDL_SPS, (float *)hfdl_matched_filter, HFDL_MF_TAPS_CNT);
+  const int NB = NS * HFDL_SPS;             // baseband samples
+  double *tx = g_new(double, 2 * NB);
+  uint32_t lcg = 0x1234567u;                // deterministic PRBS (reproducible)
+  const double coff = 3.0, cph = 0.7;       // carrier offset (Hz) + initial phase
+  int w = 0;
+  for (int s = 0; s < NS; s++) {
+    lcg = lcg * 1103515245u + 12345u;
+    int bit = (int)((lcg >> 16) & 1u);
+    txbits[s] = bit;
+    float complex y[HFDL_SPS];
+    firinterp_crcf_execute(fi, bit ? 1.0f : -1.0f, y);   // BPSK ±1
+    for (int k = 0; k < HFDL_SPS; k++, w++) {
+      double ph = 2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + coff) * w / fs2 + cph;
+      tx[2 * w]     = creal(y[k] * (cos(ph) + I * sin(ph)));
+      tx[2 * w + 1] = cimag(y[k] * (cos(ph) + I * sin(ph)));
+    }
+  }
+  firinterp_crcf_destroy(fi);
+
+  float *bb = g_new(float, 2 * (NB + 64));
+  int nbb = hfdl_demod_process(d2, tx, NB, bb, NB + 64);
+  float *rs = g_new(float, 2 * (NS + 64));
+  int nsy = hfdl_demod_symbols(d2, bb, nbb, rs, NS + 64);
+
+  // Score with DIFFERENTIAL BER: d[i] = bit[i] XOR bit[i-1]. BPSK carries an
+  // inherent 180° phase ambiguity (and the Costas loop may slip a half-turn),
+  // which the frame preamble resolves later — but the *transitions* are
+  // invariant to it, so a low differential BER proves symbol/carrier recovery is
+  // working. Sweep the pipeline delay for the best alignment.
+  gboolean sym_ok = FALSE;
+  if (nsy > 800) {
+    const int settle = 400;                 // skip loop settling
+    int best_err = INT32_MAX, best_tot = 0;
+    for (int delay = 0; delay <= 30; delay++) {
+      int err = 0, tot = 0;
+      for (int i = settle + 1; i < nsy; i++) {
+        int ti = i - delay;
+        if (ti < 1 || ti >= NS) continue;
+        int drx = ((rs[2 * i] > 0.f) ? 1 : 0) ^ ((rs[2 * (i - 1)] > 0.f) ? 1 : 0);
+        int dtx = txbits[ti] ^ txbits[ti - 1];
+        if (drx != dtx) err++;
+        tot++;
+      }
+      if (tot > 500 && err < best_err) { best_err = err; best_tot = tot; }
+    }
+    double ber = best_tot > 0 ? (double)best_err / best_tot : 1.0;
+    if (ber < 0.02) {
+      sym_ok = TRUE;
+      log_info("hfdl_demod selftest: BPSK recovery PASS (%d symbols, diff-BER %.4f)\n", nsy, ber);
+    } else {
+      log_error("hfdl_demod selftest: BPSK recovery FAIL (diff-BER %.4f over %d symbols)\n", ber, best_tot);
+    }
+  } else {
+    log_error("hfdl_demod selftest: BPSK recovery — too few symbols (%d)\n", nsy);
+  }
+
+  g_free(txbits); g_free(tx); g_free(bb); g_free(rs);
+  hfdl_demod_destroy(d2);
+  return ok && sym_ok;
 }

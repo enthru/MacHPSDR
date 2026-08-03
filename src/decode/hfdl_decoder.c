@@ -41,17 +41,20 @@
 #include "hfdl_demod.h"
 #include "log.h"
 
-// Scratch for one block of conditioned symbol-domain output (interleaved float
-// I/Q). Real off-air rates (≥48 kHz) decimate to far fewer than this per block;
-// the front-end caps its write at HFDL_OUT_MAX so this can never overflow.
+// Scratch for one block of conditioned baseband output (interleaved float I/Q).
+// Real off-air rates (≥48 kHz) decimate to far fewer than this per block; the
+// front-end caps its write at HFDL_OUT_MAX so this can never overflow.
 #define HFDL_OUT_MAX 8192
+// Recovered symbols per block ≤ baseband/SPS; the same cap is more than enough.
+#define HFDL_SYM_MAX 8192
 
 // --- state (all audio-thread-owned unless noted) ---------------------------
 
 static volatile gint enabled = 0;          // atomic on/off gate
 static hfdl_demod   *demod = NULL;          // front-end DSP (audio thread only)
 static double        demod_rate = 0.0;      // input rate demod was built for
-static float         out_buf[2 * HFDL_OUT_MAX];
+static float         out_buf[2 * HFDL_OUT_MAX];   // conditioned baseband
+static float         sym_buf[2 * HFDL_SYM_MAX];   // recovered symbols
 
 static GMutex        lock;                  // guards the published fields below
 static GString      *pending = NULL;        // decoded text awaiting the panel drain
@@ -122,14 +125,17 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
     demod = hfdl_demod_create((double)sample_rate);
     demod_rate = (double)sample_rate;
   }
-  int nout = 0;
+  int nsym = 0;
   double level = -160.0;
   if (demod) {
-    nout = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
+    // Phase 2a front-end: condition the raw I/Q into the 5400 S/s symbol domain.
+    int nbb = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
     level = hfdl_demod_level_db(demod);
-    // Phase 2a stops here: the conditioned symbols in out_buf are not yet
-    // demodulated. The symbol/carrier recovery, equalizer, M-PSK modem and
-    // preamble→framing→FEC that turn them into messages are the next phase.
+    // Phase 2b: recover carrier-locked BPSK symbols (symsync + Costas + modem).
+    nsym = hfdl_demod_symbols(demod, out_buf, nbb, sym_buf, HFDL_SYM_MAX);
+    // The recovered symbols in sym_buf are not yet framed: preamble correlation,
+    // the LMS equalizer, adaptive M-PSK selection and framing→FEC→message text
+    // are the next phase (only meaningfully verifiable against a real recording).
   }
 
   g_mutex_lock(&lock);
@@ -140,15 +146,15 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
     reset_pending = FALSE;
   }
   status_rate = sample_rate;
-  status_syms += nout;
+  status_syms += nsym;
   status_level = level;
   status_fed = TRUE;
   glong syms = status_syms;
   gboolean do_echo = echo;
   g_mutex_unlock(&lock);
 
-  if (do_echo && nout > 0 && (syms - nout) / 50000 != syms / 50000)
-    g_printerr("[HFDL] %ld symbol-domain samples @ %.0f dB (front-end only)\n",
+  if (do_echo && nsym > 0 && (syms - nsym) / 20000 != syms / 20000)
+    g_printerr("[HFDL] %ld symbols recovered @ %.0f dB (no framing yet)\n",
                syms, level);
 }
 
@@ -171,7 +177,7 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
   ensure_init();
   if (listening)   *listening   = g_atomic_int_get(&enabled) && status_fed;
   if (sample_rate) *sample_rate = status_rate;
-  if (blocks)      *blocks      = status_syms;   // symbol-domain samples produced
+  if (blocks)      *blocks      = status_syms;   // recovered symbols since reset
   g_mutex_unlock(&lock);
 }
 

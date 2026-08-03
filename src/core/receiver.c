@@ -1829,8 +1829,8 @@ static void full_rx_buffer(RECEIVER *rx) {
   // HFDL (aviation HF data link) decoder tap: raw off-air complex I/Q — NOT the
   // listen-audio path, and independent of decoder_taps_audio() (like the
   // recorder/vectorscope). Active RX in DIGU only; the enable/disable gate lives
-  // here in one place (only the active RX toggles it). The demod chain is built
-  // up in later phases; phase 1 only accumulates a throughput counter.
+  // here in one place (only the active RX toggles it). The decoder conditions +
+  // demodulates this I/Q (front-end + symbol recovery); framing is a later phase.
   if(radio->active_receiver==rx) {
     gboolean hfdl_on = (rx->mode_a==DIGU) && radio->decode_mode==DECODE_HFDL;
     hfdl_decoder_set_enabled(hfdl_on);

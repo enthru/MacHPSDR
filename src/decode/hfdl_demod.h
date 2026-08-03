@@ -71,10 +71,23 @@ int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
 // Current AGC signal level (RSSI, dB) — slowly tracking, for the panel readout.
 double hfdl_demod_level_db(hfdl_demod *d);
 
-// Headless self-test: synthesize a complex tone at the HFDL carrier offset, push
-// it through, and assert (a) the output rate matches HFDL_BASEBAND_RATE and (b)
-// the downmix brings the tone to DC (coherent output). Returns TRUE on pass.
-// No GTK/RADIO deps — callable from a standalone test binary.
+// Symbol recovery (phase 2b): take conditioned baseband (HFDL_BASEBAND_RATE,
+// interleaved float I/Q from hfdl_demod_process) and run symbol-timing recovery
+// (symsync) + carrier recovery (Costas loop, decision-directed against BPSK),
+// emitting one carrier-locked complex symbol per HFDL symbol (~HFDL_SYM_RATE/s)
+// into out_syms (interleaved float I/Q; room for 2*max_out floats). Returns the
+// symbol count. The LMS equalizer and adaptive BPSK/PSK4/PSK8 selection are
+// driven by the frame state machine (a later phase); this stage recovers the
+// clean/lightly-impaired constellation the synthetic self-test exercises.
+int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
+                       float *out_syms, int max_out);
+
+// Headless self-test (no GTK/RADIO deps — links into a standalone binary):
+//   (a) front-end: a tone at the carrier offset lands at DC (coherent) at the
+//       exact HFDL_BASEBAND_RATE;
+//   (b) symbol recovery: synthetic RRC-shaped BPSK (with a carrier offset) is
+//       recovered end-to-end through process()+symbols() at ~0 differential BER.
+// Returns TRUE only if both pass.
 gboolean hfdl_demod_selftest(void);
 
 #endif
