@@ -120,6 +120,31 @@ SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_p
 SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o
 endif
 
+# HFDL (aviation HF Data Link, ARINC 635) receive decoder — parity 4.5.
+# OFF by default: a stock build stays GPLv2. It depends on liquid-dsp (MIT;
+# `brew install liquid-dsp` on macOS, `libliquid-dev`/source on Linux) and, as
+# later phases port dumphfdl (GPL-3.0), the HFDL build becomes effectively GPLv3
+# (compatible with this fork's "GPLv2 or later" — see NOTICE). Enable with
+# `make HFDL_INCLUDE=HFDL` or uncomment the line below. Requires SSTV+FT8 (it
+# reuses the shared decode-block machinery). On Linux, override HFDL_INCLUDES /
+# HFDL_LIBS if liquid-dsp is not on the default include/lib path.
+#HFDL_INCLUDE=HFDL
+
+ifeq ($(HFDL_INCLUDE),HFDL)
+HFDL_OPTIONS=-D HFDL
+ifeq ($(UNAME_S), Darwin)
+HFDL_INCLUDES=-I$(shell brew --prefix liquid-dsp)/include
+HFDL_LIBS=-L$(shell brew --prefix liquid-dsp)/lib -lliquid
+endif
+ifeq ($(UNAME_S), Linux)
+HFDL_INCLUDES=
+HFDL_LIBS=-lliquid
+endif
+HFDL_SOURCES= hfdl_decoder.c hfdl_panel.c
+HFDL_HEADERS= hfdl_decoder.h hfdl_panel.h
+HFDL_OBJS= hfdl_decoder.o hfdl_panel.o
+endif
+
 
 ifeq ($(UNAME_S), Linux)
 # cwdaemon support. Allows linux based logging software to key an Hermes/HermesLite2
@@ -190,7 +215,7 @@ CFLAGS= -g -O3 -std=gnu23 -Wall -Wextra \
         -Wno-unused-parameter -Wno-unused-variable \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
@@ -204,7 +229,7 @@ ifeq ($(UNAME_S), Linux)
 # (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
 # but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
 # require `sudo make install` of an upstream WDSP.
-LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS)
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(HFDL_LIBS)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
 # so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
@@ -213,7 +238,7 @@ RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)'
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
@@ -230,7 +255,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -458,14 +483,14 @@ tci.o \
 tci_dialog.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(LIBS) $(RPATH_FLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
+	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(LIBS) $(RPATH_FLAGS)
 
 # Header dependencies: the .c.o rule emits a .d per object (-MMD -MP). Pulling
 # them in here makes a plain `make` recompile every object that includes a
 # changed header (e.g. a struct field added to radio.h) — without this, stale
 # objects keep the old struct layout and corrupt memory at run time.
-ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS)
+ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
 # Build the in-tree WDSP (patched: WFM demod + tweaks) on BOTH platforms, so the

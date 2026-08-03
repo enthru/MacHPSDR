@@ -81,6 +81,10 @@
 #include "cw_decoder.h"
 #include "cw_panel.h"
 #endif
+#ifdef HFDL
+#include "hfdl_decoder.h"
+#include "hfdl_panel.h"
+#endif
 
 #include "cwdaemon.h"
 #include "dxcluster.h"
@@ -107,6 +111,9 @@ static GtkWidget *add_wideband_b;
 static gboolean panels_idle(RADIO *r) {
   return r->ft8_panel==NULL && r->sstv_panel==NULL &&
          r->wefax_panel==NULL && r->cw_panel==NULL &&
+#ifdef HFDL
+         r->hfdl_panel==NULL &&
+#endif
          r->receivers < r->discovered->supported_receivers;
 }
 
@@ -828,6 +835,9 @@ static gboolean rx_stack_balance(gpointer data) {
   if(r->sstv_panel!=NULL)  n++;
   if(r->wefax_panel!=NULL) n++;
   if(r->cw_panel!=NULL)    n++;
+#ifdef HFDL
+  if(r->hfdl_panel!=NULL)  n++;
+#endif
   if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
 
   GtkWidget *w=gtk_widget_get_first_child(r->rx_container);
@@ -931,6 +941,16 @@ void radio_rebuild_rx_stack(RADIO *r) {
     child_remove_from_parent(r->cw_panel);
     tables[n++]=r->cw_panel;
   }
+#ifdef HFDL
+  // The HFDL message panel is likewise mutually exclusive with the other decoder
+  // panels and occupies the second-receiver slot.
+  if(r->hfdl_panel!=NULL) {
+    g_object_ref(r->hfdl_panel);
+    GtkWidget *parent=gtk_widget_get_parent(r->hfdl_panel);
+    child_remove_from_parent(r->hfdl_panel);
+    tables[n++]=r->hfdl_panel;
+  }
+#endif
 
   // Destroy whatever remains in the container: the old paned skeleton plus any
   // orphaned panel (e.g. a receiver that was just closed). Live panels were
@@ -1051,6 +1071,7 @@ static const char *decode_mode_label(int m) {
     case DECODE_SSTV:  return "SSTV";
     case DECODE_WEFAX: return "WEFAX";
     case DECODE_CW:    return "CW";
+    case DECODE_HFDL:  return "HFDL";
   }
   return "?";
 }
@@ -1066,6 +1087,9 @@ static int decode_valid_mask(RECEIVER *rx) {
     int m = (1<<DECODE_OFF)|(1<<DECODE_FT8)|(1<<DECODE_FT4)|(1<<DECODE_SSTV);
 #ifdef SSTV
     m |= (1<<DECODE_WEFAX);
+#endif
+#ifdef HFDL
+    if(rx->mode_a==DIGU) m |= (1<<DECODE_HFDL);   // aviation HF data link — USB (DIGU) only
 #endif
     return m;
   }
@@ -1099,9 +1123,9 @@ static void decode_sel_sync(RADIO *r) {
   g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
   if(rebuild) {
     gtk_string_list_splice(sl,0,g_list_model_get_n_items(G_LIST_MODEL(sl)),NULL);
-    int *modes = g_new0(int, DECODE_CW+1);
+    int *modes = g_new0(int, DECODE_HFDL+1);
     int n = 0;
-    for(int m=DECODE_OFF;m<=DECODE_CW;m++) if(mask & (1<<m)) {
+    for(int m=DECODE_OFF;m<=DECODE_HFDL;m++) if(mask & (1<<m)) {
       gtk_string_list_append(sl,decode_mode_label(m));
       modes[n++] = m;
     }
@@ -1153,6 +1177,9 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV
   radio_wefax_panel_sync(r); // close the WEFAX image panel if we left WEFAX
   radio_cw_panel_sync(r);    // close the CW text panel if we left CW
+#endif
+#ifdef HFDL
+  radio_hfdl_panel_sync(r);  // close the HFDL message panel if we left HFDL
 #endif
 }
 #endif
@@ -1271,6 +1298,44 @@ static void cw_expand_cb(GtkButton *b, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->cw_panel_open = !r->cw_panel_open;
   radio_cw_panel_sync(r);
+}
+#endif
+
+#ifdef HFDL
+// Show or hide the embedded HFDL message panel.  Like the CW/SSTV/WEFAX panels
+// it takes the second-receiver slot, but only in DIGU (HF USB data link) with
+// the HFDL decoder selected.  Leaving HFDL or DIGU closes it.  GTK thread only.
+void radio_hfdl_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean hfdlmode = (r->active_receiver!=NULL && r->active_receiver->mode_a==DIGU) &&
+                      r->decode_mode==DECODE_HFDL;
+  if(!hfdlmode) r->hfdl_panel_open=FALSE;
+  gboolean want = hfdlmode && r->hfdl_panel_open;
+  gboolean have = (r->hfdl_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->hfdl_panel=hfdl_panel_create();
+    g_object_ref_sink(r->hfdl_panel);
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->hfdl_panel;
+    r->hfdl_panel=NULL;                        // hide from the rebuild below
+    child_remove_from_parent(p);
+    g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      panels_idle(r));
+}
+
+// Bottom-bar "Show HFDL" toggle: open/close the HFDL message panel (in place of RX2).
+static void hfdl_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->hfdl_panel_open = !r->hfdl_panel_open;
+  radio_hfdl_panel_sync(r);
 }
 #endif
 
@@ -1606,6 +1671,10 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean sstv_active = sstv_cap && r->decode_mode==DECODE_SSTV;
   gboolean wefax_active = digi && r->decode_mode==DECODE_WEFAX;   // HF USB radiofax
   gboolean cw_active = cw_cap && r->decode_mode==DECODE_CW;
+#ifdef HFDL
+  // HFDL (aviation HF data link) is HF USB — offered in DIGU only.
+  gboolean hfdl_active = digu && r->decode_mode==DECODE_HFDL;
+#endif
   const char *ftname = r->decode_mode==DECODE_FT4 ? "FT4" : "FT8";
 #endif
   // The decoder block is the RDS readout in WFM and the selected-decoder readout
@@ -1619,6 +1688,9 @@ static gboolean rds_update_cb(gpointer data) {
     else if(sstv_active) title = "SSTV";
     else if(wefax_active) title = "WEFAX";
     else if(cw_active) title = "CW";
+#ifdef HFDL
+    else if(hfdl_active) title = "HFDL";
+#endif
 #endif
     gtk_label_set_text(GTK_LABEL(r->rds_title), title);
   }
@@ -1798,6 +1870,23 @@ static gboolean rds_update_cb(gpointer data) {
     snprintf(ft8buf,sizeof(ft8buf),"CW decoder support not built in");
 #endif
   }
+#ifdef HFDL
+  else if(hfdl_active) {
+    // HFDL: the messages live in the big panel; the bottom block carries a compact
+    // listening/throughput readout (phase 1 — no demod yet). Hint to open the
+    // panel when it is closed, like SSTV/WEFAX.
+    show_ft8 = TRUE;
+    gboolean listening; int hrate; glong hblocks;
+    hfdl_decoder_get_status(&listening, &hrate, &hblocks);
+    if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "HFDL");
+    if(r->hfdl_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %ld blocks   (demod not yet implemented)",
+               listening?"listening":"idle", hblocks);
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %ld blocks\n(Show HFDL for the message panel — demod not yet implemented)",
+               listening?"listening":"idle", hblocks);
+  }
+#endif
 #endif
 #ifdef FT8
   // Swap between the 3 RDS rows and the single decoder block depending on the mode.
@@ -1841,6 +1930,14 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_button_set_label(GTK_BUTTON(r->cw_expand_btn),
                          r->cw_panel_open?"Hide CW":"Show CW");
   }
+#ifdef HFDL
+  // The "Show HFDL" toggle: shown in DIGU with the HFDL decoder selected.
+  if(r->hfdl_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->hfdl_expand_btn, hfdl_active);
+    gtk_button_set_label(GTK_BUTTON(r->hfdl_expand_btn),
+                         r->hfdl_panel_open?"Hide HFDL":"Show HFDL");
+  }
+#endif
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
     gtk_widget_set_visible(r->rds_label[i], !show_ft8);
     gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
@@ -2030,6 +2127,15 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_valign(r->cw_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->cw_expand_btn,"clicked",G_CALLBACK(cw_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->cw_expand_btn);
+#endif
+#ifdef HFDL
+  // "Show HFDL" toggle: opens/closes the HFDL message panel (in place of RX2).
+  // Shown only in DIGU with the HFDL decoder selected (see rds_update_cb).
+  r->hfdl_expand_btn=gtk_button_new_with_label("Show HFDL");
+  gtk_widget_set_name(r->hfdl_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->hfdl_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->hfdl_expand_btn,"clicked",G_CALLBACK(hfdl_expand_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(dec_ctl),r->hfdl_expand_btn);
 #endif
 
   // Decode block content: the text column (expands) with the controls on the right.

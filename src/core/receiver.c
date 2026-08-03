@@ -75,6 +75,9 @@
 #include "cw_decoder.h"
 #include "cw_keyer.h"
 #endif
+#ifdef HFDL
+#include "hfdl_decoder.h"
+#endif
 // Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
 // gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
 // decoders, so it is compiled whenever either is enabled.
@@ -1431,6 +1434,9 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     radio_cw_panel_sync(radio);
   }
 #endif
+#ifdef HFDL
+  if(radio!=NULL && rx==radio->active_receiver) radio_hfdl_panel_sync(radio);
+#endif
   // TCI (Phase A): mirror the mode change to connected clients (no-op unless
   // the server runs and rx is the active receiver; see tci.c).
   tci_notify_mode(rx);
@@ -1819,6 +1825,18 @@ static void full_rx_buffer(RECEIVER *rx) {
   // TCI (Phase B): stream this off-air I/Q block to any iq_start client. No-op
   // with no IQ subscribers (single atomic read).
   tci_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size, rx->sample_rate);
+#ifdef HFDL
+  // HFDL (aviation HF data link) decoder tap: raw off-air complex I/Q — NOT the
+  // listen-audio path, and independent of decoder_taps_audio() (like the
+  // recorder/vectorscope). Active RX in DIGU only; the enable/disable gate lives
+  // here in one place (only the active RX toggles it). The demod chain is built
+  // up in later phases; phase 1 only accumulates a throughput counter.
+  if(radio->active_receiver==rx) {
+    gboolean hfdl_on = (rx->mode_a==DIGU) && radio->decode_mode==DECODE_HFDL;
+    hfdl_decoder_set_enabled(hfdl_on);
+    if(hfdl_on) hfdl_decoder_add_iq(rx->iq_input_buffer, rx->buffer_size, rx->sample_rate);
+  }
+#endif
 
   // noise blanker works on origianl IQ samples
   if(rx->nb) {
