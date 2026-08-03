@@ -1240,11 +1240,20 @@ void set_squelch(RECEIVER *rx) {
   // that; the same convention now applies to AMSQ for the other modes.
   rx->squelch_enable=(rx->squelch > 0.0);
 
+  // Squelch gates the audio stream, so it must step aside while a decoder is
+  // running (or in the data modes) exactly like NR/NB/ANF/notch -- otherwise a
+  // closing squelch feeds the decoder SILENCE. For SSTV that silence decodes to
+  // solid GREEN (a Y=Cr=Cb=0 sample maps to RGB(0,135,0) in the BT.601 full-range
+  // conversion, since chroma neutral is 128 not 0), i.e. green patches wherever
+  // the squelch chattered. The bar value/enable is kept (still shown/persisted);
+  // only the WDSP Run flag is suppressed, and returns the moment decoding stops.
+  gboolean run = rx->squelch_enable && !bypass_stream_dsp(rx);
+
   if(is_fm) {
     double fm_sq=pow(10.0, -2.0*rx->squelch);
     SetRXAFMSQThreshold(rx->channel, fm_sq);
     SetRXAAMSQRun(rx->channel, 0);
-    SetRXAFMSQRun(rx->channel, rx->squelch_enable);
+    SetRXAFMSQRun(rx->channel, run);
     log_info("Set FM squelch %f %f\n", rx->squelch, fm_sq);
   } else {
     // Voice/amplitude squelch. AMSQ's unmute threshold is pow(10, thresh_db/20)
@@ -1256,7 +1265,7 @@ void set_squelch(RECEIVER *rx) {
     double thresh_db=amsq_min_db + (amsq_max_db-amsq_min_db)*rx->squelch;
     SetRXAAMSQThreshold(rx->channel, thresh_db);
     SetRXAFMSQRun(rx->channel, 0);
-    SetRXAAMSQRun(rx->channel, rx->squelch_enable);
+    SetRXAAMSQRun(rx->channel, run);
     log_info("Set AM/voice squelch %f %f dB\n", rx->squelch, thresh_db);
   }
 }

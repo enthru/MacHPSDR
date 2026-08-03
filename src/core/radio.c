@@ -1143,6 +1143,11 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   // the WDSP Run flags change — rx->nr* (and the VFO NR indicator) are untouched.
   if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
     update_noise(r->active_receiver);
+  // Squelch also gates the stream, so it has to be held off while a decoder runs
+  // and restored when it stops — same reason as update_noise above. Without this
+  // a closing squelch feeds the decoder silence (for SSTV: solid green patches).
+  if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
+    set_squelch(r->active_receiver);
   radio_ft8_panel_sync(r);   // close the QSO panel if we left FT8/FT4
 #ifdef SSTV
   radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV
