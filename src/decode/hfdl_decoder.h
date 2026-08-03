@@ -63,8 +63,11 @@ int hfdl_decoder_get_messages(char *buf, int buflen);
 // Snapshot of decoder status for the panel readout. GTK thread only.
 //   listening   - TRUE while the tap is receiving I/Q (enabled + fed)
 //   sample_rate - the off-air sample rate currently seen (Hz), 0 if idle
-//   blocks      - total I/Q blocks fed since the last reset
+//   blocks      - conditioned symbol-domain samples produced since the last reset
 void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *blocks);
+
+// Current front-end AGC signal level (RSSI, dB) for the readout. GTK thread only.
+double hfdl_decoder_get_level_db(void);
 
 // Clear decoded text + reset state (panel "Clear" button). Safe from the GTK
 // thread; the state reset is applied on the next audio-thread feed.

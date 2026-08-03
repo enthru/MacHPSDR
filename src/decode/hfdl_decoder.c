@@ -18,12 +18,19 @@
 */
 
 /*
- * HFDL receive decoder — phase-1 scaffold. See hfdl_decoder.h for the design.
+ * HFDL receive decoder — orchestrator. See hfdl_decoder.h for the design.
  *
- * Threading: hfdl_decoder_add_iq() runs on the RX audio thread; the panel drains
- * text + reads status from the GTK thread. A single GMutex guards the pending
- * message ring and the published status trio (same model as cw_decoder.c). The
- * enable flag is an atomic so the tap's fast-path check is lock-free.
+ * Phase 2a: owns the front-end DSP (hfdl_demod.c) that conditions the raw off-air
+ * I/Q into the HFDL symbol domain, and publishes a signal-level / symbol-throughput
+ * status for the panel. The demod CORE (symbol/carrier recovery, equalizer, M-PSK
+ * modem, preamble→framing→FEC) is the next phase.
+ *
+ * Threading: hfdl_decoder_set_enabled() and hfdl_decoder_add_iq() both run on the
+ * RX audio thread (from the tap in receiver.c:full_rx_buffer), so the front-end
+ * (hfdl_demod, not thread-safe) is created/fed/destroyed entirely there — no lock
+ * needed around it. Only the published status trio and the message ring are
+ * touched cross-thread (the GTK panel poll), guarded by a single GMutex (mirrors
+ * cw_decoder.c). The enable flag is an atomic so the tap's fast-path is lock-free.
  */
 
 #include <glib.h>
@@ -31,25 +38,44 @@
 #include <liquid/liquid.h>
 
 #include "hfdl_decoder.h"
+#include "hfdl_demod.h"
 #include "log.h"
 
-// --- state -----------------------------------------------------------------
+// Scratch for one block of conditioned symbol-domain output (interleaved float
+// I/Q). Real off-air rates (≥48 kHz) decimate to far fewer than this per block;
+// the front-end caps its write at HFDL_OUT_MAX so this can never overflow.
+#define HFDL_OUT_MAX 8192
+
+// --- state (all audio-thread-owned unless noted) ---------------------------
 
 static volatile gint enabled = 0;          // atomic on/off gate
-static gboolean      reset_pending = FALSE; // requested from GTK, applied on feed
+static hfdl_demod   *demod = NULL;          // front-end DSP (audio thread only)
+static double        demod_rate = 0.0;      // input rate demod was built for
+static float         out_buf[2 * HFDL_OUT_MAX];
 
-static GMutex        lock;                  // guards everything below
+static GMutex        lock;                  // guards the published fields below
 static GString      *pending = NULL;        // decoded text awaiting the panel drain
+static gboolean      reset_pending = FALSE; // requested from GTK, applied on feed
 static int           status_rate = 0;       // last off-air sample rate seen (Hz)
-static glong         status_blocks = 0;     // I/Q blocks fed since reset
+static glong         status_syms = 0;       // symbol-domain samples since reset
+static double        status_level = -160.0; // AGC RSSI (dB)
 static gboolean      status_fed = FALSE;    // fed at least one block since enable
 
 static gboolean      echo = FALSE;          // MACHPSDR_HFDL_ECHO -> stderr
-static gboolean      echo_read = FALSE;
+static gboolean      env_read = FALSE;
 
 static void ensure_init(void) {
   if (pending == NULL) pending = g_string_new(NULL);
-  if (!echo_read) { echo = (g_getenv("MACHPSDR_HFDL_ECHO") != NULL); echo_read = TRUE; }
+  if (!env_read) {
+    echo = (g_getenv("MACHPSDR_HFDL_ECHO") != NULL);
+    env_read = TRUE;
+  }
+}
+
+// Audio thread. Free the front-end (on disable / rate change / re-enable reset).
+static void demod_free(void) {
+  if (demod) { hfdl_demod_destroy(demod); demod = NULL; }
+  demod_rate = 0.0;
 }
 
 // --- API -------------------------------------------------------------------
@@ -57,49 +83,73 @@ static void ensure_init(void) {
 void hfdl_decoder_set_enabled(gboolean on) {
   gint was = g_atomic_int_get(&enabled);
   if (on && !was) {
-    // off -> on: fresh start. Log the liquid-dsp version to prove the phase-0
-    // link and mark the demod core still to come.
+    // off -> on: fresh start.
     g_mutex_lock(&lock);
     ensure_init();
     g_string_truncate(pending, 0);
-    status_blocks = 0;
+    status_syms = 0;
     status_rate = 0;
+    status_level = -160.0;
     status_fed = FALSE;
     reset_pending = FALSE;
+    gboolean do_echo = echo;
     g_mutex_unlock(&lock);
-    log_info("hfdl: decoder enabled (liquid-dsp %s) — scaffold, demod not yet implemented\n",
+    demod_free();   // rebuilt lazily on the first feed at the live rate
+    log_info("hfdl: decoder enabled (liquid-dsp %s) — front-end (phase 2a), no framing yet\n",
              liquid_libversion());
-    if (echo) g_printerr("[HFDL] enabled (liquid-dsp %s)\n", liquid_libversion());
+    if (do_echo) {
+      g_printerr("[HFDL] enabled (liquid-dsp %s)\n", liquid_libversion());
+      if (g_getenv("MACHPSDR_HFDL_SELFTEST"))
+        g_printerr("[HFDL] demod selftest: %s\n", hfdl_demod_selftest() ? "PASS" : "FAIL");
+    }
   } else if (!on && was) {
+    demod_free();
     log_info("hfdl: decoder disabled\n");
+    g_mutex_lock(&lock);
     if (echo) g_printerr("[HFDL] disabled\n");
+    g_mutex_unlock(&lock);
   }
   g_atomic_int_set(&enabled, on ? 1 : 0);
 }
 
 void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
-  if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0) return;
+  if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0 || sample_rate <= 0)
+    return;
+
+  // (Re)build the front-end if the rate changed (audio thread — safe).
+  if (demod == NULL || demod_rate != (double)sample_rate) {
+    demod_free();
+    demod = hfdl_demod_create((double)sample_rate);
+    demod_rate = (double)sample_rate;
+  }
+  int nout = 0;
+  double level = -160.0;
+  if (demod) {
+    nout = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
+    level = hfdl_demod_level_db(demod);
+    // Phase 2a stops here: the conditioned symbols in out_buf are not yet
+    // demodulated. The symbol/carrier recovery, equalizer, M-PSK modem and
+    // preamble→framing→FEC that turn them into messages are the next phase.
+  }
 
   g_mutex_lock(&lock);
   ensure_init();
   if (reset_pending) {
     g_string_truncate(pending, 0);
-    status_blocks = 0;
+    status_syms = 0;
     reset_pending = FALSE;
   }
   status_rate = sample_rate;
-  status_blocks++;
+  status_syms += nout;
+  status_level = level;
   status_fed = TRUE;
-  glong blk = status_blocks;
+  glong syms = status_syms;
+  gboolean do_echo = echo;
   g_mutex_unlock(&lock);
 
-  // Phase 1: no demodulation yet. Later phases NCO-shift the 1800 Hz carrier to
-  // DC, LP-filter + decimate to ~3600 complex S/s, then run the liquid M-PSK
-  // demod + equalizer + framing on a worker thread from here.
-  if (echo && (blk % 200) == 0)
-    g_printerr("[HFDL] %ld blocks fed @ %d Hz (no demod yet)\n", blk, sample_rate);
-
-  (void)nframes;
+  if (do_echo && nout > 0 && (syms - nout) / 50000 != syms / 50000)
+    g_printerr("[HFDL] %ld symbol-domain samples @ %.0f dB (front-end only)\n",
+               syms, level);
 }
 
 int hfdl_decoder_get_messages(char *buf, int buflen) {
@@ -121,8 +171,15 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
   ensure_init();
   if (listening)   *listening   = g_atomic_int_get(&enabled) && status_fed;
   if (sample_rate) *sample_rate = status_rate;
-  if (blocks)      *blocks      = status_blocks;
+  if (blocks)      *blocks      = status_syms;   // symbol-domain samples produced
   g_mutex_unlock(&lock);
+}
+
+double hfdl_decoder_get_level_db(void) {
+  g_mutex_lock(&lock);
+  double v = status_level;
+  g_mutex_unlock(&lock);
+  return v;
 }
 
 void hfdl_decoder_reset(void) {

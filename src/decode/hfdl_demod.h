@@ -1,0 +1,80 @@
+/* Copyright (C)
+* 2026 - MacHPSDR fork
+*
+* This program is free software; you can redistribute it and/or
+* modify it under the terms of the GNU General Public License
+* as published by the Free Software Foundation; either version 2
+* of the License, or (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*
+*/
+
+/*
+ * HFDL receive front-end DSP — parity 4.5, phase 2a.
+ *
+ * Conditions the raw off-air complex I/Q into the HFDL symbol domain:
+ *
+ *   NCO carrier downmix (−HFDL_CARRIER_OFFSET_HZ)  →  bring the SSB carrier to DC
+ *   msresamp (multi-stage arbitrary resampler)     →  HFDL_SYM_RATE*HFDL_SPS S/s
+ *   AGC                                            →  level-normalise
+ *   matched filter (root-raised-cosine, 19 taps)   →  ISI-shaped baseband
+ *
+ * This is a straight port of the front half of dumphfdl's (GPL-3.0)
+ * `hfdl_channel_create()` / demod loop (src/hfdl.c): the same 1800-baud / SPS=3
+ * / 1440 Hz-offset parameters and the same liquid-dsp blocks. dumphfdl's FFT
+ * channelizer is dropped — our WDSP receiver already delivers a narrow slice
+ * centred on the dial, so a single NCO mixer replaces it.
+ *
+ * What phase 2a delivers is exactly this conditioned symbol-domain stream plus a
+ * signal-level (AGC RSSI) readout. The coupled demod CORE — symbol-timing
+ * (symsync), carrier recovery (Costas), LMS equalizer, M-PSK modem and preamble
+ * correlation → framing → FEC — is the next phase (it needs libfec's Viterbi and
+ * can only be meaningfully verified against a real HFDL recording).
+ *
+ * Self-contained + liquid-dsp only; no GTK/RADIO deps, so it links into a
+ * headless unit test (see hfdl_demod_selftest()).
+ */
+
+#ifndef _HFDL_DEMOD_H
+#define _HFDL_DEMOD_H
+
+#include <glib.h>
+
+#define HFDL_SYM_RATE          1800   // HFDL symbol rate (baud)
+#define HFDL_SPS               3      // samples/symbol in the resampled domain
+#define HFDL_CARRIER_OFFSET_HZ 1440   // SSB carrier offset (dumphfdl HFDL_SSB_CARRIER_OFFSET_HZ)
+// Conditioned output sample rate = symbol rate × samples-per-symbol.
+#define HFDL_BASEBAND_RATE     (HFDL_SYM_RATE * HFDL_SPS)   // 5400 S/s
+
+typedef struct hfdl_demod hfdl_demod;
+
+// Create the front-end for an off-air complex input at input_rate Hz. Returns
+// NULL on failure (e.g. input_rate below the symbol-domain rate).
+hfdl_demod *hfdl_demod_create(double input_rate);
+void hfdl_demod_destroy(hfdl_demod *d);
+
+// Feed nframes complex input samples (interleaved I/Q doubles: I=iq[2i],
+// Q=iq[2i+1]); write up to max_out conditioned baseband samples (HFDL_BASEBAND_RATE)
+// into out as interleaved float I/Q (needs room for 2*max_out floats). Returns
+// the number of complex samples written (≤ max_out; excess is dropped this call).
+int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
+                       float *out, int max_out);
+
+// Current AGC signal level (RSSI, dB) — slowly tracking, for the panel readout.
+double hfdl_demod_level_db(hfdl_demod *d);
+
+// Headless self-test: synthesize a complex tone at the HFDL carrier offset, push
+// it through, and assert (a) the output rate matches HFDL_BASEBAND_RATE and (b)
+// the downmix brings the tone to DC (coherent output). Returns TRUE on pass.
+// No GTK/RADIO deps — callable from a standalone test binary.
+gboolean hfdl_demod_selftest(void);
+
+#endif

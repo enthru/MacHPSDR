@@ -140,9 +140,9 @@ ifeq ($(UNAME_S), Linux)
 HFDL_INCLUDES=
 HFDL_LIBS=-lliquid
 endif
-HFDL_SOURCES= hfdl_decoder.c hfdl_panel.c
-HFDL_HEADERS= hfdl_decoder.h hfdl_panel.h
-HFDL_OBJS= hfdl_decoder.o hfdl_panel.o
+HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_panel.c
+HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_panel.h
+HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_panel.o
 endif
 
 

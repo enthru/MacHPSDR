@@ -55,12 +55,13 @@ static gboolean tick(gpointer data) {
     gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(p->view), p->end_mark, 0.0, FALSE, 0.0, 0.0);
   }
 
-  gboolean listening; int rate; glong blocks;
-  hfdl_decoder_get_status(&listening, &rate, &blocks);
-  char buf[96];
+  gboolean listening; int rate; glong syms;
+  hfdl_decoder_get_status(&listening, &rate, &syms);
+  double level = hfdl_decoder_get_level_db();
+  char buf[128];
   if (listening)
-    g_snprintf(buf, sizeof(buf), "listening \xC2\xB7 %d kHz \xC2\xB7 %ld blocks  (demod not yet implemented)",
-               rate / 1000, blocks);
+    g_snprintf(buf, sizeof(buf), "signal %.0f dB \xC2\xB7 %d kHz \xC2\xB7 %ld ksym  (front-end only \xE2\x80\x94 no framing yet)",
+               level, rate / 1000, syms / 1000);
   else
     g_snprintf(buf, sizeof(buf), "idle");
   gtk_label_set_text(GTK_LABEL(p->status), buf);

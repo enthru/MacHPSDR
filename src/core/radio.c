@@ -1876,15 +1876,16 @@ static gboolean rds_update_cb(gpointer data) {
     // listening/throughput readout (phase 1 — no demod yet). Hint to open the
     // panel when it is closed, like SSTV/WEFAX.
     show_ft8 = TRUE;
-    gboolean listening; int hrate; glong hblocks;
-    hfdl_decoder_get_status(&listening, &hrate, &hblocks);
+    gboolean listening; int hrate; glong hsyms;
+    hfdl_decoder_get_status(&listening, &hrate, &hsyms);
+    double hlvl = hfdl_decoder_get_level_db();
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "HFDL");
     if(r->hfdl_panel_open)
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %ld blocks   (demod not yet implemented)",
-               listening?"listening":"idle", hblocks);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld ksym   (front-end only — no framing yet)",
+               listening?"sig":"idle", hlvl, hsyms/1000);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %ld blocks\n(Show HFDL for the message panel — demod not yet implemented)",
-               listening?"listening":"idle", hblocks);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld ksym\n(Show HFDL for the message panel — front-end only, no framing yet)",
+               listening?"sig":"idle", hlvl, hsyms/1000);
   }
 #endif
 #endif
