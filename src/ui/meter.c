@@ -185,7 +185,15 @@ static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,g
   GdkRGBA warn=skin_rgba(WARNING,1.0);
   GdkRGBA darktext=skin_rgba(DARK_TEXT,1.0);
 
-  // dial arc + S9+ overload zone
+  // --- moving-coil draw order -------------------------------------------
+  // The printed scale (dial arc, S9+ red band, ticks, numbers) is laid down
+  // FIRST; the needle sweeps OVER all of it, exactly like a real meter whose
+  // pointer rides above the face; finally an opaque dial-face disc masks the
+  // needle's inner two-thirds so it appears to emerge from the face. Drawing
+  // the scale first is what lets the needle tip stay visible in the red S9+
+  // band (it used to hide behind the band, which was painted on top).
+
+  // dial arc + S9+ overload zone (outer scale)
   meter_arc(snapshot,cx,cy,radius,216.0*M_PI/180.0,324.0*M_PI/180.0,1.0,&offwhite);
   meter_arc(snapshot,cx,cy,radius+2,264.0*M_PI/180.0,324.0*M_PI/180.0,2.5,&warn);
 
@@ -211,10 +219,34 @@ static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,g
     lm_text(snapshot,widget, cx+(radius+5)*ca-4.0, cy+(radius+5)*sa, 12, &offwhite, sf, FALSE);
   }
 
-  // needle + pivot hub
+  // needle — drawn OVER the whole printed scale (incl. the red band) so the
+  // tip stays visible everywhere.
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
   double nrad=(needle_level+127.0+offset)*M_PI/180.0;
   lm_line(snapshot, cx+(radius+8)*cos(nrad), cy+(radius+8)*sin(nrad), cx, cy, 2.0, &tb);
+
+  // Dial face: an opaque disc (background subtly lightened so it reads as a
+  // raised face). Opaque = it hides the needle root drawn just above. Kept
+  // small (only the pivot/counterweight hides) so a good length of needle
+  // still pokes out and stays readable at low S-levels.
+  double face_r=radius-38.0;
+  GdkRGBA face=bg;
+  face.red  += 0.055f; if(face.red  >1.0f) face.red  =1.0f;
+  face.green+= 0.055f; if(face.green>1.0f) face.green=1.0f;
+  face.blue += 0.060f; if(face.blue >1.0f) face.blue =1.0f;
+  {
+    GskPathBuilder *b=gsk_path_builder_new();
+    gsk_path_builder_add_circle(b,&GRAPHENE_POINT_INIT((float)cx,(float)cy),(float)face_r);
+    GskPath *p=gsk_path_builder_free_to_path(b);
+    gtk_snapshot_append_fill(snapshot,p,GSK_FILL_RULE_WINDING,&face);
+    gsk_path_unref(p);
+  }
+
+  // the "second arc": the dial-face edge, mirroring the scale — the needle
+  // pokes past this line and the rest hides behind the face below it.
+  meter_arc(snapshot,cx,cy,face_r,216.0*M_PI/180.0,324.0*M_PI/180.0,1.5,&offwhite);
+
+  // pivot hub, sitting on the face
   {
     GskPathBuilder *b=gsk_path_builder_new();
     gsk_path_builder_add_circle(b,&GRAPHENE_POINT_INIT((float)cx,(float)cy),3.0f);

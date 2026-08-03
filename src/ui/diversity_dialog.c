@@ -293,7 +293,7 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   if(diversity_supported(radio)) {
     gtk_label_set_markup(GTK_LABEL(note),
       "<small><i>Note: diversity reception combines two coherent ADC streams to null "
-      "interference / fight fading. Like PureSignal it is Protocol 1 only and has NOT "
+      "interference / fight fading. Like PureSignal it is Protocol 1 only and has NOT\n"
       "been verified on hardware in this fork. Requires testing on real hardware; use at your own risk.</i></small>");
   } else {
     gtk_label_set_markup(GTK_LABEL(note),
@@ -301,8 +301,8 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
       "and two receivers/ADCs), so it cannot be enabled here.</i></small>");
   }
   gtk_label_set_wrap(GTK_LABEL(note), TRUE);
+  gtk_label_set_justify(GTK_LABEL(note), GTK_JUSTIFY_LEFT);
   gtk_label_set_xalign(GTK_LABEL(note), 0.0);
-  gtk_widget_set_size_request(note, 600, -1);
   gtk_grid_attach(GTK_GRID(page), note, 0, 1, 1, 1);   // below the frame
 
   // Load current state into the controls (and grey them if diversity is off).
