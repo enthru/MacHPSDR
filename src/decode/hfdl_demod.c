@@ -185,8 +185,18 @@ int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
   ensure_cap(&d->rs, &d->rs_cap, rs_max);
 
   // doubles -> float complex, then downmix carrier -> DC in one block.
+  // I/Q ORDER: the receiver's I/Q buffer is (Q, I) — that is how WDSP reads it
+  // (analyzer.c: Ipointer[i] = pbuff[2i+1], Qpointer[i] = pbuff[2i]), so it is
+  // the convention the panadapter, the demodulated audio and therefore the
+  // operator's whole picture of the band are in. Reading it as (I, Q) here
+  // conjugates the signal, i.e. MIRRORS the spectrum against everything on
+  // screen: a channel the operator points at 14 kHz above the centre is then
+  // hunted 14 kHz below it, and nothing decodes no matter how carefully they
+  // tune. (This was invisible for a long time because the offline tests and the
+  // replay recipe both moved the wanted signal to the centre, where a mirror
+  // about the centre changes nothing.)
   for (int i = 0; i < nframes; i++)
-    d->mix[i] = (float)iq[2 * i] + (float)iq[2 * i + 1] * I;
+    d->mix[i] = (float)iq[2 * i + 1] + (float)iq[2 * i] * I;
   nco_crcf_mix_block_down(d->osc, d->mix, d->mix, (unsigned int)nframes);
 
   unsigned int nrs = 0;
@@ -288,8 +298,9 @@ gboolean hfdl_demod_selftest(void) {
   double *iq = g_new(double, 2 * N);
   for (int i = 0; i < N; i++) {
     double ph = 2.0 * M_PI * HFDL_CARRIER_OFFSET_HZ * i / fs;
-    iq[2 * i]     = cos(ph);
-    iq[2 * i + 1] = sin(ph);
+    // Written in the receiver's (Q, I) order, matching hfdl_demod_process.
+    iq[2 * i]     = sin(ph);
+    iq[2 * i + 1] = cos(ph);
   }
   const int OUT = HFDL_BASEBAND_RATE;   // 1 s worth of headroom (>expected)
   float *out = g_new(float, 2 * OUT);
@@ -352,8 +363,9 @@ gboolean hfdl_demod_selftest(void) {
     firinterp_crcf_execute(fi, bit ? 1.0f : -1.0f, y);   // BPSK ±1
     for (int k = 0; k < HFDL_SPS; k++, w++) {
       double ph = 2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + coff) * w / fs2 + cph;
-      tx[2 * w]     = creal(y[k] * (cos(ph) + I * sin(ph)));
-      tx[2 * w + 1] = cimag(y[k] * (cos(ph) + I * sin(ph)));
+      // (Q, I) order — the receiver's buffer convention, see hfdl_demod_process.
+      tx[2 * w]     = cimag(y[k] * (cos(ph) + I * sin(ph)));
+      tx[2 * w + 1] = creal(y[k] * (cos(ph) + I * sin(ph)));
     }
   }
   firinterp_crcf_destroy(fi);
@@ -436,8 +448,8 @@ gboolean hfdl_demod_selftest(void) {
       firinterp_crcf_execute(fi4, c, y);
       for (int k = 0; k < HFDL_SPS; k++, w4++) {
         double ph = 2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + coff4) * w4 / fs2 + cph;
-        tx4[2 * w4]     = creal(y[k] * (cos(ph) + I * sin(ph)));
-        tx4[2 * w4 + 1] = cimag(y[k] * (cos(ph) + I * sin(ph)));
+        tx4[2 * w4]     = cimag(y[k] * (cos(ph) + I * sin(ph)));
+        tx4[2 * w4 + 1] = creal(y[k] * (cos(ph) + I * sin(ph)));
       }
     }
     firinterp_crcf_destroy(fi4);
