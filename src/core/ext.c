@@ -111,6 +111,33 @@ int ext_set_frequency_a(void *data) {
   return 0;
 }
 
+// Absolute set of VFO B (TCI "vfo:<rx>,1,<hz>"). Deliberately a direct
+// assignment rather than a receiver_move_b() delta: the split modes make a
+// delta ambiguous (RSAT moves B the other way, SAT drags A along), whereas
+// "put VFO B on this frequency" has one meaning. The [0, fmax] guard is the
+// same directional one receiver_move_b uses — reject only a move that pushes
+// further out of range, so a B already above the device max can be brought back.
+int ext_set_frequency_b(void *data) {
+  RX_FREQUENCY *f=(RX_FREQUENCY *)data;
+
+  g_mutex_lock(&f->rx->mutex);
+  if(f->rx!=NULL && !f->rx->locked) {
+    long long fmax=receiver_max_frequency();
+    long long nf=f->frequency;
+    if(!((nf <= 0    && nf < f->rx->frequency_b) ||
+         (nf >  fmax && nf > f->rx->frequency_b))) {
+      f->rx->frequency_b=nf;
+      f->rx->band_b=get_band_from_frequency(nf);
+      frequency_changed(f->rx);
+      update_vfo(f->rx);
+    }
+  }
+  g_mutex_unlock(&f->rx->mutex);
+
+  g_free(f);
+  return 0;
+}
+
 int ext_set_mode(void *data) {
   MODE *m=(MODE *)data;
   if (m->rx != NULL) {

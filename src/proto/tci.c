@@ -389,6 +389,14 @@ static void dispatch_set_frequency(RECEIVER *rx, long long hz) {
   g_idle_add(ext_set_frequency_a, f);
 }
 
+static void dispatch_set_frequency_b(RECEIVER *rx, long long hz) {
+  if (rx == NULL) return;
+  RX_FREQUENCY *f = g_new0(RX_FREQUENCY, 1);
+  f->rx = rx;
+  f->frequency = hz;
+  g_idle_add(ext_set_frequency_b, f);
+}
+
 static void dispatch_set_mode(RECEIVER *rx, int mode) {
   if (rx == NULL) return;
   MODE *m = g_new0(MODE, 1);
@@ -688,8 +696,9 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   if (!strcmp(name, "vfo") || !strcmp(name, "dds")) {
     if (nargs >= 3) {
       int ch = atoi(args[1]);
-      // VFO A is settable; VFO B has no setter here, so a chan-1 set is acked.
-      if (ch == 0) dispatch_set_frequency(trx, g_ascii_strtoll(args[2], NULL, 10));
+      long long hz = g_ascii_strtoll(args[2], NULL, 10);
+      if (ch == 0)      dispatch_set_frequency(trx, hz);
+      else if (ch == 1) dispatch_set_frequency_b(trx, hz);
     } else if (trx != NULL) {
       int ch = (nargs >= 2) ? atoi(args[1]) : 0;
       long long f = (ch == 1) ? (long long)trx->frequency_b : (long long)trx->frequency_a;

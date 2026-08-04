@@ -50,6 +50,7 @@ extern int ext_vox_changed(void *data);
 extern int ext_ptt_changed(void *data);
 extern int ext_set_mox(void *data);
 extern int ext_set_frequency_a(void *data);
+extern int ext_set_frequency_b(void *data);
 extern int ext_set_mode(void *data);
 extern int ext_tx_set_ps(void *data);
 //extern int ext_ps_twotone(void *data);
