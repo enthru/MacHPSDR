@@ -39,6 +39,7 @@
 #define _HFDL_FRAME_H
 
 #include <glib.h>
+#include <stdint.h>
 
 // HFDL modulation arities (bits/symbol), indexing hfdl_frame_params[].scheme.
 enum { HFDL_M_BPSK = 1, HFDL_M_PSK4 = 2, HFDL_M_PSK8 = 3 };
@@ -57,8 +58,25 @@ typedef struct {
 
 extern const hfdl_params hfdl_frame_params[HFDL_M_SHIFT_CNT];
 
-// Headless self-test: deinterleaver bijection (over a few configs) + descrambler
-// periodicity/determinism. Returns TRUE on pass. No GTK/RADIO deps.
+// RF framer state machine: consumes carrier-recovered symbols (one per HFDL
+// symbol), detects the A-preamble + M1 config, collects the data symbols and
+// decodes them to frame bytes. Opaque; created per receiver.
+typedef struct hfdl_framer hfdl_framer;
+hfdl_framer *hfdl_framer_create(void);
+void hfdl_framer_destroy(hfdl_framer *f);
+
+// Feed one recovered symbol (interleaved I/Q). Returns the decoded byte count
+// (>0) when a full frame completes — the bytes are then available from
+// hfdl_framer_bytes() — else 0.
+int hfdl_framer_push(hfdl_framer *f, float re, float im);
+
+// Bytes of the frame most recently completed by hfdl_framer_push() (valid only
+// on the call that returned >0). *nbytes gets the length.
+const uint8_t *hfdl_framer_bytes(hfdl_framer *f, int *nbytes);
+
+// Headless self-test: deinterleaver bijection + descrambler periodicity +
+// preamble/M1 correlators + whole data-path round-trip + full-frame end-to-end
+// through the framer. Returns TRUE on pass. No GTK/RADIO deps.
 gboolean hfdl_frame_selftest(void);
 
 #endif

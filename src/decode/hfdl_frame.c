@@ -278,6 +278,163 @@ static int hfdl_frame_decode_data(const float *sym_iq, int nsym, int m_shift,
   return K;
 }
 
+/* ---------------- RF framer state machine ---------------- */
+
+#define HFDL_M2_LEN   15
+#define HFDL_T_LEN    15
+#define HFDL_A2_THRESH 0.30f
+#define HFDL_MAX_SEARCH_RETRIES 3
+#define HFDL_DATA_SYM_MAX (168 * HFDL_DATA_FRAME_LEN)   // double-slot worst case
+
+// framer states (dumphfdl framer_state)
+enum { FR_A1 = 1, FR_A2, FR_M1, FR_M2_SKIP, FR_EQ_TRAIN, FR_DATA_1, FR_DATA_2 };
+// sampler states (what happens to each recovered symbol)
+enum { SMP_BITS = 1, SMP_SYMBOLS, SMP_SKIP };
+
+typedef struct hfdl_framer {
+  hfdl_preamble *pre;      // A correlator (own bit window)
+  hfdl_mode     *mode;     // M1 correlator (own bit window, fed the same bits)
+  modem          bpsk;     // search-symbol slicer
+  int state, sampler;
+  int bitmask;             // BPSK polarity resolved by the A1 peak (0/1)
+  int symbols_wanted;
+  int m_shift;             // detected config (-1 until M1)
+  int data_arity, data_segment_cnt, eq_train_seq_cnt, search_retries;
+  float last_corr;         // A correlation from the most recent search bit
+  gboolean collecting_data;
+  float *data_sym;         // collected data symbols (interleaved I/Q)
+  int data_n;
+  uint8_t frame_bytes[HFDL_DATA_SYM_MAX];  // decoded output (K/8 <= this)
+  int frame_nbytes;
+} hfdl_framer;
+
+static void framer_reset(hfdl_framer *f) {
+  f->state = FR_A1;
+  f->sampler = SMP_BITS;
+  f->symbols_wanted = 1;
+  f->search_retries = 0;
+  f->m_shift = -1;
+  f->data_n = 0;
+  f->collecting_data = FALSE;
+}
+
+hfdl_framer *hfdl_framer_create(void) {
+  hfdl_framer *f = g_new0(hfdl_framer, 1);
+  f->pre = hfdl_preamble_create();
+  f->mode = hfdl_mode_create();
+  f->bpsk = modem_create(LIQUID_MODEM_BPSK);
+  f->data_sym = g_new0(float, 2 * HFDL_DATA_SYM_MAX);
+  framer_reset(f);
+  return f;
+}
+
+void hfdl_framer_destroy(hfdl_framer *f) {
+  if (f == NULL) return;
+  hfdl_preamble_destroy(f->pre);
+  hfdl_mode_destroy(f->mode);
+  modem_destroy(f->bpsk);
+  g_free(f->data_sym);
+  g_free(f);
+}
+
+// Feed one carrier-recovered symbol. Returns the decoded byte count (>0) when a
+// full frame completes (bytes in f->frame_bytes), else 0. Faithful port of
+// dumphfdl's per-symbol framer loop, minus the LMS equalizer (a clean channel
+// needs none; it's a real-fading refinement verified only on-air).
+int hfdl_framer_push(hfdl_framer *f, float re, float im) {
+  float complex s = re + im * I;
+
+  if (f->sampler == SMP_BITS) {
+    unsigned int bit;
+    modem_demodulate(f->bpsk, s, &bit);
+    bit ^= (unsigned int)(f->bitmask & 1);
+    f->last_corr = hfdl_preamble_push(f->pre, (int)bit);
+    hfdl_mode_push(f->mode, (int)bit);
+  } else if (f->sampler == SMP_SYMBOLS && f->collecting_data) {
+    if (f->data_n < HFDL_DATA_SYM_MAX) {
+      f->data_sym[2 * f->data_n]     = re;
+      f->data_sym[2 * f->data_n + 1] = im;
+      f->data_n++;
+    }
+  }
+  // Symbols are consumed until the slot boundary; the switch runs only then.
+  if (f->symbols_wanted > 1) { f->symbols_wanted--; return 0; }
+
+  switch (f->state) {
+  case FR_A1:
+    if (fabsf(f->last_corr) > HFDL_CORR_THRESHOLD_A1) {
+      f->bitmask = f->last_corr > 0.f ? 0 : 1;   // sign resolves BPSK 180°
+      f->symbols_wanted = HFDL_A_LEN;
+      f->state = FR_A2;
+    }
+    break;
+  case FR_A2:
+    if (fabsf(f->last_corr) > HFDL_A2_THRESH) {
+      f->symbols_wanted = HFDL_M1_LEN;
+      f->search_retries = 0;
+      f->state = FR_M1;
+    } else if (++f->search_retries >= HFDL_MAX_SEARCH_RETRIES) {
+      framer_reset(f);
+    }
+    break;
+  case FR_M1: {
+    float mc; int mk = hfdl_mode_match(f->mode, &mc);
+    if (mk >= 0 && mc > HFDL_CORR_THRESHOLD_M1) {
+      f->m_shift = mk;
+      f->data_segment_cnt = hfdl_frame_params[mk].data_segment_cnt;
+      f->data_arity = hfdl_frame_params[mk].scheme;
+      f->symbols_wanted = HFDL_M2_LEN;
+      f->state = FR_M2_SKIP;
+      f->sampler = SMP_SKIP;
+    } else {
+      framer_reset(f);
+    }
+    break;
+  }
+  case FR_M2_SKIP:
+    f->symbols_wanted = HFDL_T_LEN;
+    f->eq_train_seq_cnt = 9;
+    f->state = FR_EQ_TRAIN;
+    f->sampler = SMP_SYMBOLS;
+    f->collecting_data = FALSE;   // training symbols (ignored — no equalizer)
+    break;
+  case FR_EQ_TRAIN:
+    if (f->eq_train_seq_cnt > 1) {
+      f->eq_train_seq_cnt--;
+      f->symbols_wanted = HFDL_T_LEN;
+    } else if (f->data_segment_cnt > 0) {
+      f->symbols_wanted = HFDL_DATA_FRAME_LEN / 2;
+      f->state = FR_DATA_1;
+      f->collecting_data = TRUE;
+    } else {
+      // end of frame: decode the collected data symbols.
+      int K = hfdl_frame_decode_data(f->data_sym, f->data_n, f->m_shift,
+                                     f->bitmask, f->frame_bytes);
+      framer_reset(f);
+      f->frame_nbytes = (K > 0) ? (K + 7) / 8 : 0;
+      return f->frame_nbytes;
+    }
+    break;
+  case FR_DATA_1:
+    f->symbols_wanted = HFDL_DATA_FRAME_LEN / 2;
+    f->state = FR_DATA_2;
+    break;
+  case FR_DATA_2:
+    f->data_segment_cnt--;
+    f->symbols_wanted = HFDL_T_LEN;
+    f->state = FR_EQ_TRAIN;
+    f->eq_train_seq_cnt = 1;
+    f->collecting_data = FALSE;
+    break;
+  }
+  return 0;
+}
+
+const uint8_t *hfdl_framer_bytes(hfdl_framer *f, int *nbytes) {
+  if (nbytes) *nbytes = f ? f->frame_nbytes : 0;
+  return f ? f->frame_bytes : NULL;
+}
+
 /* ---------------- Self-test ---------------- */
 
 // Deinterleaver permutation: perm[i] = pop-position of the value pushed i-th.
@@ -381,6 +538,89 @@ static gboolean dataframe_roundtrip_bpsk(int m_shift) {
   return ok;
 }
 
+// Feed one symbol to the framer, latching a completed frame's bytes.
+static void framer_feed(hfdl_framer *f, float re, float im,
+                        int *got, const uint8_t **fb, int *fn) {
+  int r = hfdl_framer_push(f, re, im);
+  if (r > 0) { *got = r; *fb = hfdl_framer_bytes(f, fn); }
+}
+
+// Full-frame end-to-end: synthesize a complete baseband HFDL frame (prekey + A +
+// A + M1 + M2 + 9 training + [data + training] per segment) carrying known user
+// bytes, feed the symbols to the framer, and assert it syncs, selects the mode,
+// collects the data and decodes back to the same bytes. BPSK r=1/2 configs.
+static gboolean framer_e2e_bpsk(int m_shift) {
+  const hfdl_params *p = &hfdl_frame_params[m_shift];
+  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return TRUE;
+  int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;
+  int N = nsym, K = N / 2, ndata = K - 6;
+
+  uint8_t *dbits = g_new(uint8_t, ndata);
+  uint8_t *enc = g_new(uint8_t, N);
+  int *perm = g_new(int, N);
+  float *dsym = g_new(float, 2 * nsym);
+  uint32_t rng = 0x13572468u;
+  for (int i = 0; i < ndata; i++) { rng = rng * 1103515245u + 12345u; dbits[i] = (rng >> 19) & 1u; }
+  frame_conv_encode(dbits, ndata, enc);
+  frame_perm(m_shift, perm, N);
+
+  modem mm = modem_create(LIQUID_MODEM_BPSK);
+  descrambler *dtx = hfdl_descrambler_create();
+  for (int i = 0; i < nsym; i++) {
+    unsigned int b = enc[perm[i]];
+    float complex s; modem_modulate(mm, b, &s);
+    if (descrambler_advance(dtx)) s = -s;
+    dsym[2 * i] = crealf(s); dsym[2 * i + 1] = cimagf(s);
+  }
+  hfdl_descrambler_destroy(dtx);
+
+  hfdl_framer *f = hfdl_framer_create();
+  int got = 0, fn = 0; const uint8_t *fb = NULL;
+
+  // Sync fields are EMIT_BITS (demodulated + correlated) — BPSK-modulate each bit.
+  float complex bs;
+  for (int i = 0; i < 140; i++) { modem_modulate(mm, 0, &bs); framer_feed(f, crealf(bs), cimagf(bs), &got, &fb, &fn); }  // prekey
+  for (int r = 0; r < 2; r++)                                          // A + A
+    for (int j = 0; j < HFDL_A_LEN; j++) {
+      modem_modulate(mm, (hfdl_A_octets[j >> 3] >> (7 - (j & 7))) & 1, &bs);
+      framer_feed(f, crealf(bs), cimagf(bs), &got, &fb, &fn);
+    }
+  for (int j = 0; j < HFDL_M1_LEN; j++) {                              // M1
+    modem_modulate(mm, hfdl_M1_bits[(hfdl_M_shifts[m_shift] + j) % HFDL_M1_LEN], &bs);
+    framer_feed(f, crealf(bs), cimagf(bs), &got, &fb, &fn);
+  }
+  // From M2 on the framer collects raw symbols (no demod): M2 skipped, T ignored,
+  // data collected. Push M2(15) + 9 T(15) then [30 data + 15 T] per segment.
+  for (int i = 0; i < HFDL_M2_LEN; i++)          framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
+  for (int i = 0; i < 9 * HFDL_T_LEN; i++)       framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
+  int di = 0;
+  for (int seg = 0; seg < p->data_segment_cnt; seg++) {
+    for (int i = 0; i < HFDL_DATA_FRAME_LEN; i++, di++)
+      framer_feed(f, dsym[2 * di], dsym[2 * di + 1], &got, &fb, &fn);
+    for (int i = 0; i < HFDL_T_LEN; i++)         framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
+  }
+  modem_destroy(mm);
+
+  gboolean ok = TRUE;
+  int errs = 0;
+  if (got <= 0 || fb == NULL) {
+    log_error("hfdl_frame selftest: framer[%d] produced no frame\n", m_shift);
+    ok = FALSE;
+  } else {
+    for (int i = 0; i < ndata; i++) {
+      int rb = (fb[i >> 3] >> (7 - (i & 7))) & 1;
+      if (rb != dbits[i]) errs++;
+    }
+    if (errs != 0) {
+      log_error("hfdl_frame selftest: framer[%d] decoded %d/%d bit errors\n", m_shift, errs, ndata);
+      ok = FALSE;
+    }
+  }
+  hfdl_framer_destroy(f);
+  g_free(dbits); g_free(enc); g_free(perm); g_free(dsym);
+  return ok;
+}
+
 gboolean hfdl_frame_selftest(void) {
   gboolean ok = TRUE;
 
@@ -461,8 +701,13 @@ gboolean hfdl_frame_selftest(void) {
   if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;
   if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;
 
+  // (6) Full-frame end-to-end through the RF framer (sync + mode + collect +
+  // decode) on a synthesized baseband frame.
+  if (!framer_e2e_bpsk(1)) ok = FALSE;
+  if (!framer_e2e_bpsk(5)) ok = FALSE;
+
   if (ok)
-    log_info("hfdl_frame selftest: PASS (deinterleave+descramble+preamble %.2f/%.2f + M1 mode + data-frame round-trip)\n",
+    log_info("hfdl_frame selftest: PASS (correlators %.2f/%.2f + M1 mode + data round-trip + full-frame framer)\n",
              peak, peak_inv);
   return ok;
 }
