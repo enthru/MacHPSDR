@@ -81,6 +81,7 @@ typedef struct {
   hfdl_framer *framer;
   double       trim_hz;     // search offset applied on top (0 for the exact one)
   gboolean     is_trim;     // one of the tuned channel's search siblings
+  gboolean     is_tuned;    // follows the cursor (vs a fixed scan channel)
 } HFDL_CHANNEL;
 
 // Coarse carrier search.
@@ -101,10 +102,15 @@ static const double HFDL_TRIM_HZ[] = { 0.0, 150.0, -150.0, 300.0, -300.0,
                                        450.0, -450.0 };
 #define HFDL_TRIM_CNT ((int)(sizeof(HFDL_TRIM_HZ)/sizeof(HFDL_TRIM_HZ[0])))
 
-// Retuning the cursor tears down and rebuilds the front-end, so ignore moves
-// smaller than this: an HFDL channel is 2.6 kHz wide and the demod pulls in a
-// few hundred Hz by itself, so nudging the cursor a step must not reset sync.
-#define HFDL_CURSOR_EPS_HZ 200.0
+// A cursor move RETUNES the front-end's NCO in place — no rebuild, so the
+// resampler, AGC and symbol recovery keep their state and the decoder is always
+// exactly where the VFO says it is. (It used to ignore moves under 200 Hz to
+// avoid the rebuild, which meant small steps of the dial did nothing at all
+// while the readout kept showing the old frequency: fine-tuning by ear or by eye
+// was impossible.) Only a jump bigger than this re-arms the coarse search, on
+// the grounds that the operator has gone to a different channel rather than
+// nudged this one.
+#define HFDL_RESEARCH_HZ 400.0
 
 static HFDL_CHANNEL  chans[HFDL_MAX_CHANNELS];
 static int           nchans = 0;
@@ -229,12 +235,15 @@ static void chans_build(double rate, long long center_hz, long long cursor_hz) {
   }
   uint32_t cursor_khz = cursor_hz > 0 ? (uint32_t)(cursor_hz / 1000) : 0;
   chan_add_trim(cursor_off, cursor_khz, rate, 0.0, FALSE);
+  chans[nchans-1].is_tuned = TRUE;
   // Search siblings at the same channel, a few hundred Hz either side. Only when
   // not scanning: a bandful of channels is already the CPU budget, and those
   // come from the station table at exact frequencies rather than from a mouse.
   if (!scan_band)
-    for (int t = 1; t < HFDL_TRIM_CNT; t++)
+    for (int t = 1; t < HFDL_TRIM_CNT; t++) {
       chan_add_trim(cursor_off, cursor_khz, rate, HFDL_TRIM_HZ[t], TRUE);
+      chans[nchans-1].is_tuned = TRUE;
+    }
 
   demod_rate   = rate;
   demod_center = center_hz;
@@ -368,12 +377,24 @@ void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
   // or when the scan toggle asked for it. Always on the audio thread, which owns
   // them. The cursor gets a dead band: rebuilding drops the framer's sync, and a
   // one-step nudge of the dial must not cost the frame being received.
+  double moved = fabs((double)(cursor_hz - demod_cursor));
   if (nchans == 0 || demod_rate != (double)sample_rate ||
-      demod_center != center_hz ||
-      fabs((double)(cursor_hz - demod_cursor)) > HFDL_CURSOR_EPS_HZ ||
+      demod_center != center_hz || moved > HFDL_RESEARCH_HZ ||
       g_atomic_int_get(&rebuild_req)) {
     g_atomic_int_set(&rebuild_req, 0);
     chans_build((double)sample_rate, center_hz, cursor_hz);
+  } else if (moved > 0.0) {
+    // Small move: follow it by retuning, keeping every filter's state. The
+    // decoder must sit exactly where the operator put the cursor, or fine
+    // tuning does nothing and the readout lies about where it is listening.
+    double off = (double)(cursor_hz - center_hz);
+    for (int c = 0; c < nchans; c++) {
+      if (!chans[c].is_tuned) continue;
+      chans[c].offset_hz = off;
+      chans[c].khz       = (uint32_t)(cursor_hz / 1000);
+      hfdl_demod_set_channel_offset(chans[c].demod, off + chans[c].trim_hz);
+    }
+    demod_cursor = cursor_hz;
   }
 
   int nsym = 0, frames = 0, winner = -1;
