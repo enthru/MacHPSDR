@@ -58,7 +58,7 @@ feature additions.
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters, Ctrl+scroll to resize one; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver, with a list editor in Configure → RX-N (per-notch on/off, exact frequency and width, and an **AF** mode that rides the dial instead). |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. In the **data modes (DIGU/DIGL) and whenever a decoder is running** (FT8/FT4/SSTV/WEFAX/CW), **every waveform-altering block is automatically bypassed** — all four NR modes, the noise blankers (NB/NB2), the auto-notch (ANF), the spectral noise blanker (SNB) and the manual notches — so a modem/decoder or external software gets the clean signal (only demod, passband filter and AGC stay in). Your selections are kept and return the moment you leave the data mode / stop decoding. |
 | **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → CW) that peaks the beat-note to lift weak CW out of the noise — on the sub-receiver too — plus a **mode-aware squelch**: the SQL bar gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), is remembered **per mode**, and its dB range and tail are settable in Configure → RX *(faker-tested; on-air threshold calibration pending hardware)*. |
-| **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
+| **Spectrum display modes** | **Panadapter Automatic** fits the dB scale to the band by itself (noise floor at the bottom, strongest signal just under the top) so a quiet band and a loud one both fill the window without touching High/Low. Plus a **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, and selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
@@ -127,6 +127,18 @@ you've dialled in.
   receiver, in the receiver settings dialog) sets the S-meter needle ballistics —
   0 makes it track instantly, higher values damp it like a mechanical meter
   (fast attack, slower decay); the default is 50 and it is remembered per receiver.
+
+- **Automatic spectrum levels.** A **Panadapter Automatic** check box in the
+  receiver settings dialog's **Panadapter** section (right under the High/Low
+  sliders) sets the vertical dB scale continuously from the signal itself: the
+  bottom follows the band noise floor, the top follows the strongest signal in
+  view, so the trace fills the window on a dead band and a strong station still
+  fits without clipping off the top. The scale widens quickly and narrows slowly,
+  so a burst appearing or ending does not make the display jump. While it is on
+  the **High** and **Low** sliders (and the dB-scale scroll zone on the
+  panadapter) are inactive, since the automatic fit owns them; switching it off
+  hands them back at the levels the automatic fit ended on. Per receiver and
+  remembered between sessions.
 
 - **Spectrum display modes.** In the receiver settings dialog's **Panadapter**
   section: a **Peak Hold** check box overlays a max-hold trace (a light line that

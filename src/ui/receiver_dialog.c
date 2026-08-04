@@ -339,6 +339,27 @@ static void panadapter_low_value_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_low=gtk_range_get_value(GTK_RANGE(widget));
 }
 
+/* The two sliders the automatic scale takes over, so it can grey them out. */
+typedef struct {
+  RECEIVER *rx;
+  GtkWidget *high;
+  GtkWidget *low;
+} PAN_AUTO_UI;
+
+static void panadapter_automatic_cb(GtkWidget *widget, gpointer data) {
+  PAN_AUTO_UI *ui=(PAN_AUTO_UI *)data;
+  RECEIVER *rx=ui->rx;
+  rx->panadapter_automatic=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  rx->pan_auto_seeded=FALSE;   // re-seed instead of drifting in from the old window
+  gtk_widget_set_sensitive(ui->high,!rx->panadapter_automatic);
+  gtk_widget_set_sensitive(ui->low,!rx->panadapter_automatic);
+  if(!rx->panadapter_automatic) {
+    // Hand the sliders back where the auto-fit left the display.
+    gtk_range_set_value(GTK_RANGE(ui->high),(double)rx->panadapter_high);
+    gtk_range_set_value(GTK_RANGE(ui->low),(double)rx->panadapter_low);
+  }
+}
+
 static void panadapter_step_value_changed_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->panadapter_step=gtk_range_get_value(GTK_RANGE(widget));
@@ -1241,15 +1262,30 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   g_signal_connect(G_OBJECT(panadapter_low_scale),"value_changed",G_CALLBACK(panadapter_low_value_changed_cb),rx);
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_low_scale,1,3,1,1);
 
+  // Automatic dB scale. It owns High/Low while it is on, so the two sliders are
+  // greyed out; switching it off hands them back with the values the auto-fit
+  // ended on, so the manual scale picks up where the display already is.
+  PAN_AUTO_UI *pau=g_new0(PAN_AUTO_UI,1);
+  pau->rx=rx;
+  pau->high=panadapter_high_scale;
+  pau->low=panadapter_low_scale;
+  GtkWidget *panadapter_automatic=gtk_check_button_new_with_label("Panadapter Automatic");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(panadapter_automatic),rx->panadapter_automatic);
+  gtk_widget_set_sensitive(panadapter_high_scale,!rx->panadapter_automatic);
+  gtk_widget_set_sensitive(panadapter_low_scale,!rx->panadapter_automatic);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_automatic,0,4,2,1);
+  g_object_set_data_full(G_OBJECT(panadapter_automatic),"pan_auto_ui",pau,g_free);
+  g_signal_connect(panadapter_automatic,"toggled",G_CALLBACK(panadapter_automatic_cb),pau);
+
   GtkWidget *step_label=gtk_label_new("Step:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),step_label,0,4,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),step_label,0,5,1,1);
 
   GtkWidget *panadapter_step_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_step,1.0, 40.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_step_scale,200,30);
   sui_scale_show_value(panadapter_step_scale,0);
   gtk_widget_set_visible(panadapter_step_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_step_scale),"value_changed",G_CALLBACK(panadapter_step_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_step_scale,1,4,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_step_scale,1,5,1,1);
 
   // Second internal column (grid cols 3-4): the display/rendering toggles, so
   // the frame is ~9 rows tall instead of a 17-row single-column strip. A left
@@ -1296,17 +1332,17 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   // S-meter needle ballistics (0 = instant, 100 = heaviest damping).
   GtkWidget *meter_smoothing_label=gtk_label_new("Meter smoothing:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_label,0,5,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_label,0,6,1,1);
 
   GtkWidget *meter_smoothing_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->meter_smoothing, 0.0, 100.0, 1.0, 10.0, 1.0));
   gtk_widget_set_size_request(meter_smoothing_scale,200,30);
   sui_scale_show_value(meter_smoothing_scale,0);
   gtk_widget_set_visible(meter_smoothing_scale, TRUE);
   g_signal_connect(G_OBJECT(meter_smoothing_scale),"value_changed",G_CALLBACK(meter_smoothing_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_scale,1,5,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),meter_smoothing_scale,1,6,1,1);
 
   GtkWidget *display_detector_mode_label=gtk_label_new("Detector:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_label,0,6,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_label,0,7,1,1);
 
   GtkStringList *ddm_sl=gtk_string_list_new(NULL);
   for(i=0; i<(int)(sizeof(display_detector_mode_names)/sizeof(display_detector_mode_names[0])); i++) {
@@ -1314,11 +1350,11 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
   GtkWidget *display_detector_mode_b=gtk_drop_down_new(G_LIST_MODEL(ddm_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(display_detector_mode_b),rx->display_detector_mode);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_b,1,6,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_detector_mode_b,1,7,1,1);
   g_signal_connect(display_detector_mode_b,"notify::selected",G_CALLBACK(display_detector_mode_changed_cb),rx);
 
   GtkWidget *display_average_mode_label=gtk_label_new("Averaging:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_label,0,7,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_label,0,8,1,1);
 
   GtkStringList *dam_sl=gtk_string_list_new(NULL);
   for(i=0; i<(int)(sizeof(display_average_mode_names)/sizeof(display_average_mode_names[0])); i++) {
@@ -1326,7 +1362,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
   GtkWidget *display_average_mode_b=gtk_drop_down_new(G_LIST_MODEL(dam_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(display_average_mode_b),rx->display_average_mode);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_b,1,7,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),display_average_mode_b,1,8,1,1);
   g_signal_connect(display_average_mode_b,"notify::selected",G_CALLBACK(display_average_mode_changed_cb),rx);
 
   GtkWidget *panadapter_peak_hold=gtk_check_button_new_with_label("Peak Hold");
@@ -1413,40 +1449,40 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_label_set_markup(GTK_LABEL(waterfall_hdr),"<b>Waterfall</b>");
   gtk_widget_set_halign(waterfall_hdr,GTK_ALIGN_START);
   gtk_widget_set_margin_top(waterfall_hdr,8);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_hdr,0,8,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_hdr,0,9,2,1);
 
   GtkWidget *waterfall_high_label=gtk_label_new("High:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_high_label,0,9,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_high_label,0,10,1,1);
 
   GtkWidget *waterfall_high_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_high,-200.0, 20.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(waterfall_high_scale,200,30);
   sui_scale_show_value(waterfall_high_scale,0);
   gtk_widget_set_visible(waterfall_high_scale, TRUE);
   g_signal_connect(G_OBJECT(waterfall_high_scale),"value_changed",G_CALLBACK(waterfall_high_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_high_scale,1,9,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_high_scale,1,10,1,1);
 
   GtkWidget *waterfall_low_label=gtk_label_new("Low:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_low_label,0,10,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_low_label,0,11,1,1);
 
   GtkWidget *waterfall_low_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->waterfall_low,-200.0, 20.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(waterfall_low_scale,200,30);
   sui_scale_show_value(waterfall_low_scale,0);
   gtk_widget_set_visible(waterfall_low_scale, TRUE);
   g_signal_connect(G_OBJECT(waterfall_low_scale),"value_changed",G_CALLBACK(waterfall_low_value_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_low_scale,1,10,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_low_scale,1,11,1,1);
 
   GtkWidget *waterfall_automatic=gtk_check_button_new_with_label("Waterfall Automatic");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_automatic), rx->waterfall_automatic);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_automatic,0,11,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_automatic,0,12,2,1);
   g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),rx);
 
   GtkWidget *waterfall_ft8_marker=gtk_check_button_new_with_label("Waterfall FT8 Marker");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_ft8_marker,0,12,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_ft8_marker,0,13,2,1);
   g_signal_connect(waterfall_ft8_marker,"toggled",G_CALLBACK(waterfall_ft8_marker_cb),rx);
 
   GtkWidget *waterfall_theme_label=gtk_label_new("Color Theme:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_label,0,13,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_label,0,14,1,1);
 
   GtkStringList *wt_sl=gtk_string_list_new(NULL);
   for(i=0; i<get_theme_count(); i++) {
@@ -1454,7 +1490,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
   GtkWidget *waterfall_theme_combo=gtk_drop_down_new(G_LIST_MODEL(wt_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(waterfall_theme_combo),rx->waterfall_color_theme);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_combo,1,13,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_combo,1,14,1,1);
   g_signal_connect(waterfall_theme_combo,"notify::selected",G_CALLBACK(waterfall_theme_cb),rx);
 
   // CAT sits directly UNDER the Panadapter in the same (middle) column, so it

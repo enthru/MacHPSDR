@@ -279,6 +279,11 @@ typedef struct _receiver {
   gint display_detector_mode;   // WDSP DETECTOR_MODE_* (0=Peak,1=Rosenfell,2=Average,3=Sample)
   gint display_average_mode;    // WDSP AVERAGE_MODE_* (0=None,1=Recursive,2=Time Window,3=Log Recursive)
 
+  gboolean panadapter_automatic;   // auto-fit the dB scale to the noise floor and the strongest signal
+  gdouble  pan_auto_low;           // smoothed auto low/high (runtime only) — rounded into panadapter_low/high
+  gdouble  pan_auto_high;
+  gboolean pan_auto_seeded;        // FALSE until the first frame seeds the smoother
+
   gboolean panadapter_peak_hold;   // draw a max-hold overlay trace
   gint     panadapter_peak_decay;  // dB/second the held peak falls (0 = infinite hold)
   gfloat  *panadapter_peaks;       // per-pixel held maxima, sized rx->pixels (mirrors pixel_samples)

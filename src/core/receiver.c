@@ -1082,7 +1082,11 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
     }
     rx->pan=pan;
   } else if(!rx->locked) {
-    if((x>4 && x<35) && (widget==rx->panadapter)) {
+    // The dB-scale strip only responds while the scale is under manual control;
+    // with Panadapter Automatic on, the next frame would undo the change anyway.
+    if((x>4 && x<35) && (widget==rx->panadapter) && rx->panadapter_automatic) {
+      /* nothing: the automatic scale owns high/low */
+    } else if((x>4 && x<35) && (widget==rx->panadapter)) {
       if(up) {
         if(y<half) {
           rx->panadapter_high=rx->panadapter_high-5*mag;
@@ -2683,6 +2687,8 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->panadapter_high=-60;
   rx->panadapter_step=20;
   rx->panadapter_surface=NULL;
+  rx->panadapter_automatic=FALSE;
+  rx->pan_auto_seeded=FALSE;
 
   rx->panadapter_filled=TRUE;
   rx->panadapter_gradient=TRUE;

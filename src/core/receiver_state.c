@@ -138,6 +138,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_step",rx->channel);
   sprintf(value,"%d",rx->panadapter_step);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_automatic",rx->channel);
+  sprintf(value,"%d",rx->panadapter_automatic);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].panadapter_filled",rx->channel);
   sprintf(value,"%d",rx->panadapter_filled);
   setProperty(name,value);
@@ -918,6 +921,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_step",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_step=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_automatic",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_automatic=atoi(value);
   sprintf(name,"receiver[%d].panadapter_filled",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_filled=atoi(value);

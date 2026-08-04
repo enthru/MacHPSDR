@@ -727,6 +727,85 @@ static void phosphor_accumulate(RECEIVER *rx, int display_width, int display_hei
 }
 
 // ---------------------------------------------------------------------------
+// Automatic dB scale ("Panadapter Automatic").
+//
+// Fits the vertical scale between the band noise floor and the strongest signal
+// in view, so a quiet band and a loud one both fill the window without touching
+// the High/Low sliders. Two decisions matter:
+//
+//  - the floor is a LOW PERCENTILE of the visible trace, not the minimum: the
+//    minimum tracks the deepest notch of the moment and jitters, while the 30th
+//    percentile is the noise the band actually sits at (on a crowded band most
+//    pixels are still noise, so the percentile stays on the floor);
+//  - the smoothing is ASYMMETRIC — the window opens quickly (a signal that
+//    appears must fit within a fraction of a second) and closes slowly, so a
+//    burst ending does not snap the whole display back and make the trace jump.
+//
+// Runs on the fps timer, writes rx->panadapter_low/high, so every existing
+// drawing path (trace, graticule, peak hold, phosphor, S-meter marks) follows
+// with no changes.
+// ---------------------------------------------------------------------------
+#define PAN_AUTO_BIN_MIN   (-200)   // histogram floor, dBm
+#define PAN_AUTO_BINS      221      // 1 dB bins, -200..+20 dBm
+#define PAN_AUTO_PCT       0.30     // percentile taken as the noise floor
+#define PAN_AUTO_MARGIN    12.0     // dB of room kept below the noise floor
+#define PAN_AUTO_HEADROOM  8.0      // dB of room kept above the strongest signal
+#define PAN_AUTO_MIN_SPAN  40.0     // never squeeze the scale tighter than this
+#define PAN_AUTO_TAU_OPEN  0.25     // seconds to widen the window
+#define PAN_AUTO_TAU_CLOSE 3.0      // seconds to narrow it back down
+
+static void pan_auto_levels(RECEIVER *rx, float *samples, int offset, int width, double corr) {
+  int hist[PAN_AUTO_BINS];
+  memset(hist,0,sizeof(hist));
+
+  double peak=-1000.0;
+  int n=0;
+  for(int j=offset; j<offset+width && j<rx->pixels; j++) {
+    double s=(double)samples[j]+corr;
+    if(s>peak) peak=s;
+    int b=(int)floor(s)-PAN_AUTO_BIN_MIN;
+    if(b<0) b=0;
+    if(b>=PAN_AUTO_BINS) b=PAN_AUTO_BINS-1;
+    hist[b]++;
+    n++;
+  }
+  if(n<8) return;
+
+  int want=(int)(PAN_AUTO_PCT*(double)n);
+  int cum=0, fb=0;
+  for(fb=0; fb<PAN_AUTO_BINS; fb++) {
+    cum+=hist[fb];
+    if(cum>=want) break;
+  }
+  if(fb>=PAN_AUTO_BINS) fb=PAN_AUTO_BINS-1;
+  double floor_db=(double)(fb+PAN_AUTO_BIN_MIN);
+
+  double lo=floor_db-PAN_AUTO_MARGIN;
+  double hi=peak+PAN_AUTO_HEADROOM;
+  if(hi-lo<PAN_AUTO_MIN_SPAN) hi=lo+PAN_AUTO_MIN_SPAN;
+  if(lo<-200.0) lo=-200.0;
+  if(hi>20.0) hi=20.0;
+  if(hi<=lo) hi=lo+PAN_AUTO_MIN_SPAN;
+
+  if(!rx->pan_auto_seeded) {
+    rx->pan_auto_low=lo;
+    rx->pan_auto_high=hi;
+    rx->pan_auto_seeded=TRUE;
+  } else {
+    double dt=1.0/(double)(rx->fps>0?rx->fps:10);
+    double a_open=1.0-exp(-dt/PAN_AUTO_TAU_OPEN);
+    double a_close=1.0-exp(-dt/PAN_AUTO_TAU_CLOSE);
+    /* widening (low falls / high rises) is the fast direction */
+    rx->pan_auto_low  += (lo-rx->pan_auto_low ) * (lo<rx->pan_auto_low  ? a_open : a_close);
+    rx->pan_auto_high += (hi-rx->pan_auto_high) * (hi>rx->pan_auto_high ? a_open : a_close);
+  }
+
+  rx->panadapter_low=(gint)lround(rx->pan_auto_low);
+  rx->panadapter_high=(gint)lround(rx->pan_auto_high);
+  if(rx->panadapter_high<=rx->panadapter_low) rx->panadapter_high=rx->panadapter_low+1;
+}
+
+// ---------------------------------------------------------------------------
 // Per-frame STATE update (fps timer). Only the frame-rate-locked buffers are
 // touched here (peak-hold decay, phosphor occupancy EMA + colour-map); the
 // actual drawing is done by rx_pana_build() at snapshot time. Ends by queuing a
@@ -748,7 +827,6 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   }
 
   samples[display_width-1+offset]=-200;
-  double dbm_per_line=(double)display_height/((double)rx->panadapter_high-(double)rx->panadapter_low);
 
   double attenuation=radio->adc[rx->adc].attenuation;
   if (radio->divmixer[rx->dmix_id] != NULL) {
@@ -762,6 +840,13 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   }
 
   if(display_height<=1) { gtk_widget_queue_draw(rx->panadapter); return; }
+
+  // Auto dB scale, before anything derives from panadapter_low/high this frame.
+  // Skipped in vectorscope mode, which draws no trace and has its own scaling.
+  if(rx->panadapter_automatic && running && !rx->panadapter_phase) {
+    pan_auto_levels(rx,samples,offset,display_width,attenuation+radio->panadapter_calibration);
+  }
+  double dbm_per_line=(double)display_height/((double)rx->panadapter_high-(double)rx->panadapter_low);
 
   if(opengl) {
     if(signal_vertices_size!=display_width) {

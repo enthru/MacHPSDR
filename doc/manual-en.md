@@ -40,7 +40,12 @@ The window is organised top-to-bottom around one or more **receivers**:
   The filter passband is shaded; the cursor shows where you are tuned. It can be
   turned off per receiver (a **Show Panadapter** check box in the receiver
   settings dialog) — the waterfall then fills the whole spectrum area. The
-  receiver settings dialog's **Panadapter** section also offers a **Peak Hold**
+  receiver settings dialog's **Panadapter** section also offers **Panadapter
+  Automatic** — a check box under the High/Low sliders that sets the dB scale
+  from the signal itself (bottom on the band noise floor, top just above the
+  strongest signal in view), widening quickly and narrowing slowly so the display
+  does not jump; while it is on, High/Low and the panadapter's dB-scale scroll
+  zone are inactive. The same section also offers a **Peak Hold**
   overlay (a light max-hold trace, with a **Peak Decay** slider for how fast the
   held peaks fall), a **Histogram** persistence display (a virtual-phosphor
   heat-coloured cloud showing where the trace has been, with a **Persistence
