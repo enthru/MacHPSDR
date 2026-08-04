@@ -862,7 +862,13 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   int row=0;
   SELECT *select;
 
+  // The page is a vbox: the two-column grid on top, then the full-width
+  // Squelch/MNF row under it. Putting that row in the grid instead left a tall
+  // gap — the left column's Audio/EQ/NR4 box spans 4 grid rows and hugs the
+  // top, so the leftover height of its last row opened up above the new row.
+  GtkWidget *page=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);  // = SUI_PAGE_ROW_SP
   GtkWidget *grid=gtk_grid_new();
+  gtk_box_append(GTK_BOX(page),grid);
   sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
@@ -1123,9 +1129,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);
   row+=4;
-  // Kept so the full-width bottom row (Squelch + MNF) can start below BOTH
-  // columns — `row` is reset when the right-hand column starts.
-  int left_rows=row;
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), rx->enable_equalizer);
@@ -1537,19 +1540,17 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,5,2,1,1);
   g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
 
-  // Squelch + Manual Notch sit SIDE BY SIDE under CAT: neither is tall, and
-  // stacked they left the bottom of the page half empty while the notch list
-  // pushed the page taller than the window.
-  // Squelch + MNF go in their OWN row spanning BOTH columns at the bottom of
-  // the page, not inside the right-hand CAT column: there they started at the
-  // middle column's left edge (so they read as right-aligned) and MNF ran off
-  // the right edge, while the area under the NR4 frame sat empty. halign START
-  // pins the pair to the page's left edge; the children keep the default valign
-  // FILL so both frames take the row height and come out the same height.
+  // Squelch + Manual Notch sit SIDE BY SIDE in the page's bottom row, under
+  // BOTH grid columns. Neither is tall, so stacking them wasted the bottom of
+  // the page; and inside the right-hand CAT column they started at the middle
+  // column's left edge (reading as right-aligned) with MNF running off the
+  // right edge. halign START pins the pair to the page's left edge; the
+  // children keep the default valign FILL so both frames take the row height
+  // and come out the same height.
   GtkWidget *sq_mnf_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
   gtk_widget_set_valign(sq_mnf_row,GTK_ALIGN_START);
   gtk_widget_set_halign(sq_mnf_row,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),sq_mnf_row,0,(left_rows>row)?left_rows:row,2,1);
+  gtk_box_append(GTK_BOX(page),sq_mnf_row);
 
   // Squelch calibration. Only the AMSQ (non-FM) path is exposed: the FM squelch
   // mapping is fixed and known-good, while the amplitude squelch has no
@@ -1676,5 +1677,5 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     mnf_refresh(ui);
   }
 
-  return grid;
+  return page;
 }
