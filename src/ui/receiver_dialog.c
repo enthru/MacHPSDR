@@ -868,6 +868,11 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // top, so the leftover height of its last row opened up above the new row.
   GtkWidget *page=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);  // = SUI_PAGE_ROW_SP
   GtkWidget *grid=gtk_grid_new();
+  // A GtkGrid inherits vexpand from any expanding child, so inside the vbox it
+  // would swallow the scroller's spare height and shove the Squelch/MNF row to
+  // the bottom of the viewport. Pin it to its natural height.
+  gtk_widget_set_vexpand(grid,FALSE);
+  gtk_widget_set_valign(grid,GTK_ALIGN_START);
   gtk_box_append(GTK_BOX(page),grid);
   sui_style_page(grid);
   gtk_grid_set_row_homogeneous(GTK_GRID(grid),FALSE);
