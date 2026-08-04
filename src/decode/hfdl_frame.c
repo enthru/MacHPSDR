@@ -25,6 +25,7 @@
 #include <glib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 #include <liquid/liquid.h>
 
 #include "hfdl_frame.h"
@@ -132,6 +133,47 @@ static uint32_t descrambler_advance(descrambler *d) {
   return msequence_advance(d->ms);
 }
 
+/* ---------------- Preamble correlator (A-sequence) ---------------- */
+
+#define HFDL_A_LEN 127
+#define HFDL_CORR_THRESHOLD_A1 0.36f   // dumphfdl CORR_THRESHOLD_A1
+
+// The 127-bit HFDL "A" preamble sync sequence (verbatim from dumphfdl A_octets).
+static const unsigned char hfdl_A_octets[16] = {
+  0x5b, 0xbc, 0x74, 0x57, 0x03, 0xd9, 0x89, 0x39,
+  0xf2, 0x08, 0xd5, 0x36, 0x94, 0x2c, 0x32, 0xfe
+};
+
+typedef struct {
+  bsequence ref;   // the known A-sequence
+  bsequence win;   // sliding window of the last A_LEN demodulated bits
+} hfdl_preamble;
+
+static hfdl_preamble *hfdl_preamble_create(void) {
+  hfdl_preamble *p = g_new0(hfdl_preamble, 1);
+  p->ref = bsequence_create(HFDL_A_LEN);
+  bsequence_init(p->ref, (unsigned char *)hfdl_A_octets);
+  p->win = bsequence_create(HFDL_A_LEN);
+  return p;
+}
+
+static void hfdl_preamble_destroy(hfdl_preamble *p) {
+  if (p == NULL) return;
+  bsequence_destroy(p->ref);
+  bsequence_destroy(p->win);
+  g_free(p);
+}
+
+// Push one demodulated hard bit into the sliding window and return the
+// normalised correlation against the A-sequence, in [-1, 1]. |corr| exceeding
+// HFDL_CORR_THRESHOLD_A1 marks the preamble; its sign resolves the BPSK 180°
+// phase ambiguity (this is why the real decoder needs no differential coding).
+static float hfdl_preamble_push(hfdl_preamble *p, int bit) {
+  bsequence_push(p->win, bit);
+  int c = bsequence_correlate(p->ref, p->win);
+  return 2.0f * (float)c / (float)HFDL_A_LEN - 1.0f;
+}
+
 /* ---------------- Self-test ---------------- */
 
 // A block deinterleaver must be a bijection over its table: each of the N input
@@ -187,7 +229,42 @@ gboolean hfdl_frame_selftest(void) {
   }
   hfdl_descrambler_destroy(d);
 
+  // (3) Preamble correlator: feed a random run (no false peak above threshold),
+  // then the A-sequence (a sharp peak at |corr|=1 when the window fills), then
+  // the inverted A-sequence (peak of the opposite sign — the polarity that
+  // resolves BPSK's 180° ambiguity).
+  int abits[HFDL_A_LEN];
+  for (int i = 0; i < HFDL_A_LEN; i++)
+    abits[i] = (hfdl_A_octets[i >> 3] >> (7 - (i & 7))) & 1;   // MSB-first
+
+  hfdl_preamble *pr = hfdl_preamble_create();
+  uint32_t rng = 0x0badf00du;
+  float max_noise = 0.f;
+  for (int i = 0; i < 300; i++) {
+    rng = rng * 1103515245u + 12345u;
+    float c = hfdl_preamble_push(pr, (int)((rng >> 20) & 1u));
+    if (fabsf(c) > max_noise) max_noise = fabsf(c);
+  }
+  if (max_noise >= HFDL_CORR_THRESHOLD_A1) {
+    log_error("hfdl_frame selftest: preamble false-triggered on noise (max |corr|=%.3f)\n", max_noise);
+    ok = FALSE;
+  }
+  float peak = 0.f;
+  for (int i = 0; i < HFDL_A_LEN; i++) peak = hfdl_preamble_push(pr, abits[i]);
+  if (peak < 0.99f) {
+    log_error("hfdl_frame selftest: A-sequence peak too low (corr=%.3f)\n", peak);
+    ok = FALSE;
+  }
+  float peak_inv = 0.f;
+  for (int i = 0; i < HFDL_A_LEN; i++) peak_inv = hfdl_preamble_push(pr, abits[i] ^ 1);
+  if (peak_inv > -0.99f) {
+    log_error("hfdl_frame selftest: inverted A-sequence peak wrong (corr=%.3f)\n", peak_inv);
+    ok = FALSE;
+  }
+  hfdl_preamble_destroy(pr);
+
   if (ok)
-    log_info("hfdl_frame selftest: PASS (deinterleaver bijection + descrambler 120-periodic)\n");
+    log_info("hfdl_frame selftest: PASS (deinterleaver bijection + descrambler 120-periodic + preamble corr %.2f/%.2f, noise<%.2f)\n",
+             peak, peak_inv, max_noise);
   return ok;
 }
