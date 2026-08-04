@@ -858,8 +858,6 @@ void update_receiver_dialog(RECEIVER *rx) {
 
 GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   int i;
-  int col=0;
-  int row=0;
   SELECT *select;
 
   // The page is a vbox: the two-column grid on top, then the full-width
@@ -879,8 +877,16 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_homogeneous(GTK_GRID(grid),FALSE);
   gtk_grid_set_column_spacing(GTK_GRID(grid),5);
 
-  row=0;
-  col=0;
+  // Each column is its OWN vbox, not a run of grid rows: the two columns hold a
+  // different number of frames, so as grid rows (with multi-row spans) the
+  // taller column's row heights leaked ~150px of slack into the shorter one and
+  // the grid ended up much taller than its content.
+  GtkWidget *left_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+  gtk_widget_set_valign(left_box,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),left_box,0,0,1,1);
+  GtkWidget *right_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+  gtk_widget_set_valign(right_box,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),right_box,1,0,1,1);
 
   if(radio->discovered->adcs>1) {
     GtkWidget *adc_frame=gtk_frame_new("ADC");
@@ -889,7 +895,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_column_homogeneous(GTK_GRID(adc_grid),FALSE);
     sui_style_group(adc_grid);
     gtk_frame_set_child(GTK_FRAME(adc_frame),adc_grid);
-    gtk_grid_attach(GTK_GRID(grid),adc_frame,col,row++,1,1);
+    gtk_box_append(GTK_BOX(left_box),adc_frame);
 
     GtkWidget *adc0_b=gtk_check_button_new_with_label("ADC-0");
     gtk_check_button_set_active (GTK_CHECK_BUTTON (adc0_b), rx->adc==0);
@@ -924,8 +930,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       gtk_grid_set_column_homogeneous(GTK_GRID(sample_rate_grid),FALSE);
       sui_style_group(sample_rate_grid);
       gtk_frame_set_child(GTK_FRAME(sample_rate_frame),sample_rate_grid);
-      gtk_grid_attach(GTK_GRID(grid),sample_rate_frame,col,row,1,2);
-      row+=2;
+      gtk_box_append(GTK_BOX(left_box),sample_rate_frame);
 
       GtkWidget *sample_rate_48=gtk_check_button_new_with_label("48000");
       gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_48), rx->sample_rate==48000);
@@ -982,12 +987,9 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
 
   rx->filter_frame=gtk_frame_new("Filter");
-  gtk_grid_attach(GTK_GRID(grid),rx->filter_frame,col,row,1,1);
-  row++;
+  gtk_box_append(GTK_BOX(left_box),rx->filter_frame);
 
   update_filters(rx);
-
-  col=0;
 
   // Audio + Equalizer share column 0 and are stacked in one top-aligned box so
   // they hug each other; without it the tall Panadapter in the next column
@@ -1132,8 +1134,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // (The CW Audio Peak Filter lives on the CW configuration tab now — see
   // cw_dialog.c — since it only does anything in CWL/CWU.)
 
-  gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);
-  row+=4;
+  gtk_box_append(GTK_BOX(left_box),audio_eq_box);
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), rx->enable_equalizer);
@@ -1173,9 +1174,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   g_object_set_data_full(G_OBJECT(rx_eq_reset_b),"eq_scales",rx_eq_scales,g_free);
   g_signal_connect(rx_eq_reset_b,"clicked",G_CALLBACK(rx_eq_reset_cb),rx);
 
-  col++;
-  row=0;
-
   if(strcmp(radio->discovered->name,"rtlsdr")!=0) {
     GtkWidget *tx_frame=gtk_frame_new("TX Frequency");
     GtkWidget *tx_grid=gtk_grid_new();
@@ -1183,8 +1181,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_set_column_homogeneous(GTK_GRID(tx_grid),FALSE);
     sui_style_group(tx_grid);
     gtk_frame_set_child(GTK_FRAME(tx_frame),tx_grid);
-    gtk_grid_attach(GTK_GRID(grid),tx_frame,col,row,1,1);
-    row++;
+    gtk_box_append(GTK_BOX(right_box),tx_frame);
 
     rx->tx_control_b=gtk_check_button_new_with_label("Use This Receivers Frequency");
     gtk_check_button_set_active (GTK_CHECK_BUTTON (rx->tx_control_b), radio->transmitter!=NULL && radio->transmitter->rx==rx);
@@ -1198,8 +1195,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_set_column_homogeneous(GTK_GRID(panadapter_grid),FALSE);
   sui_style_group(panadapter_grid);
   gtk_frame_set_child(GTK_FRAME(panadapter_frame),panadapter_grid);
-  gtk_grid_attach(GTK_GRID(grid),panadapter_frame,col,row,1,3);
-  row+=3;
+  gtk_box_append(GTK_BOX(right_box),panadapter_frame);
 
 
   GtkWidget *fps_label=gtk_label_new("FPS:");
@@ -1476,9 +1472,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // reason the left column stacks its Audio/EQ/NR4 frames in a box).
   GtkWidget *cat_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,5);
   gtk_widget_set_valign(cat_box,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),cat_box,col,row,1,1);
+  gtk_box_append(GTK_BOX(right_box),cat_box);
   gtk_box_append(GTK_BOX(cat_box),cat_frame);
-  row++;
 
   GtkWidget *cat_debug_b=gtk_check_button_new_with_label("CAT Debug");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (cat_debug_b), rx->rigctl_debug);
