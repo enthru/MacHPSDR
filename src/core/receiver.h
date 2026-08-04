@@ -346,6 +346,13 @@ typedef struct _receiver {
   // here, since last_x is rewritten every motion event (per-event delta stays
   // tiny on a slow drag and would never trip has_moved).
   gint press_x;
+  // TRUE between OUR OWN button-1 press and its release on this RX's
+  // panadapter/waterfall. A drag must be gated on this, never on the event's
+  // GDK_BUTTON1_MASK alone: on macOS gdk derives that mask from
+  // [NSEvent pressedMouseButtons], which is *system-wide* state, so a button
+  // held down by another process (a Cmd-Shift-4 screenshot area selection)
+  // makes every motion event we receive look like a drag.
+  gboolean pointer_pressed;
   // GTK4: the scroll controller's "scroll" signal carries no pointer position,
   // so the motion controller stashes the latest cursor coords here for it.
   gint cursor_x;

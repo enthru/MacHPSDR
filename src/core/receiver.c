@@ -433,6 +433,11 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
   switch(button) {
     case 1: // left button
+      // Remember that THIS widget owns the drag now: receiver_motion_cb only
+      // tunes/pans while this is set, so a button held down elsewhere (another
+      // process' drag, e.g. a screenshot area selection) can't be mistaken for
+      // a drag on the spectrum.  See RECEIVER.pointer_pressed.
+      rx->pointer_pressed=TRUE;
       // Ctrl+click manages manual notch filters: click empty area to drop a
       // notch of the configured default width at the clicked RF; click on an
       // existing notch to remove it. (Ctrl+scroll resizes one, see below.)
@@ -875,6 +880,7 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
   int x=(int)ex;
   int moved=x-rx->last_x;
   if(button==1) {
+      rx->pointer_pressed=FALSE;
 #ifdef FT8
       // FT8 TX-offset gesture (Shift+click/drag in DIGU): update the offset from
       // the release point and return — never tune/pan the RX.
@@ -931,11 +937,11 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
   RECEIVER *rx=(RECEIVER *)data;
 #ifdef __APPLE__
   // See receiver_pressed_cb: the gdkmacos backend leaks the button-1 drag motion
-  // from the Configure dialog's title bar to the panadapter underneath. This
-  // handler retunes on any button-1 motion (independent of our own press flag,
-  // which the guarded press handler never set), so dragging the dialog around
-  // re-tuned the waterfall. Drop the motion while that dialog is the active
-  // window — same leak condition.
+  // from the Configure dialog's title bar to the panadapter underneath, which
+  // re-tuned the waterfall while the dialog was being dragged around. Drop the
+  // motion while that dialog is the active window — same leak condition. (The
+  // rx->pointer_pressed gate below now catches this case as well; this stays as
+  // the fail-safe, and it also keeps the stashed cursor position honest.)
   if(receiver_click_leaked_from_dialog()) return;
 #endif
   GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
@@ -945,15 +951,27 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
   rx->cursor_x=x;
   rx->cursor_y=y;
   int moved=x-rx->last_x;
+  // A drag is button 1 down *in a press we received ourselves*.  Testing the
+  // event's GDK_BUTTON1_MASK alone is wrong on macOS: gdk fills that mask from
+  // [NSEvent pressedMouseButtons], i.e. system-wide button state, so while any
+  // other process holds the button down — a Cmd-Shift-4 screenshot area
+  // selection being the everyday case — merely sweeping the pointer across the
+  // panadapter/waterfall was read as a drag and retuned the receiver.
+  // Self-healing: a motion with no button down clears a press whose release we
+  // never saw (grab broken, released off-window), so neither a stranded drag nor
+  // a stranded pan can hijack the next pointer sweep.
+  gboolean button1=(state & GDK_BUTTON1_MASK)==GDK_BUTTON1_MASK;
+  if(!button1) { rx->pointer_pressed=FALSE; rx->is_panning=FALSE; }
+  gboolean dragging=button1 && rx->pointer_pressed;
 #ifdef FT8
   // Shift+drag in DIGU slides the FT8 TX offset live, without tuning the RX.
-  if(ft8_tx_offset_gesture(rx,state) && (state & GDK_BUTTON1_MASK)) {
+  if(ft8_tx_offset_gesture(rx,state) && dragging) {
     ft8_set_tx_offset_from_x(rx,(double)x);
     rx->last_x=x;
     return;
   }
 #endif
-  if(rx->is_panning) {
+  if(rx->is_panning && dragging) {
     int pan=rx->pan+(moved*rx->zoom);
     if(pan<0) {
       pan=0;
@@ -963,7 +981,7 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
     rx->pan=pan;
     rx->last_x=x;
   } else if(!rx->locked) {
-    if((state & GDK_BUTTON1_MASK) == GDK_BUTTON1_MASK) {
+    if(dragging) {
       //receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),FALSE);
       receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),TRUE);
       rx->last_x=x;
@@ -2754,6 +2772,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->zoom=1;
   rx->pan=0;
   rx->is_panning=FALSE;
+  rx->pointer_pressed=FALSE;
   rx->enable_equalizer=FALSE;
   for(int i=0;i<11;i++) rx->equalizer[i]=0;
 
