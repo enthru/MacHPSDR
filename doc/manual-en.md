@@ -256,10 +256,23 @@ both directions. MacHPSDR decodes it out of the box.
 
 Put the receiver in **DIGU** and choose **HFDL** from the
 Decode selector; **Show HFDL** opens a panel (in the second-receiver slot, like
-the other decoders) with the decoded messages, and the Decode block shows the
-signal level, frame count and symbol throughput. Tune the HFDL channel the same
-way as any USB data signal — the decoder expects the 1440 Hz carrier offset the
-standard uses, i.e. dial the *assigned* channel frequency. What you get:
+the other decoders), and the Decode block shows the signal level, frame count,
+symbol throughput and the last few lines of decoded text. Tune the HFDL channel
+the same way as any USB data signal — the decoder expects the 1440 Hz carrier
+offset the standard uses, i.e. dial the *assigned* channel frequency. The panel's
+**channel drop-down** does that for you: pick, say, *11387 kHz – Riverhead, New
+York* and press **Tune**. The list is built from the ground-station table, so it
+follows the table received on air.
+
+The panel has three tabs. **Messages** is the running decode; **Stations** lists
+every known ground station with how long ago it was heard, how many frames it
+sent, its UTC-sync flag and the frequencies it reports in use; **Aircraft** lists
+the aircraft seen — ICAO address (once a logon reveals it), flight number, last
+heard, and last reported position. **Log** appends every decoded message to
+`~/.local/share/machpsdr/hfdl_log.txt`, which is what makes leaving the decoder
+running unattended worthwhile; the setting is remembered.
+
+What you get:
 
 - **Squitters** — each ground station's periodic broadcast: station name, UTC
   sync, system-table version and the frequencies it is currently using.

@@ -63,6 +63,48 @@ void hfdl_msg_reset(void);
 // Ground-station name from the embedded system-table snapshot, or NULL.
 const char *hfdl_msg_gs_name(uint8_t gs_id);
 
+// --- live activity tables ---------------------------------------------------
+//
+// The decode text scrolls away; these are the standing picture the operator
+// wants next to it — which stations are up on which frequencies, and which
+// aircraft have been heard. Filled in on the audio thread as frames are parsed,
+// read by the panel on the GTK thread, so both list calls take an internal lock
+// and hand back a snapshot.
+
+#define HFDL_MAX_FREQS 20
+
+typedef struct {
+  uint8_t     id;
+  const char *name;           // NULL when the station is not in the snapshot
+  gboolean    learned;        // frequencies came from the over-the-air table
+  gboolean    utc_sync;
+  gboolean    have_pos;
+  double      lat, lon;
+  int         freq_cnt;
+  uint32_t    freqs[HFDL_MAX_FREQS];   // kHz
+  uint32_t    inuse_mask;     // bit n set = slot n reported in use
+  gint64      last_heard_us;  // g_get_monotonic_time() of the last frame FROM it, 0 = never
+  int         frames;
+} HFDL_GS_INFO;
+
+typedef struct {
+  uint8_t   ac_id;
+  uint32_t  icao;             // 0 = not seen in a logon exchange
+  char      flight[8];
+  gboolean  have_pos;
+  double    lat, lon;
+  gint64    last_heard_us;
+  int       frames;
+} HFDL_AC_INFO;
+
+// Fill out[] with the known ground stations (every station in the table, heard
+// or not) / the aircraft heard so far, most recent first. Returns the count.
+int hfdl_msg_gs_list(HFDL_GS_INFO *out, int max);
+int hfdl_msg_ac_list(HFDL_AC_INFO *out, int max);
+
+// Version of the system table in use, or -1 if only the embedded snapshot is.
+int hfdl_msg_systable_version(void);
+
 // Headless self-test: synthesises valid frames (logon request, performance
 // data, frequency data, an ACARS-bearing enveloped-data HFNPDU) with correct
 // FCS/CRC and asserts the rendered text; also asserts corrupt input is rejected.

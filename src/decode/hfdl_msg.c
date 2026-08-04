@@ -345,6 +345,88 @@ static void ac_cache_del(uint32_t icao) {
 }
 static uint32_t ac_cache_get(uint8_t ac_id) { return ac_cache[ac_id]; }
 
+// --- live activity tables ---------------------------------------------------
+//
+// What the panel's Stations/Aircraft views show. Written here on the audio
+// thread as frames are parsed and read from the GTK thread, so the two arrays
+// (and only they) are behind a mutex; everything else in this file stays
+// audio-thread-only.
+
+static GMutex activity_lock;
+
+typedef struct {
+  gboolean seen;              // reported by a squitter or heard directly
+  gboolean utc_sync;
+  uint32_t inuse_mask;
+  gint64   last_us;           // last frame FROM this station
+  int      frames;
+} GS_ACTIVITY;
+
+typedef struct {
+  gboolean seen;
+  char     flight[8];
+  gboolean have_pos;
+  double   lat, lon;
+  gint64   last_us;
+  int      frames;
+} AC_ACTIVITY;
+
+static GS_ACTIVITY gs_act[GS_LEARNED_MAX];
+static AC_ACTIVITY ac_act[256];
+
+// The aircraft the MPDU currently being walked belongs to, so an HFNPDU nested
+// several layers down can attribute its flight id / position without threading
+// the id through every parse function. Audio-thread only.
+static int current_ac_id = -1;
+
+static void activity_clear(void) {
+  g_mutex_lock(&activity_lock);
+  memset(gs_act, 0, sizeof(gs_act));
+  memset(ac_act, 0, sizeof(ac_act));
+  g_mutex_unlock(&activity_lock);
+}
+
+static void gs_heard(uint8_t id) {
+  if (id >= GS_LEARNED_MAX) return;
+  g_mutex_lock(&activity_lock);
+  gs_act[id].seen = TRUE;
+  gs_act[id].last_us = g_get_monotonic_time();
+  gs_act[id].frames++;
+  g_mutex_unlock(&activity_lock);
+}
+
+static void gs_status(uint8_t id, gboolean utc_sync, uint32_t inuse) {
+  if (id >= GS_LEARNED_MAX) return;
+  g_mutex_lock(&activity_lock);
+  gs_act[id].seen = TRUE;
+  gs_act[id].utc_sync = utc_sync;
+  gs_act[id].inuse_mask = inuse;
+  g_mutex_unlock(&activity_lock);
+}
+
+static void ac_heard(uint8_t id) {
+  g_mutex_lock(&activity_lock);
+  ac_act[id].seen = TRUE;
+  ac_act[id].last_us = g_get_monotonic_time();
+  ac_act[id].frames++;
+  g_mutex_unlock(&activity_lock);
+}
+
+static void ac_seen(uint8_t id) {          // addressed by a ground station
+  g_mutex_lock(&activity_lock);
+  ac_act[id].seen = TRUE;
+  g_mutex_unlock(&activity_lock);
+}
+
+static void ac_set_flight(uint8_t id, const char *flight, gboolean have_pos,
+                          double lat, double lon) {
+  g_mutex_lock(&activity_lock);
+  ac_act[id].seen = TRUE;
+  if (flight && flight[0]) g_strlcpy(ac_act[id].flight, flight, sizeof(ac_act[id].flight));
+  if (have_pos) { ac_act[id].have_pos = TRUE; ac_act[id].lat = lat; ac_act[id].lon = lon; }
+  g_mutex_unlock(&activity_lock);
+}
+
 // --- ACARS multi-block reassembly ------------------------------------------
 //
 // Port of libacars' reassembly.c driven with its ACARS profile (acars.c), cut
@@ -521,6 +603,8 @@ static ACARS_REASM_STATUS acars_reasm_add(const char *reg, const char *label,
 void hfdl_msg_reset(void) {
   memset(ac_cache, 0, sizeof(ac_cache));
   acars_reasm_clear();
+  activity_clear();
+  current_ac_id = -1;
   systable_set_reset();     // partial table: worthless once the stream restarts
   // gs_learned is deliberately kept: it is the current world-wide station list,
   // not per-session state, and re-learning it costs another full PDU set.
@@ -764,6 +848,15 @@ static void emit_flight_pos(GString *out, int indent, const uint8_t *buf) {
   g_ascii_formatd(lonbuf, sizeof(lonbuf), "%.4f", lon);
   emit(out, indent, "Flight: %s   Pos: %s, %s   Time: %02d:%02d:%02d",
        flight_id[0] ? flight_id : "(none)", latbuf, lonbuf, h, m, s);
+
+  // Feed the Aircraft view. Two encodings mean "no fix" rather than a place:
+  // all-zero (0,0 — not the Gulf of Guinea) and all-ones, which comes out as
+  // 180,180 and is impossible anyway (latitude cannot exceed 90). The decode
+  // text above still prints whatever was sent; only the table filters.
+  if (current_ac_id >= 0) {
+    gboolean pos_ok = (lat != 0.0 || lon != 0.0) && lat <= 90.0 && lat >= -90.0;
+    ac_set_flight((uint8_t)current_ac_id, flight_id, pos_ok, lat, lon);
+  }
 }
 
 #define PERFORMANCE_DATA_LEN 47
@@ -930,6 +1023,10 @@ static void lpdu_decode(const uint8_t *buf, int len, GString *out, int indent) {
       if (len < 8) { emit(out, indent + 1, "truncated"); return; }
       uint32_t icao = parse_icao_hex(buf + 1);
       ac_cache_set(buf[4], icao);             // the ID every later frame uses
+      // A logon confirm is addressed to the broadcast id, not to the aircraft
+      // being logged on, so without this the newly identified aircraft would
+      // not appear in the Aircraft view until it transmitted something.
+      ac_seen(buf[4]);
       emit(out, indent + 1, "ICAO: %06X   Assigned AC ID: %u", icao, buf[4]);
       consumed = 8;
       break;
@@ -972,6 +1069,7 @@ static int lpdu_list_decode(const uint8_t *size_ptr, const uint8_t *data_ptr,
 
 static void spdu_decode(const uint8_t *buf, GString *out) {
   uint8_t src = buf[1] & 0x7F;
+  gs_heard(src);
   GString *g = g_string_new(NULL);
   append_gs_id(g, src);
   emit(out, 0, "HFDL SPDU (squitter) from GS %s", g->str);
@@ -996,6 +1094,7 @@ static void spdu_decode(const uint8_t *buf, GString *out) {
   };
   emit(out, 1, "Ground station status:");
   for (int i = 0; i < GS_STATUS_CNT; i++) {
+    gs_status(gs[i].id, gs[i].utc, gs[i].freqs);
     g_string_truncate(g, 0);
     append_gs_id(g, gs[i].id);
     emit(out, 2, "GS %s   UTC sync: %s", g->str, gs[i].utc ? "yes" : "no");
@@ -1043,6 +1142,8 @@ gboolean hfdl_msg_decode(const uint8_t *buf, int len, GString *out) {
 
   if (downlink) {
     uint8_t src_ac = buf[2], dst_gs = buf[1] & 0x7f;
+    ac_heard(src_ac);
+    current_ac_id = src_ac;
     append_ac_id(g, src_ac);
     g_string_append(g, "  ->  GS ");
     append_gs_id(g, dst_gs);
@@ -1051,11 +1152,14 @@ gboolean hfdl_msg_decode(const uint8_t *buf, int len, GString *out) {
       emit(out, 1, "LPDU list truncated");
   } else {
     uint8_t src_gs = buf[1] & 0x7f;
+    gs_heard(src_gs);
     append_gs_id(g, src_gs);
     emit(out, 0, "HFDL uplink MPDU (gnd->air)  GS %s  %d aircraft", g->str, aircraft_cnt);
     const uint8_t *hdrptr = buf + 2;            // first AC ID octet
     for (int i = 0; i < aircraft_cnt; i++) {
       uint8_t dst_ac = *hdrptr++;
+      ac_seen(dst_ac);
+      current_ac_id = dst_ac;
       lpdu_cnt = (*hdrptr++ >> 4) & 0xF;
       g_string_truncate(g, 0);
       append_ac_id(g, dst_ac);
@@ -1068,6 +1172,73 @@ gboolean hfdl_msg_decode(const uint8_t *buf, int len, GString *out) {
   }
   g_string_free(g, TRUE);
   return TRUE;
+}
+
+// --- activity snapshots for the panel ---------------------------------------
+
+int hfdl_msg_systable_version(void) { return gs_learned_version; }
+
+int hfdl_msg_gs_list(HFDL_GS_INFO *out, int max) {
+  if (out == NULL || max <= 0) return 0;
+  int n = 0;
+  g_mutex_lock(&activity_lock);
+  for (int id = 0; id < GS_LEARNED_MAX && n < max; id++) {
+    const HFDL_GS *snap = gs_lookup((uint8_t)id);
+    const HFDL_GS_LEARNED *lrn = gs_learned[id].valid ? &gs_learned[id] : NULL;
+    // A station is worth listing if we know it from either table or have heard
+    // it (an unknown id we have actually heard matters more than a known one).
+    if (snap == NULL && lrn == NULL && !gs_act[id].seen) continue;
+
+    HFDL_GS_INFO *o = &out[n++];
+    memset(o, 0, sizeof(*o));
+    o->id      = (uint8_t)id;
+    o->name    = snap ? snap->name : NULL;
+    o->learned = lrn != NULL;
+    if (lrn) {
+      o->freq_cnt = MIN(lrn->freq_cnt, HFDL_MAX_FREQS);
+      for (int f = 0; f < o->freq_cnt; f++) o->freqs[f] = lrn->freqs[f];
+      o->have_pos = (lrn->lat != 0.0 || lrn->lon != 0.0);
+      o->lat = lrn->lat; o->lon = lrn->lon;
+    } else if (snap) {
+      o->freq_cnt = MIN(snap->freq_cnt, HFDL_MAX_FREQS);
+      for (int f = 0; f < o->freq_cnt; f++) o->freqs[f] = snap->freqs[f];
+    }
+    o->utc_sync      = gs_act[id].utc_sync;
+    o->inuse_mask    = gs_act[id].inuse_mask;
+    o->last_heard_us = gs_act[id].last_us;
+    o->frames        = gs_act[id].frames;
+  }
+  g_mutex_unlock(&activity_lock);
+  return n;
+}
+
+int hfdl_msg_ac_list(HFDL_AC_INFO *out, int max) {
+  if (out == NULL || max <= 0) return 0;
+  int n = 0;
+  g_mutex_lock(&activity_lock);
+  for (int id = 0; id < 256 && n < max; id++) {
+    if (!ac_act[id].seen) continue;
+    HFDL_AC_INFO *o = &out[n++];
+    memset(o, 0, sizeof(*o));
+    o->ac_id = (uint8_t)id;
+    o->icao  = ac_cache[id];
+    g_strlcpy(o->flight, ac_act[id].flight, sizeof(o->flight));
+    o->have_pos      = ac_act[id].have_pos;
+    o->lat           = ac_act[id].lat;
+    o->lon           = ac_act[id].lon;
+    o->last_heard_us = ac_act[id].last_us;
+    o->frames        = ac_act[id].frames;
+  }
+  g_mutex_unlock(&activity_lock);
+
+  // Most recently heard first; never-heard entries (addressed but silent) last.
+  for (int i = 1; i < n; i++) {
+    HFDL_AC_INFO key = out[i];
+    int j = i - 1;
+    while (j >= 0 && out[j].last_heard_us < key.last_heard_us) { out[j + 1] = out[j]; j--; }
+    out[j + 1] = key;
+  }
+  return n;
 }
 
 // --- self-test --------------------------------------------------------------

@@ -429,7 +429,12 @@ you've dialled in.
   embedded snapshot as the fallback and the source of station names. An ACARS
   message **split across several blocks is reassembled** before it is shown. The
   application layer is a **native port**, not a link against libacars, so nothing
-  large is vendored; CPDLC/ADS-C payloads are deliberately left out. Select **HFDL** from the Decode block in **DIGU** and
+  large is vendored; CPDLC/ADS-C payloads are deliberately left out. The panel
+  has three tabs — the running **decode**, a **Stations** table (who was heard,
+  how long ago, UTC sync, frequencies in use) and an **Aircraft** table (ICAO,
+  flight, last position) — plus a **channel drop-down + Tune** built from the
+  station table, and a **Log** toggle that appends every message to
+  `~/.local/share/machpsdr/hfdl_log.txt`. Select **HFDL** from the Decode block in **DIGU** and
   press **Show HFDL** for the message panel. Built by default; it needs
   `liquid-dsp`, and since the decoder is a port of `dumphfdl` the resulting build
   is effectively GPLv3 (which this fork's "GPLv2 or later" permits). Comment out

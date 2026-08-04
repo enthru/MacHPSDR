@@ -1363,6 +1363,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_proto=atoi(value);
   value=getProperty("radio.decode_mode");
   if(value!=NULL) r->decode_mode=atoi(value);
+  value=getProperty("radio.hfdl_log");
+  if(value!=NULL) r->hfdl_log=atoi(value);
   value=getProperty("radio.wefax_lpm");
   if(value!=NULL) r->wefax_lpm=atoi(value);
   value=getProperty("radio.wefax_ioc");
