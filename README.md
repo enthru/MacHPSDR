@@ -505,7 +505,10 @@ you've dialled in.
   6th-order Butterworth low-pass band-limits the resampled stream so the
   panadapter shows the file's own bandwidth rather than resampling images. If the
   sideband is inverted, tick **Swap I & Q** in the radio dialog to mirror the
-  spectrum live.
+  spectrum live — a wrong setting shows up as inside-out SSB (USB and LSB
+  swapped) and a spectrum reflected about the centre, and the audio decoders
+  (FT8, SSTV, WEFAX, CW) stop decoding; HFDL is no guide, as it mirrors with the
+  display and decodes either side.
 
 ### Reliability & performance
 

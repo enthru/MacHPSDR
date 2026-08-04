@@ -479,5 +479,9 @@ not around the station), set **Frequency offset (Hz)** in the same frame to shif
 the recording so that signal lands in the middle of the span; the value is
 remembered and applies live. `MACHPSDR_FAKE_OFFSET=<Hz>` does the same from the
 command line. If the sideband is inverted, tick **Swap I & Q** in the radio dialog
-to mirror the spectrum live. This is the recommended way to try FT8 decoding, the
+to mirror the spectrum live. You tell it is wrong by ear — SSB comes out
+inside-out, USB and LSB swapped — and by the spectrum being reflected about the
+centre, so frequencies read on the scale are mirrored. The audio decoders (FT8,
+SSTV, WEFAX, CW) simply stop decoding; HFDL is no guide here, since it mirrors
+together with the display and decodes either way. This is the recommended way to try FT8 decoding, the
 recorder replay, and the UI without a radio.
