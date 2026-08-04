@@ -169,15 +169,14 @@ GtkWidget *create_about_dialog(RADIO *r) {
             "and PPM calibration.",FALSE);
   about_row(g,&row,
             "The foundation — the HPSDR protocol stack, the WDSP receiver chain and the "
-            "original application — is LinHPSDR by John Melton, G0ORX/N6LYT. Every source "
-            "file that came from it keeps his copyright notice.",FALSE);
+            "original application — is LinHPSDR by John Melton, G0ORX/N6LYT.",FALSE);
   about_row(g,&row,"https://github.com/enthru/MacHPSDR",FALSE);
 
   /* Credits. */
   g=about_group(page,&page_row,"Credits");
   row=0;
   about_row(g,&row,"John Melton, G0ORX/N6LYT — LinHPSDR, the application this fork is built on",FALSE);
-  about_row(g,&row,"Gleb Sushko, enthru — MacHPSDR fork: macOS support, UI and new features",FALSE);
+  about_row(g,&row,"Gleb Sushko, enthru — MacHPSDR fork: modern macOS support, UI and new features",FALSE);
   about_row(g,&row,"Warren Pratt, NR0V — WDSP, the DSP library the whole receiver runs on",FALSE);
   about_row(g,&row,"Steve Wilson, KA6S — RIGCTL (CAT over TCP) and testing (LinHPSDR)",FALSE);
   about_row(g,&row,"Ken Hopper, N9VV — testing and documentation (LinHPSDR)",FALSE);
