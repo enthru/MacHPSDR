@@ -1093,8 +1093,23 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     }
     gsk_path_unref(p);
     // dB numbers on top, each over a solid background box.
+    //
+    // Label decimation: the gridline spacing in PIXELS is what decides whether
+    // two numbers can coexist, and that shrinks with the panadapter's height —
+    // on a short pane (waterfall dragged up, or the panadapter squeezed into a
+    // sliver) consecutive labels landed a few pixels apart and smeared into an
+    // unreadable stack. So keep every Nth label, N chosen from the actual pixel
+    // pitch against the 12 px label font. This replaces a fixed "every 3rd when
+    // the step is small" rule, which knew nothing about the pane height.
+    const double db_label_min_px = 14.0;
+    double px_per_step = (double)db_step * dbm_per_line;
+    int label_nth = 1;
+    if(px_per_step > 0.0) {
+      label_nth = (int)ceil(db_label_min_px / px_per_step);
+      if(label_nth < 1) label_nth = 1;
+    }
     for(i=rx->panadapter_high;i>=rx->panadapter_low;i--) {
-      if(abs(i)%db_step==0 && (db_step>3 || (abs(i)/db_step)%3==0)) {
+      if(abs(i)%db_step==0 && (abs(i)/db_step)%label_nth==0) {
         double y=(double)(rx->panadapter_high-i)*dbm_per_line;
         const GdkRGBA *lc = rx->panadapter_gradient ? &text_b : &dark;
         sprintf(temp," %d",i);

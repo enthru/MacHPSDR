@@ -356,6 +356,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.iqswap",value);
 
   setProperty("radio.iq_player_file",radio->iq_player_file);
+  sprintf(value,"%f",radio->iq_player_offset);
+  setProperty("radio.iq_player_offset",value);
 
   sprintf(value,"%d",radio->which_audio);
   setProperty("radio.which_audio",value);
@@ -613,6 +615,8 @@ void radio_restore_state(RADIO *radio) {
 
   value=getProperty("radio.iq_player_file");
   if(value) g_strlcpy(radio->iq_player_file,value,sizeof(radio->iq_player_file));
+  value=getProperty("radio.iq_player_offset");
+  if(value) radio->iq_player_offset=atof(value);
 
   value=getProperty("radio.which_audio");
   if(value) radio->which_audio=atoi(value);

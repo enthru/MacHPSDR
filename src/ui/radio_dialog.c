@@ -577,6 +577,16 @@ static void iq_player_clear_cb(GtkWidget *widget, gpointer data) {
   iq_player_set_label(g_object_get_data(G_OBJECT(widget),"iq-player-label"),r);
 }
 
+// Carrier de-rotation for the played recording. A capture whose signal is not
+// at DC (an HFDL burst sitting ~15 kHz off the LO, say) cannot demodulate
+// without this, and it used to be reachable only through MACHPSDR_FAKE_OFFSET —
+// which is not a control an operator can find.
+static void iq_player_offset_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->iq_player_offset=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  fake_protocol_set_iq_offset(r,r->iq_player_offset);
+}
+
 static void attenuation_value_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   adc->attenuation=gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
@@ -805,6 +815,18 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(iq_grid),iq_clear,1,0,1,1);
 
     gtk_grid_attach(GTK_GRID(iq_grid),iq_lbl,2,0,1,1);
+
+    GtkWidget *iq_off_lbl=gtk_label_new("Frequency offset (Hz):");
+    gtk_label_set_xalign(GTK_LABEL(iq_off_lbl),0.0);
+    gtk_grid_attach(GTK_GRID(iq_grid),iq_off_lbl,0,1,1,1);
+    GtkWidget *iq_off=gtk_spin_button_new_with_range(-500000.0,500000.0,10.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(iq_off),radio->iq_player_offset);
+    gtk_widget_set_tooltip_text(iq_off,
+      "Shift the recording in frequency so the signal you want lands at the centre "
+      "of the span. Needed when the capture was not tuned to that signal — e.g. an "
+      "HFDL burst recorded 15 kHz off the receiver's LO. 0 = play as recorded.");
+    gtk_grid_attach(GTK_GRID(iq_grid),iq_off,1,1,1,1);
+    g_signal_connect(iq_off,"value_changed",G_CALLBACK(iq_player_offset_cb),radio);
   }
 
 

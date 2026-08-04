@@ -33,6 +33,9 @@ int fake_protocol_is_running(void);
  * case the current playback is left untouched). Safe to call from the GTK main
  * thread — the swap is serialised against the feed thread via r->delete_rx_mutex. */
 int fake_protocol_set_iq_file(RADIO *r, const char *path);
+// Live carrier de-rotation (Hz) for the played recording — the UI equivalent of
+// MACHPSDR_FAKE_OFFSET, needed for any capture whose signal is not at DC.
+void fake_protocol_set_iq_offset(RADIO *r, double hz);
 
 /* Playback status for the panadapter overlay. Returns 1 and fills the non-NULL
  * out-params (elapsed/total seconds into the looped recording, and the file's

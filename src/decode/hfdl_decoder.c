@@ -63,6 +63,14 @@ static glong         status_frames = 0;     // frames decoded since reset
 
 static GMutex        lock;                  // guards the published fields below
 static GString      *pending = NULL;        // decoded text awaiting the panel drain
+// Separate, NON-draining copy of the same text for the bottom Decode block.
+// The panel's drain must not steal what the readout shows (and vice versa), so
+// the readout peeks at this history instead — same split as cw_decoder.c.
+// Both buffers are capped: with the panel closed nothing ever drains `pending`,
+// so an unbounded GString would grow for the whole session.
+#define HFDL_HISTORY_MAX 4096
+#define HFDL_PENDING_MAX 65536
+static GString      *history = NULL;
 static gboolean      reset_pending = FALSE; // requested from GTK, applied on feed
 static int           status_rate = 0;       // last off-air sample rate seen (Hz)
 static glong         status_syms = 0;       // symbol-domain samples since reset
@@ -74,6 +82,7 @@ static gboolean      env_read = FALSE;
 
 static void ensure_init(void) {
   if (pending == NULL) pending = g_string_new(NULL);
+  if (history == NULL) history = g_string_new(NULL);
   if (!env_read) {
     echo = (g_getenv("MACHPSDR_HFDL_ECHO") != NULL);
     env_read = TRUE;
@@ -96,6 +105,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
     g_mutex_lock(&lock);
     ensure_init();
     g_string_truncate(pending, 0);
+    g_string_truncate(history, 0);
     status_syms = 0;
     status_rate = 0;
     status_level = -160.0;
@@ -192,6 +202,7 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   ensure_init();
   if (reset_pending) {
     g_string_truncate(pending, 0);
+    g_string_truncate(history, 0);
     status_syms = 0;
     status_frames = 0;
     reset_pending = FALSE;
@@ -202,7 +213,14 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   status_frames += frames;
   status_level = level;
   status_fed = TRUE;
-  if (frametext != NULL) g_string_append(pending, frametext->str);
+  if (frametext != NULL) {
+    g_string_append(pending, frametext->str);
+    if (pending->len > HFDL_PENDING_MAX)
+      g_string_erase(pending, 0, pending->len - HFDL_PENDING_MAX);
+    g_string_append(history, frametext->str);
+    if (history->len > HFDL_HISTORY_MAX)
+      g_string_erase(history, 0, history->len - HFDL_HISTORY_MAX);
+  }
   glong syms = status_syms;
   gboolean do_echo = echo;
   g_mutex_unlock(&lock);
@@ -228,6 +246,19 @@ int hfdl_decoder_get_messages(char *buf, int buflen) {
   buf[n] = '\0';
   g_mutex_unlock(&lock);
   return n;
+}
+
+// Newest decoded text WITHOUT consuming it — for the bottom Decode readout, which
+// must not steal messages from the panel's drain.
+int hfdl_decoder_get_recent(char *buf, int buflen) {
+  if (buf == NULL || buflen <= 0) return 0;
+  g_mutex_lock(&lock);
+  ensure_init();
+  int take = (int)MIN((gsize)(buflen - 1), history->len);
+  memcpy(buf, history->str + history->len - take, take);   // the newest `take` chars
+  buf[take] = '\0';
+  g_mutex_unlock(&lock);
+  return take;
 }
 
 void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *blocks) {

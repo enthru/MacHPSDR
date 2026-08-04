@@ -63,7 +63,7 @@ feature additions.
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
-| **I/Q Player** | Play back a recorded I/Q WAV with no hardware — pick **"I/Q Player"** in the device list (always offered, last), then choose the file in **Configure → Radio** (live-swappable while it runs; empty ⇒ synthetic test signal). Also `--faker <file>` from the CLI. |
+| **I/Q Player** | Play back a recorded I/Q WAV with no hardware — pick **"I/Q Player"** in the device list (always offered, last), then choose the file in **Configure → Radio** (live-swappable while it runs; empty ⇒ synthetic test signal), with a **frequency offset** for captures whose signal is not at the centre. Also `--faker <file>` from the CLI. |
 
 ---
 
@@ -468,6 +468,11 @@ you've dialled in.
   on the command line — `./machpsdr --faker ft8.wav` (skips the selection dialog;
   or set `MACHPSDR_FAKE_IQ=…`); the CLI file takes precedence over the saved one,
   and with no source it falls back to `iq.wav`. Any 16-bit stereo I/Q WAV works.
+  A **Frequency offset (Hz)** spin in the same frame shifts the recording so a
+  signal that was not at the centre of the capture (an SDR records around its LO,
+  not around the station) lands in the middle of the span — needed to replay, say,
+  an HFDL burst captured 15 kHz off the LO. Persisted, applied live;
+  `MACHPSDR_FAKE_OFFSET=<Hz>` is the command-line equivalent.
   The recording's sample rate is resampled to
   the receiver's rate and its carrier auto-centred to baseband, then looped. A
   6th-order Butterworth low-pass band-limits the resampled stream so the

@@ -1879,16 +1879,37 @@ static gboolean rds_update_cb(gpointer data) {
   }
 #ifdef HFDL
   else if(hfdl_active) {
-    // HFDL: the messages live in the big panel; the bottom block carries a compact
-    // listening/throughput readout (phase 1 — no demod yet). Hint to open the
-    // panel when it is closed, like SSTV/WEFAX.
+    // HFDL: a compact listening/throughput readout, plus the newest decoded text.
+    // The full message log lives in the big panel, but the readout must show
+    // *something* the moment a frame decodes — with the panel closed this block
+    // used to report only counters, so a working decode looked like no decode.
+    // The text comes from the non-draining peek, so it cannot steal messages
+    // from the panel's drain (same split as CW).
     show_ft8 = TRUE;
     gboolean listening; int hrate; glong hsyms;
     hfdl_decoder_get_status(&listening, &hrate, &hsyms);
     double hlvl = hfdl_decoder_get_level_db();
     glong hframes = hfdl_decoder_get_frames();
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "HFDL");
-    if(r->hfdl_panel_open)
+    char hrecent[2048];
+    hfdl_decoder_get_recent(hrecent, sizeof(hrecent));
+    // Show the tail of the newest decode, not just its last line: the block is
+    // several lines tall, so use them. Walk back over the trailing newlines and
+    // then over HFDL_READOUT_LINES line breaks to find where to start printing.
+    const int HFDL_READOUT_LINES = 4;
+    char *hlast = hrecent;
+    int hlen = (int)strlen(hrecent);
+    while(hlen > 0 && (hrecent[hlen-1]=='\n' || hrecent[hlen-1]=='\r')) hrecent[--hlen]='\0';
+    if(hlen > 0) {
+      int breaks = 0;
+      for(int p = hlen-1; p >= 0; p--) {
+        if(hrecent[p]=='\n' && ++breaks == HFDL_READOUT_LINES) { hlast = hrecent+p+1; break; }
+      }
+    }
+    if(*hlast!='\0')
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym\n%s",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000, hlast);
+    else if(r->hfdl_panel_open)
       snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym",
                listening?"sig":"idle", hlvl, hframes, hsyms/1000);
     else
@@ -2157,6 +2178,11 @@ static void create_visual(RADIO *r) {
   {
     gboolean wfm = r->active_receiver!=NULL && r->active_receiver->mode_a==WFM;
     GtkWidget *decode_mod=bar_module_ex(wfm?"RDS":"Decode",decode_row,&r->rds_title);
+    // bar_module_ex centres a module's content so short button columns don't hug
+    // the title. That is wrong for THIS module: its content is running text, and
+    // centring it wastes the space above and below and cuts how many decoded
+    // lines fit. Take the full height and start at the top instead.
+    gtk_widget_set_valign(decode_row,GTK_ALIGN_FILL);
     gtk_box_append(GTK_BOX(r->bottom_bar),decode_mod);
     gtk_widget_set_hexpand(decode_mod,TRUE);
   }

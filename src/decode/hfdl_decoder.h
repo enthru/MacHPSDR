@@ -60,6 +60,11 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate);
 // only. (Phase 1: never produces anything yet.)
 int hfdl_decoder_get_messages(char *buf, int buflen);
 
+// Peek at the newest decoded text WITHOUT consuming it (the bottom Decode block
+// readout; the panel drains hfdl_decoder_get_messages and the two must not steal
+// from each other).
+int hfdl_decoder_get_recent(char *buf, int buflen);
+
 // Snapshot of decoder status for the panel readout. GTK thread only.
 //   listening   - TRUE while the tap is receiving I/Q (enabled + fed)
 //   sample_rate - the off-air sample rate currently seen (Hz), 0 if idle

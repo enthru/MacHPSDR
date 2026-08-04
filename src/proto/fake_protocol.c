@@ -199,13 +199,10 @@ static int fake_load_iq(const char *path) {
   // hundreds of kHz off the DC signal, so the "fix" shoved the already-centred
   // station right off to the side. Opt in with MACHPSDR_FAKE_OFFSET=<Hz> to
   // manually de-rotate a genuinely off-centre single-signal recording.
-  iq_offset = 0.0;
-  {
-    const char *env = getenv("MACHPSDR_FAKE_OFFSET");
-    if(env && env[0]) iq_offset = atof(env);
-  }
-  if(iq_offset != 0.0)
-    log_info("fake: iq.wav manual de-rotation %.0f Hz (MACHPSDR_FAKE_OFFSET)\n", iq_offset);
+  // The offset itself is NOT reset here: it is a property of how the operator
+  // wants this recording played, not of the file, and fake_load_iq() also runs
+  // on a live file swap. It is seeded once in fake_protocol_init() and changed
+  // from Configure -> Radio (or MACHPSDR_FAKE_OFFSET).
   return 1;
 }
 
@@ -423,6 +420,20 @@ void fake_protocol_init(RADIO *r) {
   if(iq_file==NULL || iq_file[0]=='\0') iq_file = getenv("MACHPSDR_FAKE_IQ");
   if(iq_file==NULL || iq_file[0]=='\0') iq_file = FAKE_IQ_FILE;
 
+  // Carrier de-rotation. Same precedence idea as the file: the env var wins (it
+  // is the headless override), otherwise the value persisted from Configure ->
+  // Radio. This has to be reachable from the UI: a recording whose signal is not
+  // at DC — an HFDL capture, say, where the burst sits ~15 kHz off the LO the
+  // SDR was tuned to — simply cannot decode without it, and an env var is not a
+  // control an operator can find.
+  iq_offset = r->iq_player_offset;
+  {
+    const char *env = getenv("MACHPSDR_FAKE_OFFSET");
+    if(env && env[0]) iq_offset = atof(env);
+  }
+  if(iq_offset != 0.0)
+    log_info("fake: I/Q de-rotation %.0f Hz\n", iq_offset);
+
   // Look for the recording in the current dir, then the home dir.
   if(!fake_load_iq(iq_file)) {
     char *home_path = g_build_filename(g_get_home_dir(), iq_file, NULL);
@@ -478,6 +489,18 @@ int fake_protocol_set_iq_file(RADIO *r, const char *path) {
   log_info("fake: now playing I/Q file '%s' (%.0f Hz, %ld frames, %.1f s), looping\n",
            path, rate, frames, rate>0.0 ? (double)frames/rate : 0.0);
   return 1;
+}
+
+// Live de-rotation change from Configure -> Radio. Written under the same mutex
+// the feed thread holds around each block, so the NCO cannot be re-based
+// mid-block; the phase accumulators are reset with it so the step change is a
+// clean restart rather than an arbitrary jump.
+void fake_protocol_set_iq_offset(RADIO *r, double hz) {
+  g_mutex_lock(&r->delete_rx_mutex);
+  iq_offset = hz;
+  for(int i=0;i<8;i++) mix_phase[i] = 0.0;
+  g_mutex_unlock(&r->delete_rx_mutex);
+  log_info("fake: I/Q de-rotation %.0f Hz\n", hz);
 }
 
 int fake_protocol_playback(double *elapsed_s, double *total_s, double *bw_hz) {

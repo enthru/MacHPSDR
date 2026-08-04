@@ -331,6 +331,11 @@ typedef struct _radio {
   // I/Q Player (fake device): path of the WAV recording to loop, chosen in
   // Configure -> Radio. Empty => synthetic noise+tones. Persisted.
   char iq_player_file[512];
+  // Carrier de-rotation applied to that recording, Hz (Configure -> Radio).
+  // A capture whose signal of interest is not at DC — e.g. an HFDL burst
+  // sitting ~15 kHz off the LO the SDR was tuned to — cannot be demodulated
+  // without this. Persisted; MACHPSDR_FAKE_OFFSET overrides it at start-up.
+  gdouble iq_player_offset;
 
   gint which_audio;
   gint which_audio_backend;

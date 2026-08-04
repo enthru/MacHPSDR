@@ -434,7 +434,12 @@ is set. **Choose the file in Configure → Radio** (the *I/Q Player* frame:
 **live while it plays**. You can also pass a file on the command line with
 `--faker ft8.wav` (this skips the selection dialog) or set `MACHPSDR_FAKE_IQ`; the
 command-line file takes precedence, and with no source it falls back to `iq.wav`.
-The recording is resampled to the receiver rate and auto-centred to baseband, then
-looped. If the sideband is inverted, tick **Swap I & Q** in the radio dialog to
-mirror the spectrum live. This is the recommended way to try FT8 decoding, the
+The recording is resampled to the receiver rate and looped, and is played exactly
+as recorded — the file centre becomes the receiver centre. When the signal you
+want is *not* at the centre of the capture (an SDR usually records around its LO,
+not around the station), set **Frequency offset (Hz)** in the same frame to shift
+the recording so that signal lands in the middle of the span; the value is
+remembered and applies live. `MACHPSDR_FAKE_OFFSET=<Hz>` does the same from the
+command line. If the sideband is inverted, tick **Swap I & Q** in the radio dialog
+to mirror the spectrum live. This is the recommended way to try FT8 decoding, the
 recorder replay, and the UI without a radio.
