@@ -1609,7 +1609,13 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *mnf_grid=gtk_grid_new();
     sui_style_group(mnf_grid);
     gtk_frame_set_child(GTK_FRAME(mnf_frame),mnf_grid);
-    gtk_box_append(GTK_BOX(sq_mnf_row),mnf_frame);
+    // MNF sits left, under the Audio/EQ/NR4 column, and a size group pins it to
+    // that column's exact width so the two line up; Squelch takes the rest.
+    gtk_box_prepend(GTK_BOX(sq_mnf_row),mnf_frame);
+    GtkSizeGroup *sg=gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
+    gtk_size_group_add_widget(sg,left_box);
+    gtk_size_group_add_widget(sg,mnf_frame);
+    g_object_set_data_full(G_OBJECT(mnf_frame),"mnf_sizegroup",sg,g_object_unref);
     // Freed with the frame, so the callbacks' data outlives every row widget.
     g_object_set_data_full(G_OBJECT(mnf_frame),"mnf_ui",ui,g_free);
 
