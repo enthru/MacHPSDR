@@ -54,9 +54,11 @@
 
 static volatile gint enabled = 0;          // atomic on/off gate
 static hfdl_demod   *demod = NULL;          // front-end DSP (audio thread only)
+static hfdl_framer  *framer = NULL;         // frame state machine (audio thread only)
 static double        demod_rate = 0.0;      // input rate demod was built for
 static float         out_buf[2 * HFDL_OUT_MAX];   // conditioned baseband
 static float         sym_buf[2 * HFDL_SYM_MAX];   // recovered symbols
+static glong         status_frames = 0;     // frames decoded since reset
 
 static GMutex        lock;                  // guards the published fields below
 static GString      *pending = NULL;        // decoded text awaiting the panel drain
@@ -80,6 +82,7 @@ static void ensure_init(void) {
 // Audio thread. Free the front-end (on disable / rate change / re-enable reset).
 static void demod_free(void) {
   if (demod) { hfdl_demod_destroy(demod); demod = NULL; }
+  if (framer) { hfdl_framer_destroy(framer); framer = NULL; }
   demod_rate = 0.0;
 }
 
@@ -124,23 +127,41 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0 || sample_rate <= 0)
     return;
 
-  // (Re)build the front-end if the rate changed (audio thread — safe).
+  // (Re)build the front-end + framer if the rate changed (audio thread — safe).
   if (demod == NULL || demod_rate != (double)sample_rate) {
     demod_free();
     demod = hfdl_demod_create((double)sample_rate);
+    framer = hfdl_framer_create();
     demod_rate = (double)sample_rate;
   }
-  int nsym = 0;
+  int nsym = 0, frames = 0;
   double level = -160.0;
+  char frametext[4096]; int ftlen = 0; frametext[0] = '\0';
   if (demod) {
-    // Phase 2a front-end: condition the raw I/Q into the 5400 S/s symbol domain.
+    // Front-end: condition the raw I/Q into the 5400 S/s symbol domain.
     int nbb = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
     level = hfdl_demod_level_db(demod);
-    // Phase 2b: recover carrier-locked BPSK symbols (symsync + Costas + modem).
+    // Symbol recovery: carrier-locked BPSK symbols (symsync + Costas + modem).
     nsym = hfdl_demod_symbols(demod, out_buf, nbb, sym_buf, HFDL_SYM_MAX);
-    // The recovered symbols in sym_buf are not yet framed: preamble correlation,
-    // the LMS equalizer, adaptive M-PSK selection and framing→FEC→message text
-    // are the next phase (only meaningfully verifiable against a real recording).
+    // Framer: sync on the preamble, select the mode, collect + decode a frame.
+    // (No LMS equalizer yet, so on a real fading channel this won't lock — that's
+    // the last, on-air-only piece; the whole chain is otherwise complete.)
+    if (framer) {
+      for (int i = 0; i < nsym; i++) {
+        int nb = hfdl_framer_push(framer, sym_buf[2 * i], sym_buf[2 * i + 1]);
+        if (nb > 0) {
+          const uint8_t *fb = hfdl_framer_bytes(framer, &nb);
+          frames++;
+          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen,
+                              "HFDL frame (%d bytes): ", nb);
+          int show = nb < 48 ? nb : 48;   // trim very long dumps for the panel
+          for (int k = 0; k < show && ftlen < (int)sizeof(frametext) - 8; k++)
+            ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "%02x ", fb[k]);
+          if (show < nb) ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "\xE2\x80\xA6");
+          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "\n");
+        }
+      }
+    }
   }
 
   g_mutex_lock(&lock);
@@ -148,18 +169,23 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   if (reset_pending) {
     g_string_truncate(pending, 0);
     status_syms = 0;
+    status_frames = 0;
     reset_pending = FALSE;
   }
   status_rate = sample_rate;
   status_syms += nsym;
+  status_frames += frames;
   status_level = level;
   status_fed = TRUE;
+  if (ftlen > 0) g_string_append(pending, frametext);
   glong syms = status_syms;
   gboolean do_echo = echo;
   g_mutex_unlock(&lock);
 
-  if (do_echo && nsym > 0 && (syms - nsym) / 20000 != syms / 20000)
-    g_printerr("[HFDL] %ld symbols recovered @ %.0f dB (no framing yet)\n",
+  if (do_echo && frames > 0)
+    g_printerr("[HFDL] decoded %d frame(s) @ %.0f dB\n", frames, level);
+  else if (do_echo && nsym > 0 && (syms - nsym) / 20000 != syms / 20000)
+    g_printerr("[HFDL] %ld symbols recovered @ %.0f dB (searching for frames)\n",
                syms, level);
 }
 
@@ -189,6 +215,13 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
 double hfdl_decoder_get_level_db(void) {
   g_mutex_lock(&lock);
   double v = status_level;
+  g_mutex_unlock(&lock);
+  return v;
+}
+
+glong hfdl_decoder_get_frames(void) {
+  g_mutex_lock(&lock);
+  glong v = status_frames;
   g_mutex_unlock(&lock);
   return v;
 }

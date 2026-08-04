@@ -69,6 +69,9 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
 // Current front-end AGC signal level (RSSI, dB) for the readout. GTK thread only.
 double hfdl_decoder_get_level_db(void);
 
+// Number of frames decoded since the last reset. GTK thread only.
+glong hfdl_decoder_get_frames(void);
+
 // Clear decoded text + reset state (panel "Clear" button). Safe from the GTK
 // thread; the state reset is applied on the next audio-thread feed.
 void hfdl_decoder_reset(void);

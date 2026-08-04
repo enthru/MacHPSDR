@@ -1879,13 +1879,14 @@ static gboolean rds_update_cb(gpointer data) {
     gboolean listening; int hrate; glong hsyms;
     hfdl_decoder_get_status(&listening, &hrate, &hsyms);
     double hlvl = hfdl_decoder_get_level_db();
+    glong hframes = hfdl_decoder_get_frames();
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "HFDL");
     if(r->hfdl_panel_open)
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld ksym   (front-end only — no framing yet)",
-               listening?"sig":"idle", hlvl, hsyms/1000);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld ksym\n(Show HFDL for the message panel — front-end only, no framing yet)",
-               listening?"sig":"idle", hlvl, hsyms/1000);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym\n(Show HFDL for the message panel)",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000);
   }
 #endif
 #endif

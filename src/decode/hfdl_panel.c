@@ -58,10 +58,11 @@ static gboolean tick(gpointer data) {
   gboolean listening; int rate; glong syms;
   hfdl_decoder_get_status(&listening, &rate, &syms);
   double level = hfdl_decoder_get_level_db();
-  char buf[128];
+  glong frames = hfdl_decoder_get_frames();
+  char buf[160];
   if (listening)
-    g_snprintf(buf, sizeof(buf), "signal %.0f dB \xC2\xB7 %d kHz \xC2\xB7 %ld ksym  (front-end only \xE2\x80\x94 no framing yet)",
-               level, rate / 1000, syms / 1000);
+    g_snprintf(buf, sizeof(buf), "signal %.0f dB \xC2\xB7 %d kHz \xC2\xB7 %ld frames \xC2\xB7 %ld ksym",
+               level, rate / 1000, frames, syms / 1000);
   else
     g_snprintf(buf, sizeof(buf), "idle");
   gtk_label_set_text(GTK_LABEL(p->status), buf);
