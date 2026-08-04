@@ -29,6 +29,7 @@
 #include <liquid/liquid.h>
 
 #include "hfdl_frame.h"
+#include "hfdl_fec.h"
 #include "log.h"
 
 #define DATA_FRAME_CNT_SINGLE_SLOT 72
@@ -174,32 +175,154 @@ static float hfdl_preamble_push(hfdl_preamble *p, int bit) {
   return 2.0f * (float)c / (float)HFDL_A_LEN - 1.0f;
 }
 
+/* ---------------- Data-frame decode (symbols -> bytes) ---------------- */
+
+// Decode one HFDL data frame: `nsym` collected data symbols (interleaved float
+// I/Q) for configuration `m_shift`, mirroring dumphfdl decode_user_data():
+// per-symbol descramble + soft M-PSK demod → block-deinterleave → (r=1/4 chip
+// averaging) → r=1/2 Viterbi → `out` bytes (MSB-first, ⌈K/8⌉). Returns the
+// decoded bit count K (data + 6 conv tail bits), or -1 on error. `bitmask` is
+// the BPSK-polarity flag from the preamble (0 or 1); the caller passes what the
+// A-correlator resolved. GTK-independent.
+static int hfdl_frame_decode_data(const float *sym_iq, int nsym, int m_shift,
+                                  int bitmask, uint8_t *out) {
+  const hfdl_params *p = &hfdl_frame_params[m_shift];
+  int arity = p->scheme;
+  int num_encoded_bits = nsym * arity;
+  deinterleaver *di = deinterleaver_create(m_shift);
+  if (num_encoded_bits != deinterleaver_table_size(di)) { deinterleaver_destroy(di); return -1; }
+  descrambler *ds = hfdl_descrambler_create();
+  modem m = modem_create(arity == 1 ? LIQUID_MODEM_BPSK :
+                         arity == 2 ? LIQUID_MODEM_PSK4 : LIQUID_MODEM_PSK8);
+  uint8_t soft[8];
+  float bmflip = (bitmask & 1) ? -1.f : 1.f;
+  for (int i = 0; i < nsym; i++) {
+    float complex s = sym_iq[2 * i] + sym_iq[2 * i + 1] * I;
+    uint32_t dbit = descrambler_advance(ds);
+    float flip = (dbit ? -1.f : 1.f) * bmflip;
+    unsigned int hard;
+    modem_demodulate_soft(m, s * flip, &hard, soft);
+    for (int j = 0; j < arity; j++) deinterleaver_push(di, soft[j]);
+  }
+  int vin_len = (p->code_rate == 4) ? num_encoded_bits / 2 : num_encoded_bits;
+  uint8_t *vin = g_new(uint8_t, vin_len);
+  if (p->code_rate == 4) {
+    for (int i = 0; i < vin_len; i++) {
+      uint8_t a = deinterleaver_pop(di), b = deinterleaver_pop(di);
+      vin[i] = (uint8_t)((a & b) + ((a ^ b) >> 1));   // average without overflow
+    }
+  } else {
+    for (int i = 0; i < vin_len; i++) vin[i] = deinterleaver_pop(di);
+  }
+  int K = vin_len / 2;   // decoded bits (incl. the 6 conv tail bits)
+  hfdl_fec_viterbi_decode(vin, K, out);
+  g_free(vin);
+  modem_destroy(m);
+  hfdl_descrambler_destroy(ds);
+  deinterleaver_destroy(di);
+  return K;
+}
+
 /* ---------------- Self-test ---------------- */
 
-// A block deinterleaver must be a bijection over its table: each of the N input
-// (push) positions maps to a distinct output (pop) position, covering all N.
-// Probe one input at a time (a lone 1 among 0s) and record where it pops out; a
-// collision or a gap means the row/col arithmetic is wrong.
+// Deinterleaver permutation: perm[i] = pop-position of the value pushed i-th.
+// O(N^2) probe — test/encode only (the live decode uses push/pop directly).
+static void frame_perm(int m_shift, int *perm, int N) {
+  deinterleaver *d = deinterleaver_create(m_shift);
+  for (int k = 0; k < N; k++) {
+    deinterleaver_reset(d);
+    for (int i = 0; i < DEINTERLEAVER_ROW_CNT; i++) memset(d->table[i], 0, d->column_cnt);
+    for (int i = 0; i < N; i++) deinterleaver_push(d, i == k ? 1 : 0);
+    deinterleaver_reset(d);
+    perm[k] = -1;
+    for (int i = 0; i < N; i++) if (deinterleaver_pop(d)) { perm[k] = i; break; }
+  }
+  deinterleaver_destroy(d);
+}
+
+// A valid block deinterleaver is a bijection: perm covers 0..N-1 exactly once.
 static gboolean deinterleaver_is_bijection(int m_shift) {
   deinterleaver *d = deinterleaver_create(m_shift);
   int N = deinterleaver_table_size(d);
-  gboolean ok = TRUE;
-  int *seen = g_new0(int, N);          // output-position hit count
-  uint8_t *out = g_new0(uint8_t, N);
-  for (int k = 0; k < N && ok; k++) {
-    deinterleaver_reset(d);
-    for (int i = 0; i < DEINTERLEAVER_ROW_CNT; i++)
-      memset(d->table[i], 0, d->column_cnt);
-    for (int i = 0; i < N; i++) deinterleaver_push(d, i == k ? 1 : 0);
-    deinterleaver_reset(d);
-    int at = -1, hits = 0;
-    for (int i = 0; i < N; i++) { out[i] = deinterleaver_pop(d); if (out[i]) { at = i; hits++; } }
-    if (hits != 1) { ok = FALSE; break; }   // marker lost or duplicated
-    seen[at]++;
-  }
-  if (ok) for (int i = 0; i < N; i++) if (seen[i] != 1) { ok = FALSE; break; }
-  g_free(seen); g_free(out);
   deinterleaver_destroy(d);
+  int *perm = g_new(int, N);
+  int *seen = g_new0(int, N);
+  frame_perm(m_shift, perm, N);
+  gboolean ok = TRUE;
+  for (int i = 0; i < N; i++) {
+    if (perm[i] < 0 || perm[i] >= N || seen[perm[i]]) { ok = FALSE; break; }
+    seen[perm[i]] = 1;
+  }
+  g_free(perm); g_free(seen);
+  return ok;
+}
+
+// r=1/2 K=7 convolutional encoder (Karn convention; matches hfdl_fec's decoder),
+// appending 6 tail zero bits. out_bits holds 2*(ndata+6) hard bits (0/1).
+static void frame_conv_encode(const uint8_t *data_bits, int ndata, uint8_t *out_bits) {
+  unsigned int sr = 0;
+  int total = ndata + 6;
+  for (int i = 0; i < total; i++) {
+    int b = (i < ndata) ? (data_bits[i] & 1) : 0;
+    sr = (sr << 1) | (unsigned int)b;
+    unsigned int a = sr & 0x6d, c = sr & 0x4f;
+    a ^= a >> 4; a ^= a >> 2; a ^= a >> 1;
+    c ^= c >> 4; c ^= c >> 2; c ^= c >> 1;
+    out_bits[2 * i]     = (uint8_t)(a & 1);
+    out_bits[2 * i + 1] = (uint8_t)(c & 1);
+  }
+}
+
+// End-to-end data-frame round-trip for a BPSK config (arity 1): random user
+// bits → conv-encode(+tail) → interleave (inverse of the deinterleaver perm) →
+// per-symbol scramble + BPSK-modulate → hfdl_frame_decode_data → assert the
+// user bits come back bit-exact. Exercises the whole data path (interleave +
+// scramble + M-PSK + Viterbi) as one self-consistent chain.
+static gboolean dataframe_roundtrip_bpsk(int m_shift) {
+  const hfdl_params *p = &hfdl_frame_params[m_shift];
+  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return TRUE;   // BPSK r=1/2 only
+  int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;   // arity 1 -> pushes = nsym
+  int N = nsym;                                           // encoded bits = table size
+  int K = N / 2;                                          // decoded bits (incl tail)
+  int ndata = K - 6;
+
+  uint8_t *dbits = g_new(uint8_t, ndata);
+  uint8_t *enc = g_new(uint8_t, N);
+  int *perm = g_new(int, N);
+  float *sym = g_new(float, 2 * nsym);
+  uint8_t *out = g_new0(uint8_t, (K + 7) / 8);
+
+  uint32_t rng = 0x2468aceu;
+  for (int i = 0; i < ndata; i++) { rng = rng * 1103515245u + 12345u; dbits[i] = (rng >> 19) & 1u; }
+  frame_conv_encode(dbits, ndata, enc);
+  frame_perm(m_shift, perm, N);
+
+  // TX: pushed[i] (soft bit for symbol i) = enc[perm[i]] so the RX pop yields enc
+  // in order; scramble + BPSK-modulate so RX descramble+demod recovers it.
+  modem mtx = modem_create(LIQUID_MODEM_BPSK);
+  descrambler *dtx = hfdl_descrambler_create();
+  for (int i = 0; i < nsym; i++) {
+    unsigned int b = enc[perm[i]];
+    float complex s; modem_modulate(mtx, b, &s);
+    uint32_t dbit = descrambler_advance(dtx);
+    if (dbit) s = -s;                                     // pre-apply scramble flip
+    sym[2 * i] = crealf(s); sym[2 * i + 1] = cimagf(s);
+  }
+  modem_destroy(mtx); hfdl_descrambler_destroy(dtx);
+
+  int Kout = hfdl_frame_decode_data(sym, nsym, m_shift, 0, out);
+  gboolean ok = (Kout == K);
+  int errs = 0;
+  if (ok) for (int i = 0; i < ndata; i++) {
+    int rb = (out[i >> 3] >> (7 - (i & 7))) & 1;
+    if (rb != dbits[i]) errs++;
+  }
+  if (!ok || errs != 0) {
+    log_error("hfdl_frame selftest: data-frame[%d] round-trip FAIL (Kout=%d/%d, %d/%d bit errors)\n",
+              m_shift, Kout, K, errs, ndata);
+    ok = FALSE;
+  }
+  g_free(dbits); g_free(enc); g_free(perm); g_free(sym); g_free(out);
   return ok;
 }
 
@@ -263,8 +386,13 @@ gboolean hfdl_frame_selftest(void) {
   }
   hfdl_preamble_destroy(pr);
 
+  // (4) Whole data-path round-trip (interleave + scramble + BPSK + Viterbi) for a
+  // single-slot (m=1) and a double-slot (m=5) BPSK r=1/2 config.
+  if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;
+  if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;
+
   if (ok)
-    log_info("hfdl_frame selftest: PASS (deinterleaver bijection + descrambler 120-periodic + preamble corr %.2f/%.2f, noise<%.2f)\n",
-             peak, peak_inv, max_noise);
+    log_info("hfdl_frame selftest: PASS (deinterleave+descramble+preamble %.2f/%.2f + data-frame round-trip)\n",
+             peak, peak_inv);
   return ok;
 }
