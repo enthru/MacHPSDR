@@ -34,10 +34,13 @@ The optional HFDL decoder (compiled only with HFDL_INCLUDE=HFDL, OFF by default)
 links liquid-dsp (MIT) and includes a vendored copy of Phil Karn KA9Q's libfec
 r=1/2 K=7 Viterbi decoder under hfdl_lib/libfec/, licensed under the GNU Lesser
 General Public License (LGPL); see the license headers in those files. Its
-signal-processing core is ported from dumphfdl (szpajder), which is GPL version
-3 or later — as later phases incorporate that code the HFDL build becomes
-effectively GPLv3, which this fork's "GPL v2 or later" permits. A stock build
-(HFDL off) is unaffected and remains GPLv2.
+signal-processing core, framing and protocol layers are ported from dumphfdl
+(szpajder), which is GPL version 3 or later, and its ACARS block parser is
+ported from libacars (szpajder, MIT); the HFDL build is therefore effectively
+GPLv3, which this fork's "GPL v2 or later" permits. A stock build (HFDL off) is
+unaffected and remains GPLv2. hfdl_lib/hfdl_crc.c is dumphfdl's crc16_ccitt.
+The embedded HFDL ground-station table in src/decode/hfdl_msg.c is a snapshot of
+dumphfdl's etc/systable.conf.
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A

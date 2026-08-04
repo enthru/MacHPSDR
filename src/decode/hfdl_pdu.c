@@ -35,11 +35,12 @@
 
 // FCS = CRC-16-CCITT over the first hdr_len bytes, stored little-endian at
 // buf[hdr_len..hdr_len+1] (dumphfdl hfdl_pdu_fcs_check).
-static gboolean fcs_ok(const uint8_t *buf, int hdr_len) {
+gboolean hfdl_pdu_fcs_check(const uint8_t *buf, int hdr_len) {
   uint16_t check = (uint16_t)(buf[hdr_len] | (buf[hdr_len + 1] << 8));
   uint16_t comp  = (uint16_t)(crc16_ccitt((uint8_t *)buf, (uint32_t)hdr_len, 0xFFFFu) ^ 0xFFFFu);
   return check == comp;
 }
+#define fcs_ok hfdl_pdu_fcs_check
 
 gboolean hfdl_pdu_describe(const uint8_t *buf, int len, char *out, int outlen) {
   if (out == NULL || outlen <= 0) return FALSE;

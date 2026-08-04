@@ -41,6 +41,12 @@
 // (a real, uncorrupted PDU), FALSE otherwise. GTK-independent.
 gboolean hfdl_pdu_describe(const uint8_t *buf, int len, char *out, int outlen);
 
+// FCS check: CRC-16-CCITT over the first hdr_len bytes against the little-endian
+// FCS stored at buf[hdr_len..hdr_len+1] (dumphfdl hfdl_pdu_fcs_check). Every PDU
+// layer — SPDU, MPDU header, LPDU — is protected the same way, so hfdl_msg.c
+// uses this too.
+gboolean hfdl_pdu_fcs_check(const uint8_t *buf, int hdr_len);
+
 // Headless self-test: build a valid SPDU and a valid MPDU (correct FCS), confirm
 // they validate + describe; corrupt a byte and confirm the FCS check fails.
 gboolean hfdl_pdu_selftest(void);

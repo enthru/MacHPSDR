@@ -52,6 +52,7 @@ feature additions.
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
+| **HFDL** *(optional build)* | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. **Off in a stock build** — the port makes that build GPLv3, so enable it explicitly with `make HFDL_INCLUDE=HFDL` *(every layer self-tested offline, including a full-stack test that reads an ACARS message back out of a synthesised frame; not yet verified against an on-air signal)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
@@ -400,6 +401,30 @@ you've dialled in.
   verified to ingest without disturbing the mic path but, like the whole TX
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
+
+- **HFDL — aviation HF data link (optional build).** A complete receiver for
+  HFDL (ARINC 635), the ACARS-carrying data link airliners use over the oceans:
+  raw I/Q in, decoded messages out. The chain is a faithful port of `dumphfdl` —
+  NCO downmix from the 1440 Hz carrier offset, resampling to the 1800-baud symbol
+  domain, AGC and RRC matched filter, symbol-timing and Costas carrier recovery,
+  A/M1 preamble correlation and mode selection, an **LMS equalizer** trained on
+  the frame's training sequences (so multipath does not destroy the frame),
+  de-interleaving, **Viterbi FEC** and descrambling, then the protocol stack:
+  ground-station squitters (status and frequencies in use), aircraft logon/logoff
+  with **ICAO addresses**, position / performance / frequency reports, and
+  **ACARS message text** (registration, label, flight, message body). Aircraft
+  IDs are resolved to ICAO addresses from the logon exchange, and an embedded
+  ground-station table turns "frequency slot *n*" into real kilohertz. The
+  application layer is a **native port**, not a link against libacars, so nothing
+  large is vendored; CPDLC/ADS-C payloads and multi-block ACARS reassembly are
+  deliberately left out. Select **HFDL** from the Decode block in **DIGU** and
+  press **Show HFDL** for the message panel. **Not built by default** — the
+  `dumphfdl` port is GPLv3, so the HFDL build is enabled explicitly with
+  `make HFDL_INCLUDE=HFDL` and a stock build stays GPLv2. *(Every layer has a
+  built-in self-test — timing/carrier recovery at zero bit errors, FEC round-trip
+  with error correction, a full synthetic frame decoded bit-exactly through a
+  2-tap multipath channel, and a full-stack test that reads an ACARS message back
+  out of a synthesised frame. Not yet verified against a real on-air signal.)*
 
 ### SoapySDR / HackRF
 

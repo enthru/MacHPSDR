@@ -239,6 +239,43 @@ transmitter un-keys, after a short break-in hang) when you release the paddles.
 *(The A/B timing is verified by a headless unit test; on-air behaviour with a
 real paddle is unverified — no transmit hardware or physical paddle here.)*
 
+**HFDL — aviation HF data link (optional build).** HFDL (ARINC 635) is the
+short-message data link airliners use over the oceans when they are out of VHF
+range: the ground stations broadcast their status, aircraft log on and off, and
+ACARS messages — position reports, flight plans, company traffic — travel in
+both directions. MacHPSDR can decode it, but **it is not in a stock build**: the
+decoder is ported from `dumphfdl`, which is GPLv3, so it has to be switched on at
+compile time with `make HFDL_INCLUDE=HFDL` (a stock build stays GPLv2 and simply
+does not offer HFDL).
+
+With such a build, put the receiver in **DIGU** and choose **HFDL** from the
+Decode selector; **Show HFDL** opens a panel (in the second-receiver slot, like
+the other decoders) with the decoded messages, and the Decode block shows the
+signal level, frame count and symbol throughput. Tune the HFDL channel the same
+way as any USB data signal — the decoder expects the 1440 Hz carrier offset the
+standard uses, i.e. dial the *assigned* channel frequency. What you get:
+
+- **Squitters** — each ground station's periodic broadcast: station name, UTC
+  sync, system-table version and the frequencies it is currently using.
+- **Logon / logoff** — an aircraft's **ICAO address** as it joins or leaves a
+  station, and the short ID assigned to it. Later messages from that aircraft
+  are then shown with the ICAO address filled in automatically.
+- **Position, performance and frequency reports** — flight ID, latitude,
+  longitude, UTC time, the station and frequency in use, and which frequencies
+  the aircraft can hear.
+- **ACARS message text** — registration, label, flight ID, message number and
+  the message body.
+
+Station names and channel frequencies come from a built-in table, so a report
+that names "frequency slot 1" is shown as the actual kHz. CPDLC and ADS-C
+payloads inside ACARS are not decoded (their text is shown raw), and messages
+split over several ACARS blocks are shown block by block rather than reassembled.
+
+*(Every layer of the receiver — timing and carrier recovery, equalizer, FEC,
+framing and the message parsing — is checked by built-in self-tests, including
+one that reads an ACARS message back out of a synthesised frame. The chain has
+not yet been confirmed against a real on-air HFDL signal.)*
+
 ---
 
 ## 8. SSTV and WEFAX — images and weather fax

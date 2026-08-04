@@ -79,4 +79,17 @@ const uint8_t *hfdl_framer_bytes(hfdl_framer *f, int *nbytes);
 // through the framer. Returns TRUE on pass. No GTK/RADIO deps.
 gboolean hfdl_frame_selftest(void);
 
+// --- test seam (self-tests only) -------------------------------------------
+// Payload bits a BPSK r=1/2 frame of this modulation/slot config can carry, or
+// 0 if the config isn't BPSK r=1/2.
+int hfdl_frame_test_capacity(int m_shift);
+
+// Synthesize a complete baseband frame carrying `bits` (zero-padded to the
+// config's capacity), optionally through a 2-tap multipath channel `echo`, run
+// it through a framer and return the decoded bytes in *out_bytes (caller frees
+// with g_free) plus their count — 0 if the framer produced no frame. Lets a
+// caller assert the whole chain, bits to symbols to framer to bytes.
+int hfdl_frame_test_roundtrip(int m_shift, float echo, const uint8_t *bits, int nbits,
+                              uint8_t **out_bytes);
+
 #endif

@@ -576,22 +576,31 @@ static void framer_feed(hfdl_framer *f, float re, float im,
   if (r > 0) { *got = r; *fb = hfdl_framer_bytes(f, fn); }
 }
 
-// Full-frame end-to-end: synthesize a complete baseband HFDL frame (prekey + A +
-// A + M1 + M2 + 9 training + [data + training] per segment) carrying known user
-// bytes, feed the symbols to the framer, and assert it syncs, selects the mode,
-// collects the data and decodes back to the same bytes. BPSK r=1/2 configs.
-static gboolean framer_e2e_bpsk(int m_shift, float echo) {
+int hfdl_frame_test_capacity(int m_shift) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
-  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return TRUE;
+  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return 0;
+  return (p->data_segment_cnt * HFDL_DATA_FRAME_LEN / 2) - 6;
+}
+
+// Full-frame end-to-end: synthesize a complete baseband HFDL frame (prekey + A +
+// A + M1 + M2 + 9 training + [data + training] per segment) carrying the caller's
+// bits, feed the symbols to the framer, and hand back what it decoded. Used both
+// by the framer's own round-trip test (random bits) and by hfdl_msg's full-stack
+// test (a real MPDU), so the whole chain — bits to symbols to framer to bytes to
+// message text — is asserted in one go.
+int hfdl_frame_test_roundtrip(int m_shift, float echo, const uint8_t *bits, int nbits,
+                              uint8_t **out_bytes) {
+  const hfdl_params *p = &hfdl_frame_params[m_shift];
+  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return 0;
   int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;
   int N = nsym, K = N / 2, ndata = K - 6;
+  if (nbits > ndata) return 0;
 
-  uint8_t *dbits = g_new(uint8_t, ndata);
+  uint8_t *dbits = g_new0(uint8_t, ndata);      // zero-padded past nbits
   uint8_t *enc = g_new(uint8_t, N);
   int *perm = g_new(int, N);
   float *dsym = g_new(float, 2 * nsym);
-  uint32_t rng = 0x13572468u;
-  for (int i = 0; i < ndata; i++) { rng = rng * 1103515245u + 12345u; dbits[i] = (rng >> 19) & 1u; }
+  memcpy(dbits, bits, (size_t)nbits);
   frame_conv_encode(dbits, ndata, enc);
   frame_perm(m_shift, perm, N);
 
@@ -641,23 +650,46 @@ static gboolean framer_e2e_bpsk(int m_shift, float echo) {
   #undef FEED_CH
   modem_destroy(mm);
 
-  gboolean ok = TRUE;
-  int errs = 0;
-  if (got <= 0 || fb == NULL) {
-    log_error("hfdl_frame selftest: framer[%d] (echo %.2f) produced no frame\n", m_shift, echo);
-    ok = FALSE;
-  } else {
-    for (int i = 0; i < ndata; i++) {
-      int rb = (fb[i >> 3] >> (7 - (i & 7))) & 1;
-      if (rb != dbits[i]) errs++;
-    }
-    if (errs != 0) {
-      log_error("hfdl_frame selftest: framer[%d] (echo %.2f) decoded %d/%d bit errors\n", m_shift, echo, errs, ndata);
-      ok = FALSE;
-    }
+  // The framer's byte buffer dies with the framer, so hand back a copy.
+  int nbytes = 0;
+  if (got > 0 && fb != NULL && fn > 0) {
+    nbytes = fn;
+    *out_bytes = g_memdup2(fb, (gsize)fn);
   }
   hfdl_framer_destroy(f);
   g_free(dbits); g_free(enc); g_free(perm); g_free(dsym);
+  return nbytes;
+}
+
+// The framer's own round-trip: random payload bits must come back bit-exact,
+// including through a 2-tap multipath channel (the equalizer must undo it).
+static gboolean framer_e2e_bpsk(int m_shift, float echo) {
+  int ndata = hfdl_frame_test_capacity(m_shift);
+  if (ndata <= 0) return TRUE;                  // not a BPSK r=1/2 config
+
+  uint8_t *dbits = g_new(uint8_t, ndata);
+  uint32_t rng = 0x13572468u;
+  for (int i = 0; i < ndata; i++) { rng = rng * 1103515245u + 12345u; dbits[i] = (rng >> 19) & 1u; }
+
+  uint8_t *fb = NULL;
+  int fn = hfdl_frame_test_roundtrip(m_shift, echo, dbits, ndata, &fb);
+
+  gboolean ok = TRUE;
+  if (fn <= 0) {
+    log_error("hfdl_frame selftest: framer[%d] (echo %.2f) produced no frame\n", m_shift, echo);
+    ok = FALSE;
+  } else {
+    int errs = 0;
+    for (int i = 0; i < ndata; i++)
+      if (((fb[i >> 3] >> (7 - (i & 7))) & 1) != dbits[i]) errs++;
+    if (errs != 0) {
+      log_error("hfdl_frame selftest: framer[%d] (echo %.2f) decoded %d/%d bit errors\n",
+                m_shift, echo, errs, ndata);
+      ok = FALSE;
+    }
+  }
+  g_free(fb);
+  g_free(dbits);
   return ok;
 }
 

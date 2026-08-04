@@ -20,10 +20,12 @@
 /*
  * HFDL receive decoder — orchestrator. See hfdl_decoder.h for the design.
  *
- * Phase 2a: owns the front-end DSP (hfdl_demod.c) that conditions the raw off-air
- * I/Q into the HFDL symbol domain, and publishes a signal-level / symbol-throughput
- * status for the panel. The demod CORE (symbol/carrier recovery, equalizer, M-PSK
- * modem, preamble→framing→FEC) is the next phase.
+ * Owns the whole RX chain: the front-end DSP + symbol recovery (hfdl_demod.c) that
+ * turn raw off-air I/Q into carrier-locked symbols, the frame state machine
+ * (hfdl_frame.c: preamble sync → mode select → equalizer → deinterleave → Viterbi →
+ * frame bytes) and the application layer (hfdl_msg.c: MPDU/LPDU/HFNPDU → ACARS
+ * message text). It publishes a signal-level / symbol-throughput status and the
+ * decoded messages for the panel.
  *
  * Threading: hfdl_decoder_set_enabled() and hfdl_decoder_add_iq() both run on the
  * RX audio thread (from the tap in receiver.c:full_rx_buffer), so the front-end
@@ -41,6 +43,7 @@
 #include "hfdl_demod.h"
 #include "hfdl_fec.h"
 #include "hfdl_frame.h"
+#include "hfdl_msg.h"
 #include "hfdl_pdu.h"
 #include "log.h"
 
@@ -104,7 +107,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
     gboolean do_echo = echo;
     g_mutex_unlock(&lock);
     demod_free();   // rebuilt lazily on the first feed at the live rate
-    log_info("hfdl: decoder enabled (liquid-dsp %s) — front-end (phase 2a), no framing yet\n",
+    log_info("hfdl: decoder enabled (liquid-dsp %s) — full RX chain incl. message decode\n",
              liquid_libversion());
     if (do_echo) {
       g_printerr("[HFDL] enabled (liquid-dsp %s)\n", liquid_libversion());
@@ -113,6 +116,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
         g_printerr("[HFDL] fec selftest:   %s\n", hfdl_fec_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] frame selftest: %s\n", hfdl_frame_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] pdu selftest:   %s\n", hfdl_pdu_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] msg selftest:   %s\n", hfdl_msg_selftest() ? "PASS" : "FAIL");
       }
     }
   } else if (!on && was) {
@@ -138,7 +142,7 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   }
   int nsym = 0, frames = 0;
   double level = -160.0;
-  char frametext[4096]; int ftlen = 0; frametext[0] = '\0';
+  GString *frametext = NULL;      // decoded messages from this block (may be NULL)
   if (demod) {
     // Front-end: condition the raw I/Q into the 5400 S/s symbol domain.
     int nbb = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
@@ -154,16 +158,17 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
         if (nb > 0) {
           const uint8_t *fb = hfdl_framer_bytes(framer, &nb);
           frames++;
-          // Validate + describe the PDU (type / direction / ids / FCS). The full
-          // ACARS/CPDLC message text (libacars) is the remaining app-layer piece.
-          char desc[128];
-          hfdl_pdu_describe(fb, nb, desc, sizeof(desc));
-          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "%s\n  ", desc);
-          int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
-          for (int k = 0; k < show && ftlen < (int)sizeof(frametext) - 8; k++)
-            ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "%02x ", fb[k]);
-          if (show < nb) ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "\xE2\x80\xA6");
-          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "\n");
+          // Full application-layer decode: MPDU/SPDU header -> LPDU -> HFNPDU ->
+          // ACARS message text (hfdl_msg.c). Frames whose FCS fails are shown as
+          // a hex dump instead, so a marginal decode is still visible.
+          if (frametext == NULL) frametext = g_string_new(NULL);
+          if (!hfdl_msg_decode(fb, nb, frametext)) {
+            g_string_append(frametext, "  ");
+            int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
+            for (int k = 0; k < show; k++) g_string_append_printf(frametext, "%02x ", fb[k]);
+            if (show < nb) g_string_append(frametext, "\xE2\x80\xA6");
+            g_string_append_c(frametext, '\n');
+          }
         }
       }
     }
@@ -176,22 +181,25 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
     status_syms = 0;
     status_frames = 0;
     reset_pending = FALSE;
+    hfdl_msg_reset();     // audio thread — same thread the cache is filled on
   }
   status_rate = sample_rate;
   status_syms += nsym;
   status_frames += frames;
   status_level = level;
   status_fed = TRUE;
-  if (ftlen > 0) g_string_append(pending, frametext);
+  if (frametext != NULL) g_string_append(pending, frametext->str);
   glong syms = status_syms;
   gboolean do_echo = echo;
   g_mutex_unlock(&lock);
 
   if (do_echo && frames > 0)
-    g_printerr("[HFDL] decoded %d frame(s) @ %.0f dB\n", frames, level);
+    g_printerr("[HFDL] decoded %d frame(s) @ %.0f dB\n%s", frames, level,
+               frametext ? frametext->str : "");
   else if (do_echo && nsym > 0 && (syms - nsym) / 20000 != syms / 20000)
     g_printerr("[HFDL] %ld symbols recovered @ %.0f dB (searching for frames)\n",
                syms, level);
+  if (frametext != NULL) g_string_free(frametext, TRUE);
 }
 
 int hfdl_decoder_get_messages(char *buf, int buflen) {
