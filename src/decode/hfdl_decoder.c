@@ -41,6 +41,7 @@
 #include "hfdl_demod.h"
 #include "hfdl_fec.h"
 #include "hfdl_frame.h"
+#include "hfdl_pdu.h"
 #include "log.h"
 
 // Scratch for one block of conditioned baseband output (interleaved float I/Q).
@@ -111,6 +112,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
         g_printerr("[HFDL] demod selftest: %s\n", hfdl_demod_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] fec selftest:   %s\n", hfdl_fec_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] frame selftest: %s\n", hfdl_frame_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] pdu selftest:   %s\n", hfdl_pdu_selftest() ? "PASS" : "FAIL");
       }
     }
   } else if (!on && was) {
@@ -152,9 +154,12 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
         if (nb > 0) {
           const uint8_t *fb = hfdl_framer_bytes(framer, &nb);
           frames++;
-          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen,
-                              "HFDL frame (%d bytes): ", nb);
-          int show = nb < 48 ? nb : 48;   // trim very long dumps for the panel
+          // Validate + describe the PDU (type / direction / ids / FCS). The full
+          // ACARS/CPDLC message text (libacars) is the remaining app-layer piece.
+          char desc[128];
+          hfdl_pdu_describe(fb, nb, desc, sizeof(desc));
+          ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "%s\n  ", desc);
+          int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
           for (int k = 0; k < show && ftlen < (int)sizeof(frametext) - 8; k++)
             ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "%02x ", fb[k]);
           if (show < nb) ftlen += g_snprintf(frametext + ftlen, sizeof(frametext) - ftlen, "\xE2\x80\xA6");
