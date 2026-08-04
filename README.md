@@ -429,7 +429,11 @@ you've dialled in.
   embedded snapshot as the fallback and the source of station names. An ACARS
   message **split across several blocks is reassembled** before it is shown. The
   application layer is a **native port**, not a link against libacars, so nothing
-  large is vendored; CPDLC/ADS-C payloads are deliberately left out. The panel
+  large is vendored. An **ARINC-622** application inside the message text is
+  decoded too: **ADS-C** position reports (position, altitude, time, flight ID,
+  predicted route, wind and temperature) come out as readable fields rather than
+  hex. FANS-1/A **CPDLC** payloads are identified but not decoded — they are
+  ASN.1, which is the bulk of libacars. The panel
   has three tabs — the running **decode**, a **Stations** table (who was heard,
   how long ago, UTC sync, frequencies in use) and an **Aircraft** table (ICAO,
   flight, last position) — plus a **channel drop-down + Tune** built from the

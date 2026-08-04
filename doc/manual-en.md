@@ -298,8 +298,11 @@ one and is listed in full (station, position, frequencies). Until then — and f
 the station *names*, which the broadcast does not carry — a built-in snapshot is
 used. A message **split over several ACARS blocks is reassembled**: each block
 reports "Reassembly: in progress" and the block that completes the message prints
-the whole text (a lost block is reported instead of being spliced over). CPDLC and
-ADS-C payloads inside ACARS are not decoded (their text is shown raw).
+the whole text (a lost block is reported instead of being spliced over). An **ARINC-622** application inside the message text is decoded as
+well: an **ADS-C** report is shown as position, altitude, time, flight ID,
+predicted route, wind and temperature, with its own CRC checked. FANS-1/A
+**CPDLC** payloads are identified but not decoded (they are ASN.1); their hex
+stays visible.
 
 *(Verified on a real off-air recording: on a 11387 kHz capture of the Riverhead,
 New York ground station the decoder produced squitters, a ground-station uplink

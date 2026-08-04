@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "hfdl_arinc.h"   // ARINC-622 / ADS-C inside the ACARS text
 #include "hfdl_crc.h"      // vendored crc16_ccitt (hfdl_lib/) — same table as la_crc16_ccitt
 #include "hfdl_frame.h"    // test seam: full-stack self-test through the RF chain
 #include "hfdl_msg.h"
@@ -783,6 +784,16 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
   // A completed message prints in full; anything else prints just this block.
   const char *body     = reasm_txt ? reasm_txt : p;
   int         body_len = reasm_txt ? (int)strlen(reasm_txt) : remaining;
+
+  // ARINC-622 ATS application inside the message text (ADS-C position reports,
+  // FANS-1/A CPDLC). Only on a complete message — half an envelope has neither
+  // a valid CRC nor a parsable payload. Decoded BEFORE the raw text is printed
+  // so the interpretation leads and the hex backs it up.
+  if (body_len > 0 && reasm != ACARS_REASM_IN_PROGRESS) {
+    char *b0 = g_strndup(body, (gsize)body_len);
+    hfdl_arinc_decode(b0, out, indent + 1);
+    g_free(b0);
+  }
 
   if (body_len > 0) {
     // Render the message text line by line, with non-printables shown as '.'.

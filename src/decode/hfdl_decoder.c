@@ -44,6 +44,7 @@
 #include "hfdl_demod.h"
 #include "hfdl_fec.h"
 #include "hfdl_frame.h"
+#include "hfdl_arinc.h"
 #include "hfdl_msg.h"
 #include "hfdl_pdu.h"
 #include "log.h"
@@ -208,6 +209,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
         g_printerr("[HFDL] frame selftest: %s\n", hfdl_frame_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] pdu selftest:   %s\n", hfdl_pdu_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] msg selftest:   %s\n", hfdl_msg_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] arinc selftest: %s\n", hfdl_arinc_selftest() ? "PASS" : "FAIL");
       }
     }
   } else if (!on && was) {
