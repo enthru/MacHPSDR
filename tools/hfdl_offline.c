@@ -2,7 +2,10 @@
 // with an explicit receiver centre and tuned-channel (cursor) frequency, and
 // print every decoded message. No GTK, no audio, no radio.
 //
-//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz] [conj]
+//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz] [conj] [out_rate]
+//
+// out_rate resamples the file the way the I/Q Player does (cubic, looping),
+// so the app's 192 kHz path can be reproduced from a 62.5 kHz recording.
 //
 // The WAV's own sample rate is the I/Q rate. Frequencies are absolute Hz; the
 // cursor is where the operator would have the CTUN/freetune cursor.
@@ -30,6 +33,7 @@ int main(int argc, char **argv) {
   long long cursor = atoll(argv[3]);
   double rot_hz = (argc > 4) ? atof(argv[4]) : 0.0;
   int conj = (argc > 5) ? atoi(argv[5]) : 0;   // 1 = mirror the spectrum (Q = -Q)
+  unsigned out_rate = (argc > 6) ? (unsigned)atoi(argv[6]) : 0;
 
   FILE *f = fopen(path, "rb");
   if (!f) { perror(path); return 1; }
@@ -54,6 +58,45 @@ int main(int argc, char **argv) {
   printf("centre %lld Hz, cursor %lld Hz (%+lld Hz)\n", centre, cursor, cursor-centre);
 
   hfdl_decoder_set_enabled(TRUE);
+
+  if (out_rate != 0 && out_rate != rate) {
+    // Same shape as fake_protocol.c: cubic interpolation of the file at
+    // step = file_rate / out_rate, fed in blocks at out_rate.
+    short *all = g_new(short, (size_t)nframes*2);
+    if ((long)fread(all, sizeof(short)*2, nframes, f) != nframes) { fprintf(stderr,"short read\n"); return 1; }
+    double step = (double)rate / (double)out_rate;
+    long outn = (long)((double)nframes / step);
+    printf("resampled to %u Hz -> %ld frames\n", out_rate, outn);
+    const int OB = 4096;
+    double *ob = g_new(double, OB*2);
+    char m2[65536];
+    double pos = 0.0; long produced = 0; int k = 0;
+    while (produced < outn) {
+      int want = (int)MIN((long)OB, outn-produced);
+      for (int i = 0; i < want; i++) {
+        long i0 = (long)pos; double t = pos - (double)i0;
+        long im1 = i0-1; if (im1 < 0) im1 += nframes;
+        long ip1 = i0+1; if (ip1 >= nframes) ip1 -= nframes;
+        long ip2 = i0+2; if (ip2 >= nframes) ip2 -= nframes;
+        double a,b,c,d,re,im;
+        a=all[im1*2]/32768.0; b=all[i0*2]/32768.0; c=all[ip1*2]/32768.0; d=all[ip2*2]/32768.0;
+        re = b + 0.5*t*(c-a + t*(2.0*a-5.0*b+4.0*c-d + t*(3.0*(b-c)+d-a)));
+        a=all[im1*2+1]/32768.0; b=all[i0*2+1]/32768.0; c=all[ip1*2+1]/32768.0; d=all[ip2*2+1]/32768.0;
+        im = b + 0.5*t*(c-a + t*(2.0*a-5.0*b+4.0*c-d + t*(3.0*(b-c)+d-a)));
+        if (conj) im = -im;
+        ob[2*i] = re; ob[2*i+1] = im;
+        pos += step; if (pos >= (double)nframes) pos -= (double)nframes;
+      }
+      hfdl_decoder_add_iq_at(ob, want, (int)out_rate, centre, cursor);
+      produced += want; k++;
+      int n2 = hfdl_decoder_get_messages(m2, sizeof(m2));
+      if (n2 > 0) fputs(m2, stdout);
+    }
+    int n2 = hfdl_decoder_get_messages(m2, sizeof(m2));
+    if (n2 > 0) fputs(m2, stdout);
+    printf("--- fed %ld frames at %u Hz in %d blocks\n", produced, out_rate, k);
+    return 0;
+  }
 
   const int BLK = 4096;
   short *raw = g_new(short, BLK*2);
