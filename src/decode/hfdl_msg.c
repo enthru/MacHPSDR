@@ -71,11 +71,11 @@
 
 // --- ground-station table --------------------------------------------------
 //
-// Snapshot of dumphfdl's etc/systable.conf (version 52). The real table is
-// broadcast over the air in System-table HFNPDUs; reassembling those needs a
-// real signal to develop against, so until then this static copy supplies the
-// station names and the per-station frequency slots that Performance-data and
-// Frequency-data HFNPDUs address by index. Frequencies are kHz.
+// Snapshot of dumphfdl's etc/systable.conf (version 52) — the fallback, and the
+// only source of station NAMES (the over-the-air table carries none). The live
+// table is broadcast in System-table HFNPDUs and reassembled below into
+// `gs_learned`, which takes precedence for frequencies once a complete table has
+// been received. Frequencies are kHz.
 
 typedef struct {
   uint8_t     id;
@@ -131,10 +131,202 @@ const char *hfdl_msg_gs_name(uint8_t gs_id) {
   return gs ? gs->name : NULL;
 }
 
-// kHz for a station's frequency slot, or 0 if unknown.
+// --- over-the-air system table ----------------------------------------------
+//
+// Port of dumphfdl's systable.c, minus its libconfig save-file: a ground station
+// broadcasts the current table split across several System-table HFNPDUs, each
+// carrying the table version, its own index and the set size. Collect a complete
+// set, concatenate, and parse a list of per-station records. That table is the
+// authority on which frequencies a station's slot indices mean — the embedded
+// snapshot goes stale as stations move frequency, and a stale slot map renders
+// every "freq slot N" in a Performance/Frequency-data HFNPDU as the wrong kHz.
+//
+// Names are NOT in the broadcast (dumphfdl copies them across from its previous
+// config for the same reason), so a learned station keeps the snapshot's name.
+
+// Defined further down with the other field helpers / renderers; this block
+// sits here because gs_freq() below it is what the rest of the file calls.
+static double parse_coordinate(uint32_t c);
+G_GNUC_PRINTF(3, 4) static void emit(GString *out, int indent, const char *fmt, ...);
+
+#define SYSTABLE_MAX_PDUS       16
+#define SYSTABLE_PDU_MAX_LEN    1024
+#define SYSTABLE_HFNPDU_HDR_LEN 5    // HFNPDU type .. table version, in every PDU
+#define SYSTABLE_VERSION_MAX  4095
+#define SYSTABLE_GS_MIN_LEN   8      // GS id .. master slot offset, sans frequencies
+#define GS_LEARNED_MAX        128    // gs_id is 7 bits
+
+typedef struct {
+  gboolean valid;
+  gboolean utc_sync;
+  double   lat, lon;
+  uint8_t  spdu_version;
+  int      freq_cnt;
+  uint32_t freqs[GS_MAX_FREQ_CNT];      // kHz
+  uint8_t  slots[GS_MAX_FREQ_CNT];      // master frame slot
+} HFDL_GS_LEARNED;
+
+static HFDL_GS_LEARNED gs_learned[GS_LEARNED_MAX];
+static int gs_learned_version = -1;     // version of the table in gs_learned
+
+// The PDU set being collected (one at a time, as in dumphfdl).
+static struct {
+  gboolean in_use;
+  int      version;
+  int      len;                          // total PDUs in the set
+  int      have;                         // how many collected
+  int      frag_len[SYSTABLE_MAX_PDUS];
+  uint8_t  frag[SYSTABLE_MAX_PDUS][SYSTABLE_PDU_MAX_LEN];
+} systable_set;
+
+static void systable_set_reset(void) { memset(&systable_set, 0, sizeof(systable_set)); }
+
+// The 12-bit version wraps; a value less than half the space behind the current
+// one is a wrap forward, not an older table (dumphfdl systable_is_newer).
+static gboolean systable_is_newer(int v_old, int v_new) {
+  if (v_old < 0 && v_new >= 0) return TRUE;
+  if (v_new < 0 && v_old >= 0) return FALSE;
+  if (v_new == v_old)          return FALSE;
+  return v_new > v_old ||
+         v_new + SYSTABLE_VERSION_MAX - v_old < (SYSTABLE_VERSION_MAX + 1) >> 1;
+}
+
+// 3 octets of packed BCD, 100 Hz per unit -> kHz.
+static uint32_t systable_decode_frequency(const uint8_t buf[3]) {
+  uint32_t hz = 100u        * (buf[0] & 0xF) +
+                1000u       * ((buf[0] >> 4) & 0xF) +
+                10000u      * (buf[1] & 0xF) +
+                100000u     * ((buf[1] >> 4) & 0xF) +
+                1000000u    * (buf[2] & 0xF) +
+                10000000u   * ((buf[2] >> 4) & 0xF);
+  return hz / 1000u;
+}
+
+// One station record; returns the octets consumed, or -1 on a malformed record.
+static int systable_decode_gs(const uint8_t *buf, int len, HFDL_GS_LEARNED *out,
+                              uint8_t *gs_id_out) {
+  if (len < SYSTABLE_GS_MIN_LEN) return -1;
+
+  uint8_t gs_id = buf[0] & 0x7F;
+  HFDL_GS_LEARNED gs;
+  memset(&gs, 0, sizeof(gs));
+  gs.utc_sync = (buf[0] & 0x80) != 0;
+
+  uint32_t coord = (uint32_t)buf[1] | ((uint32_t)buf[2] << 8) | ((uint32_t)(buf[3] & 0xF) << 16);
+  gs.lat = parse_coordinate(coord);
+  coord = (uint32_t)(buf[3] >> 4) | ((uint32_t)buf[4] << 4) | ((uint32_t)buf[5] << 12);
+  gs.lon = parse_coordinate(coord);
+
+  gs.spdu_version = buf[6] & 7;
+  gs.freq_cnt = (buf[6] >> 3) & 0x1F;
+  if (gs.freq_cnt > GS_MAX_FREQ_CNT) return -1;
+
+  int consumed = SYSTABLE_GS_MIN_LEN - 1;               // 7: header, sans frequencies
+  for (int f = 0; f < gs.freq_cnt; f++) {
+    int pos = SYSTABLE_GS_MIN_LEN - 1 + f * 4;          // 3 octets freq + 1 slot
+    if (pos + 4 > len) return -1;
+    gs.freqs[f] = systable_decode_frequency(buf + pos);
+    gs.slots[f] = buf[pos + 3] & 0xF;
+    consumed += 4;
+  }
+  gs.valid = TRUE;
+  *out = gs;
+  *gs_id_out = gs_id;
+  return consumed;
+}
+
+// Parse a reassembled table. Returns the station count, or -1 if malformed;
+// on success the stations are written into gs_learned.
+static int systable_decode(const uint8_t *buf, int len, int version, GString *out, int indent) {
+  HFDL_GS_LEARNED parsed[GS_LEARNED_MAX];
+  uint8_t ids[GS_LEARNED_MAX];
+  int n = 0;
+
+  while (len >= SYSTABLE_GS_MIN_LEN && n < GS_LEARNED_MAX) {
+    uint8_t id;
+    HFDL_GS_LEARNED gs;
+    int used = systable_decode_gs(buf, len, &gs, &id);
+    if (used <= 0) return -1;
+    parsed[n] = gs; ids[n] = id; n++;
+    buf += used; len -= used;
+  }
+  if (n == 0) return -1;
+
+  // Only commit a table that is actually newer, so a stale retransmission of an
+  // older version cannot roll the frequency map back.
+  if (!systable_is_newer(gs_learned_version, version)) {
+    emit(out, indent, "System table version %d received (keeping version %d)",
+         version, gs_learned_version);
+    return n;
+  }
+  memset(gs_learned, 0, sizeof(gs_learned));
+  for (int i = 0; i < n; i++) gs_learned[ids[i]] = parsed[i];
+  gs_learned_version = version;
+
+  emit(out, indent, "System table version %d complete — %d ground stations", version, n);
+  for (int i = 0; i < n; i++) {
+    const char *name = hfdl_msg_gs_name(ids[i]);
+    GString *fl = g_string_new(NULL);
+    for (int f = 0; f < parsed[i].freq_cnt; f++)
+      g_string_append_printf(fl, "%s%u", f ? ", " : "", parsed[i].freqs[f]);
+    char lat[G_ASCII_DTOSTR_BUF_SIZE], lon[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(lat, sizeof(lat), "%.4f", parsed[i].lat);
+    g_ascii_formatd(lon, sizeof(lon), "%.4f", parsed[i].lon);
+    emit(out, indent + 1, "GS %u%s%s%s  %s, %s  [%s kHz]", ids[i],
+         name ? " (" : "", name ? name : "", name ? ")" : "", lat, lon,
+         fl->len ? fl->str : "none");
+    g_string_free(fl, TRUE);
+  }
+  return n;
+}
+
+// Store one fragment; when the set completes, decode and adopt it.
+static void systable_store_pdu(int version, int idx, int total,
+                               const uint8_t *buf, int len, GString *out, int indent) {
+  if (total < 1 || total > SYSTABLE_MAX_PDUS || idx < 0 || idx >= total) return;
+  if (len <= 0 || len > SYSTABLE_PDU_MAX_LEN) return;
+
+  // A version or set-size change means the sender started a different table;
+  // whatever we had collected belongs to the old one.
+  if (systable_set.in_use &&
+      (systable_set.version != version || systable_set.len != total))
+    systable_set_reset();
+
+  if (!systable_set.in_use) {
+    systable_set.in_use  = TRUE;
+    systable_set.version = version;
+    systable_set.len     = total;
+  }
+  if (systable_set.frag_len[idx] == 0) systable_set.have++;
+  systable_set.frag_len[idx] = len;
+  memcpy(systable_set.frag[idx], buf, (size_t)len);
+
+  emit(out, indent, "System table v%d: part %d of %d (%d/%d collected)",
+       version, idx + 1, total, systable_set.have, total);
+  if (systable_set.have < total) return;
+
+  uint8_t whole[SYSTABLE_MAX_PDUS * SYSTABLE_PDU_MAX_LEN];
+  int pos = 0;
+  for (int i = 0; i < total; i++) {
+    memcpy(whole + pos, systable_set.frag[i], (size_t)systable_set.frag_len[i]);
+    pos += systable_set.frag_len[i];
+  }
+  systable_set_reset();
+
+  if (systable_decode(whole, pos, version, out, indent) < 0)
+    emit(out, indent, "System table v%d: malformed, discarded", version);
+}
+
+// kHz for a station's frequency slot, or 0 if unknown. The over-the-air table
+// wins when we have one — it is current, the snapshot is not.
 static uint32_t gs_freq(uint8_t gs_id, int slot) {
+  if (slot < 0 || slot >= GS_MAX_FREQ_CNT) return 0;
+  if (gs_id < GS_LEARNED_MAX && gs_learned[gs_id].valid) {
+    if (slot < gs_learned[gs_id].freq_cnt) return gs_learned[gs_id].freqs[slot];
+    return 0;                            // learned table is authoritative
+  }
   const HFDL_GS *gs = gs_lookup(gs_id);
-  if (gs == NULL || slot < 0 || slot >= gs->freq_cnt) return 0;
+  if (gs == NULL || slot >= gs->freq_cnt) return 0;
   return gs->freqs[slot];
 }
 
@@ -153,7 +345,186 @@ static void ac_cache_del(uint32_t icao) {
 }
 static uint32_t ac_cache_get(uint8_t ac_id) { return ac_cache[ac_id]; }
 
-void hfdl_msg_reset(void) { memset(ac_cache, 0, sizeof(ac_cache)); }
+// --- ACARS multi-block reassembly ------------------------------------------
+//
+// Port of libacars' reassembly.c driven with its ACARS profile (acars.c), cut
+// down to what ACARS actually needs: in-order delivery only, so a fragment list
+// is just a growing string and "have we got them all" is "did the final block
+// arrive". Out-of-order delivery exists in libacars solely for OHMA.
+//
+// An ACARS message longer than one block is split by the sender, every block
+// but the last terminated with ETB instead of ETX. Without this the operator
+// sees each block on its own, cut mid-word — the long ones (flight plans,
+// weather, free text) are exactly the interesting ones.
+//
+//   key   = registration + label + message number  (the message number is the
+//           3-char field, NOT including its trailing sequence character)
+//   seq   = downlink: the message number's sequence char, 'A' -> 0
+//           uplink:   the block id, 'A' -> 0, wrapping after 'X'
+//   first = downlink: 0 (a downlink always starts at 'A')
+//           uplink:   unknown (any block id may start a message)
+//   final = the block ended with ETX rather than ETB
+//
+// Timeouts are ARINC 618's HFGT4/HFAT4 (dumphfdl selects LA_ACARS_BEARER_HFDL).
+
+#define ACARS_REASM_MAX      16                 // messages in flight at once
+#define ACARS_REASM_MAX_LEN  (32 * 1024)        // per-message cap
+#define ACARS_SEQ_UNINIT     (-2)
+#define ACARS_SEQ_NONE       (-1)               // "no such value" for first/wrap
+#define ACARS_SEQ_WRAP_UP    ('X' - 'A')
+#define ACARS_TMO_DOWN_US    (1260LL * 1000000) // HFGT4
+#define ACARS_TMO_UP_US      (370LL  * 1000000) // HFAT4
+
+typedef enum {
+  ACARS_REASM_SKIPPED,      // not fragmented (or only the last block survived)
+  ACARS_REASM_IN_PROGRESS,
+  ACARS_REASM_COMPLETE,
+  ACARS_REASM_DUPLICATE,
+  ACARS_REASM_OUT_OF_SEQ,   // a block was lost — reassembly abandoned
+} ACARS_REASM_STATUS;
+
+typedef struct {
+  gboolean in_use;
+  char     reg[8], label[3], msg_num[4];
+  gboolean downlink;
+  int      prev_seq;
+  gint64   first_us;        // arrival of the first block (for the timeout)
+  int      frags;
+  GString *text;
+} ACARS_REASM;
+
+static ACARS_REASM acars_reasm[ACARS_REASM_MAX];
+
+// Test seam: the self-test drives the timeout path on a mock clock, since no
+// test can wait 21 minutes for HFGT4 to expire.
+static gint64 reasm_test_now_us = 0;
+static gint64 reasm_now(void) {
+  return reasm_test_now_us ? reasm_test_now_us : g_get_monotonic_time();
+}
+
+static void acars_reasm_free(ACARS_REASM *e) {
+  if (e->text) { g_string_free(e->text, TRUE); e->text = NULL; }
+  e->in_use = FALSE;
+}
+
+static void acars_reasm_clear(void) {
+  for (int i = 0; i < ACARS_REASM_MAX; i++) acars_reasm_free(&acars_reasm[i]);
+}
+
+static gint64 acars_reasm_timeout(gboolean downlink) {
+  return downlink ? ACARS_TMO_DOWN_US : ACARS_TMO_UP_US;
+}
+
+// Reap entries whose reassembly timer expired. Also the only thing keeping the
+// table from filling up with messages whose remaining blocks never arrive.
+static void acars_reasm_expire(gint64 now_us) {
+  for (int i = 0; i < ACARS_REASM_MAX; i++) {
+    ACARS_REASM *e = &acars_reasm[i];
+    if (e->in_use && now_us - e->first_us > acars_reasm_timeout(e->downlink))
+      acars_reasm_free(e);
+  }
+}
+
+static ACARS_REASM *acars_reasm_lookup(const char *reg, const char *label,
+                                       const char *msg_num) {
+  for (int i = 0; i < ACARS_REASM_MAX; i++) {
+    ACARS_REASM *e = &acars_reasm[i];
+    if (e->in_use && !strcmp(e->reg, reg) && !strcmp(e->label, label) &&
+        !strcmp(e->msg_num, msg_num))
+      return e;
+  }
+  return NULL;
+}
+
+// Take a free slot, or recycle the oldest in-flight one if the table is full.
+static ACARS_REASM *acars_reasm_alloc(void) {
+  ACARS_REASM *oldest = NULL;
+  for (int i = 0; i < ACARS_REASM_MAX; i++) {
+    if (!acars_reasm[i].in_use) return &acars_reasm[i];
+    if (oldest == NULL || acars_reasm[i].first_us < oldest->first_us)
+      oldest = &acars_reasm[i];
+  }
+  acars_reasm_free(oldest);
+  return oldest;
+}
+
+// Add one block. On COMPLETE, *full points at the assembled text (owned by the
+// caller, which must free it); otherwise *full is left NULL.
+static ACARS_REASM_STATUS acars_reasm_add(const char *reg, const char *label,
+                                          const char *msg_num, gboolean downlink,
+                                          int seq, gboolean final,
+                                          const char *data, int dlen,
+                                          char **full) {
+  gint64 now_us = reasm_now();
+  int seq_first = downlink ? 0 : ACARS_SEQ_NONE;
+  int seq_wrap  = downlink ? ACARS_SEQ_NONE : ACARS_SEQ_WRAP_UP;
+
+  *full = NULL;
+  acars_reasm_expire(now_us);
+
+  ACARS_REASM *e = acars_reasm_lookup(reg, label, msg_num);
+  if (e != NULL && now_us - e->first_us > acars_reasm_timeout(downlink)) {
+    // Expired between the sweep above and now only if the direction differs;
+    // treat this block as the start of a new message either way.
+    acars_reasm_free(e);
+    e = NULL;
+  }
+
+  if (e == NULL) {
+    // Don't start a message on a block we know cannot be its first one...
+    if (seq_first != ACARS_SEQ_NONE && seq != seq_first) return ACARS_REASM_OUT_OF_SEQ;
+    // ...and don't bother tracking one that is already complete. This is the
+    // overwhelmingly common case: a single-block message.
+    if (final) return ACARS_REASM_SKIPPED;
+
+    e = acars_reasm_alloc();
+    e->in_use   = TRUE;
+    e->downlink = downlink;
+    e->prev_seq = ACARS_SEQ_UNINIT;
+    e->first_us = now_us;
+    e->frags    = 0;
+    e->text     = g_string_new(NULL);
+    g_strlcpy(e->reg,     reg,     sizeof(e->reg));
+    g_strlcpy(e->label,   label,   sizeof(e->label));
+    g_strlcpy(e->msg_num, msg_num, sizeof(e->msg_num));
+  }
+
+  // Uplink block ids run A..X and then start over; rebase so the increment
+  // check below still sees a step of one.
+  if (seq_wrap != ACARS_SEQ_NONE && seq == 0 && e->prev_seq == seq_wrap)
+    e->prev_seq = -1;
+
+  if (e->prev_seq == seq || (seq_wrap == ACARS_SEQ_NONE && seq < e->prev_seq))
+    return ACARS_REASM_DUPLICATE;
+
+  if (e->prev_seq != ACARS_SEQ_UNINIT && seq != e->prev_seq + 1) {
+    acars_reasm_free(e);            // a block was lost; the rest is unusable
+    return ACARS_REASM_OUT_OF_SEQ;
+  }
+
+  if (dlen > 0) g_string_append_len(e->text, data, dlen);
+  if (e->text->len > ACARS_REASM_MAX_LEN) {
+    acars_reasm_free(e);
+    return ACARS_REASM_OUT_OF_SEQ;
+  }
+  e->prev_seq = seq;
+  e->frags++;
+
+  if (!final) return ACARS_REASM_IN_PROGRESS;
+
+  *full = g_string_free(e->text, FALSE);
+  e->text = NULL;
+  acars_reasm_free(e);
+  return ACARS_REASM_COMPLETE;
+}
+
+void hfdl_msg_reset(void) {
+  memset(ac_cache, 0, sizeof(ac_cache));
+  acars_reasm_clear();
+  systable_set_reset();     // partial table: worthless once the stream restarts
+  // gs_learned is deliberately kept: it is the current world-wide station list,
+  // not per-session state, and re-learning it costs another full PDU set.
+}
 
 // --- small field helpers (dumphfdl util.c) ---------------------------------
 
@@ -225,9 +596,10 @@ static void append_freq_list(GString *out, uint8_t gs_id, uint32_t freqs) {
 
 // --- ACARS block (libacars la_acars_parse_and_reassemble) -------------------
 //
-// buf starts at the SOH byte. Renders the message header + text. Multi-block
-// reassembly is not implemented: each block is shown as it arrives (its block
-// id / sequence tell the operator it is a fragment).
+// buf starts at the SOH byte. Renders the message header + text, feeding
+// multi-block messages through the reassembly table above: a fragment shows its
+// header plus a "Reassembly:" line, and the block that completes the message
+// prints the whole text.
 
 static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int indent) {
   if (len < 1 || buf[0] != ACARS_SOH) return FALSE;
@@ -283,17 +655,56 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
     emit(out, indent, "ACARS: no text in downlink"); g_free(txt); return FALSE;
   }
 
+  g_strchomp(reg);
+
+  // Reassembly. The key is the message number WITHOUT its trailing sequence
+  // character (that character is the sequence itself); an uplink has no message
+  // number at all, so its key is registration+label and its sequence is the
+  // block id.
+  char msg_num_key[4] = "";
+  int  seq = -1;
+  if (downlink) {
+    if (msg_num[0] != '\0') {
+      memcpy(msg_num_key, msg_num, 3); msg_num_key[3] = '\0';
+      seq = msg_num[3] - 'A';
+    }
+  } else {
+    seq = block_id - 'A';
+  }
+
+  char *reasm_txt = NULL;
+  ACARS_REASM_STATUS reasm = ACARS_REASM_SKIPPED;
+  if (seq >= 0)
+    reasm = acars_reasm_add(reg, label, msg_num_key, downlink, seq, final_block,
+                            p, remaining, &reasm_txt);
+
   emit(out, indent, "ACARS %s  Reg: %s  Label: %s  Blk: %c%s  Mode: %c  Ack: %c  CRC %s",
-       downlink ? "downlink" : "uplink", g_strchomp(reg), label, block_id,
+       downlink ? "downlink" : "uplink", reg, label, block_id,
        final_block ? "" : " (more)", mode, ack, crc_ok ? "OK" : "FAIL");
   if (downlink)
     emit(out, indent + 1, "Flight: %s  Msg no: %s", g_strchomp(flight_id), msg_num);
+  switch (reasm) {
+    case ACARS_REASM_IN_PROGRESS:
+      emit(out, indent + 1, "Reassembly: in progress"); break;
+    case ACARS_REASM_COMPLETE:
+      emit(out, indent + 1, "Reassembly: complete"); break;
+    case ACARS_REASM_DUPLICATE:
+      emit(out, indent + 1, "Reassembly: duplicate block"); break;
+    case ACARS_REASM_OUT_OF_SEQ:
+      emit(out, indent + 1, "Reassembly: block(s) lost — cannot reassemble"); break;
+    case ACARS_REASM_SKIPPED:
+      break;                                    // not fragmented; nothing to say
+  }
 
-  if (remaining > 0) {
+  // A completed message prints in full; anything else prints just this block.
+  const char *body     = reasm_txt ? reasm_txt : p;
+  int         body_len = reasm_txt ? (int)strlen(reasm_txt) : remaining;
+
+  if (body_len > 0) {
     // Render the message text line by line, with non-printables shown as '.'.
     GString *line = g_string_new(NULL);
-    for (int i = 0; i <= remaining; i++) {
-      char c = (i < remaining) ? p[i] : '\n';
+    for (int i = 0; i <= body_len; i++) {
+      char c = (i < body_len) ? body[i] : '\n';
       if (c == '\r') continue;
       if (c == '\n') {
         if (line->len > 0) emit(out, indent + 1, "| %s", line->str);
@@ -305,6 +716,7 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
     g_string_free(line, TRUE);
   }
 
+  g_free(reasm_txt);
   g_free(txt);
   return TRUE;
 }
@@ -374,12 +786,20 @@ static void hfnpdu_decode(const uint8_t *buf, int len, GString *out, int indent)
   indent++;
 
   switch (type) {
-    case HFNPDU_SYSTEM_TABLE:
-      if (len < 5) { emit(out, indent, "truncated"); break; }
-      emit(out, indent, "Version: %u   Part %u of %u",
-           (unsigned)(buf[3] >> 4 | buf[4] << 4),
-           (unsigned)((buf[2] & 0xF) + 1), (unsigned)((buf[2] >> 4) + 1));
+    case HFNPDU_SYSTEM_TABLE: {
+      // The 5-octet header (type .. table version) is repeated in every PDU of
+      // the set; everything after it is a slice of the table itself.
+      if (len < SYSTABLE_HFNPDU_HDR_LEN) { emit(out, indent, "truncated"); break; }
+      int version = buf[3] >> 4 | buf[4] << 4;
+      int idx     = buf[2] & 0xF;
+      int total   = (buf[2] >> 4) + 1;
+      if (len > SYSTABLE_HFNPDU_HDR_LEN)
+        systable_store_pdu(version, idx, total, buf + SYSTABLE_HFNPDU_HDR_LEN,
+                           len - SYSTABLE_HFNPDU_HDR_LEN, out, indent);
+      else
+        emit(out, indent, "Version: %d   Part %d of %d (no data)", version, idx + 1, total);
       break;
+    }
 
     case HFNPDU_SYSTEM_TABLE_REQUEST:
       if (len < 4) { emit(out, indent, "truncated"); break; }
@@ -685,14 +1105,26 @@ static int build_lpdu(uint8_t *out, uint8_t type, const uint8_t *payload, int pl
   return 1 + plen + 2;
 }
 
+// kHz -> the 3-octet packed-BCD frequency the system table carries (100 Hz per
+// unit), i.e. the inverse of systable_decode_frequency().
+static void st_freq(uint8_t *out, uint32_t khz) {
+  uint32_t hz = khz * 1000u;
+  uint8_t d[6];
+  for (int i = 0; i < 6; i++) { d[i] = (uint8_t)((hz / 100u) % 10u); hz /= 10u; }
+  out[0] = (uint8_t)(d[0] | (d[1] << 4));
+  out[1] = (uint8_t)(d[2] | (d[3] << 4));
+  out[2] = (uint8_t)(d[4] | (d[5] << 4));
+}
+
 static void icao_encode(uint8_t *out, uint32_t icao) {
   for (int i = 0; i < 3; i++) out[i] = REVERSE_BYTE((icao >> (8 * (2 - i))) & 0xff);
 }
 
-// A complete ACARS block: SOH .. DEL, with a valid CRC.
-static int build_acars(uint8_t *out, const char *reg, const char *label,
-                       char block_id, const char *flight, const char *msg_num,
-                       const char *text) {
+// A complete ACARS block: SOH .. DEL, with a valid CRC. final=FALSE ends the
+// block with ETB instead of ETX, i.e. "more blocks follow".
+static int build_acars_blk(uint8_t *out, const char *reg, const char *label,
+                           char block_id, const char *flight, const char *msg_num,
+                           const char *text, gboolean final) {
   int n = 0;
   out[n++] = ACARS_SOH;
   int crc_start = n;
@@ -709,12 +1141,18 @@ static int build_acars(uint8_t *out, const char *reg, const char *label,
   }
   size_t tlen = strlen(text);
   memcpy(out + n, text, tlen); n += (int)tlen;
-  out[n++] = ACARS_ETX;
+  out[n++] = final ? ACARS_ETX : ACARS_ETB;
   uint16_t crc = crc16_ccitt(out + crc_start, (uint32_t)(n - crc_start), 0);
   out[n++] = (uint8_t)(crc & 0xff);             // LE, so the check comes to 0
   out[n++] = (uint8_t)(crc >> 8);
   out[n++] = ACARS_DEL;
   return n;
+}
+
+static int build_acars(uint8_t *out, const char *reg, const char *label,
+                       char block_id, const char *flight, const char *msg_num,
+                       const char *text) {
+  return build_acars_blk(out, reg, label, block_id, flight, msg_num, text, TRUE);
 }
 
 // Check one rendered decode. With MACHPSDR_HFDL_MSG_DEBUG set, every step's
@@ -867,6 +1305,156 @@ gboolean hfdl_msg_selftest(void) {
     g_free(decoded);
     g_free(bits);
   }
+
+  // (9) ACARS multi-block reassembly. Each block goes through the whole stack
+  // (MPDU -> LPDU -> enveloped-data HFNPDU -> ACARS) exactly as a real one does.
+  g_string_truncate(out, 0);
+  hfdl_msg_reset();
+
+  // Push one ACARS block and return the rendered decode in `out`.
+  #define PUSH_BLK(blkid, msgnum, text, final)                                   \
+    do {                                                                         \
+      g_string_truncate(out, 0);                                                 \
+      env[0] = 0xFF; env[1] = HFNPDU_ENVELOPED_DATA;                             \
+      int _al = build_acars_blk(env + 2, ".N123AB", "H1", (blkid), "DLH441",     \
+                                (msgnum), (text), (final));                      \
+      int _lp = build_lpdu(lpdu, LPDU_UNNUMBERED_DATA, env, 2 + _al);            \
+      int _fl = build_downlink_mpdu(frame, 42, 3, lpdu, _lp);                    \
+      if (!hfdl_msg_decode(frame, _fl, out)) ok = FALSE;                         \
+    } while (0)
+
+  // (9a) Three-block downlink: 'A' and 'B' end in ETB, 'C' in ETX. Only the
+  // last one may print the text, and it must print ALL of it.
+  PUSH_BLK('4', "M01A", "FIRST/", FALSE);
+  if (!check(out, "reasm blk 1", (const char *[]){ "Reassembly: in progress", NULL })) ok = FALSE;
+  if (strstr(out->str, "| FIRST/") == NULL) {   // fragment text is still shown
+    g_printerr("[HFDL msg selftest] reasm blk 1: fragment text missing\n"); ok = FALSE;
+  }
+  PUSH_BLK('4', "M01B", "SECOND/", FALSE);
+  if (!check(out, "reasm blk 2", (const char *[]){ "Reassembly: in progress", NULL })) ok = FALSE;
+  PUSH_BLK('4', "M01C", "THIRD", TRUE);
+  if (!check(out, "reasm blk 3",
+             (const char *[]){ "Reassembly: complete", "FIRST/SECOND/THIRD", NULL })) ok = FALSE;
+
+  // (9b) A repeated block is recognised as a duplicate, not appended twice.
+  hfdl_msg_reset();
+  PUSH_BLK('4', "M02A", "ONE/", FALSE);
+  PUSH_BLK('4', "M02A", "ONE/", FALSE);
+  if (!check(out, "reasm duplicate", (const char *[]){ "duplicate block", NULL })) ok = FALSE;
+  PUSH_BLK('4', "M02B", "TWO", TRUE);
+  if (!check(out, "reasm after duplicate",
+             (const char *[]){ "Reassembly: complete", "ONE/TWO", NULL })) ok = FALSE;
+  if (strstr(out->str, "ONE/ONE/") != NULL) {
+    g_printerr("[HFDL msg selftest] reasm: duplicate block was appended\n"); ok = FALSE;
+  }
+
+  // (9c) A lost block abandons the message rather than splicing a hole.
+  hfdl_msg_reset();
+  PUSH_BLK('4', "M03A", "START/", FALSE);
+  PUSH_BLK('4', "M03C", "END", TRUE);           // 'B' never arrived
+  if (!check(out, "reasm gap", (const char *[]){ "cannot reassemble", NULL })) ok = FALSE;
+  if (strstr(out->str, "START/END") != NULL) {
+    g_printerr("[HFDL msg selftest] reasm: spliced across a lost block\n"); ok = FALSE;
+  }
+
+  // (9d) Uplink: no message number, so the sequence is the block id itself and
+  // any block id may start a message.
+  hfdl_msg_reset();
+  PUSH_BLK('M', "", "UP-ONE/", FALSE);
+  if (!check(out, "reasm uplink blk 1",
+             (const char *[]){ "ACARS uplink", "Reassembly: in progress", NULL })) ok = FALSE;
+  PUSH_BLK('N', "", "UP-TWO", TRUE);
+  if (!check(out, "reasm uplink blk 2",
+             (const char *[]){ "Reassembly: complete", "UP-ONE/UP-TWO", NULL })) ok = FALSE;
+
+  // (9e) The reassembly timer. HFGT4 is 21 minutes, so this runs on the mock
+  // clock: a second block arriving after it expires starts a new message (and
+  // for a downlink, a block that is not 'A' cannot start one).
+  hfdl_msg_reset();
+  reasm_test_now_us = 1000000;
+  PUSH_BLK('4', "M04A", "STALE/", FALSE);
+  reasm_test_now_us += (ACARS_TMO_DOWN_US + 1000000);
+  PUSH_BLK('4', "M04B", "LATE", TRUE);
+  if (!check(out, "reasm timeout", (const char *[]){ "cannot reassemble", NULL })) ok = FALSE;
+  if (strstr(out->str, "STALE/LATE") != NULL) {
+    g_printerr("[HFDL msg selftest] reasm: timed-out message was still joined\n"); ok = FALSE;
+  }
+  reasm_test_now_us = 0;
+  #undef PUSH_BLK
+
+  // (10) Over-the-air system table. Build a two-PDU set carrying two station
+  // records and check that it is reassembled, adopted, and then actually used
+  // to resolve a frequency slot.
+  hfdl_msg_reset();
+  gs_learned_version = -1;
+  memset(gs_learned, 0, sizeof(gs_learned));
+
+  // One station record: id/utc-sync, lat, lon, spdu ver + freq count, then
+  // (frequency, slot) pairs. Frequencies are packed BCD, 100 Hz per unit.
+  #define ST_GS(dst, id, f1, f2)                                                 \
+    do {                                                                         \
+      uint8_t *_d = (dst);                                                       \
+      _d[0] = (uint8_t)((id) | 0x80);        /* UTC synced */                    \
+      _d[1] = _d[2] = _d[3] = _d[4] = _d[5] = 0;   /* lat/lon 0 */               \
+      _d[6] = (uint8_t)(0x01 | (2 << 3));    /* spdu ver 1, 2 frequencies */     \
+      st_freq(_d + 7,  (f1)); _d[10] = 1;                                        \
+      st_freq(_d + 11, (f2)); _d[14] = 2;                                        \
+    } while (0)
+
+  uint8_t table[64];
+  ST_GS(table,      4, 11387, 6661);
+  ST_GS(table + 15, 5, 13351, 8921);
+  int tlen = 30;
+
+  // Split across two HFNPDUs, each repeating the 5-octet header.
+  g_string_truncate(out, 0);
+  uint8_t st_pdu[64];
+  int split = 14;
+  for (int part = 0; part < 2; part++) {
+    int off  = part ? split : 0;
+    int plen = part ? tlen - split : split;
+    st_pdu[0] = 0xFF; st_pdu[1] = HFNPDU_SYSTEM_TABLE;
+    st_pdu[2] = (uint8_t)((1 << 4) | part);          // 2 PDUs total, index `part`
+    st_pdu[3] = (uint8_t)((60 & 0xF) << 4);          // version 60, low nibble
+    st_pdu[4] = (uint8_t)(60 >> 4);
+    memcpy(st_pdu + 5, table + off, (size_t)plen);
+    lp = build_lpdu(lpdu, LPDU_UNNUMBERED_DATA, st_pdu, 5 + plen);
+    fl = build_downlink_mpdu(frame, 42, 3, lpdu, lp);
+    g_string_truncate(out, 0);
+    if (!hfdl_msg_decode(frame, fl, out)) ok = FALSE;
+  }
+  if (!check(out, "systable complete",
+             (const char *[]){ "System table version 60 complete", "2 ground stations",
+                               "GS 4 (Riverhead, New York)", "11387, 6661", NULL })) ok = FALSE;
+
+  // The learned table must now drive slot -> kHz. Slot 1 of GS 4 is 6661 in the
+  // table just received; in the embedded snapshot it is 17919, so this only
+  // passes if the over-the-air table won.
+  if (gs_freq(4, 1) != 6661) {
+    g_printerr("[HFDL msg selftest] systable: slot 1 of GS 4 resolved to %u, expected 6661\n",
+               gs_freq(4, 1));
+    ok = FALSE;
+  }
+
+  // An older version must not roll the table back.
+  g_string_truncate(out, 0);
+  ST_GS(table, 4, 21931, 17919);
+  st_pdu[0] = 0xFF; st_pdu[1] = HFNPDU_SYSTEM_TABLE;
+  st_pdu[2] = 0x00;                                   // single-PDU set
+  st_pdu[3] = (uint8_t)((59 & 0xF) << 4);
+  st_pdu[4] = (uint8_t)(59 >> 4);
+  memcpy(st_pdu + 5, table, 15);
+  lp = build_lpdu(lpdu, LPDU_UNNUMBERED_DATA, st_pdu, 5 + 15);
+  fl = build_downlink_mpdu(frame, 42, 3, lpdu, lp);
+  if (!hfdl_msg_decode(frame, fl, out)) ok = FALSE;
+  if (!check(out, "systable older", (const char *[]){ "keeping version 60", NULL })) ok = FALSE;
+  if (gs_freq(4, 1) != 6661) {
+    g_printerr("[HFDL msg selftest] systable: an older table overwrote the current one\n");
+    ok = FALSE;
+  }
+  #undef ST_GS
+  gs_learned_version = -1;
+  memset(gs_learned, 0, sizeof(gs_learned));
 
   g_string_free(out, TRUE);
   hfdl_msg_reset();

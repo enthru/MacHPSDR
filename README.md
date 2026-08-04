@@ -422,11 +422,14 @@ you've dialled in.
   ground-station squitters (status and frequencies in use), aircraft logon/logoff
   with **ICAO addresses**, position / performance / frequency reports, and
   **ACARS message text** (registration, label, flight, message body). Aircraft
-  IDs are resolved to ICAO addresses from the logon exchange, and an embedded
-  ground-station table turns "frequency slot *n*" into real kilohertz. The
+  IDs are resolved to ICAO addresses from the logon exchange, and the
+  ground-station table that turns "frequency slot *n*" into real kilohertz is
+  **learned over the air** — the System-table PDUs a station broadcasts are
+  collected, reassembled and adopted when a newer version arrives, with an
+  embedded snapshot as the fallback and the source of station names. An ACARS
+  message **split across several blocks is reassembled** before it is shown. The
   application layer is a **native port**, not a link against libacars, so nothing
-  large is vendored; CPDLC/ADS-C payloads and multi-block ACARS reassembly are
-  deliberately left out. Select **HFDL** from the Decode block in **DIGU** and
+  large is vendored; CPDLC/ADS-C payloads are deliberately left out. Select **HFDL** from the Decode block in **DIGU** and
   press **Show HFDL** for the message panel. Built by default; it needs
   `liquid-dsp`, and since the decoder is a port of `dumphfdl` the resulting build
   is effectively GPLv3 (which this fork's "GPLv2 or later" permits). Comment out

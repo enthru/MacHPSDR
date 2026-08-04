@@ -272,10 +272,15 @@ standard uses, i.e. dial the *assigned* channel frequency. What you get:
 - **ACARS message text** — registration, label, flight ID, message number and
   the message body.
 
-Station names and channel frequencies come from a built-in table, so a report
-that names "frequency slot 1" is shown as the actual kHz. CPDLC and ADS-C
-payloads inside ACARS are not decoded (their text is shown raw), and messages
-split over several ACARS blocks are shown block by block rather than reassembled.
+A report that names "frequency slot 1" is shown as the actual kHz. The slot map
+comes from the **system table the ground stations broadcast**: the decoder
+collects the parts, and once a complete table arrives it replaces the built-in
+one and is listed in full (station, position, frequencies). Until then — and for
+the station *names*, which the broadcast does not carry — a built-in snapshot is
+used. A message **split over several ACARS blocks is reassembled**: each block
+reports "Reassembly: in progress" and the block that completes the message prints
+the whole text (a lost block is reported instead of being spliced over). CPDLC and
+ADS-C payloads inside ACARS are not decoded (their text is shown raw).
 
 *(Verified on a real off-air recording: on a 11387 kHz capture of the Riverhead,
 New York ground station the decoder produced squitters, a ground-station uplink
