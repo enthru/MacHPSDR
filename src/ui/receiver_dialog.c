@@ -1532,8 +1532,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // Squelch + Manual Notch sit SIDE BY SIDE under CAT: neither is tall, and
   // stacked they left the bottom of the page half empty while the notch list
   // pushed the page taller than the window.
+  // halign START keeps the pair flush left at their natural width instead of
+  // being stretched across the column; the children keep the default valign
+  // FILL so both frames take the row height and end up the same height.
   GtkWidget *sq_mnf_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
   gtk_widget_set_valign(sq_mnf_row,GTK_ALIGN_START);
+  gtk_widget_set_halign(sq_mnf_row,GTK_ALIGN_START);
   gtk_box_append(GTK_BOX(cat_box),sq_mnf_row);
 
   // Squelch calibration. Only the AMSQ (non-FM) path is exposed: the FM squelch
@@ -1544,8 +1548,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *sq_grid=gtk_grid_new();
     sui_style_group(sq_grid);
     gtk_frame_set_child(GTK_FRAME(sq_frame),sq_grid);
-    gtk_widget_set_valign(sq_frame,GTK_ALIGN_START);
-    gtk_widget_set_hexpand(sq_frame,TRUE);
     gtk_box_append(GTK_BOX(sq_mnf_row),sq_frame);
 
     GtkWidget *l=gtk_label_new("The SQL bar spans this dB range on the pre-AGC signal (FM uses its own squelch).");
@@ -1595,8 +1597,6 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     GtkWidget *mnf_grid=gtk_grid_new();
     sui_style_group(mnf_grid);
     gtk_frame_set_child(GTK_FRAME(mnf_frame),mnf_grid);
-    gtk_widget_set_valign(mnf_frame,GTK_ALIGN_START);
-    gtk_widget_set_hexpand(mnf_frame,TRUE);
     gtk_box_append(GTK_BOX(sq_mnf_row),mnf_frame);
     // Freed with the frame, so the callbacks' data outlives every row widget.
     g_object_set_data_full(G_OBJECT(mnf_frame),"mnf_ui",ui,g_free);
