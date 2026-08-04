@@ -1365,6 +1365,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->decode_mode=atoi(value);
   value=getProperty("radio.hfdl_log");
   if(value!=NULL) r->hfdl_log=atoi(value);
+  value=getProperty("radio.hfdl_scan");
+  if(value!=NULL) r->hfdl_scan=atoi(value);
   value=getProperty("radio.wefax_lpm");
   if(value!=NULL) r->wefax_lpm=atoi(value);
   value=getProperty("radio.wefax_ioc");

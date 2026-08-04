@@ -144,6 +144,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.decode_mode",value);
   sprintf(value,"%d",radio->hfdl_log);
   setProperty("radio.hfdl_log",value);
+  sprintf(value,"%d",radio->hfdl_scan);
+  setProperty("radio.hfdl_scan",value);
   sprintf(value,"%d",radio->wefax_lpm);
   setProperty("radio.wefax_lpm",value);
   sprintf(value,"%d",radio->wefax_ioc);

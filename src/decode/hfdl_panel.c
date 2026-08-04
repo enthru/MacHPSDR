@@ -103,6 +103,12 @@ static void log_toggled(GtkCheckButton *b, gpointer data) {
   if (radio) radio->hfdl_log = on;
 }
 
+static void scan_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
+  hfdl_decoder_set_scan(on);
+  if (radio) radio->hfdl_scan = on;
+}
+
 // --- frequency presets ------------------------------------------------------
 //
 // Every HFDL channel is already in the station table (learned over the air, or
@@ -279,8 +285,13 @@ static gboolean tick(gpointer data) {
   hfdl_decoder_get_status(&listening, &rate, &syms);
   double level = hfdl_decoder_get_level_db();
   glong frames = hfdl_decoder_get_frames();
-  char buf[160];
-  if (listening)
+  char buf[200];
+  int nch = hfdl_decoder_channel_count();
+  if (listening && nch > 1)
+    g_snprintf(buf, sizeof(buf),
+               "signal %.0f dB \xC2\xB7 %d kHz \xC2\xB7 %ld frames \xC2\xB7 %ld ksym \xC2\xB7 %d channels",
+               level, rate / 1000, frames, syms / 1000, nch);
+  else if (listening)
     g_snprintf(buf, sizeof(buf), "signal %.0f dB \xC2\xB7 %d kHz \xC2\xB7 %ld frames \xC2\xB7 %ld ksym",
                level, rate / 1000, frames, syms / 1000);
   else
@@ -357,6 +368,14 @@ GtkWidget *hfdl_panel_create(void) {
   g_signal_connect(logcb, "toggled", G_CALLBACK(log_toggled), p);
   gtk_box_append(GTK_BOX(bar), logcb);
 
+  GtkWidget *scancb = gtk_check_button_new_with_label("Scan band");
+  gtk_widget_set_tooltip_text(scancb,
+    "Decode every known HFDL channel that falls inside the receiver passband, "
+    "not just the one under the dial \xE2\x80\x94 an HF band holds a dozen of them "
+    "within about 100 kHz. Each channel costs roughly half a percent of a CPU core.");
+  g_signal_connect(scancb, "toggled", G_CALLBACK(scan_toggled), p);
+  gtk_box_append(GTK_BOX(bar), scancb);
+
   p->preset_list = gtk_string_list_new(NULL);
   p->presets = gtk_drop_down_new(G_LIST_MODEL(p->preset_list), NULL);
   gtk_widget_set_tooltip_text(p->presets,
@@ -392,7 +411,8 @@ GtkWidget *hfdl_panel_create(void) {
   gtk_box_append(GTK_BOX(box), nb);
 
   presets_rebuild(p);
-  if (radio && radio->hfdl_log) gtk_check_button_set_active(GTK_CHECK_BUTTON(logcb), TRUE);
+  if (radio && radio->hfdl_log)  gtk_check_button_set_active(GTK_CHECK_BUTTON(logcb), TRUE);
+  if (radio && radio->hfdl_scan) gtk_check_button_set_active(GTK_CHECK_BUTTON(scancb), TRUE);
 
   p->timer = g_timeout_add(REFRESH_MS, tick, p);
   g_signal_connect(box, "destroy", G_CALLBACK(on_destroy), p);

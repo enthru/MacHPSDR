@@ -272,6 +272,12 @@ heard, and last reported position. **Log** appends every decoded message to
 `~/.local/share/machpsdr/hfdl_log.txt`, which is what makes leaving the decoder
 running unattended worthwhile; the setting is remembered.
 
+**Scan band** decodes *every* known HFDL channel that falls inside the receiver's
+passband at once, not just the one under the dial — an HF band packs about a
+dozen channels into 100 kHz, and a 192 kHz receiver already has them all. Each
+line is then labelled with the channel it came from. Every extra channel costs
+roughly half a percent of a CPU core, and the setting is remembered.
+
 What you get:
 
 - **Squitters** — each ground station's periodic broadcast: station name, UTC

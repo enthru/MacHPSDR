@@ -37,6 +37,7 @@
 
 #include <glib.h>
 #include <string.h>
+#include <math.h>
 #include <liquid/liquid.h>
 
 #include "hfdl_decoder.h"
@@ -55,9 +56,32 @@
 // --- state (all audio-thread-owned unless noted) ---------------------------
 
 static volatile gint enabled = 0;          // atomic on/off gate
-static hfdl_demod   *demod = NULL;          // front-end DSP (audio thread only)
-static hfdl_framer  *framer = NULL;         // frame state machine (audio thread only)
-static double        demod_rate = 0.0;      // input rate demod was built for
+static volatile gint rebuild_req = 0;      // GTK asks the audio thread to rebuild channels
+
+// --- channels ---------------------------------------------------------------
+//
+// One front-end + framer per HFDL channel being decoded. An HF band holds a
+// dozen HFDL channels inside ~100 kHz (the 11 MHz band runs 11306…11387), and a
+// 192 kHz receiver already has all of them in its passband — so decoding only
+// the one under the dial throws most of the traffic away. Each channel is just
+// another NCO offset into the same I/Q block; measured cost is ~0.5 % of a core
+// per channel at 192 kHz, so a bandful is affordable.
+//
+// Channel 0 is always the dial itself (offset 0), which is exactly the previous
+// single-channel behaviour; scanning adds the others around it.
+
+typedef struct {
+  double       offset_hz;   // channel centre relative to the receiver centre
+  uint32_t     khz;         // channel frequency, 0 when it is just "the dial"
+  hfdl_demod  *demod;
+  hfdl_framer *framer;
+} HFDL_CHANNEL;
+
+static HFDL_CHANNEL  chans[HFDL_MAX_CHANNELS];
+static int           nchans = 0;
+static double        demod_rate = 0.0;      // input rate the channels were built for
+static long long     demod_center = 0;      // receiver centre they were built for
+static gboolean      scan_band = FALSE;     // decode every known channel in the passband
 static float         out_buf[2 * HFDL_OUT_MAX];   // conditioned baseband
 static glong         status_frames = 0;     // frames decoded since reset
 
@@ -89,12 +113,72 @@ static void ensure_init(void) {
   }
 }
 
-// Audio thread. Free the front-end (on disable / rate change / re-enable reset).
+// Audio thread. Free every channel (on disable / rate or centre change / reset).
 static void demod_free(void) {
-  if (demod) { hfdl_demod_destroy(demod); demod = NULL; }
-  if (framer) { hfdl_framer_destroy(framer); framer = NULL; }
+  for (int i = 0; i < nchans; i++) {
+    if (chans[i].demod)  hfdl_demod_destroy(chans[i].demod);
+    if (chans[i].framer) hfdl_framer_destroy(chans[i].framer);
+  }
+  memset(chans, 0, sizeof(chans));
+  nchans = 0;
   demod_rate = 0.0;
+  demod_center = 0;
 }
+
+static void chan_add(double offset_hz, uint32_t khz, double rate) {
+  if (nchans >= HFDL_MAX_CHANNELS) return;
+  hfdl_demod *d = hfdl_demod_create_at(rate, offset_hz);
+  if (d == NULL) return;
+  chans[nchans].offset_hz = offset_hz;
+  chans[nchans].khz       = khz;
+  chans[nchans].demod     = d;
+  chans[nchans].framer    = hfdl_framer_create();
+  nchans++;
+}
+
+// Audio thread. Build the channel set for this receiver centre / sample rate.
+static void chans_build(double rate, long long center_hz) {
+  demod_free();
+  // The dial itself is always decoded, labelled with its own frequency so that
+  // when scanning is on every line says which channel it came from.
+  chan_add(0.0, center_hz > 0 ? (uint32_t)(center_hz / 1000) : 0, rate);
+  demod_rate   = rate;
+  demod_center = center_hz;
+  if (!scan_band || center_hz <= 0) return;
+
+  // Every known HFDL channel that falls inside the usable part of the passband.
+  // 80 % of it: the outer edges are where the receiver's own filtering rolls off,
+  // and a channel there would decode badly and just waste a front-end.
+  double half = rate * 0.5 * 0.8;
+  HFDL_GS_INFO gs[64];
+  int ng = hfdl_msg_gs_list(gs, 64);
+  for (int i = 0; i < ng && nchans < HFDL_MAX_CHANNELS; i++) {
+    for (int f = 0; f < gs[i].freq_cnt && nchans < HFDL_MAX_CHANNELS; f++) {
+      if (gs[i].freqs[f] == 0) continue;
+      double off = (double)((long long)gs[i].freqs[f] * 1000LL - center_hz);
+      if (off < -half || off > half) continue;
+      if (fabs(off) < 1.0) continue;                    // that is the dial itself
+      gboolean dup = FALSE;                             // stations share channels
+      for (int c = 0; c < nchans; c++)
+        if (chans[c].khz == gs[i].freqs[f]) { dup = TRUE; break; }
+      if (dup) continue;
+      chan_add(off, gs[i].freqs[f], rate);
+    }
+  }
+  log_info("hfdl: decoding %d channel(s) around %lld Hz\n", nchans, center_hz);
+}
+
+void hfdl_decoder_set_scan(gboolean on) {
+  if (scan_band == (on != FALSE)) return;
+  scan_band = (on != FALSE);
+  // The channel set is only ever built or freed on the audio thread; this asks
+  // for a rebuild there rather than touching the channels from the GTK thread.
+  g_atomic_int_set(&rebuild_req, 1);
+}
+
+gboolean hfdl_decoder_get_scan(void) { return scan_band; }
+
+int hfdl_decoder_channel_count(void) { return nchans; }
 
 // --- API -------------------------------------------------------------------
 
@@ -140,6 +224,8 @@ void hfdl_decoder_set_enabled(gboolean on) {
 // carrier loop's slicer aligned with what the frame is carrying.
 typedef struct {
   hfdl_framer *framer;
+  hfdl_demod  *demod;     // the channel's own front-end (for the slicer)
+  uint32_t     khz;       // channel frequency, 0 = the dial
   int          frames;    // frames completed in this block
   GString     *text;      // decoded messages (allocated lazily)
 } frame_sink;
@@ -150,7 +236,7 @@ static void on_symbol(void *ctx, float re, float im) {
   int nb = hfdl_framer_push(s->framer, re, im);
   // The framer has now advanced; slice the next symbol against the modulation
   // it says is coming (BPSK for sync/training, the frame's own for data).
-  hfdl_demod_set_slicer(demod, hfdl_framer_arity(s->framer));
+  hfdl_demod_set_slicer(s->demod, hfdl_framer_arity(s->framer));
   if (nb <= 0) return;
 
   const uint8_t *fb = hfdl_framer_bytes(s->framer, &nb);
@@ -159,6 +245,9 @@ static void on_symbol(void *ctx, float re, float im) {
   // message text (hfdl_msg.c). Frames whose FCS fails are shown as a hex dump
   // instead, so a marginal decode is still visible.
   if (s->text == NULL) s->text = g_string_new(NULL);
+  // Only label the frame when more than one channel is being decoded, so the
+  // single-channel output stays exactly as it was.
+  if (s->khz) g_string_append_printf(s->text, "[%u kHz] ", s->khz);
   if (!hfdl_msg_decode(fb, nb, s->text)) {
     g_string_append(s->text, "  ");
     int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
@@ -168,34 +257,40 @@ static void on_symbol(void *ctx, float re, float im) {
   }
 }
 
-void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
+void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
+                            long long center_hz) {
   if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0 || sample_rate <= 0)
     return;
 
-  // (Re)build the front-end + framer if the rate changed (audio thread — safe).
-  if (demod == NULL || demod_rate != (double)sample_rate) {
-    demod_free();
-    demod = hfdl_demod_create((double)sample_rate);
-    framer = hfdl_framer_create();
-    demod_rate = (double)sample_rate;
+  // (Re)build the channels when the rate or the dial moved, or when the scan
+  // toggle asked for it. Always on the audio thread, which owns them.
+  if (nchans == 0 || demod_rate != (double)sample_rate ||
+      demod_center != center_hz || g_atomic_int_get(&rebuild_req)) {
+    g_atomic_int_set(&rebuild_req, 0);
+    chans_build((double)sample_rate, center_hz);
   }
+
   int nsym = 0, frames = 0;
   double level = -160.0;
   GString *frametext = NULL;      // decoded messages from this block (may be NULL)
-  if (demod) {
+  for (int c = 0; c < nchans; c++) {
     // Front-end: condition the raw I/Q into the 5400 S/s symbol domain.
-    int nbb = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
-    level = hfdl_demod_level_db(demod);
+    int nbb = hfdl_demod_process(chans[c].demod, iq, nframes, out_buf, HFDL_OUT_MAX);
+    // The dial channel drives the level readout — it is the one the operator is
+    // pointing at, and averaging over channels would say nothing about either.
+    if (c == 0) level = hfdl_demod_level_db(chans[c].demod);
     // Symbol recovery + framing, interleaved symbol by symbol: each recovered
     // symbol goes straight into the framer, and the framer's resulting state
     // picks the modulation the carrier loop slices the NEXT symbol against.
     // (A block holds tens of symbols and spans several framer states, so doing
     // this a block at a time would be far too coarse — PSK4/PSK8 data would be
     // sliced as BPSK for most of the frame.)
-    frame_sink sink = { framer, 0, NULL };
-    nsym = hfdl_demod_symbols_cb(demod, out_buf, nbb, on_symbol, &sink);
-    frames = sink.frames;
-    frametext = sink.text;
+    frame_sink sink = { chans[c].framer, chans[c].demod,
+                        nchans > 1 ? chans[c].khz : 0, 0, frametext };
+    int n = hfdl_demod_symbols_cb(chans[c].demod, out_buf, nbb, on_symbol, &sink);
+    if (c == 0) nsym = n;         // throughput readout follows the dial channel
+    frames += sink.frames;
+    frametext = sink.text;        // shared, allocated lazily by the first frame
   }
 
   g_mutex_lock(&lock);
@@ -232,6 +327,13 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
     g_printerr("[HFDL] %ld symbols recovered @ %.0f dB (searching for frames)\n",
                syms, level);
   if (frametext != NULL) g_string_free(frametext, TRUE);
+}
+
+// Single-channel entry point: the caller does not know the dial frequency, so
+// scanning cannot be offered (there is nothing to place the other channels
+// against). Used by the offline harness and the self-tests.
+void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
+  hfdl_decoder_add_iq_at(iq, nframes, sample_rate, 0);
 }
 
 int hfdl_decoder_get_messages(char *buf, int buflen) {

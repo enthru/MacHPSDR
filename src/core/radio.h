@@ -128,6 +128,7 @@ typedef struct _radio {
   GtkWidget *hfdl_panel;   // embedded HFDL message panel (NULL unless open in DIGU+HFDL)
   gboolean hfdl_panel_open;// user toggled the HFDL message panel on (in place of RX2)
   gboolean hfdl_log;       // append decoded HFDL messages to ~/.local/share/machpsdr/hfdl_log.txt
+  gboolean hfdl_scan;      // decode every known HFDL channel in the passband, not just the dial
   gint wefax_lpm;          // WEFAX lines per minute (60/90/120/240; default 120)
   gint wefax_ioc;          // WEFAX Index Of Cooperation (576/288; default 576)
   gboolean wefax_autostart;// auto-detect the WEFAX start tone (default TRUE)

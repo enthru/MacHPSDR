@@ -59,6 +59,12 @@ typedef struct hfdl_demod hfdl_demod;
 // Create the front-end for an off-air complex input at input_rate Hz. Returns
 // NULL on failure (e.g. input_rate below the symbol-domain rate).
 hfdl_demod *hfdl_demod_create(double input_rate);
+
+// Same, for a channel whose centre sits channel_offset_hz away from the input's
+// centre — the receiver passband usually holds several HFDL channels, and one
+// front-end per channel is what lets them all be decoded at once. Offset 0 is
+// exactly hfdl_demod_create().
+hfdl_demod *hfdl_demod_create_at(double input_rate, double channel_offset_hz);
 void hfdl_demod_destroy(hfdl_demod *d);
 
 // Feed nframes complex input samples (interleaved I/Q doubles: I=iq[2i],

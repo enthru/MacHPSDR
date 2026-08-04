@@ -1895,7 +1895,14 @@ static void full_rx_buffer(RECEIVER *rx) {
   if(radio->active_receiver==rx) {
     gboolean hfdl_on = (rx->mode_a==DIGU) && radio->decode_mode==DECODE_HFDL;
     hfdl_decoder_set_enabled(hfdl_on);
-    if(hfdl_on) hfdl_decoder_add_iq(rx->iq_input_buffer, rx->buffer_size, rx->sample_rate);
+    // Band scanning is a persisted setting, so apply it here rather than only
+    // from the panel — the decoder runs whether or not the panel is open.
+    if(hfdl_on) hfdl_decoder_set_scan(radio->hfdl_scan);
+    // frequency_a is the receiver centre this I/Q is taken around (CTUN moves
+    // only the demodulator), which is what lets the decoder place the other
+    // HFDL channels in the passband when band scanning is on.
+    if(hfdl_on) hfdl_decoder_add_iq_at(rx->iq_input_buffer, rx->buffer_size,
+                                       rx->sample_rate, (long long)rx->frequency_a);
   }
 #endif
 

@@ -97,6 +97,10 @@ struct hfdl_demod {
 };
 
 hfdl_demod *hfdl_demod_create(double input_rate) {
+  return hfdl_demod_create_at(input_rate, 0.0);
+}
+
+hfdl_demod *hfdl_demod_create_at(double input_rate, double channel_offset_hz) {
   if (input_rate < HFDL_BASEBAND_RATE) {
     log_error("hfdl_demod: input_rate %.0f below baseband rate %d\n",
               input_rate, HFDL_BASEBAND_RATE);
@@ -110,8 +114,13 @@ hfdl_demod *hfdl_demod_create(double input_rate) {
   // DC. mix_block_down multiplies by e^{-j*w*n}, so set w = +offset. (Sign
   // follows the HPSDR non-inverted-I/Q convention; flip if a real signal comes
   // out mirror-imaged, as ppm_cal notes for its own carrier maths.)
+  // channel_offset_hz shifts the whole channel: a channel sitting Δ Hz from the
+  // receiver centre has its carrier at Δ + HFDL_CARRIER_OFFSET_HZ, which is what
+  // lets several channels inside one receiver passband each get their own
+  // front-end. Δ=0 is the dial itself — the single-channel case.
   d->osc = nco_crcf_create(LIQUID_NCO);
-  nco_crcf_set_frequency(d->osc, (float)(2.0 * M_PI * HFDL_CARRIER_OFFSET_HZ / input_rate));
+  nco_crcf_set_frequency(d->osc,
+    (float)(2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + channel_offset_hz) / input_rate));
 
   // Multi-stage resampler to the symbol domain, 60 dB stopband (dumphfdl).
   d->resampler = msresamp_crcf_create(d->resamp_rate, 60.0f);

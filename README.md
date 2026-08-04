@@ -434,7 +434,10 @@ you've dialled in.
   how long ago, UTC sync, frequencies in use) and an **Aircraft** table (ICAO,
   flight, last position) — plus a **channel drop-down + Tune** built from the
   station table, and a **Log** toggle that appends every message to
-  `~/.local/share/machpsdr/hfdl_log.txt`. Select **HFDL** from the Decode block in **DIGU** and
+  `~/.local/share/machpsdr/hfdl_log.txt`. **Scan band** decodes *every* known
+  HFDL channel inside the receiver passband at once, not just the one under the
+  dial: an HF band packs a dozen of them into about 100 kHz, and each costs
+  roughly half a percent of a CPU core. Select **HFDL** from the Decode block in **DIGU** and
   press **Show HFDL** for the message panel. Built by default; it needs
   `liquid-dsp`, and since the decoder is a port of `dumphfdl` the resulting build
   is effectively GPLv3 (which this fork's "GPLv2 or later" permits). Comment out

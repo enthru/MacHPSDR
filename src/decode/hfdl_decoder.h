@@ -55,6 +55,27 @@ void hfdl_decoder_set_enabled(gboolean on);
 // demod chain lands in later phases.)
 void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate);
 
+// Same, but telling the decoder what the receiver centre is. That is what makes
+// band scanning possible: an HF band holds a dozen HFDL channels inside ~100 kHz
+// and the receiver passband already contains them, so with scanning on the
+// decoder runs one front-end per known channel in the passband instead of only
+// the one under the dial. Pass 0 for center_hz if it is not known (scanning is
+// then impossible and only the dial is decoded).
+void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
+                            long long center_hz);
+
+// Maximum channels decoded at once. Each costs ~0.5 % of a core at 192 kHz.
+#define HFDL_MAX_CHANNELS 12
+
+// Decode every known HFDL channel inside the receiver passband, not just the
+// one under the dial. Safe from the GTK thread (the channel set is rebuilt on
+// the audio thread at the next feed).
+void hfdl_decoder_set_scan(gboolean on);
+gboolean hfdl_decoder_get_scan(void);
+
+// Channels currently being decoded (1 = just the dial). GTK thread only.
+int hfdl_decoder_channel_count(void);
+
 // Drain newly-decoded HFDL message lines into buf (NUL-terminated, buflen
 // includes room for the NUL). Returns the number of bytes copied. GTK thread
 // only. (Phase 1: never produces anything yet.)
