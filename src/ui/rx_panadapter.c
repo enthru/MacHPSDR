@@ -1046,7 +1046,9 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     GdkRGBA band_c = rx->notch[i].active ? nrgba(0.9,0.2,0.2,0.30) : nrgba(0.6,0.6,0.6,0.20);
     n_rect(snapshot,_xl,0.0,(_xr-_xl)<1.0?1.0:(_xr-_xl),(double)display_height-20,&band_c);
     double _xc=(_fc-(double)min_display)/rx->hz_per_pixel;
-    GdkRGBA cl=nrgba(0.9,0.2,0.2,0.8);
+    // Centre line follows the per-notch enable too, so a bypassed notch reads as
+    // fully greyed out rather than a grey band with a live red line through it.
+    GdkRGBA cl = rx->notch[i].active ? nrgba(0.9,0.2,0.2,0.8) : nrgba(0.6,0.6,0.6,0.5);
     n_line(snapshot,_xc,0.0,_xc,(double)display_height-20,1.0,&cl);
   }
 

@@ -75,10 +75,27 @@ void subrx_filter_changed(RECEIVER *rx) {
   }
 }
 
+// APF (CW audio peak filter) on the sub-channel. Same operator settings as the
+// main receiver (there is one APF control set), but gated on the SUB's mode —
+// the sub is usually parked on a different mode from VFO A, and an APF running
+// on an SSB sub-channel would ring.
+void subrx_set_apf(RECEIVER *rx) {
+  SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL) return;
+  gboolean cw=(rx->mode_b==CWL || rx->mode_b==CWU);
+  double freq=(double)radio->cw_keyer_sidetone_frequency;
+  if(freq < 200.0) freq=200.0;   // SPCW design 1 clamps below 200 Hz anyway
+  SetRXASPCWFreq(subrx->channel, freq);
+  SetRXASPCWBandwidth(subrx->channel, rx->apf_bw);
+  SetRXASPCWGain(subrx->channel, rx->apf_gain);
+  SetRXASPCWRun(subrx->channel, (rx->apf_enable && cw) ? 1 : 0);
+}
+
 void subrx_mode_changed(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
   subrx_set_mode(rx);
   subrx_filter_changed(rx);
+  subrx_set_apf(rx);
 }
 
 void subrx_set_agc(RECEIVER *rx) {

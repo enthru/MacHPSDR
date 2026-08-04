@@ -55,9 +55,9 @@ feature additions.
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
-| **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
+| **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters, Ctrl+scroll to resize one; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver, with a list editor in Configure → RX-N (per-notch on/off, exact frequency and width, and an **AF** mode that rides the dial instead). |
 | **Advanced noise reduction (NR3/NR4)** | Two extra denoisers on the VFO **NR** menu beside the classic NR/NR2: **NR3** (RNNoise recurrent neural network) and **NR4** (libspecbleach adaptive spectral subtraction), vendored and built into WDSP — no external install *(built + fake-tested; on-air audio not yet tuned on hardware)*. In the **data modes (DIGU/DIGL) and whenever a decoder is running** (FT8/FT4/SSTV/WEFAX/CW), **every waveform-altering block is automatically bypassed** — all four NR modes, the noise blankers (NB/NB2), the auto-notch (ANF), the spectral noise blanker (SNB) and the manual notches — so a modem/decoder or external software gets the clean signal (only demod, passband filter and AGC stay in). Your selections are kept and return the moment you leave the data mode / stop decoding. |
-| **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → RX) that peaks the beat-note to lift weak CW out of the noise, plus a **mode-aware squelch** — the SQL bar now gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), remembered per receiver *(faker-tested; on-air threshold calibration pending hardware)*. |
+| **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → CW) that peaks the beat-note to lift weak CW out of the noise — on the sub-receiver too — plus a **mode-aware squelch**: the SQL bar gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), is remembered **per mode**, and its dB range and tail are settable in Configure → RX *(faker-tested; on-air threshold calibration pending hardware)*. |
 | **Spectrum display modes** | A **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, plus selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
 | **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
@@ -186,17 +186,26 @@ you've dialled in.
   mode-aware: in FM it drives the classic FM noise squelch, and in every other
   mode (SSB/AM/CW/digital) it drives an **amplitude / voice squelch** that mutes
   the channel until a signal exceeds the threshold. The bar at its minimum means
-  squelch fully off (audio always passes); the setting is persisted per receiver.
-  *(Faker-tested; the amplitude-squelch dB scale still needs calibration against
-  a real on-air signal.)*
+  squelch fully off (audio always passes). The setting is **remembered per mode**,
+  so opening the gate wide on AM does not leave FM wide open, and a **Squelch
+  (AM/SSB)** block in Configure → RX-N sets the dB range the bar spans plus the
+  gate's max tail — so the amplitude squelch can be calibrated against a live
+  band without rebuilding. *(Faker-tested; the dB endpoints still want calibrating
+  against a real on-air signal — that is what the new controls are for.)*
 
 - **Manual notch filters (MNF).** In addition to the automatic notch (**ANF**),
   you can place your own notches to kill a steady carrier or heterodyne.
   **Ctrl+click** on the RX spectrum drops a notch at that frequency;
-  **Ctrl+click** on an existing notch removes it. Each notch is drawn as a
-  translucent red band with a centre line, is stored by absolute RF frequency so
-  it stays on the offending signal as you tune, and is remembered per receiver
-  between sessions (up to 16 notches). *(On-air notch depth is unverified — no
+  **Ctrl+click** on an existing notch removes it; **Ctrl+scroll** over one
+  widens or narrows it. Each notch is drawn as a translucent red band with a
+  centre line (grey when switched off), is stored by absolute RF frequency so it
+  stays on the offending signal as you tune, and is remembered per receiver
+  between sessions (up to 16 notches). A **Manual Notch (MNF)** block in
+  Configure → RX-N lists them for exact editing: switch each notch on or off
+  without deleting it, type a frequency or width, set the width new notches get,
+  and flip a notch to **AF** — an AF notch keeps a fixed offset from the
+  demodulated centre, so it rides the dial and always kills the same audio pitch
+  instead of staying on one RF frequency. *(On-air notch depth is unverified — no
   receive hardware in this fork; the on-screen placement and tuning behaviour are
   faker-verified.)*
 

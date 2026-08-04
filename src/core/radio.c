@@ -373,6 +373,13 @@ void frequency_changed(RECEIVER *rx) {
     rx->band_a=get_band_from_frequency(rx->frequency_a);
   }
 
+  // An AF notch is stored as an offset from the demod centre, so its absolute
+  // frequency changes with every tuning step and must be re-pushed to WDSP.
+  // RF-anchored notches (the default) need nothing here — RXANBPSetTuneFrequency
+  // above is enough — so the whole notch list is only rebuilt when an AF notch
+  // actually exists, keeping ordinary tuning as cheap as it was.
+  if(rx->channel>=0 && receiver_has_af_notch(rx)) receiver_notch_sync(rx);
+
   if(rx->subrx_enable) {
     // make sure VFO B frequency is in the passband
     gint64 min_frequency=rx->frequency_a-(gint64)(rx->sample_rate/2);

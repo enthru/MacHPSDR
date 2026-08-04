@@ -39,5 +39,6 @@ extern void subrx_frequency_changed(RECEIVER *rx);
 extern void subrx_mode_changed(RECEIVER *rx);
 extern void subrx_filter_changed(RECEIVER *rx);
 extern void subrx_volume_changed(RECEIVER *rx);
+extern void subrx_set_apf(RECEIVER *rx);
 
 #endif

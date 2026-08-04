@@ -55,10 +55,20 @@ _Static_assert((WDSP_ANALYZER_MAX_SIZE * 2) % ANALYZER_FEED_BLOCK == 0,
 // notched-bandpass (wdsp/nbp.c), stored as absolute RF Hz so they anchor to
 // real RF as the dial moves (see receiver_notch_sync).
 #define MAX_NOTCHES 16
+#define NOTCH_DEFAULT_WIDTH 100.0
+#define NOTCH_MIN_WIDTH      10.0
+#define NOTCH_MAX_WIDTH    5000.0
 typedef struct _notch {
-  gdouble  fcenter;   // absolute RF Hz
+  gdouble  fcenter;   // absolute RF Hz (recomputed each sync when af is set)
   gdouble  fwidth;    // Hz
   gboolean active;
+  // AF notch: instead of staying on an absolute RF frequency (the default —
+  // the notch sits on the offending carrier and the dial moves under it), the
+  // notch keeps a fixed offset from the demodulated centre, so it rides the
+  // dial and always kills the same audio pitch. af_offset is that offset in Hz
+  // relative to receiver_notch_anchor(); fcenter is derived from it.
+  gboolean af;
+  gdouble  af_offset;
 } NOTCH;
 
 typedef struct _receiver {
@@ -148,6 +158,16 @@ typedef struct _receiver {
   gint deviation;
   gboolean squelch_enable;
   gdouble squelch;
+  // Per-mode squelch memory: each mode keeps its own SQL setting, like
+  // mode_filter/mode_agc, so opening the gate on AM does not open it on FM.
+  gdouble mode_squelch[MODES];
+  // AMSQ (amplitude/voice squelch, every non-FM mode) calibration. The 0..1 SQL
+  // bar maps linearly onto [amsq_min_db, amsq_max_db] as the WDSP unmute
+  // threshold; these are operator-settable because the right endpoints depend
+  // on the station's noise floor and can only be found against a live band.
+  gdouble amsq_min_db;
+  gdouble amsq_max_db;
+  gdouble amsq_tail;   // seconds the gate stays open after the signal drops
 
   // APF — CW audio peak filter (WDSP "speak"/SPCW block). Runs only in CWL/CWU;
   // peaks at the CW sidetone frequency. bw = sharpness (Hz), gain = linear.
@@ -195,7 +215,8 @@ typedef struct _receiver {
   gboolean snb;
 
   NOTCH notch[MAX_NOTCHES];
-  gint  notches;      // number of notches in use
+  gint  notches;                 // number of notches in use
+  gdouble notch_default_width;   // width a Ctrl+click notch is created with, Hz
 
   gint nr_agc;
   gint nr2_gain_method;
@@ -480,6 +501,18 @@ extern void receiver_notch_sync(RECEIVER *rx);
 extern int  receiver_add_notch(RECEIVER *rx, gdouble fcenter, gdouble fwidth);
 extern void receiver_delete_notch(RECEIVER *rx, int idx);
 extern int  receiver_notch_at(RECEIVER *rx, gdouble f_hz);
+// Demodulated centre an AF notch is anchored to (ctun cursor when tuning
+// inside the span, otherwise the dial).
+extern gdouble receiver_notch_anchor(RECEIVER *rx);
+// Switch a notch between RF-anchored and AF-anchored, preserving where it
+// currently sits.
+extern void receiver_set_notch_af(RECEIVER *rx, int idx, gboolean af);
+// TRUE when at least one notch rides the dial, so frequency_changed knows it
+// must re-push the notch list to WDSP.
+extern gboolean receiver_has_af_notch(RECEIVER *rx);
+
+// Upper tuning limit (6 GHz, or the discovered device's own maximum).
+extern long long receiver_max_frequency(void);
 
 extern void receiver_save_state(RECEIVER *rx);
 extern void receiver_restore_state(RECEIVER *rx);

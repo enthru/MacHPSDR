@@ -100,18 +100,27 @@ own VFO, panadapter and waterfall.
   remembered per receiver between sessions.
 - **Manual notch filters (MNF)** — place your own notches to kill a steady
   carrier or heterodyne. **Ctrl+click** on the RX spectrum drops a notch at that
-  frequency; **Ctrl+click** on an existing notch removes it. A notch is drawn as
-  a translucent red band with a centre line and is stored by absolute frequency,
-  so it stays on the offending signal as you tune. Up to 16 per receiver,
-  remembered between sessions.
+  frequency; **Ctrl+click** on an existing notch removes it; **Ctrl+scroll** over
+  one changes its width. A notch is drawn as a translucent red band with a centre
+  line (grey while switched off) and is stored by absolute frequency, so it stays
+  on the offending signal as you tune. Up to 16 per receiver, remembered between
+  sessions. The **Manual Notch (MNF)** block in Configure → RX-N lists them for
+  exact editing: switch a notch off without deleting it, type a frequency or
+  width, choose the width new notches get, and flip a notch to **AF** — an AF
+  notch keeps a fixed offset from the demodulated centre, so it rides the dial
+  and always kills the same audio pitch instead of one RF frequency.
 - **Audio Peak Filter (APF)** — a narrow audio peaking filter for CW that boosts
   the beat-note (centred on your sidetone pitch) to lift weak signals out of the
   noise. Enable it, and set its bandwidth (sharpness) and gain, in
-  Configure → RX-N; it runs only in CW modes. Remembered per receiver.
+  Configure → CW; it runs only in CW modes, and applies to the sub-receiver too
+  (gated on the sub's own mode). Remembered per receiver.
 - **Volume / mute / squelch** — audible-output level and squelch per receiver.
   The **SQL** bar is mode-aware: in FM it drives the FM noise squelch, in every
   other mode an amplitude / voice squelch that mutes until a signal exceeds the
-  threshold. At its minimum the squelch is fully off (audio always passes).
+  threshold. At its minimum the squelch is fully off (audio always passes). The
+  setting is remembered **per mode**, and the **Squelch (AM/SSB)** block in
+  Configure → RX-N sets the dB range the bar spans and the gate's max tail, so
+  the amplitude squelch can be calibrated against a live band.
 - **Sub-receiver (SUBRX)** — a second demodulator inside one receiver slice,
   switched on with the **SUBRX** button on the VFO; it has its own frequency
   (VFO B), mode, filter and AGC. The main RX plays on the left channel and the

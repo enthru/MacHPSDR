@@ -255,6 +255,29 @@ void receiver_set_nr_mode(RECEIVER *rx, int mode) {
   update_noise(rx);
 }
 
+// Frequency an AF notch keeps its offset from: the demodulated centre, which
+// is the ctun/freetune cursor when one is in use and the dial otherwise.
+gdouble receiver_notch_anchor(RECEIVER *rx) {
+  if(rx->ctun || rx->freetune) return (gdouble)rx->ctun_frequency;
+  return (gdouble)rx->frequency_a;
+}
+
+gboolean receiver_has_af_notch(RECEIVER *rx) {
+  for(int i=0;i<rx->notches;i++) if(rx->notch[i].af) return TRUE;
+  return FALSE;
+}
+
+// Move a notch between the two anchoring modes without moving the notch: going
+// AF records where it currently sits relative to the demod centre, going RF
+// just freezes the absolute frequency it already has.
+void receiver_set_notch_af(RECEIVER *rx, int idx, gboolean af) {
+  if(idx<0 || idx>=rx->notches) return;
+  if(rx->notch[idx].af==af) return;
+  if(af) rx->notch[idx].af_offset=rx->notch[idx].fcenter-receiver_notch_anchor(rx);
+  rx->notch[idx].af=af;
+  receiver_notch_sync(rx);
+}
+
 // Push the whole MacHPSDR notch list into WDSP for this rx's channel, set the
 // tune frequency so notches anchor to absolute RF, and enable the notched
 // bandpass only when at least one active notch exists.
@@ -265,6 +288,9 @@ void receiver_notch_sync(RECEIVER *rx) {
   for(i=0;i<existing;i++) RXANBPDeleteNotch(rx->channel, 0);
   int any_active=0;
   for(i=0;i<rx->notches;i++) {
+    // WDSP always wants an absolute RF frequency; an AF notch derives its one
+    // from the current demod centre, which is what makes it ride the dial.
+    if(rx->notch[i].af) rx->notch[i].fcenter=receiver_notch_anchor(rx)+rx->notch[i].af_offset;
     RXANBPAddNotch(rx->channel, i, rx->notch[i].fcenter, rx->notch[i].fwidth,
                    rx->notch[i].active?1:0);
     if(rx->notch[i].active) any_active=1;
@@ -283,6 +309,8 @@ int receiver_add_notch(RECEIVER *rx, gdouble fcenter, gdouble fwidth) {
   rx->notch[idx].fcenter=fcenter;
   rx->notch[idx].fwidth=fwidth;
   rx->notch[idx].active=TRUE;
+  rx->notch[idx].af=FALSE;
+  rx->notch[idx].af_offset=0.0;
   rx->notches++;
   receiver_notch_sync(rx);
   return idx;
@@ -406,12 +434,13 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
   switch(button) {
     case 1: // left button
       // Ctrl+click manages manual notch filters: click empty area to drop a
-      // 100 Hz notch at the clicked RF; click on an existing notch to remove it.
+      // notch of the configured default width at the clicked RF; click on an
+      // existing notch to remove it. (Ctrl+scroll resizes one, see below.)
       if(state & GDK_CONTROL_MASK) {
         double clicked=(double)receiver_x_to_freq(rx,ex);
         int hit=receiver_notch_at(rx,clicked);
         if(hit>=0) receiver_delete_notch(rx,hit);
-        else       receiver_add_notch(rx,clicked,100.0);
+        else       receiver_add_notch(rx,clicked,rx->notch_default_width);
         if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
         rx->has_moved=FALSE;
         rx->is_panning=FALSE;
@@ -471,7 +500,7 @@ void update_frequency(RECEIVER *rx) {
    that keeps a runaway edit from producing a garbage frequency), lowered to the
    discovered device's own maximum when that is narrower (e.g. ~61 MHz for the
    classic HPSDR radios). */
-static long long receiver_max_frequency(void) {
+long long receiver_max_frequency(void) {
   long long cap = 6000000000LL;
   if(radio != NULL && radio->discovered != NULL) {
     long long dev = (long long)radio->discovered->frequency_max;
@@ -1018,6 +1047,26 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
   gboolean up=n<0;
   int mag=n<0?-n:n;       // notches this event (>1 on a fast flick)
 
+  // Ctrl+scroll over a manual notch resizes it (Ctrl+click having placed it),
+  // so its width can be dialled in against the interference on the spectrum
+  // itself instead of via the Configure dialog. Only fires with the pointer on
+  // a notch, so plain Ctrl+scroll elsewhere still tunes as before.
+  {
+    GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
+    if(state & GDK_CONTROL_MASK) {
+      int hit=receiver_notch_at(rx,(double)receiver_x_to_freq(rx,x));
+      if(hit>=0) {
+        gdouble w=rx->notch[hit].fwidth*pow(up?1.1:1.0/1.1,(double)mag);
+        if(w<NOTCH_MIN_WIDTH) w=NOTCH_MIN_WIDTH;
+        if(w>NOTCH_MAX_WIDTH) w=NOTCH_MAX_WIDTH;
+        rx->notch[hit].fwidth=w;
+        receiver_notch_sync(rx);
+        if(rx->panadapter!=NULL) gtk_widget_queue_draw(rx->panadapter);
+        return TRUE;
+      }
+    }
+  }
+
   if(rx->zoom>1 && y>=rx->panadapter_height-20) {
     int pan;
     if(up) {
@@ -1243,6 +1292,11 @@ void set_squelch(RECEIVER *rx) {
   // that; the same convention now applies to AMSQ for the other modes.
   rx->squelch_enable=(rx->squelch > 0.0);
 
+  // Every path that moves the bar (VFO drag/scroll, CAT, actions) ends here, so
+  // this is the one place that has to remember the setting for the current mode
+  // — receiver_mode_changed restores it from the same array.
+  if(mode>=0 && mode<MODES) rx->mode_squelch[mode]=rx->squelch;
+
   // Squelch gates the audio stream, so it must step aside while a decoder is
   // running (or in the data modes) exactly like NR/NB/ANF/notch -- otherwise a
   // closing squelch feeds the decoder SILENCE. For SSTV that silence decodes to
@@ -1261,12 +1315,12 @@ void set_squelch(RECEIVER *rx) {
   } else {
     // Voice/amplitude squelch. AMSQ's unmute threshold is pow(10, thresh_db/20)
     // on the pre-AGC signal magnitude, so map the 0..1 bar linearly in dB:
-    // higher bar = tighter gate. The absolute scale is provisional -- there is
-    // no calibrated on-air reference signal here, so the dB endpoints likely
-    // need tuning against a real band.
-    const double amsq_min_db=-160.0, amsq_max_db=-40.0;
-    double thresh_db=amsq_min_db + (amsq_max_db-amsq_min_db)*rx->squelch;
+    // higher bar = tighter gate. The endpoints are operator-settable (Configure
+    // -> RX-N) because the useful range depends on the station's noise floor
+    // and can only be found against a live band, not here.
+    double thresh_db=rx->amsq_min_db + (rx->amsq_max_db-rx->amsq_min_db)*rx->squelch;
     SetRXAAMSQThreshold(rx->channel, thresh_db);
+    SetRXAAMSQMaxTail(rx->channel, rx->amsq_tail);
     SetRXAFMSQRun(rx->channel, 0);
     SetRXAAMSQRun(rx->channel, run);
     log_info("Set AM/voice squelch %f %f dB\n", rx->squelch, thresh_db);
@@ -1288,6 +1342,9 @@ void set_apf(RECEIVER *rx) {
   SetRXASPCWBandwidth(rx->channel, rx->apf_bw);
   SetRXASPCWGain(rx->channel, rx->apf_gain);
   SetRXASPCWRun(rx->channel, (rx->apf_enable && cw) ? 1 : 0);
+  // Mirror onto the sub-receiver's channel (it gates on the SUB's own mode), so
+  // every caller of set_apf — dialog, mode change, MIDI — reaches both.
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_set_apf(rx);
 }
 
 void calculate_display_average(RECEIVER *rx) {
@@ -1382,12 +1439,16 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   if(rx->mode_a>=0 && rx->mode_a<MODES) {
     rx->mode_filter[rx->mode_a]=rx->filter_a;
     rx->mode_agc[rx->mode_a]=rx->agc;
+    rx->mode_squelch[rx->mode_a]=rx->squelch;
   }
   set_mode(rx,mode);
   if(mode>=0 && mode<MODES) {
     rx->filter_a=rx->mode_filter[mode];
     // Restore this mode's remembered AGC speed and push it to WDSP.
     rx->agc=rx->mode_agc[mode];
+    // ...and its squelch setting, so opening the gate wide on AM does not
+    // leave FM wide open on the next mode change. set_squelch below pushes it.
+    rx->squelch=rx->mode_squelch[mode];
     if(rx->channel>=0) set_agc(rx);
   }
   log_info("mode_changed: %d\n",mode);
@@ -2442,6 +2503,12 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->deviation=2500;
   rx->squelch_enable = FALSE;
   rx->squelch = 0.1;
+  for(int i=0;i<MODES;i++) rx->mode_squelch[i]=rx->squelch;
+  // AMSQ calibration defaults: the endpoints set_squelch used before they were
+  // made settable, and WDSP's own amsq create-time tail.
+  rx->amsq_min_db = -160.0;
+  rx->amsq_max_db = -40.0;
+  rx->amsq_tail = 1.5;   // WDSP's create_amsq max_tail, so the default is a no-op
 
   // APF (CW audio peak filter) defaults mirror the WDSP "speak" create values
   // (bw 100 Hz, gain 2.0); off by default. Freq tracks the CW sidetone in set_apf.
@@ -2592,6 +2659,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->snb=FALSE;
 
   rx->notches=0;
+  rx->notch_default_width=NOTCH_DEFAULT_WIDTH;
 
   rx->nr_agc=0;
   rx->nr2_gain_method=2;

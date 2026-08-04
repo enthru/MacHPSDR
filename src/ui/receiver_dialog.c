@@ -461,6 +461,124 @@ static void panadapter_phase_gain_changed_cb(GtkWidget *widget, gpointer data) {
 
 // NR4 (libspecbleach) live parameter tuning. Each pushes straight to WDSP so the
 // operator can hear the change while A/B-testing on real signals.
+// --- Squelch (AMSQ calibration) -------------------------------------------
+// The 0..1 SQL bar maps onto [amsq_min_db, amsq_max_db]; both ends plus the
+// gate's tail time are settable because the useful range depends on the
+// station's noise floor and can only be found against a live band.
+static void amsq_min_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->amsq_min_db=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  set_squelch(rx);
+}
+static void amsq_max_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->amsq_max_db=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  set_squelch(rx);
+}
+static void amsq_tail_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->amsq_tail=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  set_squelch(rx);
+}
+
+// --- Manual notch (MNF) list editor ---------------------------------------
+// One fixed row per possible notch, shown/hidden as the list grows and shrinks.
+// Rows are never created or destroyed at runtime, so no callback can ever run
+// against a row widget that is being torn down underneath it.
+typedef struct _mnf_ui {
+  RECEIVER *rx;
+  GtkWidget *active[MAX_NOTCHES];
+  GtkWidget *freq[MAX_NOTCHES];
+  GtkWidget *width[MAX_NOTCHES];
+  GtkWidget *af[MAX_NOTCHES];
+  GtkWidget *del[MAX_NOTCHES];
+  GtkWidget *empty;
+} MNF_UI;
+
+static void mnf_refresh(MNF_UI *ui) {
+  RECEIVER *rx=ui->rx;
+  for(int i=0;i<MAX_NOTCHES;i++) {
+    gboolean used=(i<rx->notches);
+    gtk_widget_set_visible(ui->active[i],used);
+    gtk_widget_set_visible(ui->freq[i],used);
+    gtk_widget_set_visible(ui->width[i],used);
+    gtk_widget_set_visible(ui->af[i],used);
+    gtk_widget_set_visible(ui->del[i],used);
+    if(!used) continue;
+    // Writing a value back through these setters re-fires the callbacks, but
+    // each one then stores the value it just read — a no-op.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(ui->active[i]),rx->notch[i].active);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->freq[i]),rx->notch[i].fcenter/1000000.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ui->width[i]),rx->notch[i].fwidth);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(ui->af[i]),rx->notch[i].af);
+  }
+  gtk_widget_set_visible(ui->empty,rx->notches==0);
+}
+
+static int mnf_index(GtkWidget *w) {
+  return GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w),"notch_idx"));
+}
+
+static void notch_active_cb(GtkCheckButton *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  int i=mnf_index(GTK_WIDGET(widget));
+  if(i>=ui->rx->notches) return;
+  ui->rx->notch[i].active=gtk_check_button_get_active(widget);
+  receiver_notch_sync(ui->rx);
+  if(ui->rx->panadapter!=NULL) gtk_widget_queue_draw(ui->rx->panadapter);
+}
+
+static void notch_af_cb(GtkCheckButton *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  int i=mnf_index(GTK_WIDGET(widget));
+  if(i>=ui->rx->notches) return;
+  receiver_set_notch_af(ui->rx,i,gtk_check_button_get_active(widget));
+}
+
+static void notch_freq_cb(GtkWidget *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  int i=mnf_index(widget);
+  if(i>=ui->rx->notches) return;
+  gdouble hz=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget))*1000000.0;
+  ui->rx->notch[i].fcenter=hz;
+  // An AF notch is defined by its offset, so moving it by frequency has to
+  // re-derive that offset or the next sync would snap it straight back.
+  if(ui->rx->notch[i].af)
+    ui->rx->notch[i].af_offset=hz-receiver_notch_anchor(ui->rx);
+  receiver_notch_sync(ui->rx);
+  if(ui->rx->panadapter!=NULL) gtk_widget_queue_draw(ui->rx->panadapter);
+}
+
+static void notch_width_cb(GtkWidget *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  int i=mnf_index(widget);
+  if(i>=ui->rx->notches) return;
+  ui->rx->notch[i].fwidth=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  receiver_notch_sync(ui->rx);
+  if(ui->rx->panadapter!=NULL) gtk_widget_queue_draw(ui->rx->panadapter);
+}
+
+static void notch_delete_cb(GtkWidget *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  int i=mnf_index(widget);
+  if(i>=ui->rx->notches) return;
+  receiver_delete_notch(ui->rx,i);
+  mnf_refresh(ui);
+  if(ui->rx->panadapter!=NULL) gtk_widget_queue_draw(ui->rx->panadapter);
+}
+
+static void notch_add_cb(GtkWidget *widget, gpointer data) {
+  MNF_UI *ui=(MNF_UI *)data;
+  receiver_add_notch(ui->rx,receiver_notch_anchor(ui->rx),ui->rx->notch_default_width);
+  mnf_refresh(ui);
+  if(ui->rx->panadapter!=NULL) gtk_widget_queue_draw(ui->rx->panadapter);
+}
+
+static void notch_default_width_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->notch_default_width=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+}
+
 static void nr4_reduction_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_reduction=gtk_range_get_value(GTK_RANGE(widget));
@@ -1342,7 +1460,14 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // the left Audio/EQ/NR4/APF stack) and leaves a big empty area below its 3
   // rows of controls. START makes it hug its content height.
   gtk_widget_set_valign(cat_frame,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),cat_frame,col,row,1,1);
+  // CAT, Squelch and the notch list share ONE grid cell via a vbox: attached as
+  // separate grid rows they were spread out by the tall panadapter/EQ rows above
+  // and left a big gap between them (same reason the left column stacks its
+  // Audio/EQ/NR4 frames in a box).
+  GtkWidget *cat_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,5);
+  gtk_widget_set_valign(cat_box,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),cat_box,col,row,1,1);
+  gtk_box_append(GTK_BOX(cat_box),cat_frame);
   row++;
 
   GtkWidget *cat_debug_b=gtk_check_button_new_with_label("CAT Debug");
@@ -1403,5 +1528,129 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,5,2,1,1);
   g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
+
+  // Squelch calibration, under CAT in the same column. Only the AMSQ (non-FM)
+  // path is exposed: the FM squelch mapping is fixed and known-good, while the
+  // amplitude squelch has no calibrated reference here.
+  {
+    GtkWidget *sq_frame=gtk_frame_new("Squelch (AM/SSB)");
+    GtkWidget *sq_grid=gtk_grid_new();
+    sui_style_group(sq_grid);
+    gtk_frame_set_child(GTK_FRAME(sq_frame),sq_grid);
+    gtk_widget_set_valign(sq_frame,GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(cat_box),sq_frame);
+
+    GtkWidget *l=gtk_label_new("The SQL bar spans this dB range on the pre-AGC signal (FM uses its own squelch).");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_label_set_wrap(GTK_LABEL(l),TRUE);
+    gtk_grid_attach(GTK_GRID(sq_grid),l,0,0,4,1);
+
+    l=gtk_label_new("Bar min (dB):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(sq_grid),l,0,1,1,1);
+    GtkWidget *sp=gtk_spin_button_new_with_range(-160.0,0.0,1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp),rx->amsq_min_db);
+    gtk_grid_attach(GTK_GRID(sq_grid),sp,1,1,1,1);
+    g_signal_connect(sp,"value_changed",G_CALLBACK(amsq_min_cb),rx);
+
+    l=gtk_label_new("Bar max (dB):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_widget_set_margin_start(l,20);
+    gtk_grid_attach(GTK_GRID(sq_grid),l,2,1,1,1);
+    sp=gtk_spin_button_new_with_range(-160.0,0.0,1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp),rx->amsq_max_db);
+    gtk_grid_attach(GTK_GRID(sq_grid),sp,3,1,1,1);
+    g_signal_connect(sp,"value_changed",G_CALLBACK(amsq_max_cb),rx);
+
+    l=gtk_label_new("Max tail (s):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(sq_grid),l,0,2,1,1);
+    sp=gtk_spin_button_new_with_range(0.0,3.0,0.1);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(sp),2);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sp),rx->amsq_tail);
+    gtk_widget_set_tooltip_text(sp,"How long the gate stays open after the signal drops");
+    gtk_grid_attach(GTK_GRID(sq_grid),sp,1,2,1,1);
+    g_signal_connect(sp,"value_changed",G_CALLBACK(amsq_tail_cb),rx);
+  }
+
+  // Manual notch list. The panadapter gestures (Ctrl+click to add/remove,
+  // Ctrl+scroll to resize) stay the fast path; this is for exact values and for
+  // the per-notch enable/AF switches, which have no gesture.
+  {
+    MNF_UI *ui=g_new0(MNF_UI,1);
+    ui->rx=rx;
+
+    GtkWidget *mnf_frame=gtk_frame_new("Manual Notch (MNF)");
+    GtkWidget *mnf_grid=gtk_grid_new();
+    sui_style_group(mnf_grid);
+    gtk_frame_set_child(GTK_FRAME(mnf_frame),mnf_grid);
+    gtk_widget_set_valign(mnf_frame,GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(cat_box),mnf_frame);
+    // Freed with the frame, so the callbacks' data outlives every row widget.
+    g_object_set_data_full(G_OBJECT(mnf_frame),"mnf_ui",ui,g_free);
+
+    GtkWidget *add_b=gtk_button_new_with_label("Add at VFO");
+    gtk_grid_attach(GTK_GRID(mnf_grid),add_b,0,0,1,1);
+    g_signal_connect(add_b,"clicked",G_CALLBACK(notch_add_cb),ui);
+
+    GtkWidget *l=gtk_label_new("New notch width (Hz):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_widget_set_margin_start(l,20);
+    gtk_grid_attach(GTK_GRID(mnf_grid),l,1,0,1,1);
+    GtkWidget *dw=gtk_spin_button_new_with_range(NOTCH_MIN_WIDTH,NOTCH_MAX_WIDTH,10.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(dw),rx->notch_default_width);
+    gtk_widget_set_tooltip_text(dw,"Width a Ctrl+click notch is created with");
+    gtk_grid_attach(GTK_GRID(mnf_grid),dw,2,0,1,1);
+    g_signal_connect(dw,"value_changed",G_CALLBACK(notch_default_width_cb),rx);
+
+    l=gtk_label_new("Ctrl+click the panadapter to add or remove a notch, Ctrl+scroll over one to resize it. AF makes a notch ride the dial instead of staying on the RF frequency.");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_label_set_wrap(GTK_LABEL(l),TRUE);
+    gtk_grid_attach(GTK_GRID(mnf_grid),l,0,1,5,1);
+
+    const char *hdr[4]={"On","Frequency (MHz)","Width (Hz)","AF"};
+    for(int h=0;h<4;h++) {
+      GtkWidget *hl=gtk_label_new(hdr[h]);
+      gtk_label_set_xalign(GTK_LABEL(hl),0.0);
+      gtk_grid_attach(GTK_GRID(mnf_grid),hl,h,2,1,1);
+    }
+
+    for(int n=0;n<MAX_NOTCHES;n++) {
+      int r=3+n;
+
+      ui->active[n]=gtk_check_button_new();
+      g_object_set_data(G_OBJECT(ui->active[n]),"notch_idx",GINT_TO_POINTER(n));
+      gtk_grid_attach(GTK_GRID(mnf_grid),ui->active[n],0,r,1,1);
+      g_signal_connect(ui->active[n],"toggled",G_CALLBACK(notch_active_cb),ui);
+
+      ui->freq[n]=gtk_spin_button_new_with_range(0.0,6000.0,0.0001);
+      gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ui->freq[n]),6);
+      g_object_set_data(G_OBJECT(ui->freq[n]),"notch_idx",GINT_TO_POINTER(n));
+      gtk_grid_attach(GTK_GRID(mnf_grid),ui->freq[n],1,r,1,1);
+      g_signal_connect(ui->freq[n],"value_changed",G_CALLBACK(notch_freq_cb),ui);
+
+      ui->width[n]=gtk_spin_button_new_with_range(NOTCH_MIN_WIDTH,NOTCH_MAX_WIDTH,10.0);
+      g_object_set_data(G_OBJECT(ui->width[n]),"notch_idx",GINT_TO_POINTER(n));
+      gtk_grid_attach(GTK_GRID(mnf_grid),ui->width[n],2,r,1,1);
+      g_signal_connect(ui->width[n],"value_changed",G_CALLBACK(notch_width_cb),ui);
+
+      ui->af[n]=gtk_check_button_new();
+      g_object_set_data(G_OBJECT(ui->af[n]),"notch_idx",GINT_TO_POINTER(n));
+      gtk_grid_attach(GTK_GRID(mnf_grid),ui->af[n],3,r,1,1);
+      g_signal_connect(ui->af[n],"toggled",G_CALLBACK(notch_af_cb),ui);
+
+      ui->del[n]=gtk_button_new_with_label("Delete");
+      g_object_set_data(G_OBJECT(ui->del[n]),"notch_idx",GINT_TO_POINTER(n));
+      gtk_grid_attach(GTK_GRID(mnf_grid),ui->del[n],4,r,1,1);
+      g_signal_connect(ui->del[n],"clicked",G_CALLBACK(notch_delete_cb),ui);
+    }
+
+    ui->empty=gtk_label_new("No notches.");
+    gtk_label_set_xalign(GTK_LABEL(ui->empty),0.0);
+    gtk_grid_attach(GTK_GRID(mnf_grid),ui->empty,0,3+MAX_NOTCHES,5,1);
+
+    mnf_refresh(ui);
+  }
+
   return grid;
 }
