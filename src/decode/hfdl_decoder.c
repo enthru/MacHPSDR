@@ -153,36 +153,31 @@ static void chans_build(double rate, long long center_hz, long long cursor_hz) {
   demod_free();
   if (cursor_hz <= 0) cursor_hz = center_hz;
 
-  // Channel 0 is the receiver centre, always. That is where a channel sits when
-  // the operator has dialled it the plain way (or de-rotated a recording with
-  // the I/Q-player offset), and it must keep working no matter where the cursor
-  // happens to be parked.
-  chan_add(0.0, center_hz > 0 ? (uint32_t)(center_hz / 1000) : 0, rate);
-
-  // Channel 1 is where the operator is POINTING — the CTUN/freetune cursor. It
-  // is a second front-end rather than a replacement for the centre: both cost
-  // ~0.5 % of a core, and choosing between them means one of the two ways of
-  // tuning silently stops decoding. Skipped when the cursor is on the centre
-  // anyway, or outside the passband where there is nothing to decode.
+  // ONE channel: the one the operator is pointing at. Under CTUN/freetune that
+  // is the cursor, otherwise the centre — the same thing the rest of the
+  // receiver calls "tuned". Decoding anywhere else on the quiet is wrong: it
+  // spends a front-end on spectrum nobody asked about and hides a mistuned
+  // cursor behind lines from somewhere else. Decoding more than one channel is
+  // what "Scan band" is for, and it is deliberate.
   double cursor_off = (center_hz > 0 && cursor_hz > 0)
                       ? (double)(cursor_hz - center_hz) : 0.0;
+  // Outside the passband there is nothing to decode; fall back to the centre
+  // rather than pointing a front-end into empty spectrum.
   double usable = rate * 0.5 * 0.9;
-  gboolean have_cursor = fabs(cursor_off) > HFDL_CURSOR_EPS_HZ &&
-                         fabs(cursor_off) <= usable;
-  if (have_cursor)
-    chan_add(cursor_off, (uint32_t)(cursor_hz / 1000), rate);
+  if (fabs(cursor_off) > usable) {
+    cursor_off = 0.0;
+    cursor_hz  = center_hz;
+  }
+  chan_add(cursor_off, cursor_hz > 0 ? (uint32_t)(cursor_hz / 1000) : 0, rate);
 
   demod_rate   = rate;
   demod_center = center_hz;
   demod_cursor = cursor_hz;
-  // Say which channels are actually being decoded, not just how many: "no
-  // frames" is nearly always a front-end pointed somewhere other than the
-  // operator thinks, and that is invisible without this line.
-  if (have_cursor)
-    log_info("hfdl: decoding centre %lld Hz + cursor %lld Hz (%+.0f Hz), rate %.0f\n",
-             center_hz, cursor_hz, cursor_off, rate);
-  else
-    log_info("hfdl: decoding centre %lld Hz, rate %.0f\n", center_hz, rate);
+  // Say which channel is actually being decoded: "no frames" is nearly always
+  // the front-end pointed somewhere other than the operator thinks, and that is
+  // invisible without this line.
+  log_info("hfdl: tuned channel %lld Hz (%+.0f Hz from centre %lld), rate %.0f\n",
+           cursor_hz, cursor_off, center_hz, rate);
   if (!scan_band || center_hz <= 0) return;
 
   // Every known HFDL channel that falls inside the usable part of the passband.
