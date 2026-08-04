@@ -2,15 +2,20 @@
 // with an explicit receiver centre and tuned-channel (cursor) frequency, and
 // print every decoded message. No GTK, no audio, no radio.
 //
-//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rate_override]
+//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz]
 //
 // The WAV's own sample rate is the I/Q rate. Frequencies are absolute Hz; the
 // cursor is where the operator would have the CTUN/freetune cursor.
+//
+// rotate_hz shifts the recording UP by that many Hz before feeding it, which is
+// the I/Q Player's "Frequency offset" with the opposite sign — it is how you
+// reproduce a capture whose signal was moved onto the receiver centre.
 
 #include <glib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "hfdl_decoder.h"
 
 static int rd32(FILE *f, unsigned *v) { unsigned char b[4]; if (fread(b,1,4,f)!=4) return 0;
@@ -23,6 +28,7 @@ int main(int argc, char **argv) {
   const char *path = argv[1];
   long long centre = atoll(argv[2]);
   long long cursor = atoll(argv[3]);
+  double rot_hz = (argc > 4) ? atof(argv[4]) : 0.0;
 
   FILE *f = fopen(path, "rb");
   if (!f) { perror(path); return 1; }
@@ -53,10 +59,21 @@ int main(int argc, char **argv) {
   double *iq = g_new(double, BLK*2);
   char msg[65536];
   long done = 0; int blocks = 0;
+  double ph = 0.0, dph = 2.0*G_PI*rot_hz/(double)rate;
   while (done < nframes) {
     int want = (int)MIN((long)BLK, nframes-done);
     if ((int)fread(raw, sizeof(short)*2, want, f) != want) break;
-    for (int i = 0; i < want*2; i++) iq[i] = (double)raw[i] / 32768.0;
+    for (int i = 0; i < want; i++) {
+      double re = (double)raw[2*i] / 32768.0, im = (double)raw[2*i+1] / 32768.0;
+      if (rot_hz != 0.0) {
+        double c = cos(ph), s = sin(ph);
+        double r2 = re*c - im*s, i2 = re*s + im*c;
+        re = r2; im = i2;
+        ph += dph;
+        if (ph > 2.0*G_PI) ph -= 2.0*G_PI; else if (ph < -2.0*G_PI) ph += 2.0*G_PI;
+      }
+      iq[2*i] = re; iq[2*i+1] = im;
+    }
     hfdl_decoder_add_iq_at(iq, want, (int)rate, centre, cursor);
     done += want; blocks++;
     int n = hfdl_decoder_get_messages(msg, sizeof(msg));

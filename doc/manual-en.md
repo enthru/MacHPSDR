@@ -264,10 +264,10 @@ Decode selector; **Show HFDL** opens a panel (in the second-receiver slot, like
 the other decoders), and the Decode block shows the signal level, frame count,
 symbol throughput and the last few lines of decoded text. Tune the HFDL channel
 the same way as any USB data signal — the decoder expects the 1440 Hz carrier
-offset the standard uses, i.e. dial the *assigned* channel frequency. **With CTUN
-or freetune the cursor is what selects the channel**, so you can leave the
-receiver where it is and just put the cursor on the channel anywhere in the
-passband; without them it is the centre, as before. The panel's
+offset the standard uses, i.e. dial the *assigned* channel frequency. **With CTUN or freetune the
+cursor selects a channel too**, so you can leave the receiver where it is and put
+the cursor on a channel anywhere in the passband — the centre keeps being decoded
+as well, so both ways of tuning work at once. The panel's
 **channel drop-down** does that for you: pick, say, *11387 kHz – Riverhead, New
 York* and press **Tune**. The list is built from the ground-station table, so it
 follows the table received on air.
