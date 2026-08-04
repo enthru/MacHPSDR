@@ -77,6 +77,13 @@ int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
 // Current AGC signal level (RSSI, dB) — slowly tracking, for the panel readout.
 double hfdl_demod_level_db(hfdl_demod *d);
 
+// Move the front-end's channel offset without rebuilding it. Only the downmix
+// NCO changes; the resampler, AGC, matched filter and symbol recovery keep their
+// state, so this is cheap enough to do while hunting for the carrier. Used by
+// the decoder's coarse search: the Costas loop only pulls in ~±100 Hz, which is
+// far finer than an operator can point a mouse.
+void hfdl_demod_set_channel_offset(hfdl_demod *d, double channel_offset_hz);
+
 // Symbol recovery (phase 2b): take conditioned baseband (HFDL_BASEBAND_RATE,
 // interleaved float I/Q from hfdl_demod_process) and run symbol-timing recovery
 // (symsync) + carrier recovery (Costas loop, decision-directed against BPSK),

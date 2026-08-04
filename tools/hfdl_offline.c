@@ -2,7 +2,7 @@
 // with an explicit receiver centre and tuned-channel (cursor) frequency, and
 // print every decoded message. No GTK, no audio, no radio.
 //
-//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz]
+//   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz] [conj]
 //
 // The WAV's own sample rate is the I/Q rate. Frequencies are absolute Hz; the
 // cursor is where the operator would have the CTUN/freetune cursor.
@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
   long long centre = atoll(argv[2]);
   long long cursor = atoll(argv[3]);
   double rot_hz = (argc > 4) ? atof(argv[4]) : 0.0;
+  int conj = (argc > 5) ? atoi(argv[5]) : 0;   // 1 = mirror the spectrum (Q = -Q)
 
   FILE *f = fopen(path, "rb");
   if (!f) { perror(path); return 1; }
@@ -65,6 +66,7 @@ int main(int argc, char **argv) {
     if ((int)fread(raw, sizeof(short)*2, want, f) != want) break;
     for (int i = 0; i < want; i++) {
       double re = (double)raw[2*i] / 32768.0, im = (double)raw[2*i+1] / 32768.0;
+      if (conj) im = -im;
       if (rot_hz != 0.0) {
         double c = cos(ph), s = sin(ph);
         double r2 = re*c - im*s, i2 = re*s + im*c;

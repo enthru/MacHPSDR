@@ -79,7 +79,27 @@ typedef struct {
   uint32_t     khz;         // channel frequency, 0 when it is just "the dial"
   hfdl_demod  *demod;
   hfdl_framer *framer;
+  double       trim_hz;     // search offset applied on top (0 for the exact one)
+  gboolean     is_trim;     // one of the tuned channel's search siblings
 } HFDL_CHANNEL;
+
+// Coarse carrier search.
+//
+// MEASURED on a real recording: the chain decodes with the channel frequency out
+// by 100 Hz, and decodes nothing at 200 Hz. That is far finer than an operator
+// can point — one pixel of an unzoomed panadapter is already ~100 Hz — and finer
+// than an uncalibrated dial. dumphfdl never meets this because it is handed exact
+// channel frequencies and a calibrated SDR.
+//
+// So the tuned channel is run at several offsets AT ONCE, and whichever decodes
+// a frame wins; the losers are then dropped, leaving exactly the single
+// front-end that was there before. They must run in parallel rather than be
+// tried in turn: HFDL is bursty (this recording carries ~14 frames in 174 s), so
+// a search that walks the offset on a timer is almost never on the right one
+// when a burst finally arrives — measured, it decoded nothing at all.
+static const double HFDL_TRIM_HZ[] = { 0.0, 150.0, -150.0, 300.0, -300.0,
+                                       450.0, -450.0 };
+#define HFDL_TRIM_CNT ((int)(sizeof(HFDL_TRIM_HZ)/sizeof(HFDL_TRIM_HZ[0])))
 
 // Retuning the cursor tears down and rebuilds the front-end, so ignore moves
 // smaller than this: an HFDL channel is 2.6 kHz wide and the demod pulls in a
@@ -136,15 +156,54 @@ static void demod_free(void) {
   demod_cursor = 0;
 }
 
-static void chan_add(double offset_hz, uint32_t khz, double rate) {
+static void chan_add_trim(double offset_hz, uint32_t khz, double rate,
+                          double trim_hz, gboolean is_trim) {
   if (nchans >= HFDL_MAX_CHANNELS) return;
-  hfdl_demod *d = hfdl_demod_create_at(rate, offset_hz);
+  hfdl_demod *d = hfdl_demod_create_at(rate, offset_hz + trim_hz);
   if (d == NULL) return;
   chans[nchans].offset_hz = offset_hz;
   chans[nchans].khz       = khz;
   chans[nchans].demod     = d;
   chans[nchans].framer    = hfdl_framer_create();
+  chans[nchans].trim_hz   = trim_hz;
+  chans[nchans].is_trim   = is_trim;
   nchans++;
+}
+
+static void chan_add(double offset_hz, uint32_t khz, double rate) {
+  chan_add_trim(offset_hz, khz, rate, 0.0, FALSE);
+}
+
+// A frame decoded on channel `winner`: if the coarse search is still running,
+// keep that front-end and drop its siblings, so the steady state is the single
+// channel that existed before the search was added.
+static void chan_search_done(int winner) {
+  if (winner < 0 || winner >= nchans) return;
+  if (!chans[winner].is_trim && chans[winner].trim_hz == 0.0) {
+    // The exact offset won and no sibling is worth keeping either.
+  }
+  gboolean any = FALSE;
+  for (int i = 0; i < nchans; i++)
+    if (i != winner && (chans[i].is_trim || chans[i].trim_hz != 0.0) &&
+        chans[i].khz == chans[winner].khz) any = TRUE;
+  if (!any) return;
+  if (chans[winner].trim_hz != 0.0)
+    log_info("hfdl: carrier found %+.0f Hz from the requested channel\n",
+             chans[winner].trim_hz);
+  int n = 0;
+  for (int i = 0; i < nchans; i++) {
+    gboolean sibling = (i != winner) && (chans[i].is_trim || chans[i].trim_hz != 0.0) &&
+                       (chans[i].khz == chans[winner].khz);
+    if (sibling) {
+      if (chans[i].demod)  hfdl_demod_destroy(chans[i].demod);
+      if (chans[i].framer) hfdl_framer_destroy(chans[i].framer);
+      continue;
+    }
+    if (n != i) chans[n] = chans[i];
+    n++;
+  }
+  nchans = n;
+  for (int i = 0; i < nchans; i++) chans[i].is_trim = FALSE;
 }
 
 // Audio thread. Build the channel set for this receiver centre / tuned channel
@@ -168,7 +227,14 @@ static void chans_build(double rate, long long center_hz, long long cursor_hz) {
     cursor_off = 0.0;
     cursor_hz  = center_hz;
   }
-  chan_add(cursor_off, cursor_hz > 0 ? (uint32_t)(cursor_hz / 1000) : 0, rate);
+  uint32_t cursor_khz = cursor_hz > 0 ? (uint32_t)(cursor_hz / 1000) : 0;
+  chan_add_trim(cursor_off, cursor_khz, rate, 0.0, FALSE);
+  // Search siblings at the same channel, a few hundred Hz either side. Only when
+  // not scanning: a bandful of channels is already the CPU budget, and those
+  // come from the station table at exact frequencies rather than from a mouse.
+  if (!scan_band)
+    for (int t = 1; t < HFDL_TRIM_CNT; t++)
+      chan_add_trim(cursor_off, cursor_khz, rate, HFDL_TRIM_HZ[t], TRUE);
 
   demod_rate   = rate;
   demod_center = center_hz;
@@ -310,7 +376,7 @@ void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
     chans_build((double)sample_rate, center_hz, cursor_hz);
   }
 
-  int nsym = 0, frames = 0;
+  int nsym = 0, frames = 0, winner = -1;
   double level = -160.0;
   GString *frametext = NULL;      // decoded messages from this block (may be NULL)
   for (int c = 0; c < nchans; c++) {
@@ -325,13 +391,21 @@ void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
     // (A block holds tens of symbols and spans several framer states, so doing
     // this a block at a time would be far too coarse — PSK4/PSK8 data would be
     // sliced as BPSK for most of the frame.)
+    // Label lines with their channel only when genuinely decoding several
+    // DIFFERENT channels (scan band) — the search siblings are all the same
+    // channel, and prefixing them would invent a distinction that is not there.
     frame_sink sink = { chans[c].framer, chans[c].demod,
-                        nchans > 1 ? chans[c].khz : 0, 0, frametext };
+                        (scan_band && nchans > 1) ? chans[c].khz : 0, 0, frametext };
     int n = hfdl_demod_symbols_cb(chans[c].demod, out_buf, nbb, on_symbol, &sink);
     if (c == 0) nsym = n;         // throughput readout follows the dial channel
     frames += sink.frames;
     frametext = sink.text;        // shared, allocated lazily by the first frame
+
+    if (sink.frames > 0) winner = c;
   }
+  // Collapse the coarse search onto whichever offset actually decoded. Done
+  // after the loop so the channel array is not rearranged while iterating it.
+  if (winner >= 0) chan_search_done(winner);
 
   g_mutex_lock(&lock);
   ensure_init();

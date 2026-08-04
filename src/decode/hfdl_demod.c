@@ -265,6 +265,12 @@ int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
   return s.n;
 }
 
+void hfdl_demod_set_channel_offset(hfdl_demod *d, double channel_offset_hz) {
+  if (d == NULL || d->osc == NULL) return;
+  nco_crcf_set_frequency(d->osc,
+    (float)(2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + channel_offset_hz) / d->input_rate));
+}
+
 double hfdl_demod_level_db(hfdl_demod *d) {
   if (d == NULL) return -160.0;
   return (double)agc_crcf_get_rssi(d->agc);

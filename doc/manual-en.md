@@ -268,7 +268,9 @@ offset the standard uses, i.e. dial the *assigned* channel frequency. **With CTU
 cursor is what selects the channel**, so you can leave the receiver where it is
 and just put the cursor on the channel anywhere in the passband; without them the
 channel is the centre, as before. One channel is decoded at a time — use **Scan
-band** to decode more. The panel's
+band** to decode more. You do not have to hit the channel exactly: the decoder
+searches about **±600 Hz** around where you point, so clicking on the burst is
+enough, and the Decode block shows the channel it settled on. The panel's
 **channel drop-down** does that for you: pick, say, *11387 kHz – Riverhead, New
 York* and press **Tune**. The list is built from the ground-station table, so it
 follows the table received on air.
