@@ -277,11 +277,18 @@ static void chans_build(double rate, long long center_hz, long long cursor_hz) {
   // Search siblings at the same channel, a few hundred Hz either side. Only when
   // not scanning: a bandful of channels is already the CPU budget, and those
   // come from the station table at exact frequencies rather than from a mouse.
-  if (!scan_band)
+  if (!scan_band) {
     for (int t = 1; t < HFDL_TRIM_CNT; t++) {
       chan_add_trim(cursor_off, cursor_khz, rate, HFDL_TRIM_HZ[t], TRUE);
       chans[nchans-1].is_tuned = TRUE;
     }
+    // NOTE: an inverted sideband ("Swap I & Q" in the wrong position, or a
+    // recording made with the other convention) needs nothing here. It mirrors
+    // the panadapter and the decoder together — both read the same buffer the
+    // same way — so the signal simply appears on the other side of the centre
+    // and the operator points at what they see. Verified on a deliberately
+    // conjugated copy of a real recording: decodes normally.
+  }
 
   demod_rate   = rate;
   demod_center = center_hz;

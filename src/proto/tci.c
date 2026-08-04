@@ -1247,7 +1247,19 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
   if (rx == NULL || iq == NULL || nsamples <= 0) return;
   int idx = tci_rx_index(rx);
   if (idx < 0) return;
-  tci_stream_broadcast(TCI_STREAM_IQ, idx, sample_rate, 2, iq, NULL, (guint32)nsamples * 2u, FALSE);
+  // The receiver's buffer is (Q, I) — that is how WDSP reads it (analyzer.c
+  // Spectrum0) and therefore what the panadapter shows. TCI carries (I, Q), so
+  // send it in that order: passing the buffer through verbatim hands the client
+  // the conjugate, i.e. a spectrum mirrored against this radio's own display,
+  // which puts every signal a skimmer finds on the wrong side of the centre.
+  guint32 nf = (guint32)nsamples * 2u;
+  float *swapped = g_new(float, nf);
+  for (int i = 0; i < nsamples; i++) {
+    swapped[2*i]     = (float)iq[2*i + 1];   // I
+    swapped[2*i + 1] = (float)iq[2*i];       // Q
+  }
+  tci_stream_broadcast(TCI_STREAM_IQ, idx, sample_rate, 2, NULL, swapped, nf, FALSE);
+  g_free(swapped);
 }
 
 // Phase C: demodulated RX audio (interleaved stereo doubles, `nstereo` frames at

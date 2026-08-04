@@ -1827,8 +1827,12 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
 
   double ph = rx->scope_nco_ph;
   for(int i=0; i<n; i++) {
-    double I = iq[i*2];
-    double Q = iq[i*2+1];
+    // (Q, I): the receiver buffer's order — WDSP reads it that way
+    // (analyzer.c Spectrum0), so this matches the panadapter. Reading it as
+    // (I, Q) mirrors the spectrum, and this path downmixes by a signed offset,
+    // so it would isolate the wrong side of the centre.
+    double I = iq[i*2+1];
+    double Q = iq[i*2];
     double c = cos(ph), s = sin(ph);
     ext[(hist_n+i)*2]   = (gfloat)(I*c - Q*s);
     ext[(hist_n+i)*2+1] = (gfloat)(I*s + Q*c);
@@ -1889,8 +1893,9 @@ static void scope_iq_feed(RECEIVER *rx, double *iq, int nsamples) {
   int n = nsamples < rx->scope_iq_cap ? nsamples : rx->scope_iq_cap;
   g_mutex_lock(&rx->scope_mutex);
   for(int i=0; i<n; i++) {
-    rx->scope_iq[i*2]   = (gfloat)iq[i*2];
-    rx->scope_iq[i*2+1] = (gfloat)iq[i*2+1];
+    // (Q, I) -> (I, Q) so the vectorscope's X/Y axes are the real I and Q.
+    rx->scope_iq[i*2]   = (gfloat)iq[i*2+1];
+    rx->scope_iq[i*2+1] = (gfloat)iq[i*2];
   }
   rx->scope_iq_n = n;
   g_mutex_unlock(&rx->scope_mutex);

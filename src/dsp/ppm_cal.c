@@ -98,10 +98,14 @@ void ppm_cal_tune_to_station(RADIO *r, int index) {
 //   for zero error we need p/1e6 = −e, i.e.
 //   p_new = p_old + (residual / B)·1e6
 // A positive residual (carrier sits above the intended offset) therefore raises
-// the ppm value.  The sign follows the HPSDR non-inverted I/Q convention
-// (iq[2k]=I, iq[2k+1]=Q, a signal above the LO at positive baseband frequency);
-// re-running the measurement shows the residual collapsing toward 0 when it is
-// right.
+// the ppm value.  The sign depends on the I/Q order, and the receiver's buffer
+// is (Q, I): WDSP reads it that way (analyzer.c Spectrum0: I from pbuff[2k+1],
+// Q from pbuff[2k]), so that is the sense the panadapter — and therefore
+// "the carrier sits above the LO" — is in.  Reading it as (I, Q) here would
+// mirror the baseband, putting the carrier at −PPM_MEAS_OFFSET where the search
+// window is not looking and inverting the residual, i.e. driving the loop the
+// wrong way.  Re-running the measurement shows the residual collapsing toward 0
+// when it is right.
 
 #define PPM_FFT_N        32768   // FFT size (power of two)
 #define PPM_MEAS_OFFSET   1500.0 // Hz the carrier is parked at, away from DC
@@ -316,8 +320,9 @@ void ppm_cal_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
     return;
   }
   for(int k=0;k<n_frames;k++) {
-    fre[acc_n]=iq[2*k];
-    fim[acc_n]=iq[2*k+1];
+    // (Q, I) — the receiver buffer's order, see the sign note above.
+    fre[acc_n]=iq[2*k+1];
+    fim[acc_n]=iq[2*k];
     acc_n++;
     if(acc_n>=PPM_FFT_N) {
       if(settle_left>0) {
