@@ -1442,13 +1442,16 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
         lsample=ROUNDHTZ(tx->outMI[j]);
         rsample=ROUNDHTZ(tx->outMQ[j]);
       } else {
-        if(radio->iqswap) {
-          qsample=ROUNDHTZ(tx->iq_output_buffer[j*2]);
-          isample=ROUNDHTZ(tx->iq_output_buffer[(j*2)+1]);
-        } else {
-          isample=ROUNDHTZ(tx->iq_output_buffer[j*2]);
-          qsample=ROUNDHTZ(tx->iq_output_buffer[(j*2)+1]);
-        }
+        // No iqswap here. "Swap I & Q" describes a DEVICE whose I/Q order is
+        // reversed, and on receive it is applied for SoapySDR and the I/Q Player
+        // only — protocol1/protocol2 never consult it. Applying it on transmit
+        // for those protocols made one switch mean two different things: on
+        // Soapy "fix this device, both directions", on an HPSDR radio "invert my
+        // transmitted sideband while receive stays as it was". A radio that
+        // genuinely needed swapped TX would need swapped RX too. The SoapySDR
+        // branch below does its own swap, symmetrically with its receive path.
+        isample=ROUNDHTZ(tx->iq_output_buffer[j*2]);
+        qsample=ROUNDHTZ(tx->iq_output_buffer[(j*2)+1]);
       }
       switch(radio->discovered->protocol) {
         case PROTOCOL_1:

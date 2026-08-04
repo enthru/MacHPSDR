@@ -672,10 +672,19 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 #endif
   gtk_grid_attach(GTK_GRID(model_grid),model_combo_box,x,0,1,1);
   x++;
+  // "Swap I & Q" is only wired for the protocols that actually consult it —
+  // SoapySDR (both directions) and the I/Q Player (an inverted-sideband
+  // recording). protocol1/protocol2 ignore it on receive, so offering it there
+  // was a switch that silently did nothing on RX while inverting TX.
+  gboolean iqswap_applies =
+#ifdef SOAPYSDR
+      (radio->discovered->protocol == PROTOCOL_SOAPYSDR) ||
+#endif
+      (radio->discovered->protocol == PROTOCOL_FAKE);
   if ((radio->discovered->device == DEVICE_HERMES_LITE2) || (radio->discovered->device == DEVICE_HERMES_LITE)) {
     /* no IQ swap for Hermes Lite */
   }
-  else {
+  else if (iqswap_applies) {
     GtkWidget *iqswap=gtk_check_button_new_with_label("Swap I & Q");
     gtk_grid_attach(GTK_GRID(model_grid),iqswap,x,0,1,1);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(iqswap),radio->iqswap);
