@@ -854,20 +854,27 @@ static void emit_flight_pos(GString *out, int indent, const uint8_t *buf) {
 
   // Locale-independent: with a comma decimal separator, "Pos: 44,9997, -29,9999"
   // is unreadable — and the app runs under the user's locale.
+  // "No fix" has two encodings and neither is a place: all-zero (0,0 is not the
+  // Gulf of Guinea) and all-ones, which decodes to 180,180 — impossible, since
+  // latitude cannot exceed 90. Printing those as coordinates reads like a real
+  // position report, so say what it is.
+  gboolean pos_ok = (lat != 0.0 || lon != 0.0) && lat <= 90.0 && lat >= -90.0;
   char latbuf[G_ASCII_DTOSTR_BUF_SIZE], lonbuf[G_ASCII_DTOSTR_BUF_SIZE];
   g_ascii_formatd(latbuf, sizeof(latbuf), "%.4f", lat);
   g_ascii_formatd(lonbuf, sizeof(lonbuf), "%.4f", lon);
-  emit(out, indent, "Flight: %s   Pos: %s, %s   Time: %02d:%02d:%02d",
-       flight_id[0] ? flight_id : "(none)", latbuf, lonbuf, h, m, s);
+  if (pos_ok)
+    emit(out, indent, "Flight: %s   Pos: %s, %s   Time: %02d:%02d:%02d",
+         flight_id[0] ? flight_id : "(none)", latbuf, lonbuf, h, m, s);
+  else
+    emit(out, indent, "Flight: %s   Pos: no fix   Time: %02d:%02d:%02d",
+         flight_id[0] ? flight_id : "(none)", h, m, s);
 
   // Feed the Aircraft view. Two encodings mean "no fix" rather than a place:
   // all-zero (0,0 — not the Gulf of Guinea) and all-ones, which comes out as
   // 180,180 and is impossible anyway (latitude cannot exceed 90). The decode
   // text above still prints whatever was sent; only the table filters.
-  if (current_ac_id >= 0) {
-    gboolean pos_ok = (lat != 0.0 || lon != 0.0) && lat <= 90.0 && lat >= -90.0;
+  if (current_ac_id >= 0)
     ac_set_flight((uint8_t)current_ac_id, flight_id, pos_ok, lat, lon);
-  }
 }
 
 #define PERFORMANCE_DATA_LEN 47
