@@ -1506,7 +1506,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   rx->serial_port_entry=gtk_entry_new();
   gtk_editable_set_text(GTK_EDITABLE(rx->serial_port_entry),rx->rigctl_serial_port);
   gtk_widget_set_visible(rx->serial_port_entry, TRUE);
-  gtk_widget_set_hexpand(rx->serial_port_entry,TRUE);
+  // Sized to a device path, NOT hexpanding: expanding here made the entry eat
+  // every spare pixel of the column and dragged the whole Configure window
+  // wider than it needs to be.
+  gtk_editable_set_width_chars(GTK_EDITABLE(rx->serial_port_entry),16);
+  gtk_editable_set_max_width_chars(GTK_EDITABLE(rx->serial_port_entry),24);
+  gtk_widget_set_halign(rx->serial_port_entry,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(cat_grid),rx->serial_port_entry,5,1,2,1);
   g_signal_connect(rx->serial_port_entry,"activate",G_CALLBACK(cat_serial_port_cb),rx);
 
@@ -1526,6 +1531,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   } else if(rx->rigctl_serial_baudrate==B38400) {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(cat_serial_port_baudrate),3);
   }
+  gtk_widget_set_halign(cat_serial_port_baudrate,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,5,2,1,1);
   g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
 
