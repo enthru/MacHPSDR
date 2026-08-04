@@ -68,8 +68,11 @@ static volatile gint rebuild_req = 0;      // GTK asks the audio thread to rebui
 // another NCO offset into the same I/Q block; measured cost is ~0.5 % of a core
 // per channel at 192 kHz, so a bandful is affordable.
 //
-// Channel 0 is always the dial itself (offset 0), which is exactly the previous
-// single-channel behaviour; scanning adds the others around it.
+// Channel 0 is always the channel the operator has TUNED — the CTUN/freetune
+// cursor when either is on, otherwise the receiver centre. It is not fixed to
+// the centre: with freetune the operator points the cursor at a channel tens of
+// kHz off centre, and a decoder listening at the centre would find nothing
+// there. Scanning adds the other known channels around it.
 
 typedef struct {
   double       offset_hz;   // channel centre relative to the receiver centre
@@ -78,10 +81,16 @@ typedef struct {
   hfdl_framer *framer;
 } HFDL_CHANNEL;
 
+// Retuning the cursor tears down and rebuilds the front-end, so ignore moves
+// smaller than this: an HFDL channel is 2.6 kHz wide and the demod pulls in a
+// few hundred Hz by itself, so nudging the cursor a step must not reset sync.
+#define HFDL_CURSOR_EPS_HZ 200.0
+
 static HFDL_CHANNEL  chans[HFDL_MAX_CHANNELS];
 static int           nchans = 0;
 static double        demod_rate = 0.0;      // input rate the channels were built for
 static long long     demod_center = 0;      // receiver centre they were built for
+static long long     demod_cursor = 0;      // tuned channel they were built for
 static gboolean      scan_band = FALSE;     // decode every known channel in the passband
 static float         out_buf[2 * HFDL_OUT_MAX];   // conditioned baseband
 static glong         status_frames = 0;     // frames decoded since reset
@@ -124,6 +133,7 @@ static void demod_free(void) {
   nchans = 0;
   demod_rate = 0.0;
   demod_center = 0;
+  demod_cursor = 0;
 }
 
 static void chan_add(double offset_hz, uint32_t khz, double rate) {
@@ -137,14 +147,33 @@ static void chan_add(double offset_hz, uint32_t khz, double rate) {
   nchans++;
 }
 
-// Audio thread. Build the channel set for this receiver centre / sample rate.
-static void chans_build(double rate, long long center_hz) {
+// Audio thread. Build the channel set for this receiver centre / tuned channel
+// / sample rate.
+static void chans_build(double rate, long long center_hz, long long cursor_hz) {
   demod_free();
-  // The dial itself is always decoded, labelled with its own frequency so that
-  // when scanning is on every line says which channel it came from.
-  chan_add(0.0, center_hz > 0 ? (uint32_t)(center_hz / 1000) : 0, rate);
+  if (cursor_hz <= 0) cursor_hz = center_hz;
+  // The tuned channel is always decoded, labelled with its own frequency so that
+  // when scanning is on every line says which channel it came from. Its NCO
+  // offset is where the operator is pointing — under CTUN/freetune that is the
+  // cursor, which is the whole point: the channel is rarely at the centre.
+  double cursor_off = (center_hz > 0 && cursor_hz > 0)
+                      ? (double)(cursor_hz - center_hz) : 0.0;
+  // Outside the passband there is no signal to decode; fall back to the centre
+  // rather than building a front-end pointed into empty spectrum.
+  double usable = rate * 0.5 * 0.9;
+  if (fabs(cursor_off) > usable) {
+    cursor_off = 0.0;
+    cursor_hz  = center_hz;
+  }
+  chan_add(cursor_off, cursor_hz > 0 ? (uint32_t)(cursor_hz / 1000) : 0, rate);
   demod_rate   = rate;
   demod_center = center_hz;
+  demod_cursor = cursor_hz;
+  // Say which channel is actually being decoded, not just how many: "no frames"
+  // is nearly always the front-end pointed somewhere other than the operator
+  // thinks, and that is invisible without this line.
+  log_info("hfdl: tuned channel %lld Hz (%+.0f Hz from centre %lld), rate %.0f\n",
+           cursor_hz, cursor_off, center_hz, rate);
   if (!scan_band || center_hz <= 0) return;
 
   // Every known HFDL channel that falls inside the usable part of the passband.
@@ -158,7 +187,7 @@ static void chans_build(double rate, long long center_hz) {
       if (gs[i].freqs[f] == 0) continue;
       double off = (double)((long long)gs[i].freqs[f] * 1000LL - center_hz);
       if (off < -half || off > half) continue;
-      if (fabs(off) < 1.0) continue;                    // that is the dial itself
+      if (fabs(off - cursor_off) < 1.0) continue;       // that is the tuned channel
       gboolean dup = FALSE;                             // stations share channels
       for (int c = 0; c < nchans; c++)
         if (chans[c].khz == gs[i].freqs[f]) { dup = TRUE; break; }
@@ -260,16 +289,21 @@ static void on_symbol(void *ctx, float re, float im) {
 }
 
 void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
-                            long long center_hz) {
+                            long long center_hz, long long cursor_hz) {
   if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0 || sample_rate <= 0)
     return;
+  if (cursor_hz <= 0) cursor_hz = center_hz;
 
-  // (Re)build the channels when the rate or the dial moved, or when the scan
-  // toggle asked for it. Always on the audio thread, which owns them.
+  // (Re)build the channels when the rate, the centre or the tuned channel moved,
+  // or when the scan toggle asked for it. Always on the audio thread, which owns
+  // them. The cursor gets a dead band: rebuilding drops the framer's sync, and a
+  // one-step nudge of the dial must not cost the frame being received.
   if (nchans == 0 || demod_rate != (double)sample_rate ||
-      demod_center != center_hz || g_atomic_int_get(&rebuild_req)) {
+      demod_center != center_hz ||
+      fabs((double)(cursor_hz - demod_cursor)) > HFDL_CURSOR_EPS_HZ ||
+      g_atomic_int_get(&rebuild_req)) {
     g_atomic_int_set(&rebuild_req, 0);
-    chans_build((double)sample_rate, center_hz);
+    chans_build((double)sample_rate, center_hz, cursor_hz);
   }
 
   int nsym = 0, frames = 0;
@@ -335,7 +369,7 @@ void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
 // scanning cannot be offered (there is nothing to place the other channels
 // against). Used by the offline harness and the self-tests.
 void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
-  hfdl_decoder_add_iq_at(iq, nframes, sample_rate, 0);
+  hfdl_decoder_add_iq_at(iq, nframes, sample_rate, 0, 0);
 }
 
 int hfdl_decoder_get_messages(char *buf, int buflen) {

@@ -55,14 +55,22 @@ void hfdl_decoder_set_enabled(gboolean on);
 // demod chain lands in later phases.)
 void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate);
 
-// Same, but telling the decoder what the receiver centre is. That is what makes
-// band scanning possible: an HF band holds a dozen HFDL channels inside ~100 kHz
-// and the receiver passband already contains them, so with scanning on the
-// decoder runs one front-end per known channel in the passband instead of only
-// the one under the dial. Pass 0 for center_hz if it is not known (scanning is
-// then impossible and only the dial is decoded).
+// Same, but telling the decoder what the receiver centre is and where the
+// operator is actually pointing.
+//
+//  center_hz — the frequency this I/Q is taken around. What makes band scanning
+//              possible: an HF band holds a dozen HFDL channels inside ~100 kHz
+//              and the passband already contains them, so with scanning on the
+//              decoder runs one front-end per known channel in the passband.
+//              Pass 0 if unknown (no scanning; only the tuned channel).
+//  cursor_hz — the channel the operator has tuned. With CTUN/freetune that is
+//              the cursor, which can sit tens of kHz from the centre; without
+//              them it is the centre itself. The decoded channel is placed HERE,
+//              not at the centre — otherwise pointing the cursor at an HFDL
+//              channel decodes nothing and the only way to hear it is to move
+//              the whole receiver. Pass 0 to mean "the centre".
 void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
-                            long long center_hz);
+                            long long center_hz, long long cursor_hz);
 
 // Maximum channels decoded at once. Each costs ~0.5 % of a core at 192 kHz.
 #define HFDL_MAX_CHANNELS 12

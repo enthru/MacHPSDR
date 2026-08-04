@@ -528,6 +528,22 @@ endif
 all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
                          $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES)
 
+# Headless HFDL harness: feeds an I/Q WAV straight into the decoder with an
+# explicit receiver centre and tuned-channel frequency and prints every message.
+# Not part of `all` — it exists so the decoder can be tested WITHOUT starting the
+# app (which would raise a window over whatever the operator is doing and rewrite
+# the saved settings on exit).
+#   make hfdl-offline && ./hfdl_offline rec.wav <centre_hz> <cursor_hz>
+.PHONY: hfdl-offline
+hfdl-offline: hfdl_offline
+# Links only what the decode chain needs (no GTK, no WDSP, no audio): the panel
+# object is the one HFDL file that pulls the UI in, so it is filtered out.
+hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/hfdl_offline.c \
+	  $(filter-out hfdl_panel.o,$(HFDL_OBJS)) log.o \
+	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
+
 prebuild:
 	rm -f version.o
 

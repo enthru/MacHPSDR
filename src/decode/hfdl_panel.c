@@ -166,13 +166,21 @@ static void tune_clicked(GtkButton *b, gpointer data) {
 
   RECEIVER *rx = radio->active_receiver;
   long long f = (long long)p->preset_khz[sel] * 1000LL;
-  // The decoder takes its I/Q from the receiver centre and expects the PSK
-  // carrier 1440 Hz up, which is exactly where it sits when the dial is on the
-  // assigned channel frequency — so tune the channel, not an offset from it.
-  // CTUN would move the demodulator without moving that centre, so clear it.
-  rx->frequency_a    = f;
-  rx->ctun_frequency = f;
-  rx->ctun           = 0;
+  // The decoder follows the tuned channel — the CTUN/freetune cursor when either
+  // is on. So with those the cursor is what has to move, and the receiver centre
+  // (and the rest of the passband on screen) is left alone; clearing CTUN here
+  // would throw away the operator's whole view just to select a channel.
+  if (rx->ctun || rx->freetune) {
+    if (llabs(f - (long long)rx->frequency_a) < (long long)(rx->sample_rate / 2)) {
+      rx->ctun_frequency = f;          // inside the passband: just move the cursor
+    } else {
+      rx->frequency_a    = f;          // outside it: the receiver has to move too
+      rx->ctun_frequency = f;
+    }
+  } else {
+    rx->frequency_a    = f;
+    rx->ctun_frequency = f;
+  }
   if (rx->mode_a != DIGU) receiver_mode_changed(rx, DIGU);
   frequency_changed(rx);
   log_info("hfdl: tuned to %u kHz\n", p->preset_khz[sel]);

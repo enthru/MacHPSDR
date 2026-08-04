@@ -42,3 +42,5 @@ build_warn.log
 
 # Build-flag stamp used to force a rebuild when feature flags change
 .build-flags
+hfdl_offline
+hfdl_offline.dSYM/

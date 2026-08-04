@@ -1904,9 +1904,17 @@ static void full_rx_buffer(RECEIVER *rx) {
     if(hfdl_on) hfdl_decoder_set_scan(radio->hfdl_scan);
     // frequency_a is the receiver centre this I/Q is taken around (CTUN moves
     // only the demodulator), which is what lets the decoder place the other
-    // HFDL channels in the passband when band scanning is on.
-    if(hfdl_on) hfdl_decoder_add_iq_at(rx->iq_input_buffer, rx->buffer_size,
-                                       rx->sample_rate, (long long)rx->frequency_a);
+    // HFDL channels in the passband when band scanning is on. The channel to
+    // DECODE, though, is wherever the operator is pointing: with CTUN/freetune
+    // that is the cursor, tens of kHz off centre — decoding the centre instead
+    // would mean the cursor does nothing and the only way to hear a channel is
+    // to move the whole receiver onto it.
+    if(hfdl_on) {
+      long long cursor = (rx->ctun || rx->freetune) ? (long long)rx->ctun_frequency
+                                                    : (long long)rx->frequency_a;
+      hfdl_decoder_add_iq_at(rx->iq_input_buffer, rx->buffer_size,
+                             rx->sample_rate, (long long)rx->frequency_a, cursor);
+    }
   }
 #endif
 
