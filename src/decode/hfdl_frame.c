@@ -32,6 +32,10 @@
 #include "hfdl_fec.h"
 #include "log.h"
 
+// Reverse the bit order in a byte (dumphfdl util.h REVERSE_BYTE).
+#define HFDL_REVERSE_BYTE(x) \
+  (uint8_t)((((uint64_t)(x) * 0x80200802ULL) & 0x0884422110ULL) * 0x0101010101ULL >> 32)
+
 #define DATA_FRAME_CNT_SINGLE_SLOT 72
 #define DATA_FRAME_CNT_DOUBLE_SLOT 168
 #define DEINTERLEAVER_ROW_CNT      40
@@ -271,6 +275,13 @@ static int hfdl_frame_decode_data(const float *sym_iq, int nsym, int m_shift,
   }
   int K = vin_len / 2;   // decoded bits (incl. the 6 conv tail bits)
   hfdl_fec_viterbi_decode(vin, K, out);
+  // Every output octet's bit order is reversed before it becomes a PDU byte
+  // (dumphfdl decode_user_data: REVERSE_BYTE over the viterbi output). libfec's
+  // chainback packs the decoded bit stream the other way round from what HFDL
+  // numbers its octets. Missing this decodes a real frame into garbage that
+  // still passes a self-consistent round-trip test — it only shows up against a
+  // real signal (or an FCS check), which is exactly how it was caught.
+  for (int i = 0; i < (K + 7) / 8; i++) out[i] = HFDL_REVERSE_BYTE(out[i]);
   g_free(vin);
   modem_destroy(m);
   hfdl_descrambler_destroy(ds);
@@ -317,6 +328,15 @@ typedef struct hfdl_framer {
   uint8_t frame_bytes[HFDL_DATA_SYM_MAX];  // decoded output (K/8 <= this)
   int frame_nbytes;
 } hfdl_framer;
+
+// MACHPSDR_HFDL_FRAME_DEBUG traces the sync state machine — on a real (fading,
+// weak) signal the only way to tell "never synced" from "synced but decoded
+// wrong" is to watch the correlation peaks and the mode the M1 field selected.
+static gboolean fr_dbg(void) {
+  static int on = -1;
+  if (on < 0) on = g_getenv("MACHPSDR_HFDL_FRAME_DEBUG") != NULL;
+  return on != 0;
+}
 
 static void framer_reset(hfdl_framer *f) {
   f->state = FR_A1;
@@ -394,6 +414,8 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
       f->bitmask = f->last_corr > 0.f ? 0 : 1;   // sign resolves BPSK 180°
       f->symbols_wanted = HFDL_A_LEN;
       f->state = FR_A2;
+      if (fr_dbg()) log_info("hfdl_frame: A1 lock corr %+.2f polarity %d\n",
+                             (double)f->last_corr, f->bitmask);
     }
     break;
   case FR_A2:
@@ -401,12 +423,16 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
       f->symbols_wanted = HFDL_M1_LEN;
       f->search_retries = 0;
       f->state = FR_M1;
+      if (fr_dbg()) log_info("hfdl_frame: A2 ok corr %+.2f\n", (double)f->last_corr);
     } else if (++f->search_retries >= HFDL_MAX_SEARCH_RETRIES) {
+      if (fr_dbg()) log_info("hfdl_frame: A2 gave up (best %+.2f)\n", (double)f->last_corr);
       framer_reset(f);
     }
     break;
   case FR_M1: {
     float mc; int mk = hfdl_mode_match(f->mode, &mc);
+    if (fr_dbg()) log_info("hfdl_frame: M1 best shift %d corr %.2f (thr %.2f)\n",
+                           mk, (double)mc, (double)HFDL_CORR_THRESHOLD_M1);
     if (mk >= 0 && mc > HFDL_CORR_THRESHOLD_M1) {
       f->m_shift = mk;
       f->data_segment_cnt = hfdl_frame_params[mk].data_segment_cnt;
@@ -440,6 +466,8 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
       // end of frame: decode the collected data symbols.
       int K = hfdl_frame_decode_data(f->data_sym, f->data_n, f->m_shift,
                                      f->bitmask, f->frame_bytes);
+      if (fr_dbg()) log_info("hfdl_frame: frame end m=%d symbols=%d -> %d bits\n",
+                             f->m_shift, f->data_n, K);
       framer_reset(f);
       f->frame_nbytes = (K > 0) ? (K + 7) / 8 : 0;
       return f->frame_nbytes;
@@ -523,21 +551,32 @@ static void frame_conv_encode(const uint8_t *data_bits, int ndata, uint8_t *out_
 // scramble + M-PSK + Viterbi) as one self-consistent chain.
 static gboolean dataframe_roundtrip_bpsk(int m_shift) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
-  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return TRUE;   // BPSK r=1/2 only
+  if (p->scheme != HFDL_M_BPSK) return TRUE;              // BPSK configs only
   int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;   // arity 1 -> pushes = nsym
   int N = nsym;                                           // encoded bits = table size
-  int K = N / 2;                                          // decoded bits (incl tail)
+  // r=1/4 sends every convolutional chip twice (the RX averages the pair), so
+  // half as many distinct chips carry half as many user bits. This is the rate
+  // the 300 bps configs use — the ones actually seen on air.
+  int nchips = (p->code_rate == 4) ? N / 2 : N;
+  int K = nchips / 2;                                     // decoded bits (incl tail)
   int ndata = K - 6;
 
   uint8_t *dbits = g_new(uint8_t, ndata);
-  uint8_t *enc = g_new(uint8_t, N);
+  uint8_t *enc = g_new(uint8_t, N);                       // chips in deinterleaved order
   int *perm = g_new(int, N);
   float *sym = g_new(float, 2 * nsym);
   uint8_t *out = g_new0(uint8_t, (K + 7) / 8);
 
   uint32_t rng = 0x2468aceu;
   for (int i = 0; i < ndata; i++) { rng = rng * 1103515245u + 12345u; dbits[i] = (rng >> 19) & 1u; }
-  frame_conv_encode(dbits, ndata, enc);
+  if (p->code_rate == 4) {
+    uint8_t *chips = g_new(uint8_t, nchips);
+    frame_conv_encode(dbits, ndata, chips);
+    for (int i = 0; i < nchips; i++) enc[2 * i] = enc[2 * i + 1] = chips[i];
+    g_free(chips);
+  } else {
+    frame_conv_encode(dbits, ndata, enc);
+  }
   frame_perm(m_shift, perm, N);
 
   // TX: pushed[i] (soft bit for symbol i) = enc[perm[i]] so the RX pop yields enc
@@ -556,8 +595,9 @@ static gboolean dataframe_roundtrip_bpsk(int m_shift) {
   int Kout = hfdl_frame_decode_data(sym, nsym, m_shift, 0, out);
   gboolean ok = (Kout == K);
   int errs = 0;
+  // LSB-first: decode_data bit-reverses each output octet (HFDL octet numbering).
   if (ok) for (int i = 0; i < ndata; i++) {
-    int rb = (out[i >> 3] >> (7 - (i & 7))) & 1;
+    int rb = (out[i >> 3] >> (i & 7)) & 1;
     if (rb != dbits[i]) errs++;
   }
   if (!ok || errs != 0) {
@@ -679,9 +719,13 @@ static gboolean framer_e2e_bpsk(int m_shift, float echo) {
     log_error("hfdl_frame selftest: framer[%d] (echo %.2f) produced no frame\n", m_shift, echo);
     ok = FALSE;
   } else {
+    // Bit i of the payload lands in bit (i&7) of octet i>>3 — LSB-first, because
+    // hfdl_frame_decode_data bit-reverses each octet on the way out (HFDL octet
+    // numbering). Getting this convention wrong on BOTH sides of the test is
+    // what let the missing reversal survive until a real frame failed its FCS.
     int errs = 0;
     for (int i = 0; i < ndata; i++)
-      if (((fb[i >> 3] >> (7 - (i & 7))) & 1) != dbits[i]) errs++;
+      if (((fb[i >> 3] >> (i & 7)) & 1) != dbits[i]) errs++;
     if (errs != 0) {
       log_error("hfdl_frame selftest: framer[%d] (echo %.2f) decoded %d/%d bit errors\n",
                 m_shift, echo, errs, ndata);
@@ -770,8 +814,10 @@ gboolean hfdl_frame_selftest(void) {
 
   // (5) Whole data-path round-trip (interleave + scramble + BPSK + Viterbi) for a
   // single-slot (m=1) and a double-slot (m=5) BPSK r=1/2 config.
-  if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;
-  if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;
+  if (!dataframe_roundtrip_bpsk(0)) ok = FALSE;   // 300 bps single slot, r=1/4
+  if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;   // 600 bps single slot, r=1/2
+  if (!dataframe_roundtrip_bpsk(4)) ok = FALSE;   // 300 bps double slot, r=1/4
+  if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;   // 600 bps double slot, r=1/2
 
   // (6) Full-frame end-to-end through the RF framer (sync + mode + equalizer +
   // collect + decode): clean channel, then a 2-tap multipath the LMS equalizer

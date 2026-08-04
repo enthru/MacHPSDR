@@ -52,7 +52,7 @@ feature additions.
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
-| **HFDL** *(optional build)* | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. **Off in a stock build** — the port makes that build GPLv3, so enable it explicitly with `make HFDL_INCLUDE=HFDL` *(every layer self-tested offline, including a full-stack test that reads an ACARS message back out of a synthesised frame; not yet verified against an on-air signal)*. |
+| **HFDL** *(optional build)* | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. **Off in a stock build** — the port makes that build GPLv3, so enable it explicitly with `make HFDL_INCLUDE=HFDL` *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
@@ -424,7 +424,12 @@ you've dialled in.
   built-in self-test — timing/carrier recovery at zero bit errors, FEC round-trip
   with error correction, a full synthetic frame decoded bit-exactly through a
   2-tap multipath channel, and a full-stack test that reads an ACARS message back
-  out of a synthesised frame. Not yet verified against a real on-air signal.)*
+  out of a synthesised frame. **Verified on air**: on a real 11387 kHz recording of the
+  Riverhead, New York ground station it decoded 8 valid frames — SPDU squitters
+  (TDMA frame index matching a reference decoder exactly), a ground-station uplink
+  carrying two logon confirmations with real ICAO addresses, aircraft position and
+  performance reports, and ACARS message text byte-for-byte identical to the
+  reference decoder's output for the same frame.)*
 
 ### SoapySDR / HackRF
 

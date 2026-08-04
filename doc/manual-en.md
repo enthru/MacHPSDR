@@ -271,10 +271,11 @@ that names "frequency slot 1" is shown as the actual kHz. CPDLC and ADS-C
 payloads inside ACARS are not decoded (their text is shown raw), and messages
 split over several ACARS blocks are shown block by block rather than reassembled.
 
-*(Every layer of the receiver — timing and carrier recovery, equalizer, FEC,
-framing and the message parsing — is checked by built-in self-tests, including
-one that reads an ACARS message back out of a synthesised frame. The chain has
-not yet been confirmed against a real on-air HFDL signal.)*
+*(Verified on a real off-air recording: on a 11387 kHz capture of the Riverhead,
+New York ground station the decoder produced squitters, a ground-station uplink
+carrying two logon confirmations with genuine ICAO addresses, aircraft position
+and performance reports, and ACARS message text identical to a reference
+decoder's output for the same frame.)*
 
 ---
 

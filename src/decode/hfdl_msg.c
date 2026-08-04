@@ -847,7 +847,10 @@ gboolean hfdl_msg_selftest(void) {
     ok = FALSE;
   } else {
     uint8_t *bits = g_new0(uint8_t, cap);
-    for (int i = 0; i < fl * 8; i++) bits[i] = (frame[i >> 3] >> (7 - (i & 7))) & 1;
+    // LSB-first within each octet — the decoder bit-reverses every octet coming
+    // out of the Viterbi (HFDL octet numbering), so the transmit side has to
+    // present the payload the same way round.
+    for (int i = 0; i < fl * 8; i++) bits[i] = (frame[i >> 3] >> (i & 7)) & 1;
     uint8_t *decoded = NULL;
     int nd = hfdl_frame_test_roundtrip(1, 0.0f, bits, cap, &decoded);
     if (nd < fl || decoded == NULL || memcmp(decoded, frame, (size_t)fl) != 0) {
