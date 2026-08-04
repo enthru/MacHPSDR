@@ -1123,6 +1123,9 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
   gtk_grid_attach(GTK_GRID(grid),audio_eq_box,col,row,1,4);
   row+=4;
+  // Kept so the full-width bottom row (Squelch + MNF) can start below BOTH
+  // columns — `row` is reset when the right-hand column starts.
+  int left_rows=row;
 
   GtkWidget *enable_b=gtk_check_button_new_with_label("Enable Equalizer");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (enable_b), rx->enable_equalizer);
@@ -1460,10 +1463,9 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // the left Audio/EQ/NR4/APF stack) and leaves a big empty area below its 3
   // rows of controls. START makes it hug its content height.
   gtk_widget_set_valign(cat_frame,GTK_ALIGN_START);
-  // CAT, Squelch and the notch list share ONE grid cell via a vbox: attached as
-  // separate grid rows they were spread out by the tall panadapter/EQ rows above
-  // and left a big gap between them (same reason the left column stacks its
-  // Audio/EQ/NR4 frames in a box).
+  // CAT sits in a vbox rather than straight in the grid cell: attached as a
+  // plain grid row it was spread out by the tall panadapter row above (same
+  // reason the left column stacks its Audio/EQ/NR4 frames in a box).
   GtkWidget *cat_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,5);
   gtk_widget_set_valign(cat_box,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),cat_box,col,row,1,1);
@@ -1538,13 +1540,16 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // Squelch + Manual Notch sit SIDE BY SIDE under CAT: neither is tall, and
   // stacked they left the bottom of the page half empty while the notch list
   // pushed the page taller than the window.
-  // halign START keeps the pair flush left at their natural width instead of
-  // being stretched across the column; the children keep the default valign
-  // FILL so both frames take the row height and end up the same height.
+  // Squelch + MNF go in their OWN row spanning BOTH columns at the bottom of
+  // the page, not inside the right-hand CAT column: there they started at the
+  // middle column's left edge (so they read as right-aligned) and MNF ran off
+  // the right edge, while the area under the NR4 frame sat empty. halign START
+  // pins the pair to the page's left edge; the children keep the default valign
+  // FILL so both frames take the row height and come out the same height.
   GtkWidget *sq_mnf_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
   gtk_widget_set_valign(sq_mnf_row,GTK_ALIGN_START);
   gtk_widget_set_halign(sq_mnf_row,GTK_ALIGN_START);
-  gtk_box_append(GTK_BOX(cat_box),sq_mnf_row);
+  gtk_grid_attach(GTK_GRID(grid),sq_mnf_row,0,(left_rows>row)?left_rows:row,2,1);
 
   // Squelch calibration. Only the AMSQ (non-FM) path is exposed: the FM squelch
   // mapping is fixed and known-good, while the amplitude squelch has no
