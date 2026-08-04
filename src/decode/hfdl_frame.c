@@ -489,6 +489,14 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
   return 0;
 }
 
+int hfdl_framer_arity(const hfdl_framer *f) {
+  // Everything except the data segments is BPSK: prekey, both A sequences, M1,
+  // M2 and every training sequence. Only while collecting data does the frame
+  // carry its own modulation (dumphfdl's current_mod_arity).
+  if (f == NULL || !f->collecting_data || f->data_arity < 1) return 1;
+  return f->data_arity;
+}
+
 const uint8_t *hfdl_framer_bytes(hfdl_framer *f, int *nbytes) {
   if (nbytes) *nbytes = f ? f->frame_nbytes : 0;
   return f ? f->frame_bytes : NULL;
@@ -549,11 +557,11 @@ static void frame_conv_encode(const uint8_t *data_bits, int ndata, uint8_t *out_
 // per-symbol scramble + BPSK-modulate → hfdl_frame_decode_data → assert the
 // user bits come back bit-exact. Exercises the whole data path (interleave +
 // scramble + M-PSK + Viterbi) as one self-consistent chain.
-static gboolean dataframe_roundtrip_bpsk(int m_shift) {
+static gboolean dataframe_roundtrip(int m_shift) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
-  if (p->scheme != HFDL_M_BPSK) return TRUE;              // BPSK configs only
-  int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;   // arity 1 -> pushes = nsym
-  int N = nsym;                                           // encoded bits = table size
+  int arity = p->scheme;                                  // 1=BPSK 2=PSK4 3=PSK8
+  int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;
+  int N = nsym * arity;                                   // encoded bits = table size
   // r=1/4 sends every convolutional chip twice (the RX averages the pair), so
   // half as many distinct chips carry half as many user bits. This is the rate
   // the 300 bps configs use — the ones actually seen on air.
@@ -581,10 +589,14 @@ static gboolean dataframe_roundtrip_bpsk(int m_shift) {
 
   // TX: pushed[i] (soft bit for symbol i) = enc[perm[i]] so the RX pop yields enc
   // in order; scramble + BPSK-modulate so RX descramble+demod recovers it.
-  modem mtx = modem_create(LIQUID_MODEM_BPSK);
+  modem mtx = modem_create(arity == 1 ? LIQUID_MODEM_BPSK :
+                           arity == 2 ? LIQUID_MODEM_PSK4 : LIQUID_MODEM_PSK8);
   descrambler *dtx = hfdl_descrambler_create();
   for (int i = 0; i < nsym; i++) {
-    unsigned int b = enc[perm[i]];
+    // The RX pushes the symbol's soft bits into the deinterleaver in order, so
+    // symbol i carries pushes i*arity .. i*arity+arity-1, MSB first.
+    unsigned int b = 0;
+    for (int j = 0; j < arity; j++) b = (b << 1) | enc[perm[i * arity + j]];
     float complex s; modem_modulate(mtx, b, &s);
     uint32_t dbit = descrambler_advance(dtx);
     if (dbit) s = -s;                                     // pre-apply scramble flip
@@ -616,10 +628,14 @@ static void framer_feed(hfdl_framer *f, float re, float im,
   if (r > 0) { *got = r; *fb = hfdl_framer_bytes(f, fn); }
 }
 
+// Payload bits a frame of this config carries: encoded bits = symbols x arity,
+// halved again when r=1/4 sends every chip twice, then halved by the r=1/2
+// convolutional code, less the 6 tail bits.
 int hfdl_frame_test_capacity(int m_shift) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
-  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return 0;
-  return (p->data_segment_cnt * HFDL_DATA_FRAME_LEN / 2) - 6;
+  int N = p->data_segment_cnt * HFDL_DATA_FRAME_LEN * p->scheme;
+  int nchips = (p->code_rate == 4) ? N / 2 : N;
+  return nchips / 2 - 6;
 }
 
 // Full-frame end-to-end: synthesize a complete baseband HFDL frame (prekey + A +
@@ -631,9 +647,11 @@ int hfdl_frame_test_capacity(int m_shift) {
 int hfdl_frame_test_roundtrip(int m_shift, float echo, const uint8_t *bits, int nbits,
                               uint8_t **out_bytes) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
-  if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return 0;
+  int arity = p->scheme;
   int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;
-  int N = nsym, K = N / 2, ndata = K - 6;
+  int N = nsym * arity;                          // encoded bits (deinterleaver size)
+  int nchips = (p->code_rate == 4) ? N / 2 : N;
+  int K = nchips / 2, ndata = K - 6;
   if (nbits > ndata) return 0;
 
   uint8_t *dbits = g_new0(uint8_t, ndata);      // zero-padded past nbits
@@ -641,18 +659,32 @@ int hfdl_frame_test_roundtrip(int m_shift, float echo, const uint8_t *bits, int 
   int *perm = g_new(int, N);
   float *dsym = g_new(float, 2 * nsym);
   memcpy(dbits, bits, (size_t)nbits);
-  frame_conv_encode(dbits, ndata, enc);
+  if (p->code_rate == 4) {                      // r=1/4: every chip sent twice
+    uint8_t *chips = g_new(uint8_t, nchips);
+    frame_conv_encode(dbits, ndata, chips);
+    for (int i = 0; i < nchips; i++) enc[2 * i] = enc[2 * i + 1] = chips[i];
+    g_free(chips);
+  } else {
+    frame_conv_encode(dbits, ndata, enc);
+  }
   frame_perm(m_shift, perm, N);
 
+  // Sync/training fields are always BPSK; only the data segments use the frame's
+  // own modulation — which is exactly what the receiver has to switch its
+  // carrier-loop slicer to.
   modem mm = modem_create(LIQUID_MODEM_BPSK);
+  modem mdata = modem_create(arity == 1 ? LIQUID_MODEM_BPSK :
+                             arity == 2 ? LIQUID_MODEM_PSK4 : LIQUID_MODEM_PSK8);
   descrambler *dtx = hfdl_descrambler_create();
   for (int i = 0; i < nsym; i++) {
-    unsigned int b = enc[perm[i]];
-    float complex s; modem_modulate(mm, b, &s);
+    unsigned int b = 0;
+    for (int j = 0; j < arity; j++) b = (b << 1) | enc[perm[i * arity + j]];
+    float complex s; modem_modulate(mdata, b, &s);
     if (descrambler_advance(dtx)) s = -s;
     dsym[2 * i] = crealf(s); dsym[2 * i + 1] = cimagf(s);
   }
   hfdl_descrambler_destroy(dtx);
+  modem_destroy(mdata);
 
   hfdl_framer *f = hfdl_framer_create();
   int got = 0, fn = 0; const uint8_t *fb = NULL;
@@ -703,9 +735,9 @@ int hfdl_frame_test_roundtrip(int m_shift, float echo, const uint8_t *bits, int 
 
 // The framer's own round-trip: random payload bits must come back bit-exact,
 // including through a 2-tap multipath channel (the equalizer must undo it).
-static gboolean framer_e2e_bpsk(int m_shift, float echo) {
+static gboolean framer_e2e(int m_shift, float echo) {
   int ndata = hfdl_frame_test_capacity(m_shift);
-  if (ndata <= 0) return TRUE;                  // not a BPSK r=1/2 config
+  if (ndata <= 0) return TRUE;
 
   uint8_t *dbits = g_new(uint8_t, ndata);
   uint32_t rng = 0x13572468u;
@@ -814,17 +846,15 @@ gboolean hfdl_frame_selftest(void) {
 
   // (5) Whole data-path round-trip (interleave + scramble + BPSK + Viterbi) for a
   // single-slot (m=1) and a double-slot (m=5) BPSK r=1/2 config.
-  if (!dataframe_roundtrip_bpsk(0)) ok = FALSE;   // 300 bps single slot, r=1/4
-  if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;   // 600 bps single slot, r=1/2
-  if (!dataframe_roundtrip_bpsk(4)) ok = FALSE;   // 300 bps double slot, r=1/4
-  if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;   // 600 bps double slot, r=1/2
+  for (int m = 0; m < HFDL_M_SHIFT_CNT; m++)     // all 8: BPSK/PSK4/PSK8 x r=1/2,1/4
+    if (!dataframe_roundtrip(m)) ok = FALSE;
 
   // (6) Full-frame end-to-end through the RF framer (sync + mode + equalizer +
   // collect + decode): clean channel, then a 2-tap multipath the LMS equalizer
   // must undo (proving it works, not just that it doesn't break the clean path).
-  if (!framer_e2e_bpsk(1, 0.0f)) ok = FALSE;
-  if (!framer_e2e_bpsk(5, 0.0f)) ok = FALSE;
-  if (!framer_e2e_bpsk(1, 0.3f)) ok = FALSE;
+  for (int m = 0; m < HFDL_M_SHIFT_CNT; m++)     // all 8 configs end-to-end
+    if (!framer_e2e(m, 0.0f)) ok = FALSE;
+  if (!framer_e2e(1, 0.3f)) ok = FALSE;          // + through a 2-tap multipath
 
   if (ok)
     log_info("hfdl_frame selftest: PASS (correlators %.2f/%.2f + M1 mode + data round-trip + framer incl. equalizer/multipath)\n",

@@ -91,7 +91,8 @@ struct hfdl_demod {
   // symbol-recovery stage (phase 2b)
   symsync_crcf  ss;            // symbol-timing recovery (SPS in, 2/symbol out)
   hfdl_costas   loop;          // carrier recovery
-  modem         mbpsk;         // BPSK slicer (decision-directed phase error)
+  modem         m[4];          // slicers by arity: [1]=BPSK [2]=PSK4 [3]=PSK8
+  int           arity;         // modulation the carrier loop currently slices against
   unsigned long ss_idx;        // symsync output index (odd = decision instant)
 };
 
@@ -131,7 +132,13 @@ hfdl_demod *hfdl_demod_create(double input_rate) {
   // correct, unambiguous decision instant. Revisit when the equalizer lands.)
   symsync_crcf_set_output_rate(d->ss, 1);
   costas_init(&d->loop);
-  d->mbpsk = modem_create(LIQUID_MODEM_BPSK);
+  // One slicer per modulation. The carrier loop's decision-directed phase error
+  // must come from the modulation actually being received, so the framer switches
+  // this to the data modulation for the data segments (hfdl_demod_set_slicer).
+  d->m[1] = modem_create(LIQUID_MODEM_BPSK);
+  d->m[2] = modem_create(LIQUID_MODEM_PSK4);
+  d->m[3] = modem_create(LIQUID_MODEM_PSK8);
+  d->arity = 1;                 // preamble/mode/training are always BPSK
   d->ss_idx = 0;
   return d;
 }
@@ -143,7 +150,7 @@ void hfdl_demod_destroy(hfdl_demod *d) {
   if (d->agc)       agc_crcf_destroy(d->agc);
   if (d->mf)        firfilt_crcf_destroy(d->mf);
   if (d->ss)        symsync_crcf_destroy(d->ss);
-  if (d->mbpsk)     modem_destroy(d->mbpsk);
+  for (int i = 1; i <= 3; i++) if (d->m[i]) modem_destroy(d->m[i]);
   g_free(d->mix);
   g_free(d->rs);
   g_free(d);
@@ -200,10 +207,14 @@ int hfdl_demod_process(hfdl_demod *d, const double *iq, int nframes,
   return nout;
 }
 
-int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
-                       float *out_syms, int max_out) {
-  if (d == NULL || baseband == NULL || nbb <= 0 || out_syms == NULL || max_out <= 0)
-    return 0;
+void hfdl_demod_set_slicer(hfdl_demod *d, int arity) {
+  if (d == NULL || arity < 1 || arity > 3) return;
+  d->arity = arity;
+}
+
+int hfdl_demod_symbols_cb(hfdl_demod *d, const float *baseband, int nbb,
+                          hfdl_symbol_cb cb, void *ctx) {
+  if (d == NULL || baseband == NULL || nbb <= 0) return 0;
   int nout = 0;
   for (int j = 0; j < nbb; j++) {
     float complex in = baseband[2 * j] + baseband[2 * j + 1] * I;
@@ -216,18 +227,33 @@ int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
       costas_step(&d->loop);
       float complex r;
       costas_execute(&d->loop, sy[i], &r);
-      // Decision-directed BPSK: the modem's phase error drives the Costas loop.
+      // Decision-directed: the phase error comes from the modulation currently
+      // being carried (d->arity), which the framer keeps up to date. Slicing a
+      // QPSK/8-PSK symbol as BPSK would feed the loop a bogus error.
       unsigned int bits = 0;
-      modem_demodulate(d->mbpsk, r, &bits);
-      costas_adjust(&d->loop, modem_get_demodulator_phase_error(d->mbpsk));
-      if (nout < max_out) {
-        out_syms[2 * nout]     = crealf(r);
-        out_syms[2 * nout + 1] = cimagf(r);
-        nout++;
-      }
+      modem_demodulate(d->m[d->arity], r, &bits);
+      costas_adjust(&d->loop, modem_get_demodulator_phase_error(d->m[d->arity]));
+      nout++;
+      // The callback may change the slicer for the next symbol (framer state).
+      if (cb) cb(ctx, crealf(r), cimagf(r));
     }
   }
   return nout;
+}
+
+// Buffer-filling wrapper over the per-symbol path (one implementation).
+typedef struct { float *out; int max, n; } sym_sink;
+static void sym_sink_cb(void *ctx, float re, float im) {
+  sym_sink *s = ctx;
+  if (s->n < s->max) { s->out[2 * s->n] = re; s->out[2 * s->n + 1] = im; s->n++; }
+}
+
+int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
+                       float *out_syms, int max_out) {
+  if (out_syms == NULL || max_out <= 0) return 0;
+  sym_sink s = { out_syms, max_out, 0 };
+  hfdl_demod_symbols_cb(d, baseband, nbb, sym_sink_cb, &s);
+  return s.n;
 }
 
 double hfdl_demod_level_db(hfdl_demod *d) {
@@ -356,5 +382,94 @@ gboolean hfdl_demod_selftest(void) {
 
   g_free(txbits); g_free(tx); g_free(bb); g_free(rs);
   hfdl_demod_destroy(d2);
-  return ok && sym_ok;
+
+  // (d) PSK4 carrier recovery — the 1200/1800 bps configs carry their data as
+  // QPSK/8-PSK, so the decision-directed loop must slice against that modulation
+  // (dumphfdl switches its `current_mod_arity` on entering the data section; we
+  // do the same via hfdl_demod_set_slicer, driven by the framer).
+  //
+  // What this asserts: with the slicer set correctly, QPSK is recovered and the
+  // constellation STAYS PUT (scored absolutely — the data decoder slices
+  // absolutely, with only a 180° preamble-derived flip). What it deliberately
+  // does NOT assert: that a BPSK slicer fails here. Measured on this clean
+  // synthetic signal it is only slightly worse (steady-state |R| 0.97 vs 0.99),
+  // so an "it must fail" assertion would be false. The switch is kept because it
+  // is what the reference implementation does and is measurably no worse — not
+  // because this test proves it rescues anything.
+  //
+  // Also measured while writing this: NEITHER slicer acquires a 100 Hz residual
+  // carrier offset — that is the Costas loop's bandwidth, not the slicer. Real
+  // signals arrive after the NCO has removed the nominal 1440 Hz, so the residual
+  // is small, but this is the acquisition limit if a badly mistuned dial fails.
+  gboolean psk4_ok = FALSE;
+  {
+    const int NS4 = 4000;
+    float complex *txc = g_new(float complex, NS4);   // transmitted constellation
+    double *tx4 = g_new(double, 2 * NS4 * HFDL_SPS);
+    modem mq = modem_create(LIQUID_MODEM_PSK4);
+    firinterp_crcf fi4 = firinterp_crcf_create(HFDL_SPS, (float *)hfdl_matched_filter,
+                                               HFDL_MF_TAPS_CNT);
+    uint32_t lcg4 = 0x0badf00du;
+    const double coff4 = 10.0;    // residual offset the loop must acquire and hold
+    int w4 = 0;
+    for (int s = 0; s < NS4; s++) {
+      lcg4 = lcg4 * 1103515245u + 12345u;
+      float complex c;
+      modem_modulate(mq, (lcg4 >> 16) & 3u, &c);
+      txc[s] = c;
+      float complex y[HFDL_SPS];
+      firinterp_crcf_execute(fi4, c, y);
+      for (int k = 0; k < HFDL_SPS; k++, w4++) {
+        double ph = 2.0 * M_PI * (HFDL_CARRIER_OFFSET_HZ + coff4) * w4 / fs2 + cph;
+        tx4[2 * w4]     = creal(y[k] * (cos(ph) + I * sin(ph)));
+        tx4[2 * w4 + 1] = cimag(y[k] * (cos(ph) + I * sin(ph)));
+      }
+    }
+    firinterp_crcf_destroy(fi4);
+    modem_destroy(mq);
+
+    const int NB4 = NS4 * HFDL_SPS;
+    float *bb4 = g_new(float, 2 * (NB4 + 64));
+    float *rs4 = g_new(float, 2 * (NS4 + 64));
+    hfdl_demod *d4 = hfdl_demod_create(fs2);
+    double ser = 1.0;
+    if (d4 != NULL) {
+      hfdl_demod_set_slicer(d4, 2);                    // PSK4 — what the data is
+      int nbb4 = hfdl_demod_process(d4, tx4, NB4, bb4, NB4 + 64);
+      int nsy4 = hfdl_demod_symbols(d4, bb4, nbb4, rs4, NS4 + 64);
+      if (nsy4 > 1200) {
+        // Score ROTATION-AGNOSTICALLY: r[i]*conj(tx[i-delay]) is a constant if the
+        // loop holds the constellation still, whatever constant rotation it settled
+        // on. The circular mean length |R| of that product is 1 for a rock-steady
+        // constellation and 0 for one that wanders. (Scoring by "which quadrant"
+        // does NOT work here — liquid's PSK4 points sit on the axes, so a quadrant
+        // decision is a fixed 45° off and reports ~50% errors on a perfect signal.
+        // That false failure is what this comment exists to prevent repeating.)
+        const int settle = 1000;                       // loop acquisition
+        for (int delay = 0; delay <= 30; delay++) {
+          float complex acc = 0.f;
+          int n = 0;
+          for (int i = settle; i < nsy4; i++) {
+            int ti = i - delay;
+            if (ti < 0 || ti >= NS4) continue;
+            float complex v = (rs4[2 * i] + rs4[2 * i + 1] * I) * conjf(txc[ti]);
+            float m = cabsf(v);
+            if (m > 0.f) { acc += v / m; n++; }
+          }
+          if (n > 500) { double R = cabsf(acc) / n; if (1.0 - R < ser) ser = 1.0 - R; }
+        }
+      }
+      hfdl_demod_destroy(d4);
+    }
+    psk4_ok = (ser < 0.10);          // constellation steadiness |R| >= 0.90
+    if (psk4_ok)
+      log_info("hfdl_demod selftest: PSK4 recovery PASS (constellation steadiness %.3f)\n",
+               1.0 - ser);
+    else
+      log_error("hfdl_demod selftest: PSK4 recovery FAIL (constellation steadiness %.3f, want >=0.90)\n",
+                1.0 - ser);
+    g_free(txc); g_free(tx4); g_free(bb4); g_free(rs4);
+  }
+
+  return ok && sym_ok && psk4_ok;
 }

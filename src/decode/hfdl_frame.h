@@ -74,6 +74,13 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im);
 // on the call that returned >0). *nbytes gets the length.
 const uint8_t *hfdl_framer_bytes(hfdl_framer *f, int *nbytes);
 
+// Modulation arity the NEXT symbol will carry: 1 (BPSK) everywhere except the
+// data segments, which use the frame's own modulation. The caller feeds this to
+// hfdl_demod_set_slicer() after every symbol so the decision-directed carrier
+// loop slices against what is actually being sent — without it, PSK4/PSK8
+// frames are demodulated with a BPSK phase error and the carrier is dragged off.
+int hfdl_framer_arity(const hfdl_framer *f);
+
 // Headless self-test: deinterleaver bijection + descrambler periodicity +
 // preamble/M1 correlators + whole data-path round-trip + full-frame end-to-end
 // through the framer. Returns TRUE on pass. No GTK/RADIO deps.

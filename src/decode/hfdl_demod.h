@@ -82,6 +82,23 @@ double hfdl_demod_level_db(hfdl_demod *d);
 int hfdl_demod_symbols(hfdl_demod *d, const float *baseband, int nbb,
                        float *out_syms, int max_out);
 
+// Modulation the decision-directed carrier loop slices against: 1=BPSK, 2=PSK4,
+// 3=PSK8. MUST track what the frame is actually carrying — a BPSK phase error on
+// a QPSK/8-PSK symbol pulls constellation points onto the real axis and drags
+// the carrier phase off (dumphfdl's `current_mod_arity`, switched by its framer
+// on entering/leaving the data section). Preamble, mode and training fields are
+// always BPSK; only the data segments use the frame's own modulation.
+void hfdl_demod_set_slicer(hfdl_demod *d, int arity);
+
+// Per-symbol variant of hfdl_demod_symbols(): calls cb for each recovered symbol
+// instead of filling a buffer. This is what lets the carrier loop follow the
+// frame's modulation — the caller pushes the symbol into the framer and sets the
+// slicer for the NEXT symbol from the framer's state, symbol by symbol, the way
+// dumphfdl's single combined loop does. Returns the symbol count.
+typedef void (*hfdl_symbol_cb)(void *ctx, float re, float im);
+int hfdl_demod_symbols_cb(hfdl_demod *d, const float *baseband, int nbb,
+                          hfdl_symbol_cb cb, void *ctx);
+
 // Headless self-test (no GTK/RADIO deps — links into a standalone binary):
 //   (a) front-end: a tone at the carrier offset lands at DC (coherent) at the
 //       exact HFDL_BASEBAND_RATE;

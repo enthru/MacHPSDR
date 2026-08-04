@@ -51,8 +51,6 @@
 // Real off-air rates (≥48 kHz) decimate to far fewer than this per block; the
 // front-end caps its write at HFDL_OUT_MAX so this can never overflow.
 #define HFDL_OUT_MAX 8192
-// Recovered symbols per block ≤ baseband/SPS; the same cap is more than enough.
-#define HFDL_SYM_MAX 8192
 
 // --- state (all audio-thread-owned unless noted) ---------------------------
 
@@ -61,7 +59,6 @@ static hfdl_demod   *demod = NULL;          // front-end DSP (audio thread only)
 static hfdl_framer  *framer = NULL;         // frame state machine (audio thread only)
 static double        demod_rate = 0.0;      // input rate demod was built for
 static float         out_buf[2 * HFDL_OUT_MAX];   // conditioned baseband
-static float         sym_buf[2 * HFDL_SYM_MAX];   // recovered symbols
 static glong         status_frames = 0;     // frames decoded since reset
 
 static GMutex        lock;                  // guards the published fields below
@@ -129,6 +126,38 @@ void hfdl_decoder_set_enabled(gboolean on) {
   g_atomic_int_set(&enabled, on ? 1 : 0);
 }
 
+// Per-symbol sink: push into the framer, decode a completed frame, and keep the
+// carrier loop's slicer aligned with what the frame is carrying.
+typedef struct {
+  hfdl_framer *framer;
+  int          frames;    // frames completed in this block
+  GString     *text;      // decoded messages (allocated lazily)
+} frame_sink;
+
+static void on_symbol(void *ctx, float re, float im) {
+  frame_sink *s = ctx;
+  if (s->framer == NULL) return;
+  int nb = hfdl_framer_push(s->framer, re, im);
+  // The framer has now advanced; slice the next symbol against the modulation
+  // it says is coming (BPSK for sync/training, the frame's own for data).
+  hfdl_demod_set_slicer(demod, hfdl_framer_arity(s->framer));
+  if (nb <= 0) return;
+
+  const uint8_t *fb = hfdl_framer_bytes(s->framer, &nb);
+  s->frames++;
+  // Full application-layer decode: MPDU/SPDU header -> LPDU -> HFNPDU -> ACARS
+  // message text (hfdl_msg.c). Frames whose FCS fails are shown as a hex dump
+  // instead, so a marginal decode is still visible.
+  if (s->text == NULL) s->text = g_string_new(NULL);
+  if (!hfdl_msg_decode(fb, nb, s->text)) {
+    g_string_append(s->text, "  ");
+    int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
+    for (int k = 0; k < show; k++) g_string_append_printf(s->text, "%02x ", fb[k]);
+    if (show < nb) g_string_append(s->text, "\xE2\x80\xA6");
+    g_string_append_c(s->text, '\n');
+  }
+}
+
 void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
   if (!g_atomic_int_get(&enabled) || iq == NULL || nframes <= 0 || sample_rate <= 0)
     return;
@@ -147,31 +176,16 @@ void hfdl_decoder_add_iq(const double *iq, int nframes, int sample_rate) {
     // Front-end: condition the raw I/Q into the 5400 S/s symbol domain.
     int nbb = hfdl_demod_process(demod, iq, nframes, out_buf, HFDL_OUT_MAX);
     level = hfdl_demod_level_db(demod);
-    // Symbol recovery: carrier-locked BPSK symbols (symsync + Costas + modem).
-    nsym = hfdl_demod_symbols(demod, out_buf, nbb, sym_buf, HFDL_SYM_MAX);
-    // Framer: sync on the preamble, select the mode, collect + decode a frame.
-    // (No LMS equalizer yet, so on a real fading channel this won't lock — that's
-    // the last, on-air-only piece; the whole chain is otherwise complete.)
-    if (framer) {
-      for (int i = 0; i < nsym; i++) {
-        int nb = hfdl_framer_push(framer, sym_buf[2 * i], sym_buf[2 * i + 1]);
-        if (nb > 0) {
-          const uint8_t *fb = hfdl_framer_bytes(framer, &nb);
-          frames++;
-          // Full application-layer decode: MPDU/SPDU header -> LPDU -> HFNPDU ->
-          // ACARS message text (hfdl_msg.c). Frames whose FCS fails are shown as
-          // a hex dump instead, so a marginal decode is still visible.
-          if (frametext == NULL) frametext = g_string_new(NULL);
-          if (!hfdl_msg_decode(fb, nb, frametext)) {
-            g_string_append(frametext, "  ");
-            int show = nb < 32 ? nb : 32;   // trim the hex dump for the panel
-            for (int k = 0; k < show; k++) g_string_append_printf(frametext, "%02x ", fb[k]);
-            if (show < nb) g_string_append(frametext, "\xE2\x80\xA6");
-            g_string_append_c(frametext, '\n');
-          }
-        }
-      }
-    }
+    // Symbol recovery + framing, interleaved symbol by symbol: each recovered
+    // symbol goes straight into the framer, and the framer's resulting state
+    // picks the modulation the carrier loop slices the NEXT symbol against.
+    // (A block holds tens of symbols and spans several framer states, so doing
+    // this a block at a time would be far too coarse — PSK4/PSK8 data would be
+    // sliced as BPSK for most of the frame.)
+    frame_sink sink = { framer, 0, NULL };
+    nsym = hfdl_demod_symbols_cb(demod, out_buf, nbb, on_symbol, &sink);
+    frames = sink.frames;
+    frametext = sink.text;
   }
 
   g_mutex_lock(&lock);
