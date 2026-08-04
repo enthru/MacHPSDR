@@ -1910,15 +1910,26 @@ static gboolean rds_update_cb(gpointer data) {
         if(hrecent[p]=='\n' && ++breaks == HFDL_READOUT_LINES) { hlast = hrecent+p+1; break; }
       }
     }
-    if(*hlast!='\0')
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym\n%s",
-               listening?"sig":"idle", hlvl, hframes, hsyms/1000, hlast);
-    else if(r->hfdl_panel_open)
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym",
-               listening?"sig":"idle", hlvl, hframes, hsyms/1000);
+    // Which channel the front-end is on, in the readout itself. A decoder
+    // pointed somewhere other than the operator believes looks exactly like a
+    // dead band, and that was only visible in the terminal log.
+    long long hcur = 0; double hoff = 0.0;
+    hfdl_decoder_get_tuned(&hcur, &hoff);
+    char hch[64];
+    if(hcur > 0)
+      snprintf(hch,sizeof(hch),"   ch %.4f MHz (%+.1f kHz)",
+               (double)hcur/1e6, hoff/1000.0);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym\n(Show HFDL for the message panel)",
-               listening?"sig":"idle", hlvl, hframes, hsyms/1000);
+      hch[0]='\0';
+    if(*hlast!='\0')
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s\n%s",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch, hlast);
+    else if(r->hfdl_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch);
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)",
+               listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch);
   }
 #endif
 #endif

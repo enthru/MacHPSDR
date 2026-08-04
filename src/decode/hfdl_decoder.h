@@ -100,6 +100,12 @@ int hfdl_decoder_get_recent(char *buf, int buflen);
 //   blocks      - conditioned symbol-domain samples produced since the last reset
 void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *blocks);
 
+// The channel the front-end is actually on: absolute Hz and its offset from the
+// receiver centre. Both 0 before the first block is fed. This is what turns "no
+// frames" from a mystery into a glance — a decoder pointed somewhere other than
+// the operator believes looks exactly like a dead band.
+void hfdl_decoder_get_tuned(long long *cursor_hz, double *offset_hz);
+
 // Current front-end AGC signal level (RSSI, dB) for the readout. GTK thread only.
 double hfdl_decoder_get_level_db(void);
 

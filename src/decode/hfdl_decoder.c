@@ -412,6 +412,12 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
   g_mutex_unlock(&lock);
 }
 
+void hfdl_decoder_get_tuned(long long *cursor_hz, double *offset_hz) {
+  // Audio-thread-owned scalars; a torn read here would only misprint a readout.
+  if (cursor_hz) *cursor_hz = demod_cursor;
+  if (offset_hz) *offset_hz = (nchans > 0) ? chans[0].offset_hz : 0.0;
+}
+
 double hfdl_decoder_get_level_db(void) {
   g_mutex_lock(&lock);
   double v = status_level;
