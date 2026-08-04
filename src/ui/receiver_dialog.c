@@ -1529,20 +1529,31 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(cat_grid),cat_serial_port_baudrate,5,2,1,1);
   g_signal_connect(cat_serial_port_baudrate,"notify::selected",G_CALLBACK(cat_baudrate_cb),rx);
 
-  // Squelch calibration, under CAT in the same column. Only the AMSQ (non-FM)
-  // path is exposed: the FM squelch mapping is fixed and known-good, while the
-  // amplitude squelch has no calibrated reference here.
+  // Squelch + Manual Notch sit SIDE BY SIDE under CAT: neither is tall, and
+  // stacked they left the bottom of the page half empty while the notch list
+  // pushed the page taller than the window.
+  GtkWidget *sq_mnf_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
+  gtk_widget_set_valign(sq_mnf_row,GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(cat_box),sq_mnf_row);
+
+  // Squelch calibration. Only the AMSQ (non-FM) path is exposed: the FM squelch
+  // mapping is fixed and known-good, while the amplitude squelch has no
+  // calibrated reference here.
   {
     GtkWidget *sq_frame=gtk_frame_new("Squelch (AM/SSB)");
     GtkWidget *sq_grid=gtk_grid_new();
     sui_style_group(sq_grid);
     gtk_frame_set_child(GTK_FRAME(sq_frame),sq_grid);
     gtk_widget_set_valign(sq_frame,GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(cat_box),sq_frame);
+    gtk_widget_set_hexpand(sq_frame,TRUE);
+    gtk_box_append(GTK_BOX(sq_mnf_row),sq_frame);
 
     GtkWidget *l=gtk_label_new("The SQL bar spans this dB range on the pre-AGC signal (FM uses its own squelch).");
     gtk_label_set_xalign(GTK_LABEL(l),0.0);
     gtk_label_set_wrap(GTK_LABEL(l),TRUE);
+    // Half-width now, so cap the natural width or the wrapped label alone would
+    // ask for the whole column back.
+    gtk_label_set_max_width_chars(GTK_LABEL(l),40);
     gtk_grid_attach(GTK_GRID(sq_grid),l,0,0,4,1);
 
     l=gtk_label_new("Bar min (dB):");
@@ -1585,7 +1596,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     sui_style_group(mnf_grid);
     gtk_frame_set_child(GTK_FRAME(mnf_frame),mnf_grid);
     gtk_widget_set_valign(mnf_frame,GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(cat_box),mnf_frame);
+    gtk_widget_set_hexpand(mnf_frame,TRUE);
+    gtk_box_append(GTK_BOX(sq_mnf_row),mnf_frame);
     // Freed with the frame, so the callbacks' data outlives every row widget.
     g_object_set_data_full(G_OBJECT(mnf_frame),"mnf_ui",ui,g_free);
 
@@ -1606,6 +1618,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     l=gtk_label_new("Ctrl+click the panadapter to add or remove a notch, Ctrl+scroll over one to resize it. AF makes a notch ride the dial instead of staying on the RF frequency.");
     gtk_label_set_xalign(GTK_LABEL(l),0.0);
     gtk_label_set_wrap(GTK_LABEL(l),TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(l),40);
     gtk_grid_attach(GTK_GRID(mnf_grid),l,0,1,5,1);
 
     const char *hdr[4]={"On","Frequency (MHz)","Width (Hz)","AF"};
