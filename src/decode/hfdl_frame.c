@@ -282,9 +282,17 @@ static int hfdl_frame_decode_data(const float *sym_iq, int nsym, int m_shift,
 
 #define HFDL_M2_LEN   15
 #define HFDL_T_LEN    15
+#define HFDL_EQ_LEN   15
 #define HFDL_A2_THRESH 0.30f
 #define HFDL_MAX_SEARCH_RETRIES 3
 #define HFDL_DATA_SYM_MAX (168 * HFDL_DATA_FRAME_LEN)   // double-slot worst case
+
+// Training sequences (verbatim from dumphfdl T_seq): the ±1 BPSK reference the
+// LMS equalizer trains against. Index by the resolved BPSK polarity (bitmask&1).
+static const float hfdl_T_seq[2][HFDL_T_LEN] = {
+  {  1,  1,  1, -1,  1,  1, -1, -1,  1, -1,  1, -1, -1, -1, -1 },
+  { -1, -1, -1,  1, -1, -1,  1,  1, -1,  1, -1,  1,  1,  1,  1 }
+};
 
 // framer states (dumphfdl framer_state)
 enum { FR_A1 = 1, FR_A2, FR_M1, FR_M2_SKIP, FR_EQ_TRAIN, FR_DATA_1, FR_DATA_2 };
@@ -295,6 +303,8 @@ typedef struct hfdl_framer {
   hfdl_preamble *pre;      // A correlator (own bit window)
   hfdl_mode     *mode;     // M1 correlator (own bit window, fed the same bits)
   modem          bpsk;     // search-symbol slicer
+  eqlms_cccf     eq;       // LMS channel equalizer (trains on the T sequences)
+  int            T_idx;    // index into the current training sequence
   int state, sampler;
   int bitmask;             // BPSK polarity resolved by the A1 peak (0/1)
   int symbols_wanted;
@@ -302,7 +312,7 @@ typedef struct hfdl_framer {
   int data_arity, data_segment_cnt, eq_train_seq_cnt, search_retries;
   float last_corr;         // A correlation from the most recent search bit
   gboolean collecting_data;
-  float *data_sym;         // collected data symbols (interleaved I/Q)
+  float *data_sym;         // collected (equalized) data symbols (interleaved I/Q)
   int data_n;
   uint8_t frame_bytes[HFDL_DATA_SYM_MAX];  // decoded output (K/8 <= this)
   int frame_nbytes;
@@ -315,7 +325,9 @@ static void framer_reset(hfdl_framer *f) {
   f->search_retries = 0;
   f->m_shift = -1;
   f->data_n = 0;
+  f->T_idx = 0;
   f->collecting_data = FALSE;
+  eqlms_cccf_reset(f->eq);
 }
 
 hfdl_framer *hfdl_framer_create(void) {
@@ -323,6 +335,8 @@ hfdl_framer *hfdl_framer_create(void) {
   f->pre = hfdl_preamble_create();
   f->mode = hfdl_mode_create();
   f->bpsk = modem_create(LIQUID_MODEM_BPSK);
+  f->eq = eqlms_cccf_create_lowpass(HFDL_EQ_LEN, 0.45f);
+  eqlms_cccf_set_bw(f->eq, 0.1f);
   f->data_sym = g_new0(float, 2 * HFDL_DATA_SYM_MAX);
   framer_reset(f);
   return f;
@@ -333,28 +347,42 @@ void hfdl_framer_destroy(hfdl_framer *f) {
   hfdl_preamble_destroy(f->pre);
   hfdl_mode_destroy(f->mode);
   modem_destroy(f->bpsk);
+  eqlms_cccf_destroy(f->eq);
   g_free(f->data_sym);
   g_free(f);
 }
 
 // Feed one carrier-recovered symbol. Returns the decoded byte count (>0) when a
 // full frame completes (bytes in f->frame_bytes), else 0. Faithful port of
-// dumphfdl's per-symbol framer loop, minus the LMS equalizer (a clean channel
-// needs none; it's a real-fading refinement verified only on-air).
+// dumphfdl's per-symbol framer loop: every symbol passes through the LMS
+// equalizer (trained on the T sequences during EQ_TRAIN), and the equalized
+// symbol drives search-bit demod, training and data collection.
 int hfdl_framer_push(hfdl_framer *f, float re, float im) {
-  float complex s = re + im * I;
-
   if (f->sampler == SMP_BITS) {
+    // Preamble/mode search runs on the RAW symbols — the correlation is robust,
+    // and the equalizer is still untrained here (feeding its lowpass output to
+    // the correlator would suppress the sync peak). It only kicks in for the
+    // training + data that follow the sync.
     unsigned int bit;
-    modem_demodulate(f->bpsk, s, &bit);
+    modem_demodulate(f->bpsk, re + im * I, &bit);
     bit ^= (unsigned int)(f->bitmask & 1);
     f->last_corr = hfdl_preamble_push(f->pre, (int)bit);
     hfdl_mode_push(f->mode, (int)bit);
-  } else if (f->sampler == SMP_SYMBOLS && f->collecting_data) {
-    if (f->data_n < HFDL_DATA_SYM_MAX) {
-      f->data_sym[2 * f->data_n]     = re;
-      f->data_sym[2 * f->data_n + 1] = im;
-      f->data_n++;
+  } else if (f->sampler == SMP_SYMBOLS) {
+    // Equalize: push the symbol, take the equalized output.
+    eqlms_cccf_push(f->eq, re + im * I);
+    float complex s;
+    eqlms_cccf_execute(f->eq, &s);
+    if (f->collecting_data) {
+      if (f->data_n < HFDL_DATA_SYM_MAX) {
+        f->data_sym[2 * f->data_n]     = crealf(s);
+        f->data_sym[2 * f->data_n + 1] = cimagf(s);
+        f->data_n++;
+      }
+    } else if (f->T_idx < HFDL_T_LEN) {
+      // Training: adapt the equalizer toward the known T reference.
+      eqlms_cccf_step(f->eq, hfdl_T_seq[f->bitmask & 1][f->T_idx], s);
+      f->T_idx++;
     }
   }
   // Symbols are consumed until the slot boundary; the switch runs only then.
@@ -396,12 +424,14 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
     f->eq_train_seq_cnt = 9;
     f->state = FR_EQ_TRAIN;
     f->sampler = SMP_SYMBOLS;
-    f->collecting_data = FALSE;   // training symbols (ignored — no equalizer)
+    f->collecting_data = FALSE;   // training sequence — trains the equalizer
+    f->T_idx = 0;
     break;
   case FR_EQ_TRAIN:
     if (f->eq_train_seq_cnt > 1) {
       f->eq_train_seq_cnt--;
       f->symbols_wanted = HFDL_T_LEN;
+      f->T_idx = 0;
     } else if (f->data_segment_cnt > 0) {
       f->symbols_wanted = HFDL_DATA_FRAME_LEN / 2;
       f->state = FR_DATA_1;
@@ -425,6 +455,7 @@ int hfdl_framer_push(hfdl_framer *f, float re, float im) {
     f->state = FR_EQ_TRAIN;
     f->eq_train_seq_cnt = 1;
     f->collecting_data = FALSE;
+    f->T_idx = 0;
     break;
   }
   return 0;
@@ -549,7 +580,7 @@ static void framer_feed(hfdl_framer *f, float re, float im,
 // A + M1 + M2 + 9 training + [data + training] per segment) carrying known user
 // bytes, feed the symbols to the framer, and assert it syncs, selects the mode,
 // collects the data and decodes back to the same bytes. BPSK r=1/2 configs.
-static gboolean framer_e2e_bpsk(int m_shift) {
+static gboolean framer_e2e_bpsk(int m_shift, float echo) {
   const hfdl_params *p = &hfdl_frame_params[m_shift];
   if (p->scheme != HFDL_M_BPSK || p->code_rate != 2) return TRUE;
   int nsym = p->data_segment_cnt * HFDL_DATA_FRAME_LEN;
@@ -589,22 +620,31 @@ static gboolean framer_e2e_bpsk(int m_shift) {
     modem_modulate(mm, hfdl_M1_bits[(hfdl_M_shifts[m_shift] + j) % HFDL_M1_LEN], &bs);
     framer_feed(f, crealf(bs), cimagf(bs), &got, &fb, &fn);
   }
-  // From M2 on the framer collects raw symbols (no demod): M2 skipped, T ignored,
-  // data collected. Push M2(15) + 9 T(15) then [30 data + 15 T] per segment.
-  for (int i = 0; i < HFDL_M2_LEN; i++)          framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
-  for (int i = 0; i < 9 * HFDL_T_LEN; i++)       framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
+  // From M2 on the framer collects raw symbols (M2 skipped, T trains the
+  // equalizer, data collected). M2 = 15 valid BPSK symbols; each T block is the
+  // exact T_seq (so the equalizer trains toward identity on a clean channel).
+  // A 2-tap channel h=[1, echo] is applied over this region (preamble left clean
+  // so sync isn't affected) — the equalizer must undo its ISI to decode.
+  float complex chprev = 0.f;
+  #define FEED_CH(_re, _im) do { float complex _x = (_re) + (_im) * I; \
+      float complex _y = _x + echo * chprev; chprev = _x; \
+      framer_feed(f, crealf(_y), cimagf(_y), &got, &fb, &fn); } while (0)
+  for (int i = 0; i < HFDL_M2_LEN; i++) { modem_modulate(mm, 0, &bs); FEED_CH(crealf(bs), cimagf(bs)); }
+  for (int t = 0; t < 9; t++)
+    for (int k = 0; k < HFDL_T_LEN; k++) FEED_CH(hfdl_T_seq[0][k], 0.f);
   int di = 0;
   for (int seg = 0; seg < p->data_segment_cnt; seg++) {
     for (int i = 0; i < HFDL_DATA_FRAME_LEN; i++, di++)
-      framer_feed(f, dsym[2 * di], dsym[2 * di + 1], &got, &fb, &fn);
-    for (int i = 0; i < HFDL_T_LEN; i++)         framer_feed(f, 0.f, 0.f, &got, &fb, &fn);
+      FEED_CH(dsym[2 * di], dsym[2 * di + 1]);
+    for (int k = 0; k < HFDL_T_LEN; k++)   FEED_CH(hfdl_T_seq[0][k], 0.f);
   }
+  #undef FEED_CH
   modem_destroy(mm);
 
   gboolean ok = TRUE;
   int errs = 0;
   if (got <= 0 || fb == NULL) {
-    log_error("hfdl_frame selftest: framer[%d] produced no frame\n", m_shift);
+    log_error("hfdl_frame selftest: framer[%d] (echo %.2f) produced no frame\n", m_shift, echo);
     ok = FALSE;
   } else {
     for (int i = 0; i < ndata; i++) {
@@ -612,7 +652,7 @@ static gboolean framer_e2e_bpsk(int m_shift) {
       if (rb != dbits[i]) errs++;
     }
     if (errs != 0) {
-      log_error("hfdl_frame selftest: framer[%d] decoded %d/%d bit errors\n", m_shift, errs, ndata);
+      log_error("hfdl_frame selftest: framer[%d] (echo %.2f) decoded %d/%d bit errors\n", m_shift, echo, errs, ndata);
       ok = FALSE;
     }
   }
@@ -701,13 +741,15 @@ gboolean hfdl_frame_selftest(void) {
   if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;
   if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;
 
-  // (6) Full-frame end-to-end through the RF framer (sync + mode + collect +
-  // decode) on a synthesized baseband frame.
-  if (!framer_e2e_bpsk(1)) ok = FALSE;
-  if (!framer_e2e_bpsk(5)) ok = FALSE;
+  // (6) Full-frame end-to-end through the RF framer (sync + mode + equalizer +
+  // collect + decode): clean channel, then a 2-tap multipath the LMS equalizer
+  // must undo (proving it works, not just that it doesn't break the clean path).
+  if (!framer_e2e_bpsk(1, 0.0f)) ok = FALSE;
+  if (!framer_e2e_bpsk(5, 0.0f)) ok = FALSE;
+  if (!framer_e2e_bpsk(1, 0.3f)) ok = FALSE;
 
   if (ok)
-    log_info("hfdl_frame selftest: PASS (correlators %.2f/%.2f + M1 mode + data round-trip + full-frame framer)\n",
+    log_info("hfdl_frame selftest: PASS (correlators %.2f/%.2f + M1 mode + data round-trip + framer incl. equalizer/multipath)\n",
              peak, peak_inv);
   return ok;
 }
