@@ -1915,8 +1915,13 @@ static gboolean rds_update_cb(gpointer data) {
     // dead band, and that was only visible in the terminal log.
     long long hcur = 0; double hoff = 0.0;
     hfdl_decoder_get_tuned(&hcur, &hoff);
-    char hch[64];
-    if(hcur > 0)
+    double hpeak = 0.0; gboolean hpeak_ok = FALSE;
+    hfdl_decoder_get_peak(&hpeak, &hpeak_ok);
+    char hch[96];
+    if(hcur > 0 && hpeak_ok)
+      snprintf(hch,sizeof(hch),"   ch %.4f MHz (%+.1f kHz)   peak %+.1f kHz",
+               (double)hcur/1e6, hoff/1000.0, hpeak/1000.0);
+    else if(hcur > 0)
       snprintf(hch,sizeof(hch),"   ch %.4f MHz (%+.1f kHz)",
                (double)hcur/1e6, hoff/1000.0);
     else

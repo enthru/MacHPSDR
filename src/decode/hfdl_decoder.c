@@ -135,10 +135,48 @@ static gboolean      reset_pending = FALSE; // requested from GTK, applied on fe
 static int           status_rate = 0;       // last off-air sample rate seen (Hz)
 static glong         status_syms = 0;       // symbol-domain samples since reset
 static double        status_level = -160.0; // AGC RSSI (dB)
+static double        status_peak_hz = 0.0;  // strongest bin in the passband, Hz from centre
+static gboolean      status_peak_ok = FALSE;
 static gboolean      status_fed = FALSE;    // fed at least one block since enable
 
 static gboolean      echo = FALSE;          // MACHPSDR_HFDL_ECHO -> stderr
 static gboolean      env_read = FALSE;
+
+// Coarse "where is the signal, really" probe.
+//
+// When nothing decodes, the question is always whether the front-end is looking
+// where the operator thinks. This measures it inside the decoder, in the
+// decoder's OWN view of the I/Q (same (Q, I) order as the demod), and publishes
+// the strongest bin's offset from the receiver centre for the readout. If that
+// disagrees with the panadapter, the two are not seeing the same spectrum and
+// nothing about the tuning matters until that is resolved.
+#define HFDL_PROBE_N 4096
+static float complex probe_in[HFDL_PROBE_N];
+static float complex probe_out[HFDL_PROBE_N];
+static int           probe_fill = 0;
+static long          probe_hold = 0;   // input samples until the next probe
+
+static void probe_feed(const double *iq, int nframes, int sample_rate) {
+  // One probe per second of input is plenty and costs a single 4096-pt FFT.
+  if (probe_hold > 0) { probe_hold -= nframes; return; }
+  for (int i = 0; i < nframes && probe_fill < HFDL_PROBE_N; i++)
+    probe_in[probe_fill++] = (float)iq[2*i+1] + (float)iq[2*i] * I;
+  if (probe_fill < HFDL_PROBE_N) return;
+  probe_fill = 0;
+  probe_hold = sample_rate;
+  fft_run(HFDL_PROBE_N, probe_in, probe_out, LIQUID_FFT_FORWARD, 0);
+  double best = 0.0; int bestk = 0;
+  for (int k = 0; k < HFDL_PROBE_N; k++) {
+    double m = crealf(probe_out[k])*crealf(probe_out[k]) +
+               cimagf(probe_out[k])*cimagf(probe_out[k]);
+    if (m > best) { best = m; bestk = k; }
+  }
+  int kk = (bestk < HFDL_PROBE_N/2) ? bestk : bestk - HFDL_PROBE_N;
+  g_mutex_lock(&lock);
+  status_peak_hz = (double)kk * (double)sample_rate / (double)HFDL_PROBE_N;
+  status_peak_ok = TRUE;
+  g_mutex_unlock(&lock);
+}
 
 static void ensure_init(void) {
   if (pending == NULL) pending = g_string_new(NULL);
@@ -397,6 +435,8 @@ void hfdl_decoder_add_iq_at(const double *iq, int nframes, int sample_rate,
     demod_cursor = cursor_hz;
   }
 
+  probe_feed(iq, nframes, sample_rate);
+
   int nsym = 0, frames = 0, winner = -1;
   double level = -160.0;
   GString *frametext = NULL;      // decoded messages from this block (may be NULL)
@@ -504,6 +544,13 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
   if (listening)   *listening   = g_atomic_int_get(&enabled) && status_fed;
   if (sample_rate) *sample_rate = status_rate;
   if (blocks)      *blocks      = status_syms;   // recovered symbols since reset
+  g_mutex_unlock(&lock);
+}
+
+void hfdl_decoder_get_peak(double *peak_hz, gboolean *valid) {
+  g_mutex_lock(&lock);
+  if (peak_hz) *peak_hz = status_peak_hz;
+  if (valid)   *valid   = status_peak_ok;
   g_mutex_unlock(&lock);
 }
 

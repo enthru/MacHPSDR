@@ -106,6 +106,12 @@ void hfdl_decoder_get_status(gboolean *listening, int *sample_rate, glong *block
 // the operator believes looks exactly like a dead band.
 void hfdl_decoder_get_tuned(long long *cursor_hz, double *offset_hz);
 
+// Strongest bin the decoder itself sees, in Hz from the receiver centre, in the
+// decoder's own view of the I/Q. Shown beside the tuned channel so a decoder and
+// a panadapter that disagree about the band are caught immediately instead of
+// being argued about.
+void hfdl_decoder_get_peak(double *peak_hz, gboolean *valid);
+
 // Current front-end AGC signal level (RSSI, dB) for the readout. GTK thread only.
 double hfdl_decoder_get_level_db(void);
 
