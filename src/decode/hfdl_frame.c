@@ -175,6 +175,61 @@ static float hfdl_preamble_push(hfdl_preamble *p, int bit) {
   return 2.0f * (float)c / (float)HFDL_A_LEN - 1.0f;
 }
 
+/* ---------------- M1 mode correlator (modulation/slot select) ---------------- */
+
+#define HFDL_M1_LEN 127
+#define HFDL_CORR_THRESHOLD_M1 0.30f   // dumphfdl CORR_THRESHOLD_M1
+
+// The M1 base sequence + the 8 per-mode cyclic shifts (verbatim from dumphfdl).
+// Each M-shift is one frame configuration (see hfdl_frame_params[]); the M1
+// field after the A-preamble identifies which, correlated against these 8
+// rotations of M1_bits.
+static const uint8_t hfdl_M1_bits[HFDL_M1_LEN] = {
+  0,1,1,1,0,1,1,0,1,1,1,1,0,1,0,0,0,1,0,1,1,0,0,
+  1,0,1,1,1,1,1,0,0,0,1,0,0,0,0,0,0,1,1,0,0,1,1,0,1,1,
+  0,0,0,1,1,1,0,0,1,1,1,0,1,0,1,1,1,0,0,0,0,1,0,0,1,1,
+  0,0,0,0,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,1,0,1,0,0,1,
+  1,1,1,0,0,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,1,1,1,1,1
+};
+static const int hfdl_M_shifts[HFDL_M_SHIFT_CNT] = { 72, 82, 113, 123, 61, 103, 93, 9 };
+
+typedef struct {
+  bsequence tmpl[HFDL_M_SHIFT_CNT];   // the 8 M1 rotations
+  bsequence win;                      // sliding 127-bit window
+} hfdl_mode;
+
+static hfdl_mode *hfdl_mode_create(void) {
+  hfdl_mode *m = g_new0(hfdl_mode, 1);
+  for (int s = 0; s < HFDL_M_SHIFT_CNT; s++) {
+    m->tmpl[s] = bsequence_create(HFDL_M1_LEN);
+    for (int j = 0; j < HFDL_M1_LEN; j++)
+      bsequence_push(m->tmpl[s], hfdl_M1_bits[(hfdl_M_shifts[s] + j) % HFDL_M1_LEN]);
+  }
+  m->win = bsequence_create(HFDL_M1_LEN);
+  return m;
+}
+
+static void hfdl_mode_destroy(hfdl_mode *m) {
+  if (m == NULL) return;
+  for (int s = 0; s < HFDL_M_SHIFT_CNT; s++) bsequence_destroy(m->tmpl[s]);
+  bsequence_destroy(m->win);
+  g_free(m);
+}
+
+static void hfdl_mode_push(hfdl_mode *m, int bit) { bsequence_push(m->win, bit); }
+
+// Best-matching M-shift (frame config) for the current window; *corr gets the
+// (absolute) normalised correlation of the winner. dumphfdl match_sequence().
+static int hfdl_mode_match(hfdl_mode *m, float *corr) {
+  float best = 0.f; int best_i = -1;
+  for (int s = 0; s < HFDL_M_SHIFT_CNT; s++) {
+    float c = fabsf(2.0f * (float)bsequence_correlate(m->tmpl[s], m->win) / (float)HFDL_M1_LEN - 1.0f);
+    if (c > best) { best = c; best_i = s; }
+  }
+  *corr = best;
+  return best_i;
+}
+
 /* ---------------- Data-frame decode (symbols -> bytes) ---------------- */
 
 // Decode one HFDL data frame: `nsym` collected data symbols (interleaved float
@@ -386,13 +441,28 @@ gboolean hfdl_frame_selftest(void) {
   }
   hfdl_preamble_destroy(pr);
 
-  // (4) Whole data-path round-trip (interleave + scramble + BPSK + Viterbi) for a
+  // (4) M1 mode correlator: feed the exact bits of shift k; hfdl_mode_match must
+  // return k with a full peak, and not mis-pick another shift.
+  hfdl_mode *mo = hfdl_mode_create();
+  for (int test_k = 0; test_k < HFDL_M_SHIFT_CNT; test_k++) {
+    for (int j = 0; j < HFDL_M1_LEN; j++)
+      hfdl_mode_push(mo, hfdl_M1_bits[(hfdl_M_shifts[test_k] + j) % HFDL_M1_LEN]);
+    float mc; int mk = hfdl_mode_match(mo, &mc);
+    if (mk != test_k || mc < 0.99f) {
+      log_error("hfdl_frame selftest: M1 mode match failed (shift %d -> %d, corr %.3f)\n",
+                test_k, mk, mc);
+      ok = FALSE;
+    }
+  }
+  hfdl_mode_destroy(mo);
+
+  // (5) Whole data-path round-trip (interleave + scramble + BPSK + Viterbi) for a
   // single-slot (m=1) and a double-slot (m=5) BPSK r=1/2 config.
   if (!dataframe_roundtrip_bpsk(1)) ok = FALSE;
   if (!dataframe_roundtrip_bpsk(5)) ok = FALSE;
 
   if (ok)
-    log_info("hfdl_frame selftest: PASS (deinterleave+descramble+preamble %.2f/%.2f + data-frame round-trip)\n",
+    log_info("hfdl_frame selftest: PASS (deinterleave+descramble+preamble %.2f/%.2f + M1 mode + data-frame round-trip)\n",
              peak, peak_inv);
   return ok;
 }
