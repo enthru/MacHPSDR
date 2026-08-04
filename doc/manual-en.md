@@ -239,16 +239,13 @@ transmitter un-keys, after a short break-in hang) when you release the paddles.
 *(The A/B timing is verified by a headless unit test; on-air behaviour with a
 real paddle is unverified — no transmit hardware or physical paddle here.)*
 
-**HFDL — aviation HF data link (optional build).** HFDL (ARINC 635) is the
+**HFDL — aviation HF data link.** HFDL (ARINC 635) is the
 short-message data link airliners use over the oceans when they are out of VHF
 range: the ground stations broadcast their status, aircraft log on and off, and
 ACARS messages — position reports, flight plans, company traffic — travel in
-both directions. MacHPSDR can decode it, but **it is not in a stock build**: the
-decoder is ported from `dumphfdl`, which is GPLv3, so it has to be switched on at
-compile time with `make HFDL_INCLUDE=HFDL` (a stock build stays GPLv2 and simply
-does not offer HFDL).
+both directions. MacHPSDR decodes it out of the box.
 
-With such a build, put the receiver in **DIGU** and choose **HFDL** from the
+Put the receiver in **DIGU** and choose **HFDL** from the
 Decode selector; **Show HFDL** opens a panel (in the second-receiver slot, like
 the other decoders) with the decoded messages, and the Decode block shows the
 signal level, frame count and symbol throughput. Tune the HFDL channel the same

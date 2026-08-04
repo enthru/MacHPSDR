@@ -121,14 +121,14 @@ SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_pane
 endif
 
 # HFDL (aviation HF Data Link, ARINC 635) receive decoder — parity 4.5.
-# OFF by default: a stock build stays GPLv2. It depends on liquid-dsp (MIT;
-# `brew install liquid-dsp` on macOS, `libliquid-dev`/source on Linux) and, as
-# later phases port dumphfdl (GPL-3.0), the HFDL build becomes effectively GPLv3
-# (compatible with this fork's "GPLv2 or later" — see NOTICE). Enable with
-# `make HFDL_INCLUDE=HFDL` or uncomment the line below. Requires SSTV+FT8 (it
-# reuses the shared decode-block machinery). On Linux, override HFDL_INCLUDES /
-# HFDL_LIBS if liquid-dsp is not on the default include/lib path.
-#HFDL_INCLUDE=HFDL
+# Needs liquid-dsp (MIT; `brew install liquid-dsp` on macOS, `libliquid-dev` or
+# a source build on Linux) and requires SSTV+FT8 (it reuses the shared
+# decode-block machinery). Because the demodulator/framing is a port of dumphfdl
+# (GPL-3.0), a build with HFDL is effectively GPLv3 — which this fork's "GPLv2 or
+# later" permits. Comment the line out to build without it (drops the liquid-dsp
+# dependency). On Linux, override HFDL_INCLUDES / HFDL_LIBS if liquid-dsp is not
+# on the default include/lib path.
+HFDL_INCLUDE=HFDL
 
 ifeq ($(HFDL_INCLUDE),HFDL)
 HFDL_OPTIONS=-D HFDL
@@ -263,7 +263,16 @@ INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
-.c.o:
+# Feature flags are not tracked by make: switching one (e.g. commenting
+# HFDL_INCLUDE in or out) leaves every existing .o looking up to date, so the
+# feature links in but the code compiled without its -D stays absent — an HFDL
+# build whose Decode menu has no HFDL entry, and no error anywhere. .build-flags
+# records the current -D set and is rewritten only when that set actually
+# changes, so a flag switch forces a rebuild and nothing else does.
+# (A pattern rule, not the old `.c.o:` suffix rule — suffix rules cannot take
+# extra prerequisites; adding one silently turns them into an ordinary target
+# and nothing compiles at all.)
+%.o: %.c .build-flags
 	$(COMPILE) -MMD -MP -c -o $@ $<
 
 PROGRAM=machpsdr
@@ -523,8 +532,13 @@ prebuild:
 	rm -f version.o
 
 
+.build-flags: .FORCE
+	@printf '%s\n' '$(OPTIONS)' | cmp -s - $@ || printf '%s\n' '$(OPTIONS)' > $@
+.FORCE:
+.PHONY: .FORCE
+
 clean:
-	-rm -f *.o *.d
+	-rm -f *.o *.d .build-flags
 	-rm -f ft8_lib/ft8/*.o ft8_lib/fft/*.o ft8_lib/common/*.o
 	-rm -f $(PROGRAM)
 	-rm -rf $(APP_NAME).app

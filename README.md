@@ -52,7 +52,7 @@ feature additions.
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
-| **HFDL** *(optional build)* | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. **Off in a stock build** — the port makes that build GPLv3, so enable it explicitly with `make HFDL_INCLUDE=HFDL` *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
+| **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver. |
@@ -402,7 +402,7 @@ you've dialled in.
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
 
-- **HFDL — aviation HF data link (optional build).** A complete receiver for
+- **HFDL — aviation HF data link.** A complete receiver for
   HFDL (ARINC 635), the ACARS-carrying data link airliners use over the oceans:
   raw I/Q in, decoded messages out. The chain is a faithful port of `dumphfdl` —
   NCO downmix from the 1440 Hz carrier offset, resampling to the 1800-baud symbol
@@ -418,9 +418,10 @@ you've dialled in.
   application layer is a **native port**, not a link against libacars, so nothing
   large is vendored; CPDLC/ADS-C payloads and multi-block ACARS reassembly are
   deliberately left out. Select **HFDL** from the Decode block in **DIGU** and
-  press **Show HFDL** for the message panel. **Not built by default** — the
-  `dumphfdl` port is GPLv3, so the HFDL build is enabled explicitly with
-  `make HFDL_INCLUDE=HFDL` and a stock build stays GPLv2. *(Every layer has a
+  press **Show HFDL** for the message panel. Built by default; it needs
+  `liquid-dsp`, and since the decoder is a port of `dumphfdl` the resulting build
+  is effectively GPLv3 (which this fork's "GPLv2 or later" permits). Comment out
+  `HFDL_INCLUDE` in the Makefile to build without it and drop the dependency. *(Every layer has a
   built-in self-test — timing/carrier recovery at zero bit errors, FEC round-trip
   with error correction, a full synthetic frame decoded bit-exactly through a
   2-tap multipath channel, and a full-stack test that reads an ACARS message back
@@ -572,7 +573,7 @@ Development and testing has been run on macOS Sierra 10.12.6 and High Sierra
 10.13.6. Prerequisites are installed with [Homebrew](https://brew.sh/).
 
 ```bash
-brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr dylibbundler
+brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
 ```
 
 ```bash
@@ -660,7 +661,7 @@ requires **GTK 4** (`libgtk-4-dev` / `gtk4`); GTK 3 is no longer supported.
 
 ```bash
 sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev \
-                     libasound2-dev libgtk-4-dev libsoapysdr-dev
+                     libasound2-dev libgtk-4-dev libsoapysdr-dev libliquid-dev
 ```
 
 ```bash
