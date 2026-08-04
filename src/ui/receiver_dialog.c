@@ -885,7 +885,10 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_widget_set_valign(left_box,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),left_box,0,0,1,1);
   GtkWidget *right_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
-  gtk_widget_set_valign(right_box,GTK_ALIGN_START);
+  // FILL, not START: the right column is the shorter of the two, and its last
+  // frame (CAT) expands to take up the difference so the column bottoms line up
+  // and no dead space is left under CAT.
+  gtk_widget_set_valign(right_box,GTK_ALIGN_FILL);
   gtk_grid_attach(GTK_GRID(grid),right_box,1,0,1,1);
 
   if(radio->discovered->adcs>1) {
@@ -1466,12 +1469,16 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   // Top-align: without this the frame fills the full column height (as tall as
   // the left Audio/EQ/NR4/APF stack) and leaves a big empty area below its 3
   // rows of controls. START makes it hug its content height.
-  gtk_widget_set_valign(cat_frame,GTK_ALIGN_START);
+  // vexpand as well as FILL: valign only places the frame inside the slot the
+  // box hands it, and without vexpand that slot is just its natural height.
+  gtk_widget_set_valign(cat_frame,GTK_ALIGN_FILL);
+  gtk_widget_set_vexpand(cat_frame,TRUE);
   // CAT sits in a vbox rather than straight in the grid cell: attached as a
   // plain grid row it was spread out by the tall panadapter row above (same
   // reason the left column stacks its Audio/EQ/NR4 frames in a box).
   GtkWidget *cat_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,5);
-  gtk_widget_set_valign(cat_box,GTK_ALIGN_START);
+  gtk_widget_set_valign(cat_box,GTK_ALIGN_FILL);
+  gtk_widget_set_vexpand(cat_box,TRUE);
   gtk_box_append(GTK_BOX(right_box),cat_box);
   gtk_box_append(GTK_BOX(cat_box),cat_frame);
 
