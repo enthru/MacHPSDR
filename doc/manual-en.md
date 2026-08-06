@@ -23,19 +23,36 @@ a hardware-free player for a recorded I/Q file (see §13); select it to try the 
 or replay a capture without a radio. With `--faker` the dialog is skipped and the
 I/Q Player starts straight away.
 
-A **PlutoSDR reachable only by IP** — one that is not on your own subnet, so
-neither the USB nor the network scan can see it — has to be named before launch:
+### Adding a device on another network
+
+A radio that is not on your own subnet answers no scan — neither the USB one nor
+the network one — so it has to be named. The selection window has a **Network
+device** row for that:
+
+1. pick the kind — currently **PlutoSDR**;
+2. type its address, e.g. `192.168.36.190`;
+3. press **Add** (or Enter).
+
+It is tried straight away. If it answers it joins the list at once — no restart —
+and you can select it and press **Start Radio**. If it does not, the line below
+says why and nothing is saved, so a mistyped address cannot settle in and slow
+every later start. Devices that do answer are remembered and tried again at each
+start; select one and press **Forget** to drop it.
+
+For a one-off you can still name a Pluto on the command line:
 
 ```bash
 MACHPSDR_PLUTO_URI=ip:192.168.1.10 ./machpsdr
 ```
 
-It then appears in the device list like any other radio. Give it as a URI
-(`ip:<address>`), not as a bare host name: a host name makes the Pluto driver
-report a local connection alongside it, and SoapySDR gives that priority over the
-address you asked for, so the app ends up looking for the radio inside your own
-PC and reports *no device found in this context*. The older
+Give it as a URI (`ip:<address>`), not as a bare host name: a host name makes the
+Pluto driver report a local connection alongside it, and SoapySDR gives that
+priority over the address you asked for, so the app ends up looking for the radio
+inside your own PC and reports *no device found in this context*. The older
 `MACHPSDR_PLUTO_HOST=<host>` still works and is converted to the same URI.
+
+If an attempt fails, restart the app before trying again: the Pluto driver keeps
+its first (failed) connection for the life of the process.
 
 Running the `.app` bundle: double-click `MacHPSDR.app`, or, to pass flags,
 call its launcher directly

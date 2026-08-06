@@ -35,7 +35,8 @@ static int sdrplay_count=0;
 // carried into SoapySDRDevice_make() and remembered for every later re-open -
 // passing just "driver=" (as this used to) is enough for a device the driver
 // finds by itself, but says nothing about *which* one or *where* it is.
-static void get_info(const char *driver, const SoapySDRKwargs *found) {
+// Returns TRUE if the device answered and was appended to discovered[].
+static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
   size_t rx_rates_length, tx_rates_length, rx_gains_length, tx_gains_length, ranges_length, rx_antennas_length, tx_antennas_length, rx_bandwidth_length, tx_bandwidth_length;
   int i;
   SoapySDRKwargs args={};
@@ -44,6 +45,7 @@ static void get_info(const char *driver, const SoapySDRKwargs *found) {
   int rtlsdr_val=0;
   int sdrplay_val=0;
   char make_args[256];
+  gboolean added=FALSE;
 
   log_info("soapy_discovery: get_info: %s\n", driver);
 
@@ -82,7 +84,7 @@ static void get_info(const char *driver, const SoapySDRKwargs *found) {
   if(sdr==NULL) {
     log_info("%s: SoapySdrDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     SoapySDRKwargs_clear(&args);
-    return;
+    return FALSE;
   }
   SoapySDRKwargs_clear(&args);
 
@@ -290,6 +292,7 @@ log_info("Tx gains: \n");
     g_strlcpy(discovered[devices].info.soapy.make_args,make_args,sizeof(discovered[devices].info.soapy.make_args));
 
     devices++;
+    added=TRUE;
   }
 
   // fv
@@ -297,6 +300,7 @@ log_info("Tx gains: \n");
 
   free(ranges);
 
+  return added;
 }
 
 // A PlutoSDR that is not on this subnet is invisible to both the USB scan and
@@ -317,41 +321,217 @@ log_info("Tx gains: \n");
 // this context" - and no uri we pass can win, which is exactly the dead end this
 // looks like from the outside.  With a uri and no hostname the Pluto find
 // returns nothing at all, there is no discovery result to override us, and the
-// uri is used verbatim.  Returns "" when no Pluto was named.
-static void pluto_explicit_uri(char *uri, size_t len) {
-  const char *env;
+// uri is used verbatim.
+//
+// Adding another kind of network device is one row here.  uri_fmt turns what the
+// operator typed into the Soapy uri; the address is passed through unchanged if
+// it already looks like one (contains ':'), so "ip:1.2.3.4" and "usb:1.4.5" can
+// be typed in full when needed.
+const SOAPY_NETDEV_TYPE soapy_netdev_types[] = {
+  { "PlutoSDR", "plutosdr", "ip:%s", "192.168.2.1" },
+};
 
-  uri[0]='\0';
-  env=getenv("MACHPSDR_PLUTO_URI");
-  if(env!=NULL && env[0]!='\0') {
-    g_strlcpy(uri,env,len);
+int soapy_netdev_types_count(void) {
+  return (int)(sizeof(soapy_netdev_types)/sizeof(soapy_netdev_types[0]));
+}
+
+static SOAPY_NETDEV netdev[SOAPY_NETDEV_MAX];
+static int netdev_n=0;
+// discovered[] index each saved device landed on this discovery run, -1 if it
+// did not answer.  Rebuilt every soapy_discovery(); it is what maps a row the
+// operator selected back to the entry to forget.
+static int netdev_dev[SOAPY_NETDEV_MAX];
+static gboolean netdev_loaded=FALSE;
+
+static void netdev_path(char *path, size_t len) {
+  g_snprintf(path,len,"%s/.local/share/machpsdr/devices.props",g_get_home_dir());
+}
+
+// Own file and own tiny parser rather than property.c: the property store is a
+// single global that loadProperties() wipes, and the radio's own properties are
+// loaded into it later - saving this list through it would eventually write a
+// radio config into devices.props.
+static void netdev_load(void) {
+  char path[512];
+  char line[256];
+  FILE *f;
+
+  if(netdev_loaded) return;
+  netdev_loaded=TRUE;
+  netdev_n=0;
+  // -1 = "not in discovered[]".  Zero-initialised static storage would read as
+  // "this one is discovered[0]" and make a saved device that never answered
+  // look live (and discovered[0] look like ours) before discovery has run.
+  for(int i=0;i<SOAPY_NETDEV_MAX;i++) netdev_dev[i]=-1;
+  netdev_path(path,sizeof(path));
+  f=fopen(path,"r");
+  if(f==NULL) return;
+  while(fgets(line,sizeof(line),f)!=NULL && netdev_n<SOAPY_NETDEV_MAX) {
+    char drv[32], addr[96];
+    if(line[0]=='#' || line[0]=='\n') continue;
+    if(sscanf(line,"%31s %95s",drv,addr)!=2) continue;
+    g_strlcpy(netdev[netdev_n].driver,drv,sizeof(netdev[netdev_n].driver));
+    g_strlcpy(netdev[netdev_n].address,addr,sizeof(netdev[netdev_n].address));
+    netdev_n++;
+  }
+  fclose(f);
+  log_info("%s: %d saved network device(s)\n",__FUNCTION__,netdev_n);
+}
+
+static void netdev_save(void) {
+  char path[512];
+  FILE *f;
+
+  netdev_path(path,sizeof(path));
+  f=fopen(path,"w");
+  if(f==NULL) {
+    log_error("%s: cannot write %s\n",__FUNCTION__,path);
     return;
   }
-  // MACHPSDR_PLUTO_HOST is the older spelling and stays supported, but it is
-  // turned into a uri rather than passed on as a hostname.
-  env=getenv("MACHPSDR_PLUTO_HOST");
-  if(env!=NULL && env[0]!='\0') {
-    if(strchr(env,':')!=NULL) g_strlcpy(uri,env,len);            // already a uri
-    else g_snprintf(uri,len,"ip:%s",env);
+  fprintf(f,"# MacHPSDR network devices: <driver> <address>, one per line.\n");
+  fprintf(f,"# Devices no scan can find (another subnet); added in the device dialog.\n");
+  for(int i=0;i<netdev_n;i++) {
+    fprintf(f,"%s %s\n",netdev[i].driver,netdev[i].address);
   }
+  fclose(f);
+}
+
+static const SOAPY_NETDEV_TYPE *netdev_type_for(const char *driver) {
+  for(int t=0;t<soapy_netdev_types_count();t++) {
+    if(strcmp(soapy_netdev_types[t].driver,driver)==0) return &soapy_netdev_types[t];
+  }
+  return NULL;
+}
+
+static void netdev_uri(const char *driver, const char *address, char *uri, size_t len) {
+  const SOAPY_NETDEV_TYPE *type=netdev_type_for(driver);
+  if(strchr(address,':')!=NULL || type==NULL) {
+    g_strlcpy(uri,address,len);            // already a uri, or an unknown kind
+  } else {
+    g_snprintf(uri,len,type->uri_fmt,address);
+  }
+}
+
+// Probe one network device.  TRUE if it answered and is now in discovered[].
+static gboolean netdev_probe(const char *driver, const char *address) {
+  SoapySDRKwargs args={};
+  char uri[128];
+  gboolean ok;
+
+  netdev_uri(driver,address,uri,sizeof(uri));
+  log_info("%s: probing %s at %s\n",__FUNCTION__,driver,uri);
+  SoapySDRKwargs_set(&args, "driver", driver);
+  SoapySDRKwargs_set(&args, "uri", uri);
+  ok=get_info(driver,&args);
+  SoapySDRKwargs_clear(&args);
+  return ok;
+}
+
+int soapy_netdev_count(void) {
+  netdev_load();
+  return netdev_n;
+}
+
+const SOAPY_NETDEV *soapy_netdev_at(int i) {
+  netdev_load();
+  if(i<0 || i>=netdev_n) return NULL;
+  return &netdev[i];
+}
+
+gboolean soapy_netdev_is_saved(int index) {
+  netdev_load();
+  for(int i=0;i<netdev_n;i++) {
+    if(netdev_dev[i]==index) return TRUE;
+  }
+  return FALSE;
+}
+
+gboolean soapy_netdev_add(const char *driver, const char *address) {
+  netdev_load();
+
+  for(int i=0;i<netdev_n;i++) {
+    if(strcmp(netdev[i].driver,driver)==0 && strcmp(netdev[i].address,address)==0) {
+      // Already saved.  If it is live in this session's list there is nothing
+      // to do; if it was not answering at startup, give it another go.
+      if(netdev_dev[i]>=0) return TRUE;
+      if(!netdev_probe(driver,address)) return FALSE;
+      netdev_dev[i]=devices-1;
+      return TRUE;
+    }
+  }
+
+  if(netdev_n>=SOAPY_NETDEV_MAX) {
+    log_error("%s: no room for another network device (max %d)\n",__FUNCTION__,SOAPY_NETDEV_MAX);
+    return FALSE;
+  }
+  // Probe before saving: a typo should not become a permanent list entry that
+  // stalls every future startup waiting for an address that answers nothing.
+  if(!netdev_probe(driver,address)) return FALSE;
+
+  g_strlcpy(netdev[netdev_n].driver,driver,sizeof(netdev[netdev_n].driver));
+  g_strlcpy(netdev[netdev_n].address,address,sizeof(netdev[netdev_n].address));
+  netdev_dev[netdev_n]=devices-1;
+  netdev_n++;
+  netdev_save();
+  return TRUE;
+}
+
+gboolean soapy_netdev_forget_discovered(int index) {
+  netdev_load();
+  for(int i=0;i<netdev_n;i++) {
+    if(netdev_dev[i]!=index) continue;
+    log_info("%s: forgetting %s %s\n",__FUNCTION__,netdev[i].driver,netdev[i].address);
+    for(int j=i;j<netdev_n-1;j++) {
+      netdev[j]=netdev[j+1];
+      netdev_dev[j]=netdev_dev[j+1];
+    }
+    netdev_n--;
+    netdev_save();
+    return TRUE;
+  }
+  return FALSE;
+}
+
+// The older MACHPSDR_PLUTO_URI / MACHPSDR_PLUTO_HOST escape hatch: a one-shot
+// address that is used but not added to the saved list.  Returns "" if unset.
+static void pluto_env_address(char *addr, size_t len) {
+  const char *env;
+
+  addr[0]='\0';
+  env=getenv("MACHPSDR_PLUTO_URI");
+  if(env==NULL || env[0]=='\0') env=getenv("MACHPSDR_PLUTO_HOST");
+  if(env!=NULL && env[0]!='\0') g_strlcpy(addr,env,len);
 }
 
 void soapy_discovery(void) {
   size_t length;
   int i;
   SoapySDRKwargs input_args={};
-  char pluto_uri[128];
+  char env_addr[128];
+  char added_uri[SOAPY_NETDEV_MAX+1][128];
+  int added_uris=0;
 
   log_info("%s\n",__FUNCTION__);
 
-  pluto_explicit_uri(pluto_uri,sizeof(pluto_uri));
-  if(pluto_uri[0]!='\0') {
-    SoapySDRKwargs pluto={};
-    log_info("%s: explicit PlutoSDR uri=%s\n",__FUNCTION__,pluto_uri);
-    SoapySDRKwargs_set(&pluto, "driver", "plutosdr");
-    SoapySDRKwargs_set(&pluto, "uri", pluto_uri);
-    get_info("plutosdr", &pluto);
-    SoapySDRKwargs_clear(&pluto);
+  // Saved network devices first: they cannot be found by any scan, and probing
+  // them first keeps their discovered[] indices stable for the Forget button.
+  netdev_load();
+  for(i=0;i<netdev_n;i++) {
+    netdev_dev[i]=-1;
+    if(netdev_probe(netdev[i].driver,netdev[i].address)) {
+      netdev_dev[i]=devices-1;
+      netdev_uri(netdev[i].driver,netdev[i].address,added_uri[added_uris++],sizeof(added_uri[0]));
+    } else {
+      log_info("%s: saved device %s %s did not answer\n",__FUNCTION__,netdev[i].driver,netdev[i].address);
+    }
+  }
+
+  pluto_env_address(env_addr,sizeof(env_addr));
+  if(env_addr[0]!='\0') {
+    log_info("%s: PlutoSDR from the environment: %s\n",__FUNCTION__,env_addr);
+    if(netdev_probe("plutosdr",env_addr) && added_uris<=SOAPY_NETDEV_MAX) {
+      netdev_uri("plutosdr",env_addr,added_uri[added_uris++],sizeof(added_uri[0]));
+    }
   }
 
   // Enumerate with EMPTY args.  Anything else (a hostname in particular) makes
@@ -361,18 +541,27 @@ void soapy_discovery(void) {
   log_info("%s: length=%ld\n",__FUNCTION__,length);
   for (i = 0; i < length; i++) {
     const char *driver=NULL;
+    const char *uri=NULL;
+    gboolean dup=FALSE;
     log_info("%s: i=%d size=%ld\n",__FUNCTION__,i,results[i].size);
     for (size_t j = 0; j < results[i].size; j++) {
       log_info("%s key=%s value=%s\n",__FUNCTION__,results[i].keys[j],results[i].vals[j]);
       if(strcmp(results[i].keys[j],"driver")==0) driver=results[i].vals[j];
+      if(strcmp(results[i].keys[j],"uri")==0)    uri=results[i].vals[j];
     }
     // get_info() runs after the whole result has been read, so it sees every
     // key.  (It used to be called from inside the key loop, on the "driver"
     // key, and could only ever see the keys sorting before it.)
     if(driver==NULL) continue;
     if(strcmp(driver,"audio")==0) continue;
-    if(pluto_uri[0]!='\0' && strcmp(driver,"plutosdr")==0) {
-      log_info("%s: skipping enumerated plutosdr, an explicit uri was given\n",__FUNCTION__);
+    // A device we were told about may also be reachable by a scan (same subnet):
+    // list it once.  Matching on the uri, not the driver, so a USB Pluto is
+    // still offered alongside a networked one.
+    for(int a=0;uri!=NULL && a<added_uris;a++) {
+      if(strcmp(uri,added_uri[a])==0) dup=TRUE;
+    }
+    if(dup) {
+      log_info("%s: %s at %s already added by hand\n",__FUNCTION__,driver,uri);
       continue;
     }
     get_info(driver,&results[i]);

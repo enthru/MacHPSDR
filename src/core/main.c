@@ -57,6 +57,7 @@
 #include "protocol2.h"
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
+#include "soapy_discovery.h"
 #endif
 #include "property.h"
 #include "rigctl.h"
@@ -84,6 +85,14 @@ static GtkWidget *none_found;
 static GtkWidget *start;
 static GtkWidget *retry;
 static GtkWidget *image;   // splash image (GTK4: no wrapping event box needed)
+#ifdef SOAPYSDR
+// "Add network device" row: a device on another subnet answers no scan, so it
+// has to be typed in.  See soapy_discovery.h.
+static GtkWidget *netdev_type;     // GtkDropDown over soapy_netdev_types[]
+static GtkWidget *netdev_addr;
+static GtkWidget *netdev_forget;
+static GtkWidget *netdev_status;
+#endif
 
 static DISCOVERED *d=NULL;
 
@@ -179,6 +188,13 @@ static GtkSingleSelection *dev_selection;   // owns the model; kept for teardown
 
 static void dev_selection_changed(GObject *sel, GParamSpec *ps, gpointer data) {
   DeviceItem *it = gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(sel));
+#ifdef SOAPYSDR
+  // Only a device we were told about by hand can be forgotten; a discovered one
+  // would simply come back on the next scan.
+  if(netdev_forget!=NULL) {
+    gtk_widget_set_sensitive(netdev_forget, it!=NULL && soapy_netdev_is_saved(it->index));
+  }
+#endif
   if(it==NULL) { d=NULL; return; }
   d = &discovered[it->index];
   switch(d->status) {
@@ -189,16 +205,17 @@ static void dev_selection_changed(GObject *sel, GParamSpec *ps, gpointer data) {
 
 gboolean start_cb(GtkWidget *widget,gpointer data);  /* defined below; called for --faker */
 
-static int discover(void *data) {
+// Build (or rebuild) the selection list from discovered[].  Split out of
+// discover() because adding a network device by hand appends to discovered[]
+// without re-running discovery - the device has to show up straight away, and
+// re-scanning would throw away the very entry that was just added.
+static void build_device_list(void) {
   char v[32];
   char mac[32];
   char protocol[32];
   char ip[32];
   char iface[32];
   gint i;
-
-  discovery();
-  log_info("main: discovery found %d devices\n",devices);
 
   if(devices>0) {
     store=g_list_store_new(DEVICE_TYPE_ITEM);
@@ -284,6 +301,31 @@ log_info("adding %s\n",d->name);
     none_found=gtk_label_new("No HPSDR devices found");
     gtk_grid_attach(GTK_GRID(grid), none_found, 1, 0, 4, 1);
   }
+}
+
+// Tear the list widgets down so build_device_list() can put fresh ones up.
+static void clear_device_list(void) {
+  if(view!=NULL) {
+    if(dev_selection!=NULL) g_signal_handler_disconnect(dev_selection,selection_signal_id);
+    gtk_grid_remove(GTK_GRID(grid),view);
+    view=NULL;
+    dev_selection=NULL;
+  }
+  if(none_found!=NULL) {
+    gtk_grid_remove(GTK_GRID(grid),none_found);
+    none_found=NULL;
+  }
+  d=NULL;
+  gtk_widget_set_sensitive(start, FALSE);
+}
+
+static int discover(void *data) {
+  gint i;
+
+  discovery();
+  log_info("main: discovery found %d devices\n",devices);
+
+  build_device_list();
 
   // --faker: skip the device-selection dialog entirely. Realize the window,
   // build the fake radio straight into the grid, then reveal the fully-built
@@ -386,19 +428,62 @@ static int check_wisdom(void *data) {
 
 gboolean retry_cb(GtkWidget *widget,gpointer data) {
   gtk_widget_set_cursor_from_name(main_window, "wait");
-  if(view!=NULL) {
-    if(dev_selection!=NULL) g_signal_handler_disconnect(dev_selection,selection_signal_id);
-    gtk_grid_remove(GTK_GRID(grid),view);
-    view=NULL;
-    dev_selection=NULL;
-  }
-  if(none_found!=NULL) {
-    gtk_grid_remove(GTK_GRID(grid),none_found);
-    none_found=NULL;
-  }
+  clear_device_list();
   g_idle_add(discover,NULL);
   return TRUE;
 }
+
+#ifdef SOAPYSDR
+// Add the network device the operator typed in.  It is probed right here and,
+// if it answers, appended to discovered[] and to the list on screen - no restart
+// and no re-scan, so it can be selected and started immediately.
+static gboolean netdev_add_cb(GtkWidget *widget,gpointer data) {
+  guint t=gtk_drop_down_get_selected(GTK_DROP_DOWN(netdev_type));
+  const char *addr=gtk_editable_get_text(GTK_EDITABLE(netdev_addr));
+  char msg[256];
+
+  if(addr==NULL || addr[0]=='\0' || t>=(guint)soapy_netdev_types_count()) {
+    gtk_label_set_text(GTK_LABEL(netdev_status),"Enter the address first");
+    return TRUE;
+  }
+
+  gtk_widget_set_cursor_from_name(main_window, "wait");
+  gtk_label_set_text(GTK_LABEL(netdev_status),"Connecting…");
+  if(soapy_netdev_add(soapy_netdev_types[t].driver,addr)) {
+    int added=devices-1;
+    clear_device_list();
+    build_device_list();
+    if(dev_selection!=NULL && added>=0) gtk_single_selection_set_selected(dev_selection,added);
+    g_snprintf(msg,sizeof(msg),"Added %s at %s",soapy_netdev_types[t].label,addr);
+    gtk_editable_set_text(GTK_EDITABLE(netdev_addr),"");
+  } else {
+    // Say why.  The one that matters ("no device found in this context") means
+    // it connected but found no radio there, which reads very differently from
+    // not reaching the address at all.
+    const char *err=SoapySDRDevice_lastError();
+    g_snprintf(msg,sizeof(msg),"No %s at %s%s%s",soapy_netdev_types[t].label,addr,
+               (err!=NULL && err[0]!='\0')?": ":"",(err!=NULL)?err:"");
+  }
+  gtk_label_set_text(GTK_LABEL(netdev_status),msg);
+  gtk_widget_set_cursor_from_name(main_window, "default");
+  return TRUE;
+}
+
+// Drop the selected device from the saved list.  Unlike Add this does re-scan:
+// the device is already in discovered[] and only a fresh discovery can honestly
+// show what is left.
+static gboolean netdev_forget_cb(GtkWidget *widget,gpointer data) {
+  DeviceItem *it = dev_selection==NULL ? NULL :
+                   gtk_single_selection_get_selected_item(dev_selection);
+
+  if(it==NULL || !soapy_netdev_forget_discovered(it->index)) return TRUE;
+  gtk_label_set_text(GTK_LABEL(netdev_status),"Forgotten");
+  gtk_widget_set_cursor_from_name(main_window, "wait");
+  clear_device_list();
+  g_idle_add(discover,NULL);
+  return TRUE;
+}
+#endif
 
 gboolean start_cb(GtkWidget *widget,gpointer data) {
   char v[32];
@@ -618,6 +703,50 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   start=gtk_button_new_with_label("Start Radio");
   g_signal_connect(start,"clicked",G_CALLBACK(start_cb),NULL);
   gtk_grid_attach(GTK_GRID(grid), start, 4, 1, 1, 1);
+
+#ifdef SOAPYSDR
+  // "Add network device": a radio on another subnet answers no scan, so the
+  // only way to reach it is to say where it is.  The kind is picked from a list
+  // rather than typed as SoapySDR argument syntax; only PlutoSDR for now.
+  {
+    GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
+    GtkWidget *add;
+    const char *labels[8];
+    int n=soapy_netdev_types_count();
+
+    if(n>7) n=7;
+    for(int t=0;t<n;t++) labels[t]=soapy_netdev_types[t].label;
+    labels[n]=NULL;
+
+    gtk_box_append(GTK_BOX(row),gtk_label_new("Network device:"));
+
+    netdev_type=gtk_drop_down_new_from_strings(labels);
+    gtk_box_append(GTK_BOX(row),netdev_type);
+
+    netdev_addr=gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(netdev_addr),soapy_netdev_types[0].hint);
+    gtk_entry_set_input_purpose(GTK_ENTRY(netdev_addr),GTK_INPUT_PURPOSE_URL);
+    gtk_widget_set_hexpand(netdev_addr,TRUE);
+    gtk_box_append(GTK_BOX(row),netdev_addr);
+
+    add=gtk_button_new_with_label("Add");
+    g_signal_connect(add,"clicked",G_CALLBACK(netdev_add_cb),NULL);
+    gtk_box_append(GTK_BOX(row),add);
+    // Enter in the address field adds, like every other address bar.
+    g_signal_connect(netdev_addr,"activate",G_CALLBACK(netdev_add_cb),NULL);
+
+    netdev_forget=gtk_button_new_with_label("Forget");
+    gtk_widget_set_sensitive(netdev_forget,FALSE);
+    g_signal_connect(netdev_forget,"clicked",G_CALLBACK(netdev_forget_cb),NULL);
+    gtk_box_append(GTK_BOX(row),netdev_forget);
+
+    gtk_grid_attach(GTK_GRID(grid), row, 1, 2, 4, 1);
+
+    netdev_status=gtk_label_new("");
+    gtk_widget_set_halign(netdev_status,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), netdev_status, 1, 3, 4, 1);
+  }
+#endif
 
   //gtk_widget_set_visible(main_window, TRUE);
 

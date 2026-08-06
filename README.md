@@ -477,18 +477,25 @@ you've dialled in.
   without this HackRF crashed on key-up. Keys up on real hardware without
   crashing; on-air signal quality still needs more testing.
 
-- **PlutoSDR on another subnet.** A PlutoSDR reachable only by IP (not on your
-  own subnet, so neither the USB nor the mDNS scan can see it) is named with
-  `MACHPSDR_PLUTO_URI=ip:192.168.1.10` before launch, and then appears in the
-  device list like any other radio. The older `MACHPSDR_PLUTO_HOST=<host>` still
-  works and is turned into the same URI. *(It has to be a URI: the Pluto Soapy
-  module hands back a stale `uri=local:` alongside a hostname-based result, and
-  SoapySDR lets that override what the application asked for — so a hostname hint
-  opens the local IIO context and fails with "no device found in this context".
-  Naming the URI leaves nothing to override.)* Every device is now also re-opened
-  with the full connection details discovery found it with — previously only the
-  driver name was kept, which is enough for a USB device the driver can find by
-  itself but not for a networked one.
+- **Add a network device by hand (PlutoSDR on another subnet).** A radio that is
+  not on your own subnet answers no scan — neither the USB one nor the mDNS one —
+  so the device-selection window now has a **Network device** row: pick the kind
+  (**PlutoSDR**; the list is there to grow), type the address, press **Add**. It
+  is probed on the spot and, if it answers, joins the device list immediately —
+  no restart, no re-scan — ready to select and start. If it does not answer, the
+  line under the row says why, and nothing is saved: a typo cannot become a
+  permanent entry that delays every future startup. Devices that do answer are
+  remembered in `~/.local/share/machpsdr/devices.props` and probed at every
+  start; **Forget** (enabled when such a device is selected) drops one.
+  `MACHPSDR_PLUTO_URI=ip:192.168.1.10` still works for a one-off, as does the
+  older `MACHPSDR_PLUTO_HOST=<host>`. *(The address becomes a URI, never a host
+  name: the Pluto Soapy module hands back a stale `uri=local:` alongside a
+  hostname-based result, and SoapySDR lets that override what the application
+  asked for — so a hostname hint opens the local IIO context and fails with "no
+  device found in this context". Naming the URI leaves nothing to override.)*
+  Every device is now also re-opened with the full connection details discovery
+  found it with — previously only the driver name was kept, which is enough for a
+  USB device the driver can find by itself but not for a networked one.
 
 - **Window comes to the front on launch.** The main window is raised and given
   focus at startup (on macOS the app is also made the active application), so it
