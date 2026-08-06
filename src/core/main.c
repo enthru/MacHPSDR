@@ -75,6 +75,11 @@
 GtkWidget *main_window;
 static GtkWidget *grid;
 
+// Breathing room around the device-selection widgets, so nothing sits flush
+// against the window edge.  It goes on the widgets and not on the grid: the same
+// grid is reused for the radio window, which must not inherit a border.
+#define SELECT_MARGIN 8
+
 static sem_t *wisdom_sem;
 static GThread *wisdom_thread_id;
 
@@ -88,6 +93,7 @@ static GtkWidget *image;   // splash image (GTK4: no wrapping event box needed)
 #ifdef SOAPYSDR
 // "Add network device" row: a device on another subnet answers no scan, so it
 // has to be typed in.  See soapy_discovery.h.
+static GtkWidget *netdev_row;      // the whole row, removed when a radio starts
 static GtkWidget *netdev_type;     // GtkDropDown over soapy_netdev_types[]
 static GtkWidget *netdev_addr;
 static GtkWidget *netdev_forget;
@@ -291,6 +297,8 @@ log_info("adding %s\n",d->name);
       g_object_unref(it);   // the store holds the ref
     }
 
+    gtk_widget_set_margin_top(view,SELECT_MARGIN);
+    gtk_widget_set_margin_end(view,SELECT_MARGIN);
     gtk_grid_attach(GTK_GRID(grid), view, 1, 0, 4, 1);
     selection_signal_id=g_signal_connect(dev_selection,"notify::selected",
                                          G_CALLBACK(dev_selection_changed),NULL);
@@ -299,6 +307,8 @@ log_info("adding %s\n",d->name);
   } else {
     gtk_widget_set_sensitive(start, FALSE);
     none_found=gtk_label_new("No HPSDR devices found");
+    gtk_widget_set_margin_top(none_found,SELECT_MARGIN);
+    gtk_widget_set_margin_end(none_found,SELECT_MARGIN);
     gtk_grid_attach(GTK_GRID(grid), none_found, 1, 0, 4, 1);
   }
 }
@@ -550,6 +560,12 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     gtk_grid_remove(GTK_GRID(grid),start);
     gtk_grid_remove(GTK_GRID(grid),retry);
     gtk_grid_remove(GTK_GRID(grid),image);
+#ifdef SOAPYSDR
+    // The grid is reused for the radio window, so every selection-only widget
+    // has to go - otherwise this row stays behind, under the receiver UI.
+    gtk_grid_remove(GTK_GRID(grid),netdev_row);
+    gtk_grid_remove(GTK_GRID(grid),netdev_status);
+#endif
     gtk_grid_attach(GTK_GRID(grid), radio->visual, 0, 0, 5, 1);
     // Breathing room between the window titlebar and the first VFO button row.
     gtk_widget_set_margin_top(radio->rx_container, 8);
@@ -696,12 +712,19 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 
   gtk_window_set_child (GTK_WINDOW (main_window), grid);
 
+  // These are selection-only widgets (start_cb removes them all), so the margins
+  // that keep them off the window edge cannot leak into the radio window that
+  // reuses this same grid.
   retry=gtk_button_new_with_label("Retry Discovery");
   g_signal_connect(retry,"clicked",G_CALLBACK(retry_cb),NULL);
+  gtk_widget_set_margin_start(retry,SELECT_MARGIN);
+  gtk_widget_set_margin_bottom(retry,SELECT_MARGIN/2);
   gtk_grid_attach(GTK_GRID(grid), retry, 1, 1, 1, 1);
 
   start=gtk_button_new_with_label("Start Radio");
   g_signal_connect(start,"clicked",G_CALLBACK(start_cb),NULL);
+  gtk_widget_set_margin_end(start,SELECT_MARGIN);
+  gtk_widget_set_margin_bottom(start,SELECT_MARGIN/2);
   gtk_grid_attach(GTK_GRID(grid), start, 4, 1, 1, 1);
 
 #ifdef SOAPYSDR
@@ -709,7 +732,6 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   // only way to reach it is to say where it is.  The kind is picked from a list
   // rather than typed as SoapySDR argument syntax; only PlutoSDR for now.
   {
-    GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
     GtkWidget *add;
     const char *labels[8];
     int n=soapy_netdev_types_count();
@@ -718,32 +740,39 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
     for(int t=0;t<n;t++) labels[t]=soapy_netdev_types[t].label;
     labels[n]=NULL;
 
-    gtk_box_append(GTK_BOX(row),gtk_label_new("Network device:"));
+    netdev_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
+    gtk_widget_set_margin_start(netdev_row,SELECT_MARGIN);
+    gtk_widget_set_margin_end(netdev_row,SELECT_MARGIN);
+    gtk_widget_set_margin_bottom(netdev_row,SELECT_MARGIN/2);
+    gtk_box_append(GTK_BOX(netdev_row),gtk_label_new("Network device:"));
 
     netdev_type=gtk_drop_down_new_from_strings(labels);
-    gtk_box_append(GTK_BOX(row),netdev_type);
+    gtk_box_append(GTK_BOX(netdev_row),netdev_type);
 
     netdev_addr=gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(netdev_addr),soapy_netdev_types[0].hint);
     gtk_entry_set_input_purpose(GTK_ENTRY(netdev_addr),GTK_INPUT_PURPOSE_URL);
     gtk_widget_set_hexpand(netdev_addr,TRUE);
-    gtk_box_append(GTK_BOX(row),netdev_addr);
+    gtk_box_append(GTK_BOX(netdev_row),netdev_addr);
 
     add=gtk_button_new_with_label("Add");
     g_signal_connect(add,"clicked",G_CALLBACK(netdev_add_cb),NULL);
-    gtk_box_append(GTK_BOX(row),add);
+    gtk_box_append(GTK_BOX(netdev_row),add);
     // Enter in the address field adds, like every other address bar.
     g_signal_connect(netdev_addr,"activate",G_CALLBACK(netdev_add_cb),NULL);
 
     netdev_forget=gtk_button_new_with_label("Forget");
     gtk_widget_set_sensitive(netdev_forget,FALSE);
     g_signal_connect(netdev_forget,"clicked",G_CALLBACK(netdev_forget_cb),NULL);
-    gtk_box_append(GTK_BOX(row),netdev_forget);
+    gtk_box_append(GTK_BOX(netdev_row),netdev_forget);
 
-    gtk_grid_attach(GTK_GRID(grid), row, 1, 2, 4, 1);
+    gtk_grid_attach(GTK_GRID(grid), netdev_row, 1, 2, 4, 1);
 
     netdev_status=gtk_label_new("");
     gtk_widget_set_halign(netdev_status,GTK_ALIGN_START);
+    gtk_widget_set_margin_start(netdev_status,SELECT_MARGIN);
+    gtk_widget_set_margin_end(netdev_status,SELECT_MARGIN);
+    gtk_widget_set_margin_bottom(netdev_status,SELECT_MARGIN);
     gtk_grid_attach(GTK_GRID(grid), netdev_status, 1, 3, 4, 1);
   }
 #endif
