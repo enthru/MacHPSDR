@@ -553,10 +553,30 @@ prebuild:
 .FORCE:
 .PHONY: .FORCE
 
+# `make clean` clears EVERY tree the build writes to, not just the repo root.
+# Objects also land in ft8_lib/, hfdl_lib/ and wdsp/ (which builds through its
+# own Makefile), and the offline HFDL harness links a binary next to the app.
+# A partial clean is worse than no clean: a leftover object built under a
+# different set of feature flags links fine and then misbehaves at run time —
+# that is exactly the trap that cost a debugging session during TCI Phase A
+# (a stale .o compiled before a field was added to struct RADIO), and the reason
+# .build-flags exists.  The dependency (.d) files are removed alongside their
+# objects for the same reason: a stale .d referring to a header that has since
+# moved makes the next build fail with "No rule to make target".
+#
+# NB: this also cleans the vendored WDSP, so the next `make` rebuilds it (a
+# minute or so) rather than just relinking.
+.PHONY: clean
 clean:
 	-rm -f *.o *.d .build-flags
-	-rm -f ft8_lib/ft8/*.o ft8_lib/fft/*.o ft8_lib/common/*.o
-	-rm -f $(PROGRAM)
+	-rm -f ft8_lib/ft8/*.o ft8_lib/ft8/*.d \
+	       ft8_lib/fft/*.o ft8_lib/fft/*.d \
+	       ft8_lib/common/*.o ft8_lib/common/*.d
+	-rm -f hfdl_lib/*.o hfdl_lib/*.d \
+	       hfdl_lib/libfec/*.o hfdl_lib/libfec/*.d
+	-$(MAKE) -C $(WDSP_DIR) clean
+	-rm -f $(PROGRAM) hfdl_offline
+	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM
 	-rm -rf $(APP_NAME).app
 
 APP_NAME=MacHPSDR
