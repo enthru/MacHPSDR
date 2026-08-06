@@ -725,6 +725,15 @@ sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev \
                      libasound2-dev libgtk-4-dev libsoapysdr-dev libliquid-dev
 ```
 
+> `libliquid-dev` (liquid-dsp) is needed by the **HFDL** decoder, which is built
+> by default — leave it out and the build stops at
+> `fatal error: liquid/liquid.h: No such file or directory`. Nothing else in the
+> app uses it, so if your distribution doesn't package liquid-dsp you can either
+> build it from source ([jgaeddert/liquid-dsp](https://github.com/jgaeddert/liquid-dsp))
+> or comment out `HFDL_INCLUDE` in the `Makefile` and build without HFDL. If it
+> is installed somewhere off the default include/library path, override
+> `HFDL_INCLUDES` / `HFDL_LIBS` instead of moving it.
+
 ```bash
 git clone https://github.com/enthru/MacHPSDR.git machpsdr
 cd machpsdr
