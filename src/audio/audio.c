@@ -122,6 +122,124 @@ static void underflow_callback(struct SoundIoOutStream *outstream) {
   //g_print("audio_write: underflow %d\n", underflow_count);
 }
 
+// ---------------------------------------------------------------------------
+// Audio flow diagnostics — MACHPSDR_AUDIO_DEBUG=1
+//
+// Periodic dropouts have three quite different causes and they cannot be told
+// apart by ear (each backend just fails with its own buffer depth, which is why
+// the same fault sounds like a different period on ALSA, Pulse and JACK).  Once
+// every 5 s this prints, per receiver:
+//
+//   frames/s   what the RX thread actually produced.  Must be ~48000.  A steady
+//              47xxx/48xxx means the radio and the sound card disagree on the
+//              rate, and the sink drains (or overflows) until it gaps —
+//              period = buffer_depth / mismatch, i.e. backend-dependent.
+//   maxgap     longest interval between two consecutive 1024-sample handovers.
+//              ~21 ms is normal; a big value means the producing thread was
+//              stalled by something else (this is the "sharing a thread"
+//              hypothesis, and it is either true or it is not).
+//   fill       how much audio is queued in the sink, in frames: the soundio
+//              ring fill, or snd_pcm_delay() for direct ALSA.  fill hitting 0
+//              is starvation (no cushion); fill pinned at the maximum means we
+//              are pushing into a full device and dropping.
+//   dropped / xrun / wait / underflow
+//              frames the sink refused, ALSA underruns recovered, snd_pcm_wait
+//              rounds, and libsoundio underflow callbacks.
+//
+// The check runs on a 1024-sample boundary, so the per-sample cost when the
+// flag is off is one int compare.
+// ---------------------------------------------------------------------------
+static int audio_debug=-1;
+
+typedef struct {
+  gint64 t0;              // start of the current report window
+  gint64 last_us;         // time of the last 1024-sample checkpoint
+  gint64 max_gap_us;      // longest producer stall in this window
+  long   produced;        // frames handed to the sink
+  long   dropped;         // frames the sink refused
+  long   xruns;           // ALSA underruns recovered
+  long   waits;           // ALSA snd_pcm_wait rounds
+  int    fill_min;
+  int    fill_max;
+} AUDIO_STATS;
+
+static AUDIO_STATS astats[MAX_RECEIVERS];
+
+// Consumer side of the soundio path (write_callback runs on libsoundio's own
+// thread).  Aggregated over all streams — with one local-audio receiver, which
+// is the normal case, that is exactly the one we report next to.
+static volatile long sio_consumed=0;    // frames taken from the ring
+static volatile long sio_zerofill=0;    // frames of silence emitted instead
+
+// Sink fill for the Pulse/ALSA paths.  Those only talk to the device once per
+// local_audio_buffer_size block, so the queue depth is sampled there and reused
+// for the frames in between.
+static int pa_alsa_dbg_fill=-1;
+
+static inline gboolean audio_debug_on(void) {
+  if(audio_debug<0) {
+    const char *e=getenv("MACHPSDR_AUDIO_DEBUG");
+    audio_debug=(e!=NULL && *e!='0')?1:0;
+  }
+  return audio_debug==1;
+}
+
+// Called once per produced frame.  fill_frames is what is currently queued in
+// the sink, or -1 when the caller cannot cheaply tell (measuring it is only
+// worth doing on a block boundary).
+static void audio_stats_frame(RECEIVER *rx,int fill_frames,int dropped,int xruns,int waits) {
+  if(!audio_debug_on()) return;
+  if(rx->channel<0 || rx->channel>=MAX_RECEIVERS) return;
+  AUDIO_STATS *s=&astats[rx->channel];
+
+  s->produced++;
+  s->dropped+=dropped;
+  s->xruns+=xruns;
+  s->waits+=waits;
+  if(fill_frames>=0) {
+    if(fill_frames<s->fill_min) s->fill_min=fill_frames;
+    if(fill_frames>s->fill_max) s->fill_max=fill_frames;
+  }
+  if((s->produced & 1023)!=0) return;
+
+  gint64 now=g_get_monotonic_time();
+  if(s->t0==0) {                      // first checkpoint: just start the window
+    s->t0=now;
+    s->last_us=now;
+    s->fill_min=G_MAXINT;
+    s->fill_max=0;
+    s->produced=0;
+    s->dropped=s->xruns=s->waits=0;
+    return;
+  }
+  gint64 gap=now-s->last_us;
+  s->last_us=now;
+  if(gap>s->max_gap_us) s->max_gap_us=gap;
+
+  gint64 window=now-s->t0;
+  if(window<5000000) return;
+
+  log_info("audio dbg RX%d: %ld frames in %.2f s = %.0f/s  fill %d..%d  "
+           "maxgap %.1f ms  dropped %ld  xrun %ld  wait %ld  "
+           "underflow %d  sio out %ld zero %ld\n",
+           rx->channel,
+           s->produced, (double)window/1e6,
+           (double)s->produced*1e6/(double)window,
+           s->fill_min==G_MAXINT?-1:s->fill_min, s->fill_max,
+           (double)s->max_gap_us/1000.0,
+           s->dropped, s->xruns, s->waits,
+           underflow_count, sio_consumed, sio_zerofill);
+
+  s->t0=now;
+  s->produced=0;
+  s->dropped=s->xruns=s->waits=0;
+  s->max_gap_us=0;
+  s->fill_min=G_MAXINT;
+  s->fill_max=0;
+  sio_consumed=0;
+  sio_zerofill=0;
+}
+
 // Output device runs at a rate other than the 48 kHz DSP rate (e.g. a Bluetooth
 // headset locked to 44.1 kHz): linear-resample the 48 kHz interleaved stereo
 // audio held in the ring buffer to the device rate on the fly.  The ring buffer
@@ -252,6 +370,7 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
       // kept zero-filling until the device buffer was full — one small underrun
       // then flushed the whole ALSA/Pulse buffer to silence.
       frames_left -= frame_count;
+      sio_zerofill += frame_count;
     }
     return;
   }
@@ -293,6 +412,7 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
   // if a begin/end_write failed part way through).
   soundio_ring_buffer_advance_read_ptr(rx->ring_buffer,
                                        (read_count - frames_left) * ring_bytes_per_frame);
+  sio_consumed += (read_count - frames_left);
 }
 
 static void read_callback(struct SoundIoInStream *instream, int frame_count_min, int frame_count_max) {
@@ -507,6 +627,18 @@ log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
         return -1;
       }
 
+      // What the backend actually gave us.  The numbers in the audio-flow
+      // diagnostics below are meaningless without these: a device running at a
+      // rate other than 48 kHz goes through the resampler, and a layout that is
+      // not stereo is what broke the JACK path before.
+      log_info("audio_open_output: SOUNDIO stream: backend=%s rate=%d channels=%d "
+               "latency=%.1f ms ring=%d frames\n",
+               soundio_backend_name(soundio->current_backend),
+               rx->output_stream->sample_rate,
+               rx->output_stream->layout.channel_count,
+               rx->output_stream->software_latency*1000.0,
+               size/(int)(sizeof(float)*2));
+
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
@@ -620,7 +752,19 @@ log_info("audio_open_output: ALSA: %s\n",rx->audio_name);
         default: return -1;
       }
       
-      log_info("audio_open_output: rx=%d handle=%p buffer=%p size=%d\n",rx->channel,rx->playback_handle,rx->local_audio_buffer,rx->local_audio_buffer_size);      
+      log_info("audio_open_output: rx=%d handle=%p buffer=%p size=%d\n",rx->channel,rx->playback_handle,rx->local_audio_buffer,rx->local_audio_buffer_size);
+
+      // What ALSA actually negotiated.  We ask for 125 ms of latency; the card
+      // decides the real buffer and period, and those two numbers set how much
+      // producer jitter the path can absorb before it gaps.
+      {
+        snd_pcm_uframes_t abuf=0,aper=0;
+        if(snd_pcm_get_params(rx->playback_handle,&abuf,&aper)==0)
+          log_info("audio_open_output: ALSA params: buffer=%lu frames period=%lu frames "
+                   "(block=%d frames)\n",
+                   (unsigned long)abuf,(unsigned long)aper,rx->local_audio_buffer_size);
+      }
+
 
       g_mutex_unlock(&rx->local_audio_mutex);          
       break;
@@ -1064,12 +1208,18 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
         char *buf = soundio_ring_buffer_write_ptr(rx->ring_buffer);
         int fill_count = sizeof(float)*2;
         int free=soundio_ring_buffer_free_count(rx->ring_buffer);
+        int refused=0;
         if(free<fill_count) {
           //g_print("audio_write: ring buffer full: need %d free %d\n",fill_count,free);
+          refused=1;
         } else {
           memcpy(buf, &samples[0], fill_count);
           soundio_ring_buffer_advance_write_ptr(rx->ring_buffer, fill_count);
         }
+        if(audio_debug_on())
+          audio_stats_frame(rx,
+                            soundio_ring_buffer_fill_count(rx->ring_buffer)/(int)(sizeof(float)*2),
+                            refused,0,0);
       }
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
@@ -1093,12 +1243,18 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
         rc=pa_simple_write(rx->playstream,
                            rx->local_audio_buffer,
                            rx->local_audio_buffer_size*sizeof(float)*2,
-                           &err); 
+                           &err);
         if(rc!=0) {
           log_error("audio_write failed err=%d\n",err);
         }
         rx->local_audio_buffer_offset=0;
+        if(audio_debug_on()) {
+          // What the server still has queued for us, in frames.
+          pa_usec_t lat=pa_simple_get_latency(rx->playstream,&err);
+          pa_alsa_dbg_fill=(lat==(pa_usec_t)-1)?-1:(int)(lat*48ULL/1000ULL);
+        }
       }
+      if(audio_debug_on()) audio_stats_frame(rx,pa_alsa_dbg_fill,0,0,0);
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
@@ -1169,6 +1325,7 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
             const char *p = (const char *)rx->local_audio_buffer;
             ssize_t frame_bytes = snd_pcm_frames_to_bytes(rx->playback_handle, 1);
             int waits = 0;
+            int xruns = 0;
             int guard = 0;
             while(frames > 0 && ++guard <= 32) {
               rc = snd_pcm_writei(rx->playback_handle, p, frames);
@@ -1183,6 +1340,7 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
                 continue;
               }
               if(rc < 0) {
+                xruns++;
                 if(snd_pcm_recover(rx->playback_handle, rc, 1) < 0) {
                   log_info("audio_write: ALSA write failed: %s\n", snd_strerror(rc));
                   break;
@@ -1191,9 +1349,20 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
               }
               break;        // rc == 0 and no error: nothing accepted, avoid spinning
             }
+            if(audio_debug_on()) {
+              // How much audio the card still has to play, in frames: 0 means we
+              // are running on empty (every hiccup is then an xrun), a value
+              // pinned at the buffer size means we are pushing into a full
+              // device and the tail of each block is being dropped.
+              if(snd_pcm_delay(rx->playback_handle,&delay)==0)
+                pa_alsa_dbg_fill=(int)delay;
+              audio_stats_frame(rx,pa_alsa_dbg_fill,(int)frames,xruns,waits);
+            }
           }
           rx->local_audio_buffer_offset=0;
         }
+        if(audio_debug_on() && rx->local_audio_buffer_offset!=0)
+          audio_stats_frame(rx,pa_alsa_dbg_fill,0,0,0);
       }
 
       g_mutex_unlock(&rx->local_audio_mutex);
