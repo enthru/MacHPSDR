@@ -115,6 +115,12 @@ struct _DISCOVERED {
         char **sensor;
         gboolean has_temp;
         char address[32];
+        // The full SoapySDR device arguments this device was found/opened with,
+        // in Kwargs markup ("driver=plutosdr, uri=ip:192.168.1.10, ...").  Every
+        // later SoapySDRDevice_make() re-uses these: a USB device the driver can
+        // find on its own needs no more than "driver=", but a networked one is
+        // unreachable without the uri/hostname the enumeration returned.
+        char make_args[256];
       } soapy;
 #endif
     } info;

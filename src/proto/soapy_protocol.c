@@ -333,9 +333,34 @@ log_info("soapy_protocol_stop_transmitter: deactivateStream\n");
   }
 }
 
+// Rebuild the device arguments discovery opened this device with.  They carry
+// the uri/hostname/serial that says WHICH device and WHERE it is; a networked
+// device cannot be re-opened from the driver name alone.  Falls back to the old
+// name-plus-index args for a config discovered before those were recorded.
+static void soapy_device_args(SoapySDRKwargs *args) {
+  char temp[32];
+
+  if(radio->discovered->info.soapy.make_args[0]!='\0') {
+    *args=SoapySDRKwargs_fromString(radio->discovered->info.soapy.make_args);
+  }
+  if(SoapySDRKwargs_get(args,"driver")==NULL) {
+    SoapySDRKwargs_set(args, "driver", radio->discovered->name);
+  }
+  if(strcmp(radio->discovered->name,"rtlsdr")==0) {
+    if(SoapySDRKwargs_get(args,"serial")==NULL && SoapySDRKwargs_get(args,"rtl")==NULL) {
+      sprintf(temp,"%d",radio->discovered->info.soapy.rtlsdr_count);
+      SoapySDRKwargs_set(args, "rtl", temp);
+    }
+  } else if(strcmp(radio->discovered->name,"sdrplay")==0) {
+    if(SoapySDRKwargs_get(args,"label")==NULL) {
+      sprintf(temp,"SDRplay Dev%d",radio->discovered->info.soapy.sdrplay_count);
+      SoapySDRKwargs_set(args, "label", temp);
+    }
+  }
+}
+
 void soapy_protocol_init(RADIO *r,int rx) {
   SoapySDRKwargs args={};
-  char temp[32];
   int rc;
   int i;
 
@@ -343,14 +368,7 @@ log_info("soapy_protocol_init\n");
 
   // initialize the radio
 log_info("soapy_protocol_init: SoapySDRDevice_make\n");
-  SoapySDRKwargs_set(&args, "driver", radio->discovered->name);
-  if(strcmp(radio->discovered->name,"rtlsdr")==0) {
-    sprintf(temp,"%d",radio->discovered->info.soapy.rtlsdr_count);
-    SoapySDRKwargs_set(&args, "rtl", temp);
-  } else if(strcmp(radio->discovered->name,"sdrplay")==0) {
-    sprintf(temp,"SDRplay Dev%d",radio->discovered->info.soapy.sdrplay_count);
-    SoapySDRKwargs_set(&args, "label", temp);
-  }
+  soapy_device_args(&args);
   soapy_device=SoapySDRDevice_make(&args);
   if(soapy_device==NULL) {
     log_info("%s: SoapySDRDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
@@ -584,7 +602,6 @@ static gboolean soapy_reconnect_reapply_gain(gpointer data) {
 // dialog after the next timeout.  Runs on the GTK main thread.
 gboolean soapy_protocol_reconnect(RECEIVER *rx) {
   SoapySDRKwargs args={};
-  char temp[32];
   size_t channel=rx->adc;
 
 log_info("%s: tearing down old device/streams\n",__FUNCTION__);
@@ -620,14 +637,7 @@ log_info("%s: tearing down old device/streams\n",__FUNCTION__);
   // Re-make the device (same key args as soapy_protocol_init).  Unlike init we
   // must NOT abort the whole app on failure - the user may simply not have
   // plugged the device back in yet.
-  SoapySDRKwargs_set(&args, "driver", radio->discovered->name);
-  if(strcmp(radio->discovered->name,"rtlsdr")==0) {
-    sprintf(temp,"%d",radio->discovered->info.soapy.rtlsdr_count);
-    SoapySDRKwargs_set(&args, "rtl", temp);
-  } else if(strcmp(radio->discovered->name,"sdrplay")==0) {
-    sprintf(temp,"SDRplay Dev%d",radio->discovered->info.soapy.sdrplay_count);
-    SoapySDRKwargs_set(&args, "label", temp);
-  }
+  soapy_device_args(&args);
   soapy_device=SoapySDRDevice_make(&args);
   SoapySDRKwargs_clear(&args);
   if(soapy_device==NULL) {

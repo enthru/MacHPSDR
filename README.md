@@ -477,6 +477,19 @@ you've dialled in.
   without this HackRF crashed on key-up. Keys up on real hardware without
   crashing; on-air signal quality still needs more testing.
 
+- **PlutoSDR on another subnet.** A PlutoSDR reachable only by IP (not on your
+  own subnet, so neither the USB nor the mDNS scan can see it) is named with
+  `MACHPSDR_PLUTO_URI=ip:192.168.1.10` before launch, and then appears in the
+  device list like any other radio. The older `MACHPSDR_PLUTO_HOST=<host>` still
+  works and is turned into the same URI. *(It has to be a URI: the Pluto Soapy
+  module hands back a stale `uri=local:` alongside a hostname-based result, and
+  SoapySDR lets that override what the application asked for — so a hostname hint
+  opens the local IIO context and fails with "no device found in this context".
+  Naming the URI leaves nothing to override.)* Every device is now also re-opened
+  with the full connection details discovery found it with — previously only the
+  driver name was kept, which is enough for a USB device the driver can find by
+  itself but not for a networked one.
+
 - **Window comes to the front on launch.** The main window is raised and given
   focus at startup (on macOS the app is also made the active application), so it
   no longer opens hidden behind the terminal you launched it from — most

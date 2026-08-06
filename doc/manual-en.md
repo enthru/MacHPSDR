@@ -23,6 +23,20 @@ a hardware-free player for a recorded I/Q file (see §13); select it to try the 
 or replay a capture without a radio. With `--faker` the dialog is skipped and the
 I/Q Player starts straight away.
 
+A **PlutoSDR reachable only by IP** — one that is not on your own subnet, so
+neither the USB nor the network scan can see it — has to be named before launch:
+
+```bash
+MACHPSDR_PLUTO_URI=ip:192.168.1.10 ./machpsdr
+```
+
+It then appears in the device list like any other radio. Give it as a URI
+(`ip:<address>`), not as a bare host name: a host name makes the Pluto driver
+report a local connection alongside it, and SoapySDR gives that priority over the
+address you asked for, so the app ends up looking for the radio inside your own
+PC and reports *no device found in this context*. The older
+`MACHPSDR_PLUTO_HOST=<host>` still works and is converted to the same URI.
+
 Running the `.app` bundle: double-click `MacHPSDR.app`, or, to pass flags,
 call its launcher directly
 (`MacHPSDR.app/Contents/MacOS/MacHPSDR --faker /abs/path.wav`). See the main

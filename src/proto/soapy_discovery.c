@@ -30,7 +30,12 @@
 static int rtlsdr_count=0;
 static int sdrplay_count=0;
 
-static void get_info(char *driver) {
+// found: the complete Kwargs the enumeration returned for this device, or a
+// synthesised set for a device named explicitly (see soapy_discovery()).  It is
+// carried into SoapySDRDevice_make() and remembered for every later re-open -
+// passing just "driver=" (as this used to) is enough for a device the driver
+// finds by itself, but says nothing about *which* one or *where* it is.
+static void get_info(const char *driver, const SoapySDRKwargs *found) {
   size_t rx_rates_length, tx_rates_length, rx_gains_length, tx_gains_length, ranges_length, rx_antennas_length, tx_antennas_length, rx_bandwidth_length, tx_bandwidth_length;
   int i;
   SoapySDRKwargs args={};
@@ -38,26 +43,45 @@ static void get_info(char *driver) {
   char *address=NULL;
   int rtlsdr_val=0;
   int sdrplay_val=0;
+  char make_args[256];
 
   log_info("soapy_discovery: get_info: %s\n", driver);
 
+  if(found!=NULL) {
+    for(size_t k=0;k<found->size;k++) {
+      SoapySDRKwargs_set(&args, found->keys[k], found->vals[k]);
+    }
+  }
   SoapySDRKwargs_set(&args, "driver", driver);
   if(strcmp(driver,"rtlsdr")==0) {
-    char count[16];
-    sprintf(count,"%d",rtlsdr_count);
-    SoapySDRKwargs_set(&args, "rtl", count);
     rtlsdr_val=rtlsdr_count;
     rtlsdr_count++;
+    // Only fall back to the positional "rtl=<n>" selector when the enumeration
+    // gave us nothing better; a serial identifies the stick exactly.
+    if(SoapySDRKwargs_get(&args,"serial")==NULL) {
+      char count[16];
+      sprintf(count,"%d",rtlsdr_val);
+      SoapySDRKwargs_set(&args, "rtl", count);
+    }
   } else if(strcmp(driver,"sdrplay")==0) {
-    char label[16];
-    sprintf(label,"SDRplay Dev%d",sdrplay_count);
-    SoapySDRKwargs_set(&args, "label", label);
     sdrplay_val=sdrplay_count;
     sdrplay_count++;
+    if(SoapySDRKwargs_get(&args,"label")==NULL) {
+      char label[16];
+      sprintf(label,"SDRplay Dev%d",sdrplay_val);
+      SoapySDRKwargs_set(&args, "label", label);
+    }
   }
+
+  char *markup=SoapySDRKwargs_toString(&args);
+  g_strlcpy(make_args, markup==NULL?"":markup, sizeof(make_args));
+  if(markup!=NULL) SoapySDR_free(markup);
+  log_info("soapy_discovery: make args: %s\n",make_args);
+
   SoapySDRDevice *sdr = SoapySDRDevice_make(&args);
   if(sdr==NULL) {
-    log_info("%s: SoapySdrDevice_make failed\n",__FUNCTION__);
+    log_info("%s: SoapySdrDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
+    SoapySDRKwargs_clear(&args);
     return;
   }
   SoapySDRKwargs_clear(&args);
@@ -251,11 +275,19 @@ log_info("Tx gains: \n");
     discovered[devices].info.soapy.sensors=sensors;
     discovered[devices].info.soapy.sensor=sensor;
     discovered[devices].info.soapy.has_temp=has_temp;
+    if(address==NULL && found!=NULL) {
+      // A networked device knows where it is even when the hardware info does
+      // not say so - show that instead of claiming "USB".
+      const char *v=SoapySDRKwargs_get(found,"hostname");
+      if(v==NULL) v=SoapySDRKwargs_get(found,"uri");
+      if(v!=NULL && strcmp(v,"local:")!=0) address=(char *)v;
+    }
     if(address!=NULL) {
-      strcpy(discovered[devices].info.soapy.address,address);
+      g_strlcpy(discovered[devices].info.soapy.address,address,sizeof(discovered[devices].info.soapy.address));
     } else {
       strcpy(discovered[devices].info.soapy.address,"USB");
     }
+    g_strlcpy(discovered[devices].info.soapy.make_args,make_args,sizeof(discovered[devices].info.soapy.make_args));
 
     devices++;
   }
@@ -267,34 +299,83 @@ log_info("Tx gains: \n");
 
 }
 
+// A PlutoSDR that is not on this subnet is invisible to both the USB scan and
+// the mDNS one, so it has to be named explicitly.  Name it by URI and NEVER by
+// hostname, however natural a hostname looks here:
+//
+//   - SoapyPlutoSDR's find_PlutoSDR() reuses a single Kwargs across its backend
+//     loop and never clears it, so the "local" scan (which finds this PC's own
+//     unrelated IIO devices) leaves uri="local:" behind, and the later
+//     hostname branch hands that stale uri back as part of *our* device's
+//     enumeration result;
+//   - SoapySDR's Device::make() lets those enumerated args OVERRIDE the ones the
+//     caller passes (Factory.cpp builds hybridArgs from the discovery result and
+//     only fills the gaps from the caller), and SoapyPlutoSDR's constructor
+//     tests "uri" before "hostname".
+//
+// So a hostname hint ends up opening iio context "local:" - "no device found in
+// this context" - and no uri we pass can win, which is exactly the dead end this
+// looks like from the outside.  With a uri and no hostname the Pluto find
+// returns nothing at all, there is no discovery result to override us, and the
+// uri is used verbatim.  Returns "" when no Pluto was named.
+static void pluto_explicit_uri(char *uri, size_t len) {
+  const char *env;
+
+  uri[0]='\0';
+  env=getenv("MACHPSDR_PLUTO_URI");
+  if(env!=NULL && env[0]!='\0') {
+    g_strlcpy(uri,env,len);
+    return;
+  }
+  // MACHPSDR_PLUTO_HOST is the older spelling and stays supported, but it is
+  // turned into a uri rather than passed on as a hostname.
+  env=getenv("MACHPSDR_PLUTO_HOST");
+  if(env!=NULL && env[0]!='\0') {
+    if(strchr(env,':')!=NULL) g_strlcpy(uri,env,len);            // already a uri
+    else g_snprintf(uri,len,"ip:%s",env);
+  }
+}
+
 void soapy_discovery(void) {
   size_t length;
-  int i,j;
+  int i;
   SoapySDRKwargs input_args={};
-  SoapySDRKwargs args={};
+  char pluto_uri[128];
 
   log_info("%s\n",__FUNCTION__);
-  // Passing hostname=pluto.local unconditionally forces SoapySDR/libiio to
-  // resolve that mDNS name on every startup. With no PlutoSDR on the LAN the
-  // Avahi lookup blocks until it times out (~30 s), hanging discovery — the
-  // "Avahi Resolver: Failed to resolve host 'pluto.local'" stall. So only hint
-  // a network Pluto when the user opts in via MACHPSDR_PLUTO_HOST=<host>;
-  // otherwise enumerate with empty args (USB Pluto and all other Soapy devices
-  // are still found by their own drivers, without the blocking name lookup).
-  const char *pluto_host = getenv("MACHPSDR_PLUTO_HOST");
-  if(pluto_host!=NULL && pluto_host[0]!='\0') {
-    SoapySDRKwargs_set(&input_args, "hostname", pluto_host);
+
+  pluto_explicit_uri(pluto_uri,sizeof(pluto_uri));
+  if(pluto_uri[0]!='\0') {
+    SoapySDRKwargs pluto={};
+    log_info("%s: explicit PlutoSDR uri=%s\n",__FUNCTION__,pluto_uri);
+    SoapySDRKwargs_set(&pluto, "driver", "plutosdr");
+    SoapySDRKwargs_set(&pluto, "uri", pluto_uri);
+    get_info("plutosdr", &pluto);
+    SoapySDRKwargs_clear(&pluto);
   }
+
+  // Enumerate with EMPTY args.  Anything else (a hostname in particular) makes
+  // SoapySDR/libiio resolve a name on every startup, and with nothing to resolve
+  // the Avahi lookup blocks until it times out (~30 s), hanging discovery.
   SoapySDRKwargs *results = SoapySDRDevice_enumerate(&input_args, &length);
   log_info("%s: length=%ld\n",__FUNCTION__,length);
   for (i = 0; i < length; i++) {
+    const char *driver=NULL;
     log_info("%s: i=%d size=%ld\n",__FUNCTION__,i,results[i].size);
     for (size_t j = 0; j < results[i].size; j++) {
       log_info("%s key=%s value=%s\n",__FUNCTION__,results[i].keys[j],results[i].vals[j]);
-      if(strcmp(results[i].keys[j],"driver")==0 && strcmp(results[i].vals[j],"audio")!=0) {
-        get_info(results[i].vals[j]);
-      }
+      if(strcmp(results[i].keys[j],"driver")==0) driver=results[i].vals[j];
     }
+    // get_info() runs after the whole result has been read, so it sees every
+    // key.  (It used to be called from inside the key loop, on the "driver"
+    // key, and could only ever see the keys sorting before it.)
+    if(driver==NULL) continue;
+    if(strcmp(driver,"audio")==0) continue;
+    if(pluto_uri[0]!='\0' && strcmp(driver,"plutosdr")==0) {
+      log_info("%s: skipping enumerated plutosdr, an explicit uri was given\n",__FUNCTION__);
+      continue;
+    }
+    get_info(driver,&results[i]);
   }
   SoapySDRKwargsList_clear(results, length);
 }
