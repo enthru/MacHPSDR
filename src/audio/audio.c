@@ -215,68 +215,84 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
     return;
   }
 
+  // The ring buffer ALWAYS holds interleaved stereo float frames (audio_write
+  // pushes exactly two floats per frame), whatever the device's channel count
+  // is.  outstream->bytes_per_frame is the *device's* frame size, so it must
+  // never be used to measure the ring: libsoundio leaves outstream->layout at
+  // the device's own layout, and a device whose layout is not stereo (a JACK
+  // client with 4/6/8 ports, a surround ALSA device) then drained the ring
+  // channel_count/2 times too fast — the start-up cushion played for a fraction
+  // of a second and every callback after it underran into silence.
+  const int chans = outstream->layout.channel_count;
+  const int ring_bytes_per_frame = (int)sizeof(float) * 2;
+
   char *read_ptr = soundio_ring_buffer_read_ptr(rx->ring_buffer);
   int fill_bytes = soundio_ring_buffer_fill_count(rx->ring_buffer);
-  int fill_count = fill_bytes / outstream->bytes_per_frame;
+  int fill_count = fill_bytes / ring_bytes_per_frame;
 
   if (frame_count_min > fill_count) {
-    //g_print("write_callback: not enough data: frame_count_min=%d fill_count=%d bytes_per_frame=%d\n",frame_count_min,fill_count,outstream->bytes_per_frame);
     // Ring buffer does not have enough data, fill with zeroes.
     frames_left = frame_count_min;
-    for (;;) {
+    while (frames_left > 0) {
       frame_count = frames_left;
-      if (frame_count <= 0)
+      if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count)))
         return;
-      if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count))) {
-        //g_print("write_callback: begin write error: %s\n", soundio_strerror(err));
-        return;
-      }
       if (frame_count <= 0)
         return;
       for (int frame = 0; frame < frame_count; frame += 1) {
-        for (int ch = 0; ch < outstream->layout.channel_count; ch += 1) {
+        for (int ch = 0; ch < chans; ch += 1) {
           memset(areas[ch].ptr, 0, outstream->bytes_per_sample);
           areas[ch].ptr += areas[ch].step;
         }
       }
       if ((err = soundio_outstream_end_write(outstream)))
-        //g_print("write_callback: end write error: %s\n", soundio_strerror(err));
-        frames_left -= frame_count;
-      }
-    }
-
-    int read_count;
-    if(frame_count_max<fill_count) read_count=frame_count_max; else read_count=fill_count;
-    frames_left = read_count;
-
-    while (frames_left > 0) {
-      int frame_count = frames_left;
-
-      if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count))) {
-        log_info("begin write error: %s", soundio_strerror(err));
         return;
-      }
-
-      if (frame_count <= 0)
-        break;
-
-      for (int frame = 0; frame < frame_count; frame += 1) {
-        for (int ch = 0; ch < outstream->layout.channel_count; ch += 1) {
-          memcpy(areas[ch].ptr, read_ptr, outstream->bytes_per_sample);
-          areas[ch].ptr += areas[ch].step;
-          read_ptr += outstream->bytes_per_sample;
-        }
-      }
-
-      if ((err = soundio_outstream_end_write(outstream))) {
-        //g_print("end write error: %s\n", soundio_strerror(err));
-        return;
-      }
-
+      // NB: this decrement used to be the body of the `if` above (missing
+      // braces), so on a *successful* end_write the loop never advanced and
+      // kept zero-filling until the device buffer was full — one small underrun
+      // then flushed the whole ALSA/Pulse buffer to silence.
       frames_left -= frame_count;
+    }
+    return;
   }
 
-  soundio_ring_buffer_advance_read_ptr(rx->ring_buffer, read_count * outstream->bytes_per_frame);
+  int read_count;
+  if(frame_count_max<fill_count) read_count=frame_count_max; else read_count=fill_count;
+  frames_left = read_count;
+
+  while (frames_left > 0) {
+    frame_count = frames_left;
+
+    if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count))) {
+      log_info("begin write error: %s", soundio_strerror(err));
+      break;
+    }
+
+    if (frame_count <= 0)
+      break;
+
+    for (int frame = 0; frame < frame_count; frame += 1) {
+      const float *src = (const float *)read_ptr;
+      for (int ch = 0; ch < chans; ch += 1) {
+        // Map the stereo ring onto however many channels the device has
+        // (mono takes the left, >2 duplicates the pair), same as the
+        // resampling path does.
+        memcpy(areas[ch].ptr, &src[ch & 1], sizeof(float));
+        areas[ch].ptr += areas[ch].step;
+      }
+      read_ptr += ring_bytes_per_frame;
+    }
+
+    if ((err = soundio_outstream_end_write(outstream)))
+      break;
+
+    frames_left -= frame_count;
+  }
+
+  // Release only what was actually consumed (frames_left is what is left over
+  // if a begin/end_write failed part way through).
+  soundio_ring_buffer_advance_read_ptr(rx->ring_buffer,
+                                       (read_count - frames_left) * ring_bytes_per_frame);
 }
 
 static void read_callback(struct SoundIoInStream *instream, int frame_count_min, int frame_count_max) {
@@ -1139,19 +1155,41 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
           }
 */
           if(trim<rx->local_audio_buffer_size) {
-            if ((rc = snd_pcm_writei (rx->playback_handle, rx->local_audio_buffer, rx->local_audio_buffer_size-trim)) != rx->local_audio_buffer_size-trim) {
-              if(rc<0) {
-                if(rc==-EPIPE) {
-                  if ((rc = snd_pcm_prepare (rx->playback_handle)) < 0) {
-                    log_info("audio_write: cannot prepare audio interface for use %d (%s)\n", rc, snd_strerror (rc));
-                    rx->local_audio_buffer_offset=0;
-                    g_mutex_unlock(&rx->local_audio_mutex);
-                    return rc;
-                  }
-                } else {
-                  // ignore short write
-                }
+            // The PCM is opened SND_PCM_NONBLOCK, so a momentarily full device
+            // buffer returns -EAGAIN and a partial write returns fewer frames
+            // than asked.  Both used to discard the rest of the block ("ignore
+            // short write"), which is heard as periodic dropouts even though
+            // the card was perfectly healthy — mere producer jitter was enough.
+            // Write the remainder instead, waiting for space and recovering
+            // from an underrun.  The wait is bounded (~50 ms total) so a device
+            // that is genuinely slower than the radio's clock still drops
+            // rather than back-pressuring — and eventually stalling — the RX
+            // thread that calls us.
+            snd_pcm_uframes_t frames = rx->local_audio_buffer_size-trim;
+            const char *p = (const char *)rx->local_audio_buffer;
+            ssize_t frame_bytes = snd_pcm_frames_to_bytes(rx->playback_handle, 1);
+            int waits = 0;
+            int guard = 0;
+            while(frames > 0 && ++guard <= 32) {
+              rc = snd_pcm_writei(rx->playback_handle, p, frames);
+              if(rc > 0) {
+                p += (size_t)rc*(size_t)frame_bytes;
+                frames -= (snd_pcm_uframes_t)rc;
+                continue;
               }
+              if(rc == -EAGAIN) {
+                if(++waits > 10) break;                       // give up, drop the rest
+                if(snd_pcm_wait(rx->playback_handle, 5) <= 0) break;
+                continue;
+              }
+              if(rc < 0) {
+                if(snd_pcm_recover(rx->playback_handle, rc, 1) < 0) {
+                  log_info("audio_write: ALSA write failed: %s\n", snd_strerror(rc));
+                  break;
+                }
+                continue;   // recovered (underrun/suspend) — retry the remainder
+              }
+              break;        // rc == 0 and no error: nothing accepted, avoid spinning
             }
           }
           rx->local_audio_buffer_offset=0;
