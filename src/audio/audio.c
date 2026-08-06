@@ -618,7 +618,17 @@ log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
       rx->output_stream->sample_rate = device_rate;
       rx->output_stream->write_callback = write_callback;
       rx->output_stream->underflow_callback = underflow_callback;
-      rx->output_stream->software_latency = 0.01;
+      // Device buffer depth.  This was hardwired to 10 ms, which asks the
+      // backend to wake us ~700 times a second; measured against a PipeWire
+      // sink, that only sustained ~20-44k frames/s instead of 48000, so the ring
+      // buffer stayed pinned full and audio_write threw away every frame that
+      // did not fit — heard as sound that starts and then breaks up.  The same
+      // measurement at 50 ms runs at the full rate with ~15x fewer wakeups.
+      // rx->local_audio_latency is the per-receiver value (ms, default 50) that
+      // was already being saved and restored but never actually applied.
+      double latency=(double)rx->local_audio_latency/1000.0;
+      if(latency<0.005 || latency>1.0) latency=0.05;
+      rx->output_stream->software_latency = latency;
       rx->output_stream->userdata=(void *)rx;
 
       if((err = soundio_outstream_open(rx->output_stream))) {
@@ -646,9 +656,15 @@ log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
     case USE_PULSEAUDIO: {
 log_info("audio_open_output: PULSEAUDIO: %s\n",rx->audio_name);
 
-      if(rx->audio_name==NULL) {
-        result=-1;
-      } else {
+      {
+        // "System Default" (and an unconfigured receiver) means: give
+        // pa_simple_new no device at all.  A stream with no explicit target is
+        // attached to the server's default sink AND is moved by the server when
+        // the user changes it — so this follows the system default for free,
+        // without the poll-and-reopen timer the SoundIo path needs.
+        const char *dev=rx->audio_name;
+        if(dev!=NULL && strcmp(dev,AUDIO_SYSTEM_DEFAULT_NAME)==0) dev=NULL;
+
         g_mutex_lock(&rx->local_audio_mutex);
         sample_spec.rate=48000;
         sample_spec.channels=2;
@@ -656,11 +672,11 @@ log_info("audio_open_output: PULSEAUDIO: %s\n",rx->audio_name);
 
         char stream_id[16];
         sprintf(stream_id,"RX-%d",rx->channel);
-    
+
         rx->playstream=pa_simple_new(NULL,               // Use the default server.
                         "MacHPSDR",           // Our application's name.
                         PA_STREAM_PLAYBACK,
-                        rx->audio_name,
+                        dev,
                         stream_id,            // Description of our stream.
                         &sample_spec,                // Our sample format.
                         NULL,               // Use default channel map
@@ -919,10 +935,15 @@ int audio_open_input(RADIO *r) {
       sample_spec.channels=1;
       sample_spec.format=PA_SAMPLE_FLOAT32NE;
 
+      // Same rule as the output: no device given == the server's default source,
+      // which the server also keeps following if the user changes it.
+      const char *mic_dev=r->microphone_name;
+      if(mic_dev!=NULL && strcmp(mic_dev,AUDIO_SYSTEM_DEFAULT_NAME)==0) mic_dev=NULL;
+
       r->microphone_stream=pa_simple_new(NULL,               // Use the default server.
                       "MacHPSDR",           // Our application's name.
                       PA_STREAM_RECORD,
-                      r->microphone_name,
+                      mic_dev,
                       "TX",            // Description of our stream.
                       &sample_spec,                // Our sample format.
                       NULL,               // Use default channel map
@@ -1571,9 +1592,21 @@ log_info("audio: state_cb: PA_CONTEXT_TERMINATED\n");
                 case PA_CONTEXT_READY:
 log_info("audio: state_cb: PA_CONTEXT_READY\n");
                         *ready = 1;
-// get a list of the output devices
+// get a list of the output devices.  Seed both lists with the same synthetic
+// "System Default" entry the SoundIo path offers, so the choice is in the menu
+// whichever audio system is selected; audio_open_output/-input turn it into "no
+// device given", which is how PulseAudio spells "the default, and keep following
+// it".  index -1 marks it as not being a real sink/source index.
                         n_input_devices=0;
                         n_output_devices=0;
+                        output_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+                        output_devices[0].description=g_strdup("System Default");
+                        output_devices[0].index=-1;
+                        n_output_devices=1;
+                        input_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+                        input_devices[0].description=g_strdup("System Default");
+                        input_devices[0].index=-1;
+                        n_input_devices=1;
                         op = pa_context_get_sink_info_list(pa_ctx,sink_list_cb,NULL);
                         break;
                 default:
@@ -1583,7 +1616,79 @@ log_info("audio: state_cb: PA_CONTEXT_READY\n");
 }
 #endif
 
-// (Re)build the SoundIo output/input device lists from the current CoreAudio
+// A backend enumerating a device is not a promise that the device can be used.
+// The ALSA backend in particular lists every PCM name in the system, and on any
+// machine running a sound server (PipeWire/PulseAudio/JACK) the server holds the
+// card, so all the direct entries for it — hw:, plughw:, sysdefault:, dmix:, and
+// the raw hw:C,D — fail at snd_pcm_open with EBUSY.  They used to be offered in
+// the receiver's output menu anyway: picking one silently did nothing, which is
+// what made the menu look full of devices "that aren't there".
+//
+// There is no property that predicts this; the only honest test is to open a
+// stream the same way audio_open_output does and see whether it succeeds.  The
+// stream is never started, so nothing is audible and the device is held for the
+// few milliseconds the open takes (~6 ms per device here, and the failures are
+// the fast ones).  Returns TRUE when the device is really usable.
+//
+// Linux only.  CoreAudio does not enumerate devices it cannot open, so there is
+// nothing to filter on macOS, and probing there would cost real time on
+// Bluetooth and pop the microphone-permission prompt during a device scan.
+#ifndef __APPLE__
+static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
+  struct SoundIoOutStream *test=soundio_outstream_create(device);
+  if(test==NULL) return FALSE;
+  test->format=SoundIoFormatFloat32NE;
+  test->sample_rate=rate;
+  test->software_latency=0.01;
+  int err=soundio_outstream_open(test);
+  if(err) log_info("audio: output '%s' not usable: %s\n",device->name,soundio_strerror(err));
+  soundio_outstream_destroy(test);
+  return err==0;
+}
+
+static gboolean soundio_input_device_opens(struct SoundIoDevice *device,int rate) {
+  struct SoundIoInStream *test=soundio_instream_create(device);
+  if(test==NULL) return FALSE;
+  test->format=SoundIoFormatFloat32NE;
+  test->sample_rate=rate;
+  test->software_latency=0.01;
+  int err=soundio_instream_open(test);
+  if(err) log_info("audio: input '%s' not usable: %s\n",device->name,soundio_strerror(err));
+  soundio_instream_destroy(test);
+  return err==0;
+}
+#else
+#define soundio_output_device_opens(d,r) TRUE
+#define soundio_input_device_opens(d,r)  TRUE
+#endif
+
+// Common tests that need no open: the backend failed to probe the device, it is
+// a raw (exclusive-access) device, or we already listed the same id.  Raw
+// devices bypass the sound server and lock the card away from everything else on
+// the machine, which is never what a receiver's "Local Audio" menu should do.
+static gboolean soundio_device_is_listable(struct SoundIoDevice *device,
+                                           AUDIO_DEVICE *list,int n) {
+  if(device->probe_error) {
+    log_info("audio: skipping '%s': probe error: %s\n",
+             device->name,soundio_strerror(device->probe_error));
+    return FALSE;
+  }
+  if(device->is_raw) return FALSE;
+  for(int i=0;i<n;i++)
+    if(list[i].name!=NULL && strcmp(list[i].name,device->name)==0) return FALSE;
+  return TRUE;
+}
+
+#ifndef __APPLE__
+// libasound prints its own diagnostics straight to stderr, so probing the dead
+// ALSA entries above would spray "unable to open slave" over the console every
+// time the audio page is opened.  Silence it for the duration of the scan.
+static void alsa_quiet_handler(const char *f,int l,const char *fn,int e,const char *fmt,...) {
+  (void)f; (void)l; (void)fn; (void)e; (void)fmt;
+}
+#endif
+
+// (Re)build the SoundIo output/input device lists from the current backend
 // state.  Called at startup and again every time the receiver audio page is
 // opened, so devices that appear after launch (Bluetooth headphones the user
 // just connected) show up without restarting the app.  A synthetic "System
@@ -1604,6 +1709,10 @@ static void soundio_build_device_lists(void) {
   // refresh soundio's cached device list from the backend
   soundio_flush_events(soundio);
 
+#ifndef __APPLE__
+  snd_lib_error_set_handler(alsa_quiet_handler);
+#endif
+
   // synthetic "System Default" output at index 0; index -1 is resolved to the
   // current system default output device each time the stream is (re)opened
   output_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
@@ -1618,7 +1727,9 @@ static void soundio_build_device_lists(void) {
     if(!device) continue;
 
     int ok_fmt=soundio_device_supports_format(device, SoundIoFormatFloat32NE);
-    int nearest=soundio_device_nearest_sample_rate(device, sample_rate);
+    int nearest=soundio_device_supports_sample_rate(device, sample_rate)
+                  ? sample_rate
+                  : soundio_device_nearest_sample_rate(device, sample_rate);
 
     // Only Float32 output is required.  Devices that don't accept the 48 kHz
     // DSP rate (e.g. Bluetooth headsets locked to 44.1 kHz) are still listed
@@ -1626,6 +1737,13 @@ static void soundio_build_device_lists(void) {
     // write callback resamples on the fly.  A device with no usable rate at all
     // (nearest<=0) is skipped.
     if(!ok_fmt || nearest<=0) {
+      soundio_device_unref(device);
+      continue;
+    }
+
+    // ...and it has to actually open.  See soundio_output_device_opens().
+    if(!soundio_device_is_listable(device,output_devices,n_output_devices) ||
+       !soundio_output_device_opens(device,nearest)) {
       soundio_device_unref(device);
       continue;
     }
@@ -1650,12 +1768,35 @@ static void soundio_build_device_lists(void) {
     if(n_input_devices>=MAX_AUDIO_DEVICES) break;
     struct SoundIoDevice *device=soundio_get_input_device(soundio,i);
     if(!device) continue;
+
+    // Same treatment as the output list, which the input list never got: a mic
+    // entry that cannot be opened is worse than useless, because selecting it
+    // leaves TX with no audio and nothing on screen says why.
+    int ok_fmt=soundio_device_supports_format(device, SoundIoFormatFloat32NE);
+    int nearest=soundio_device_supports_sample_rate(device, sample_rate)
+                  ? sample_rate
+                  : soundio_device_nearest_sample_rate(device, sample_rate);
+    if(!ok_fmt || nearest<=0 ||
+       !soundio_device_is_listable(device,input_devices,n_input_devices) ||
+       !soundio_input_device_opens(device,nearest)) {
+      soundio_device_unref(device);
+      continue;
+    }
+
     input_devices[n_input_devices].name=g_strdup(device->name);
     input_devices[n_input_devices].description=g_strdup(device->name);
     input_devices[n_input_devices].index=i;
     soundio_device_unref(device);
     n_input_devices++;
   }
+
+#ifndef __APPLE__
+  snd_lib_error_set_handler(NULL);
+#endif
+
+  log_info("audio: %s backend: %d usable output device(s), %d input device(s)\n",
+           soundio_backend_name(soundio->current_backend),
+           n_output_devices-1, n_input_devices-1);
 }
 
 // Public: re-scan audio devices (macOS/SoundIo only).  Safe to call while audio
@@ -2067,7 +2208,7 @@ log_info("input_device: %s\n",device_id);
                 strcpy(output_devices[n_output_devices].name,device_id);
                 output_devices[n_output_devices].description=g_new0(char,strlen(device_id)+1);
                 strcpy(output_devices[n_output_devices].description,device_id);
-                input_devices[n_output_devices].index=0; // not used
+                output_devices[n_output_devices].index=0; // not used
                 n_output_devices++;
 log_info("output_device: %s\n",device_id);
               }
@@ -2089,7 +2230,10 @@ log_info("output_device: %s\n",device_id);
           descr = snd_device_name_get_hint(*n, "DESC");
           io = snd_device_name_get_hint(*n, "IOID");
 
-          if(strncmp("dmix:", name, 5)==0) {
+          // snd_device_name_get_hint returns NULL for a hint the PCM does not
+          // carry (DESC is routinely absent), so neither pointer may be walked
+          // before it is checked.
+          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0) {
             if(n_output_devices<MAX_AUDIO_DEVICES) {
               output_devices[n_output_devices].name=g_new0(char,strlen(name)+1);
               strcpy(output_devices[n_output_devices].name,name);
@@ -2100,11 +2244,12 @@ log_info("output_device: %s\n",device_id);
 	        i++;
 	      }
           output_devices[n_output_devices].description[i]='\0';
-              input_devices[n_output_devices].index=0;  // not used
+              // was input_devices[n_output_devices]: this is an output entry,
+              // and writing it into the input array clobbered an unrelated mic.
+              output_devices[n_output_devices].index=0;  // not used
               n_output_devices++;
 log_info("output_device: name=%s descr=%s\n",name,descr);
             }
-log_info("output_device: %s\n",device_id);
           }
 
           if (name != NULL)
