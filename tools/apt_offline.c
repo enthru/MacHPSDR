@@ -234,6 +234,34 @@ static void run_iq(int nlines, double rate, double off, double err_ppm, double n
   feed_iq(nlines, rate, off, err_ppm, noise, 1);
 }
 
+// The same transmission with I and Q swapped — a receiver wired the other way
+// round, or "Swap I & Q" left in the wrong position.  It conjugates the samples,
+// which mirrors the spectrum about the centre, so the signal has to be looked
+// for on the other side; everything after that should be identical, because the
+// video is the AMPLITUDE of the subcarrier and negating a real signal changes
+// neither amplitudes nor frequencies.
+static void run_iq_swapped(int nlines, double rate, double off, double err_ppm) {
+  const double DEV = 17000.0;
+  long n; double *x = synth_baseband(nlines, rate, err_ppm, &n);
+  double *iq = g_new(double, (size_t)n * 2);
+  double ph = 0.0;
+  for (long i = 0; i < n; i++) {
+    ph += 2.0 * M_PI * (off + DEV * x[i]) / rate;
+    if (ph > 2.0 * M_PI) ph -= 2.0 * M_PI;
+    iq[i * 2]     = -sin(ph);        // Q negated == I and Q swapped
+    iq[i * 2 + 1] = cos(ph);
+  }
+  apt_decoder_set_enabled(FALSE);
+  apt_decoder_set_enabled(TRUE);
+  apt_decoder_set_channel(0);
+  for (long i = 0; i < n; i += 4096) {
+    int blk = (int)MIN(4096L, n - i);
+    // Point at where the signal now appears: the other side of the centre.
+    apt_decoder_add_iq(iq + i * 2, blk, rate, 137000000LL, 137000000LL - (long long)off);
+  }
+  g_free(iq); g_free(x);
+}
+
 static int selftest(void) {
   int fails = 0;
   const int NL = 32;
@@ -271,6 +299,13 @@ static int selftest(void) {
     printf("  slant: recovered %+.0f ppm (error %.0f)\n", st.clock_ppm, err);
     if (err > 100.0) { printf("  slant: FAIL (clock servo did not converge)\n"); fails++; }
   }
+
+  // --- I and Q swapped: must decode exactly as well.  Verified against the real
+  // recording too, where the conjugated decode came out pixel-identical.
+  printf("APT selftest: I and Q swapped (mirrored spectrum)\n");
+  run_iq_swapped(NL, 192000.0, 30000.0, 0.0);
+  report();
+  fails += check_image(NL, "iq-swapped");
 
   // --- pure noise: the decoder must stay silent.  A 39-point correlation has a
   // noise standard deviation around 1/sqrt(39) = 0.16, and the search takes the
@@ -338,11 +373,16 @@ int main(int argc, char **argv) {
 
   const char *path = argv[1];
   const char *out = "apt.png";
-  int iq_mode = 0;
+  int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "--iq") && i + 2 < argc) {
       iq_mode = 1; centre = atoll(argv[i+1]); cursor = atoll(argv[i+2]); i += 2;
+    } else if (!strcmp(argv[i], "--conj")) {
+      // Swap I and Q, i.e. conjugate the recording: what you get from a receiver
+      // wired the other way round, or "Swap I & Q" left in the wrong position.
+      // It mirrors the spectrum about the centre.
+      conj = 1;
     } else if (!strcmp(argv[i], "-o") && i + 1 < argc) {
       out = argv[i+1]; i++;
     } else { fprintf(stderr, "unknown argument: %s\n", argv[i]); return 2; }
@@ -372,6 +412,8 @@ int main(int argc, char **argv) {
     for (long i = 0; i < nframes; i += BLK) {
       int blk = (int)MIN((long)BLK, nframes - i);
       for (int k = 0; k < blk * 2; k++) d[k] = buf[(i * 2) + k] / 32768.0;
+      // The buffer is (Q, I); negating Q conjugates the complex sample.
+      if (conj) for (int k = 0; k < blk; k++) d[k * 2] = -d[k * 2];
       apt_decoder_add_iq(d, blk, (double)rate, centre, cursor);
       if (i >= next_trace) {
         apt_status_t st; apt_decoder_get_status(&st);
