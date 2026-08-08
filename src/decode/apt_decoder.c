@@ -68,6 +68,24 @@
 #define MISS_MAX    6                    // lines tolerated before dropping lock
 #define CLOCK_GAIN  0.15                 // integral gain of the line-period servo
 
+// What counts as "this is a different transmission, start a new picture".
+// Mirrors wefax_decoder.c, where the start-tone detector calls begin_page():
+// appending a second pass under the first gives one ruined strip on a shared
+// exposure, not two pictures.  APT has no start tone, so the two triggers are:
+//   - the operator retuning the cursor onto a different signal;
+//   - the sync being gone for long enough that this cannot be the same pass.
+// Both thresholds are deliberately generous, because the cost of triggering
+// wrongly is destroying a pass that cannot be repeated.  RETUNE_HZ must clear
+// the APT signal's OWN width: it is ±17 kHz of FM, so an operator aiming at the
+// hump on the panadapter can easily click 15 kHz off centre and still mean the
+// same satellite — while the real channels (137.100 / 137.620 / 137.9125) are
+// 500 kHz apart, so 50 kHz separates the two cases with room on both sides.
+// NEWPASS_LINES likewise: a polarisation null on a low pass can mute the signal
+// for several seconds and must NOT wipe the picture, while two passes are
+// ~100 minutes apart, so anything from ~10 s to minutes is correct.
+#define RETUNE_HZ      50000.0
+#define NEWPASS_LINES  60                // 30 s at 2 lines/s
+
 // ---- state (audio-thread owned unless noted) ------------------------------
 static gboolean enabled = FALSE;
 
@@ -108,7 +126,13 @@ static double  line_start = 0.0;             // absolute sample of the next line
 static double  clock_trim = 0.0;             // ppm, automatic slant servo
 static gboolean locked = FALSE;
 static int     miss = 0;
+static int     unlocked_lines = 0;           // consecutive lines with no sync
 static double  last_corr = 0.0;
+// Where the front-end is actually listening, in absolute Hz.  Published for the
+// readout: a decoder pointed somewhere other than the operator believes looks
+// exactly like a dead band, which is the lesson HFDL paid for.  Written on the
+// audio thread, read on the GTK thread — a scalar, benign.
+static long long tuned_hz = 0;
 
 // sync-A correlation template (mean-removed, unit-ish scale)
 static float   tpl[SYNCA_LEN];
@@ -168,6 +192,7 @@ static void do_reset(void) {
   vf_pos = 0; sc_r = 1.0; sc_i = 0.0; sc_n = 0;
   ring_w = 0;
   line_start = 0.0; clock_trim = 0.0; locked = FALSE; miss = 0; last_corr = 0.0;
+  unlocked_lines = 0;
   black_lvl = white_lvl = 0.0; levels_seeded = FALSE;
   g_mutex_lock(&lock_img);
   memset(img, 0, sizeof(img));
@@ -188,6 +213,25 @@ void apt_decoder_reset(void) { reset_req = TRUE; }
 void apt_decoder_set_channel(int ch) { if (ch >= 0 && ch <= 2) p_channel = ch; }
 void   apt_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
 double apt_decoder_get_slant(void) { return slant_ppm; }
+
+// Start a fresh picture: the decoder has decided it is looking at a different
+// transmission (see RETUNE_HZ / NEWPASS_LINES).  Line tracking is left to the
+// caller, which knows whether it already has a sync position to keep.
+//
+// `clock_trim` is deliberately NOT reset: it measures OUR receiver's sample
+// clock, which is the same for the next pass as it was for the last, so keeping
+// it means the next picture comes out square from its first line instead of
+// spending 20 lines re-converging on a number we already knew.
+static void clear_image(const char *why) {
+  g_mutex_lock(&lock_img);
+  memset(img, 0, sizeof(img));
+  cur_row = 0; filled = 0;
+  ui.lines = 0; ui.locked = FALSE; ui.quality = 0.0;
+  g_snprintf(ui.status, sizeof(ui.status), "New pass (%s) — searching for sync…", why);
+  g_mutex_unlock(&lock_img);
+  levels_seeded = FALSE;
+  log_info("APT: new pass (%s)\n", why);
+}
 
 // --- ring access -----------------------------------------------------------
 static inline float fr_at(long abs) {
@@ -371,10 +415,14 @@ static void process_line(void) {
 
   if (!locked) {
     if (best >= LOCK_CORR) {
-      locked = TRUE; miss = 0;
+      // Sync back after a long silence is a new pass, not a continuation — wipe
+      // before the first line lands, but keep the position we just found.
+      if (unlocked_lines > NEWPASS_LINES) clear_image("signal returned");
+      locked = TRUE; miss = 0; unlocked_lines = 0;
       line_start = bestpos;
       log_info("APT: sync locked (corr %.2f)\n", best);
     } else {
+      unlocked_lines++;
       // Nothing to draw — a picture built from unsynchronised noise is worse
       // than an empty panel.  Step on by one line and keep hunting.
       line_start += line_len;
@@ -458,9 +506,14 @@ void apt_decoder_add_iq(const gdouble *iq, int nframes, double rate,
   if (reset_req) { reset_req = FALSE; do_reset(); }
 
   double off = (double)(cursor_hz - centre_hz);
+  tuned_hz = cursor_hz;
   // Retune in place for a small move (the operator nudging the dial); rebuild
   // only when the rate changes or the cursor jumps somewhere else entirely.
   if (rate != fe_rate || fabs(off - fe_off) > 1.0) {
+    // A move bigger than the front-end's own passband means the operator has
+    // gone to a different signal — another satellite — so the picture that was
+    // building belongs to the previous one and must not be continued into.
+    gboolean elsewhere = (fe_rate != 0.0) && fabs(off - fe_off) > RETUNE_HZ;
     if (rate != fe_rate) fe_configure(rate, off);
     else {
       // Retune in place, keeping the phasor where it is so there is no phase
@@ -468,6 +521,11 @@ void apt_decoder_add_iq(const gdouble *iq, int nframes, double rate,
       fe_off = off;
       double w = -2.0 * M_PI * off / rate;
       osc_dr = cos(w); osc_di = sin(w);
+    }
+    if (elsewhere) {
+      clear_image("retuned");
+      locked = FALSE; miss = 0; unlocked_lines = 0;
+      line_start = (double)ring_w;         // hunt from now, not from stale data
     }
   }
 
@@ -517,6 +575,7 @@ void apt_decoder_get_status(apt_status_t *st) {
   g_mutex_lock(&lock_img);
   *st = ui;
   g_mutex_unlock(&lock_img);
+  st->tuned_hz = tuned_hz;   // audio-thread scalar; benign cross-thread read
 }
 
 GdkPixbuf *apt_decoder_get_image(void) {

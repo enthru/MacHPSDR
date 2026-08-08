@@ -63,8 +63,14 @@ static gboolean tick(gpointer data) {
   apt_decoder_get_status(&st);
 
   if (strcmp(st.status, p->last_status) != 0 || st.lines != p->last_line) {
-    char buf[160];
-    g_snprintf(buf, sizeof(buf), "%s   %d lines", st.status, st.lines);
+    char buf[192];
+    // The tuned frequency belongs in the readout: a decoder listening somewhere
+    // other than the operator believes looks exactly like a dead pass.
+    if (st.tuned_hz > 0)
+      g_snprintf(buf, sizeof(buf), "%s   %d lines   %.4f MHz",
+                 st.status, st.lines, (double)st.tuned_hz / 1e6);
+    else
+      g_snprintf(buf, sizeof(buf), "%s   %d lines", st.status, st.lines);
     gtk_label_set_text(GTK_LABEL(p->status), buf);
     g_strlcpy(p->last_status, st.status, sizeof(p->last_status));
     p->last_line = st.lines;

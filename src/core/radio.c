@@ -1952,11 +1952,17 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef SSTV
     apt_status_t ast; apt_decoder_get_status(&ast);
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "APT");
+    // Show where the decoder is actually listening — it follows the CTUN cursor,
+    // and a decoder pointed elsewhere than the operator believes looks exactly
+    // like a dead pass (the lesson HFDL paid for).
+    char atune[48];
+    if(ast.tuned_hz > 0) snprintf(atune,sizeof(atune),"   %.4f MHz",(double)ast.tuned_hz/1e6);
+    else                 atune[0]='\0';
     if(r->apt_panel_open)
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines", ast.status, ast.lines);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines%s", ast.status, ast.lines, atune);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines\n(Show APT to view the image)",
-               ast.status, ast.lines);
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines%s\n(Show APT to view the image)",
+               ast.status, ast.lines, atune);
 #else
     snprintf(ft8buf,sizeof(ft8buf),"APT support not built in");
 #endif

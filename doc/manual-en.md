@@ -426,6 +426,16 @@ error, so the image does not slant. There is nothing to click.
   wedges) or channel **A** / **B** alone.
 - **Slant ±** is a manual trim, there only if you want to nudge the automatic one.
 - **Save** writes a PNG to `~/.local/share/machpsdr/apt/`; **Clear** starts a new pass.
+- The panel and the Decode block show **which frequency is being decoded** — the
+  decoder follows the cursor, and one aimed elsewhere looks like a dead pass.
+
+A **new picture starts by itself** when this is plainly a different transmission:
+you retuned the cursor by more than 50 kHz (the channels are 500 kHz apart, so it
+cannot be the same satellite — an aim 15 kHz off the middle of the 34 kHz-wide
+hump still counts as the same one), or the sync has been gone for over 30 seconds,
+which no fade during a pass lasts. Moving from one satellite to the next therefore
+gives two pictures instead of one strip with both passes stacked on a shared
+exposure. One satellite is decoded at a time — whichever the cursor is on.
 
 APT is the one decoder that does not listen to the demodulated audio: the signal is
 ~34 kHz wide — wider than the widest NFM filter and far narrower than WFM — so it

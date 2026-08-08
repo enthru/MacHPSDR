@@ -91,6 +91,9 @@ typedef struct {
   int      lines;      // rows decoded into the current image
   double   quality;    // last sync correlation, −1..1
   double   clock_ppm;  // automatic clock/slant trim the servo has settled on
+  long long tuned_hz;  // where the front-end is listening (absolute Hz) — a
+                       // decoder pointed elsewhere than the operator believes
+                       // looks exactly like a dead band
   char     status[64]; // short human-readable status line
 } apt_status_t;
 

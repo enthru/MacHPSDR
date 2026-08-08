@@ -203,7 +203,10 @@ static void run_audio(int nlines, double rate, double err_ppm) {
 
 // Feed a synthetic transmission through the I/Q entry point: FM-modulated,
 // parked `off` Hz from the receiver centre, with `noise` of additive noise.
-static void run_iq(int nlines, double rate, double off, double err_ppm, double noise) {
+// `reset` starts a fresh decoder session; pass FALSE to continue the previous
+// one, which is how the retune-between-satellites case is exercised.
+static void feed_iq(int nlines, double rate, double off, double err_ppm,
+                    double noise, int reset) {
   const double DEV = 17000.0;
   long n; double *x = synth_baseband(nlines, rate, err_ppm, &n);
   double *iq = g_new(double, (size_t)n * 2);
@@ -215,14 +218,20 @@ static void run_iq(int nlines, double rate, double off, double err_ppm, double n
     iq[i * 2]     = sin(ph) + noise * urand();
     iq[i * 2 + 1] = cos(ph) + noise * urand();
   }
-  apt_decoder_set_enabled(FALSE);
-  apt_decoder_set_enabled(TRUE);
-  apt_decoder_set_channel(0);
+  if (reset) {
+    apt_decoder_set_enabled(FALSE);
+    apt_decoder_set_enabled(TRUE);
+    apt_decoder_set_channel(0);
+  }
   for (long i = 0; i < n; i += 4096) {
     int blk = (int)MIN(4096L, n - i);
     apt_decoder_add_iq(iq + i * 2, blk, rate, 137000000LL, 137000000LL + (long long)off);
   }
   g_free(iq); g_free(x);
+}
+
+static void run_iq(int nlines, double rate, double off, double err_ppm, double noise) {
+  feed_iq(nlines, rate, off, err_ppm, noise, 1);
 }
 
 static int selftest(void) {
@@ -261,6 +270,24 @@ static int selftest(void) {
     double err = fabs(st.clock_ppm - 400.0);
     printf("  slant: recovered %+.0f ppm (error %.0f)\n", st.clock_ppm, err);
     if (err > 100.0) { printf("  slant: FAIL (clock servo did not converge)\n"); fails++; }
+  }
+
+  // --- retune to another satellite: the second pass must be a NEW picture, not
+  // extra lines appended under the first.  Without that the two passes share one
+  // strip and one exposure and both are ruined — the reason WEFAX calls
+  // begin_page() when it spots a start tone.
+  printf("APT selftest: retune to another satellite\n");
+  feed_iq(NL, 192000.0, 30000.0, 0.0, 0.0, 1);      // first bird
+  feed_iq(NL, 192000.0, -30000.0, 0.0, 0.0, 0);     // operator moves to the next
+  report();
+  {
+    apt_status_t st; apt_decoder_get_status(&st);
+    printf("  retune: %d lines after the move (one pass is ~%d)\n", st.lines, NL - 2);
+    fails += check_image(NL, "retune");
+    if (st.lines > NL) {
+      printf("  retune: FAIL (the new pass was appended to the old picture)\n");
+      fails++;
+    }
   }
 
   printf(fails ? "APT selftest: FAILED\n" : "APT selftest: PASS\n");
