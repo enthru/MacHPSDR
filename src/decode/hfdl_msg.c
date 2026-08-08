@@ -32,7 +32,9 @@
 #include "hfdl_arinc.h"   // ARINC-622 / ADS-C inside the ACARS text
 #include "hfdl_crc.h"      // vendored crc16_ccitt (hfdl_lib/) — same table as la_crc16_ccitt
 #include "hfdl_frame.h"    // test seam: full-stack self-test through the RF chain
+#include "hfdl_miam.h"     // MIAM file transfer (labels MA / H1)
 #include "hfdl_msg.h"
+#include "hfdl_ohma.h"     // OHMA messaging (label H1)
 #include "hfdl_pdu.h"      // hfdl_pdu_fcs_check
 
 // --- PDU / LPDU / HFNPDU type codes (dumphfdl) -----------------------------
@@ -604,6 +606,8 @@ static ACARS_REASM_STATUS acars_reasm_add(const char *reg, const char *label,
 void hfdl_msg_reset(void) {
   memset(ac_cache, 0, sizeof(ac_cache));
   acars_reasm_clear();
+  hfdl_miam_reset();        // partial file transfers
+  hfdl_ohma_reset();        // partial OHMA conversations
   activity_clear();
   current_ac_id = -1;
   systable_set_reset();     // partial table: worthless once the stream restarts
@@ -785,13 +789,26 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
   const char *body     = reasm_txt ? reasm_txt : p;
   int         body_len = reasm_txt ? (int)strlen(reasm_txt) : remaining;
 
-  // ARINC-622 ATS application inside the message text (ADS-C position reports,
-  // FANS-1/A CPDLC). Only on a complete message — half an envelope has neither
-  // a valid CRC nor a parsable payload. Decoded BEFORE the raw text is printed
-  // so the interpretation leads and the hex backs it up.
+  // Applications carried inside the message text, decoded BEFORE the raw text
+  // is printed so the interpretation leads and the hex backs it up. Only on a
+  // complete message — half an envelope has neither a valid CRC nor a parsable
+  // payload.
+  //
+  // ARINC-622 (ADS-C position reports, FANS-1/A CPDLC) is tried on every label:
+  // its envelope match is anchored at the start of the text, which is a strong
+  // enough test on its own, and that is the behaviour verified on air. MIAM and
+  // OHMA are gated on the labels that carry them (libacars' acars.c), because
+  // their frame ids are single characters — "TEST MESSAGE" opens exactly like a
+  // MIAM Single Transfer, and only the label keeps that apart.
   if (body_len > 0 && reasm != ACARS_REASM_IN_PROGRESS) {
     char *b0 = g_strndup(body, (gsize)body_len);
-    hfdl_arinc_decode(b0, out, indent + 1);
+    gboolean claimed = hfdl_arinc_decode(b0, out, indent + 1);
+    if (!claimed && !strcmp(label, "H1")) {
+      if (!hfdl_miam_decode(reg, b0, out, indent + 1))
+        hfdl_ohma_decode(reg, b0, out, indent + 1);
+    } else if (!claimed && !strcmp(label, "MA")) {
+      hfdl_miam_decode(reg, b0, out, indent + 1);
+    }
     g_free(b0);
   }
 

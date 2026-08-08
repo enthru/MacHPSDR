@@ -45,6 +45,8 @@
 #include "hfdl_fec.h"
 #include "hfdl_frame.h"
 #include "hfdl_arinc.h"
+#include "hfdl_miam.h"
+#include "hfdl_ohma.h"
 #include "hfdl_msg.h"
 #include "hfdl_pdu.h"
 #include "log.h"
@@ -363,6 +365,8 @@ void hfdl_decoder_set_enabled(gboolean on) {
         g_printerr("[HFDL] pdu selftest:   %s\n", hfdl_pdu_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] msg selftest:   %s\n", hfdl_msg_selftest() ? "PASS" : "FAIL");
         g_printerr("[HFDL] arinc selftest: %s\n", hfdl_arinc_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] miam selftest:  %s\n", hfdl_miam_selftest() ? "PASS" : "FAIL");
+        g_printerr("[HFDL] ohma selftest:  %s\n", hfdl_ohma_selftest() ? "PASS" : "FAIL");
       }
     }
   } else if (!on && was) {

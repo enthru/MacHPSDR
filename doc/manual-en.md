@@ -343,9 +343,18 @@ used. A message **split over several ACARS blocks is reassembled**: each block
 reports "Reassembly: in progress" and the block that completes the message prints
 the whole text (a lost block is reported instead of being spliced over). An **ARINC-622** application inside the message text is decoded as
 well: an **ADS-C** report is shown as position, altitude, time, flight ID,
-predicted route, wind and temperature, with its own CRC checked. FANS-1/A
-**CPDLC** payloads are identified but not decoded (they are ASN.1); their hex
-stays visible.
+predicted route, wind and temperature, with its own CRC checked. The two
+file-carrying applications are decoded too. **MIAM** (labels MA and H1) covers
+both the Single Transfer and the full file-transfer exchange — request, accept,
+segments, abort, pause and resume; the segments are reassembled into the whole
+file (the request is what announces its size, so a transfer joined late decodes
+segment by segment but never completes), and the CORE payload inside is
+decompressed and checked against its own ARINC CRC. **OHMA** (label H1) unpacks
+its BASE64 + zlib envelope and shows the version, conversation id and payload;
+an OHMA conversation split into parts is reassembled **even when the parts
+arrive out of order**, which is the one place ACARS block reassembly cannot
+help. FANS-1/A **CPDLC** payloads are identified but not decoded (they are
+ASN.1); their hex stays visible.
 
 *(Verified on a real off-air recording: on a 11387 kHz capture of the Riverhead,
 New York ground station the decoder produced squitters, a ground-station uplink

@@ -138,15 +138,15 @@ HFDL_OPTIONS=-D HFDL
 HFDL_VENDOR_INCLUDES=-Ihfdl_lib/libfec -Ihfdl_lib
 ifeq ($(UNAME_S), Darwin)
 HFDL_INCLUDES=-I$(shell brew --prefix liquid-dsp)/include $(HFDL_VENDOR_INCLUDES)
-HFDL_LIBS=-L$(shell brew --prefix liquid-dsp)/lib -lliquid
+HFDL_LIBS=-L$(shell brew --prefix liquid-dsp)/lib -lliquid -lz
 endif
 ifeq ($(UNAME_S), Linux)
 HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
-HFDL_LIBS=-lliquid
+HFDL_LIBS=-lliquid -lz
 endif
-HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c
-HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_pdu.h hfdl_panel.h
-HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_fec.o hfdl_frame.o hfdl_msg.o hfdl_arinc.o hfdl_pdu.o hfdl_panel.o hfdl_lib/libfec/viterbi27_port.o hfdl_lib/hfdl_crc.o
+HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_miam.c hfdl_ohma.c hfdl_util.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c
+HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_miam.h hfdl_ohma.h hfdl_util.h hfdl_pdu.h hfdl_panel.h
+HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_fec.o hfdl_frame.o hfdl_msg.o hfdl_arinc.o hfdl_miam.o hfdl_ohma.o hfdl_util.o hfdl_pdu.o hfdl_panel.o hfdl_lib/libfec/viterbi27_port.o hfdl_lib/hfdl_crc.o
 endif
 
 

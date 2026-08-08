@@ -515,7 +515,12 @@ you've dialled in.
   large is vendored. An **ARINC-622** application inside the message text is
   decoded too: **ADS-C** position reports (position, altitude, time, flight ID,
   predicted route, wind and temperature) come out as readable fields rather than
-  hex. FANS-1/A **CPDLC** payloads are identified but not decoded — they are
+  hex. The two file-carrying ACARS applications are decoded as well: **MIAM**
+  (labels MA and H1) — the Single Transfer and the whole file-transfer exchange,
+  with its segments reassembled and the compressed CORE payload decompressed and
+  CRC-checked — and **OHMA** (label H1), whose BASE64/zlib envelope is unpacked
+  and whose conversation is reassembled even when its parts arrive out of order.
+  FANS-1/A **CPDLC** payloads are identified but not decoded — they are
   ASN.1, which is the bulk of libacars. The panel
   has three tabs — the running **decode**, a **Stations** table (who was heard,
   how long ago, UTC sync, frequencies in use) and an **Aircraft** table (ICAO,
