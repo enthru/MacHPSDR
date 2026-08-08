@@ -428,6 +428,9 @@ error, so the image does not slant. There is nothing to click.
 - **Save** writes a PNG to `~/.local/share/machpsdr/apt/`; **Clear** starts a new pass.
 - The panel and the Decode block show **which frequency is being decoded** — the
   decoder follows the cursor, and one aimed elsewhere looks like a dead pass.
+- The spectrum and the waterfall both draw the **window the decoder accepts** as
+  a translucent band, captioned on the frequency ruler, so you can see the
+  satellite fitting inside it: the signal is ~34 kHz wide, the window ~44 kHz.
 
 A **new picture starts by itself** when this is plainly a different transmission:
 you retuned the cursor by more than 50 kHz (the channels are 500 kHz apart, so it

@@ -325,7 +325,11 @@ you've dialled in.
   to `~/.local/share/machpsdr/apt/`, **Clear** starts a new pass. The panel and the
   Decode block both show **which frequency is actually being decoded** — the
   decoder follows the cursor, and one pointed somewhere other than you think
-  looks exactly like a dead pass.
+  looks exactly like a dead pass. The **spectrum and the waterfall both show the
+  window the decoder accepts** as a translucent band, captioned on the frequency
+  ruler, so you can see the satellite sitting inside it rather than taking it on
+  trust — worth a glance, because the signal is ~34 kHz wide and the window is
+  about 44 kHz.
 
   A **new picture is started automatically** when the decoder decides it is
   looking at a different transmission: either you retuned the cursor more than

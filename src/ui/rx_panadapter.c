@@ -483,6 +483,33 @@ static void cluster_spot_rgb(int entity, double *r, double *g, double *b) {
   *r=r1+m; *g=g1+m; *b=b1+m;
 }
 
+#ifdef SSTV
+// Geometry of the APT front-end window, shared by the panadapter and the
+// waterfall so the two can never drift apart: the panadapter paints it as GSK
+// rects (an area fill through a cairo node is exactly the cost the GPU port
+// removed) and the waterfall paints it into the cairo overlay it already has,
+// but both take the numbers from here.
+//
+// The band is what the decoder actually accepts around the frequency it is
+// actually tuned to — asked of the decoder rather than assumed, since the
+// ±22 kHz design figure shrinks on a receiver too narrow to allow it.
+gboolean receiver_apt_window(RECEIVER *rx, double *xl, double *xr,
+                             char *cap, size_t caplen) {
+  if(radio==NULL || rx==NULL || rx->hz_per_pixel==0.0) return FALSE;
+  if(rx!=radio->active_receiver || rx->mode_a!=FMN) return FALSE;
+  if(radio->decode_mode!=DECODE_APT) return FALSE;
+  apt_status_t ast; apt_decoder_get_status(&ast);
+  double half_bw=apt_decoder_get_bandwidth();
+  if(ast.tuned_hz<=0 || half_bw<=0.0) return FALSE;
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a - half) + (long long)((double)rx->pan*rx->hz_per_pixel);
+  *xl=(((double)ast.tuned_hz-half_bw)-(double)min_display)/rx->hz_per_pixel;
+  *xr=(((double)ast.tuned_hz+half_bw)-(double)min_display)/rx->hz_per_pixel;
+  if(cap!=NULL) snprintf(cap,caplen,"APT %.0f kHz",2.0*half_bw/1000.0);
+  return TRUE;
+}
+#endif
+
 // Row-packed DX-cluster spot overlay, shared by the panadapter and the
 // waterfall's cairo overlay. min_display is recomputed from rx so the same
 // absolute-RF -> x mapping the trace uses applies on either widget; font size +
@@ -1120,34 +1147,17 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // Only while APT is the running decoder on this receiver.
   if(radio!=NULL && rx==radio->active_receiver && rx->mode_a==FMN &&
      radio->decode_mode==DECODE_APT) {
-    apt_status_t ast; apt_decoder_get_status(&ast);
-    double half=apt_decoder_get_bandwidth();
-    if(ast.tuned_hz>0 && half>0.0) {
-      double xl=(((double)ast.tuned_hz-half)-(double)min_display)/rx->hz_per_pixel;
-      double xr=(((double)ast.tuned_hz+half)-(double)min_display)/rx->hz_per_pixel;
-      if(xr>0.0 && xl<display_width) {
-        // A wash rather than a solid band: it is wide (44 kHz), and it must not
-        // bury the trace it exists to let you look at.
-        GdkRGBA wash=nrgba(0.2,0.8,0.9,0.10);
-        n_rect(snapshot,xl,0.0,xr-xl,(double)display_height,&wash);
-        GdkRGBA edge=nrgba(0.3,0.9,1.0,0.55);
-        n_rect(snapshot,xl,0.0,1.0,(double)display_height,&edge);
-        n_rect(snapshot,xr-1.0,0.0,1.0,(double)display_height,&edge);
-        char cap[48];
-        snprintf(cap,sizeof(cap),"APT %.0f kHz",2.0*half/1000.0);
-        double capw=0.0;
-        // Measure first so the caption can be centred in the window, and keep it
-        // on screen when the window runs off an edge.  label12 hands back the
-        // SHARED cached layout — borrowed, never owned: unreffing it here would
-        // destroy the cache and take the next frame with it.
-        int cw=0,chh=0;
-        pango_layout_get_pixel_size(label12(widget,cap),&cw,&chh);
-        double cx=(xl+xr)/2.0-cw/2.0;
-        if(cx<2.0) cx=2.0;
-        if(cx>display_width-cw-2.0) cx=display_width-cw-2.0;
-        GdkRGBA capc=nrgba(0.6,0.95,1.0,0.9), capbg=nrgba(0.0,0.0,0.0,0.5);
-        n_text_boxed(snapshot,widget,cx,14.0,&capc,&capbg,cap,&capw);
-      }
+    double xl=0.0,xr=0.0;
+    if(receiver_apt_window(rx,&xl,&xr,NULL,0) && xr>0.0 && xl<display_width) {
+      // A wash rather than a solid band: it is wide (44 kHz), and it must not
+      // bury the trace it exists to let you look at.  The caption is NOT drawn
+      // here — it belongs on the frequency ruler, which is painted further down
+      // and would cover it.
+      GdkRGBA wash=nrgba(0.2,0.8,0.9,0.10);
+      n_rect(snapshot,xl,0.0,xr-xl,(double)display_height,&wash);
+      GdkRGBA edge=nrgba(0.3,0.9,1.0,0.55);
+      n_rect(snapshot,xl,0.0,1.0,(double)display_height,&edge);
+      n_rect(snapshot,xr-1.0,0.0,1.0,(double)display_height,&edge);
     }
   }
 #endif
@@ -1313,6 +1323,27 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     }
     gsk_path_unref(p);
   }
+
+#ifdef SSTV
+  // ---- APT window caption, on the frequency ruler -------------------------
+  // Drawn here, after the ruler strip and its labels, because the strip is
+  // opaque and would paint over it.  Anchored to the LEFT EDGE of the band
+  // rather than its middle: the middle is where the centre marker lives, and a
+  // caption sitting on the marker is the one place it cannot be read.
+  {
+    double axl=0.0,axr=0.0; char acap[48];
+    if(receiver_apt_window(rx,&axl,&axr,acap,sizeof(acap)) &&
+       axr>0.0 && axl<display_width) {
+      int cw=0,chh=0;
+      pango_layout_get_pixel_size(label12(widget,acap),&cw,&chh);
+      double cx=axl+4.0;
+      if(cx<2.0) cx=2.0;                                  // band runs off the left
+      if(cx>display_width-cw-2.0) cx=display_width-cw-2.0; // ...or the right
+      GdkRGBA capc=nrgba(0.6,0.95,1.0,0.95), capbg=nrgba(0.0,0.0,0.0,0.55);
+      n_text_boxed(snapshot,widget,cx,(rx->panadapter_height-6),&capc,&capbg,acap,NULL);
+    }
+  }
+#endif
 
   // ---- band edges ---------------------------------------------------------
   if(rx->band_a!=band60) {

@@ -24,3 +24,10 @@ extern void update_rx_panadapter(RECEIVER *rx,gboolean running);
 // waterfall use. Shared so both the spectrum surface and the waterfall overlay
 // can render it. Caller decides whether to call (per radio->cluster_spots_on).
 extern void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width);
+#ifdef SSTV
+// Geometry of the APT front-end window (the band the decoder actually accepts),
+// in widget x. FALSE when APT is not the running decoder on this receiver.
+// Shared so the panadapter and the waterfall draw the same band.
+extern gboolean receiver_apt_window(RECEIVER *rx, double *xl, double *xr,
+                                    char *cap, size_t caplen);
+#endif

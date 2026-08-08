@@ -136,6 +136,26 @@ static void waterfall_overlay_cb(cairo_t *cr,int cwidth,int cheight,gpointer dat
     cairo_line_to(cr, centre, height);
     cairo_stroke(cr);
 
+#ifdef SSTV
+    // APT front-end window: the same band the panadapter shows, so the operator
+    // can see the satellite fitting inside it on whichever display is looking
+    // at.  Geometry comes from the shared helper — the two must not drift.
+    // No caption here: that belongs on the panadapter's frequency ruler, and
+    // the waterfall has no ruler to put it on.
+    {
+      double axl=0.0,axr=0.0;
+      if(receiver_apt_window(rx,&axl,&axr,NULL,0) && axr>0.0 && axl<cwidth) {
+        cairo_set_source_rgba(cr, 0.2, 0.8, 0.9, 0.10);
+        cairo_rectangle(cr, axl, 0.0, axr-axl, (double)height);
+        cairo_fill(cr);
+        cairo_set_source_rgba(cr, 0.3, 0.9, 1.0, 0.55);
+        cairo_rectangle(cr, axl, 0.0, 1.0, (double)height);
+        cairo_rectangle(cr, axr-1.0, 0.0, 1.0, (double)height);
+        cairo_fill(cr);
+      }
+    }
+#endif
+
     // DX-cluster spots on the waterfall (top edge = newest), when the operator
     // routed them here: cluster_spots_on 1 (waterfall) or 2 (both).
     if(radio->cluster_enable && radio->cluster_spots_show &&
