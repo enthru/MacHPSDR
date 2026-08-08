@@ -328,6 +328,9 @@ GtkWidget *sstv_panel_create(void) {
   p->area = gpu_image_new(on_source, p);
   gpu_image_set_fit(GPU_IMAGE(p->area), GPU_FIT_LETTERBOX);
   gpu_image_set_filter(GPU_IMAGE(p->area), GSK_SCALING_FILTER_NEAREST);
+  // Zoom in on a corner of the picture (Ctrl+wheel), pan with wheel or drag,
+  // double-click back to the whole frame.
+  gpu_image_set_zoomable(GPU_IMAGE(p->area), TRUE, TRUE);
   gtk_widget_set_size_request(p->area, 320, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);

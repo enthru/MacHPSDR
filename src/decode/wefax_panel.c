@@ -67,9 +67,15 @@ static GdkPixbuf *on_source(gpointer data) {
 // GTK4: GtkGestureClick "pressed" (x,y in widget coords).
 static void on_click(GtkGestureClick *gesture, int n_press, double px, double py, gpointer data) {
   WefaxPanel *p = data;
-  int aw = gtk_widget_get_width(p->area);   // image is fit-to-width, so ox=0, w=aw
-  if (aw <= 0) return;
-  double frac = px / (double)aw;
+  int aw = gtk_widget_get_width(p->area);
+  if (aw <= 0 || p->pb == NULL) return;
+  // Ask the widget where that lands in the image: with the view zoomed or panned
+  // the column under the pointer is no longer px/width, and phasing on the wrong
+  // column is exactly the mistake the click is there to correct.
+  double ix = 0.0;
+  double frac = gpu_image_widget_to_image(GPU_IMAGE(p->area), px, py, &ix, NULL)
+                  ? ix / (double)gdk_pixbuf_get_width(p->pb)
+                  : px / (double)aw;
   if (frac < 0.0) frac = 0.0; if (frac > 1.0) frac = 1.0;
   wefax_decoder_nudge_phase(frac);
 }
@@ -270,7 +276,7 @@ GtkWidget *wefax_panel_create(void) {
   gtk_box_append(GTK_BOX(sbar),sm);
   gtk_box_append(GTK_BOX(sbar),p->slant_lbl);
   gtk_box_append(GTK_BOX(sbar),sp);
-  GtkWidget *hint=gtk_label_new("(click image to set left margin)");
+  GtkWidget *hint=gtk_label_new("(click: left margin · wheel: scroll · Ctrl+wheel: zoom)");
   gtk_widget_set_hexpand(hint,TRUE);
   gtk_widget_set_halign(hint,GTK_ALIGN_END);
   gtk_box_append(GTK_BOX(sbar),hint);
@@ -280,6 +286,10 @@ GtkWidget *wefax_panel_create(void) {
   p->area = gpu_image_new(on_source, p);
   gpu_image_set_fit(GPU_IMAGE(p->area), GPU_FIT_WIDTH_BOTTOM);
   gpu_image_set_filter(GPU_IMAGE(p->area), GSK_SCALING_FILTER_TRILINEAR);
+  // Scroll back through the chart and zoom in on it: fit-to-width squeezes an
+  // 1810-px line into a few hundred, which is most of the detail gone.  No drag
+  // panning here — button 1 already sets the left margin.
+  gpu_image_set_zoomable(GPU_IMAGE(p->area), TRUE, FALSE);
   // Small min height: vexpand makes it fill the pane when there's room, but a
   // large min (was 300) forced the whole panel's minimum so high that the GTK4
   // paned could not shrink it, squeezing the RF spectrum above it to a sliver.

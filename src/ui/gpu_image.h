@@ -67,6 +67,28 @@ void gpu_image_set_filter(GpuImage *self, GskScalingFilter filter);
 void gpu_image_set_background(GpuImage *self, float r, float g, float b);
 void gpu_image_set_overlay(GpuImage *self, GpuImageOverlay overlay);
 
+// Interactive view for the image panels, where the picture is far bigger than
+// the widget: an APT line is 2080 px wide and a WEFAX chart 1810, both squeezed
+// into a few hundred, so fitting alone throws away most of what was decoded.
+//
+//   wheel          — scroll the image (shift: sideways)
+//   Ctrl+wheel     — zoom about the pointer; zooming back out to the fit scale
+//                    returns to plain fit mode, bottom-anchoring and all
+//   drag           — pan, only when `drag_pan` (leave it FALSE where button 1
+//                    already means something, as WEFAX's click-to-phase does)
+//   double-click   — back to fit (also only with `drag_pan`, same reason)
+//
+// A live decoder keeps adding lines at the bottom.  While the view sits at the
+// bottom it stays pinned there (new lines scroll into sight); once the operator
+// scrolls up, the view holds its place instead of sliding under them.
+void gpu_image_set_zoomable(GpuImage *self, gboolean on, gboolean drag_pan);
+
+// Map widget coordinates to image (pixbuf) coordinates under the current view,
+// for panels that act on a click position.  FALSE if nothing is displayed yet
+// or the point lies outside the image.
+gboolean gpu_image_widget_to_image(GpuImage *self, double wx, double wy,
+                                   double *ix, double *iy);
+
 G_END_DECLS
 
 #endif
