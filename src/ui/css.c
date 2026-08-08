@@ -848,11 +848,32 @@ static const char css_body[]=
 "  paned {\n"
 "    background-color: @BACKGROUND;\n"
 "    }\n"
+/* ---- Paned handles: thin to look at, thick enough to actually grab. ----
+   These were 2 px AND painted in @BACKGROUND — invisible, and since GTK4 takes
+   the drag target straight from the CSS box, essentially un-hittable, so none
+   of the splits could be dragged: neither RX against an open decoder panel
+   (FT8/SSTV/WEFAX/CW/HFDL/APT alike) nor the panadapter against the waterfall.
+   Keep the hairline look by painting the line with a gradient inside a 7 px
+   box, so what the pointer has to hit is the whole box, not the line. */
 "  paned > separator {\n"
+"    background-color: transparent;\n"
+"    }\n"
+"  paned.vertical > separator {\n"
+"    min-height: 7px;\n"
+"    background-image: linear-gradient(to bottom,\n"
+"        transparent 3px, alpha(@ACCENT_A,0.35) 3px,\n"
+"        alpha(@ACCENT_A,0.35) 4px, transparent 4px);\n"
+"    }\n"
+"  paned.horizontal > separator {\n"
+"    min-width: 7px;\n"
+"    background-image: linear-gradient(to right,\n"
+"        transparent 3px, alpha(@ACCENT_A,0.35) 3px,\n"
+"        alpha(@ACCENT_A,0.35) 4px, transparent 4px);\n"
+"    }\n"
+/* Hover tells you it is draggable before you try. */
+"  paned > separator:hover {\n"
 "    background-image: none;\n"
-"    background-color: @BACKGROUND;\n"
-"    min-width: 2px;\n"
-"    min-height: 2px;\n"
+"    background-color: alpha(@ACCENT_A,0.45);\n"
 "    }\n"
 /* ---- Spectrum stack: a hairline inset frame so the (dark) panadapter+waterfall ----
    ---- read as an intentional panel, especially on light skins.               ---- */
@@ -860,11 +881,18 @@ static const char css_body[]=
 "    border: 1px solid @BORDER;\n"
 "    background-color: @SPECTRUM_BG;\n"
 "    }\n"
+/* The spectrum stack keeps its own quieter line (it sits inside a framed panel),
+   but it needs the same grab area — this is the panadapter/waterfall split. */
 "  #rx-spectrum > separator {\n"
+"    background-color: transparent;\n"
+"    min-width: 7px;\n"
+"    min-height: 7px;\n"
+"    background-image: linear-gradient(to bottom,\n"
+"        transparent 3px, @BORDER 3px, @BORDER 4px, transparent 4px);\n"
+"    }\n"
+"  #rx-spectrum > separator:hover {\n"
 "    background-image: none;\n"
-"    background-color: @BORDER;\n"
-"    min-width: 1px;\n"
-"    min-height: 1px;\n"
+"    background-color: alpha(@ACCENT_A,0.45);\n"
 "    }\n"
 /* ---- Configuration dialog: flat-dark, scoped under #config-dialog so the ----
    ---- main window (which paints its own named widgets) is never touched. ---- */

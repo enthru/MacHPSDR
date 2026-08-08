@@ -108,6 +108,13 @@ typedef struct {
 
 void apt_decoder_get_status(apt_status_t *st);
 
+// Half-bandwidth of the front-end in Hz — what the decoder actually accepts
+// around its tuned frequency, which is the ±22 kHz design figure except on a
+// receiver too narrow to allow it, where it is whatever the rate permits.
+// 0 before the front-end has seen any I/Q. The panadapter draws this so the
+// operator can SEE the signal fitting inside it rather than having to trust it.
+double apt_decoder_get_bandwidth(void);
+
 // Fresh GdkPixbuf copy of the current image, cropped to the selected channel
 // (caller owns the ref), or NULL if nothing has been decoded yet.
 GdkPixbuf *apt_decoder_get_image(void);

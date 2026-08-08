@@ -64,6 +64,9 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#ifdef SSTV
+#include "apt_decoder.h"
+#endif
 #include "main.h"
 #include "vfo.h"
 #include "level_meter.h"
@@ -1106,6 +1109,48 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     graphene_point_t fs1=GRAPHENE_POINT_INIT((float)filter_left,(float)display_height);
     gtk_snapshot_append_linear_gradient(snapshot,&fr,&fs0,&fs1,fstops,2);
   }
+
+#ifdef SSTV
+  // ---- APT front-end window ----------------------------------------------
+  // The APT decoder does not use the receive filter — it takes raw I/Q and runs
+  // its own ~44 kHz FM front-end — so the passband drawn above says nothing
+  // about whether the satellite fits.  Draw the window the decoder actually
+  // accepts, around the frequency it is actually tuned to, so the operator can
+  // SEE the signal sitting inside it instead of having to take it on trust.
+  // Only while APT is the running decoder on this receiver.
+  if(radio!=NULL && rx==radio->active_receiver && rx->mode_a==FMN &&
+     radio->decode_mode==DECODE_APT) {
+    apt_status_t ast; apt_decoder_get_status(&ast);
+    double half=apt_decoder_get_bandwidth();
+    if(ast.tuned_hz>0 && half>0.0) {
+      double xl=(((double)ast.tuned_hz-half)-(double)min_display)/rx->hz_per_pixel;
+      double xr=(((double)ast.tuned_hz+half)-(double)min_display)/rx->hz_per_pixel;
+      if(xr>0.0 && xl<display_width) {
+        // A wash rather than a solid band: it is wide (44 kHz), and it must not
+        // bury the trace it exists to let you look at.
+        GdkRGBA wash=nrgba(0.2,0.8,0.9,0.10);
+        n_rect(snapshot,xl,0.0,xr-xl,(double)display_height,&wash);
+        GdkRGBA edge=nrgba(0.3,0.9,1.0,0.55);
+        n_rect(snapshot,xl,0.0,1.0,(double)display_height,&edge);
+        n_rect(snapshot,xr-1.0,0.0,1.0,(double)display_height,&edge);
+        char cap[48];
+        snprintf(cap,sizeof(cap),"APT %.0f kHz",2.0*half/1000.0);
+        double capw=0.0;
+        // Measure first so the caption can be centred in the window, and keep it
+        // on screen when the window runs off an edge.  label12 hands back the
+        // SHARED cached layout — borrowed, never owned: unreffing it here would
+        // destroy the cache and take the next frame with it.
+        int cw=0,chh=0;
+        pango_layout_get_pixel_size(label12(widget,cap),&cw,&chh);
+        double cx=(xl+xr)/2.0-cw/2.0;
+        if(cx<2.0) cx=2.0;
+        if(cx>display_width-cw-2.0) cx=display_width-cw-2.0;
+        GdkRGBA capc=nrgba(0.6,0.95,1.0,0.9), capbg=nrgba(0.0,0.0,0.0,0.5);
+        n_text_boxed(snapshot,widget,cx,14.0,&capc,&capbg,cap,&capw);
+      }
+    }
+  }
+#endif
 
   double cw_offset = 0;
   if(rx->mode_a==CWL || rx->mode_a==CWU) {

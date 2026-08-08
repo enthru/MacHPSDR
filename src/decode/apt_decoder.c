@@ -126,6 +126,7 @@ static double  fe_h[FE_TAPS];
 static double  fe_dI[FE_TAPS], fe_dQ[FE_TAPS];
 static int     fe_pos = 0, fe_cnt = 0, fe_dec = 1;
 static double  fe_rate = 0.0, fe_off = 0.0;  // rate/offset the front-end is built for
+static double  fe_bw = 0.0;                  // actual half-bandwidth accepted (Hz)
 // Downmix oscillator as a rotating phasor rather than cos/sin per sample: a
 // SoapySDR front-end can hand us 2.4 MS/s, where two trig calls per sample is
 // most of a core.  Renormalised periodically so rounding cannot let it drift
@@ -242,6 +243,7 @@ void apt_decoder_reset(void) { reset_req = TRUE; }
 void apt_decoder_set_channel(int ch) { if (ch >= 0 && ch <= 2) p_channel = ch; }
 void   apt_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
 double apt_decoder_get_slant(void) { return slant_ppm; }
+double apt_decoder_get_bandwidth(void) { return fe_bw; }
 
 // Start a fresh picture: the decoder has decided it is looking at a different
 // transmission (see RETUNE_HZ / NEWPASS_LINES).  Line tracking is left to the
@@ -536,6 +538,7 @@ static void fe_configure(double rate, double off) {
   double fc = FE_CUTOFF;
   if (fc > wr * 0.45) fc = wr * 0.45;
   fir_lowpass(fe_h, FE_TAPS, fc / rate);
+  fe_bw = fc;
   fe_dec = dec;
   fe_rate = rate; fe_off = off;
   memset(fe_dI, 0, sizeof(fe_dI)); memset(fe_dQ, 0, sizeof(fe_dQ));
