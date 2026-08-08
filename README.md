@@ -51,6 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
+| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, PNG save. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(verified end-to-end on synthesised passes — audio and I/Q, off-centre, noisy, and with a 400 ppm clock error; not yet decoded from a real pass)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
@@ -236,9 +237,9 @@ you've dialled in.
   start it. FT8/FT4 decode the audio and show the traffic in the Decode block
   (below); **SSTV** and **WEFAX** decode analogue images (see below). The
   selector **only lists the decoders usable in the current mode**: **DIGU/DIGL**
-  offers **Off / FT8 / FT4 / SSTV / WEFAX**, while **NFM (FMN)** — where only
-  SSTV applies (ISS/VHF SSTV over narrow FM) — offers just **Off / SSTV**. The
-  selection is remembered between sessions.
+  offers **Off / FT8 / FT4 / SSTV / WEFAX**, while **NFM (FMN)** — the VHF FM
+  modes — offers **Off / SSTV / APT** (ISS/VHF SSTV over narrow FM, and NOAA
+  weather-satellite pictures). The selection is remembered between sessions.
 
 - **SSTV image reception.** Choose **SSTV** from the Decode-block selector and
   press **Show SSTV** to open the image panel (it takes the second-receiver slot,
@@ -310,6 +311,29 @@ you've dialled in.
   self-contained (its own Hilbert-transform FM discriminator, same 1500 Hz =
   black / 2300 Hz = white tone convention; no WDSP/FFT) and decodes at full audio
   level regardless of volume/mute.
+
+- **APT — NOAA weather-satellite pictures.** Choose **APT** from the Decode-block
+  selector (in **NFM** — the 137 MHz downlink is FM) and press **Show APT** to
+  open the image panel. Point the receiver at the satellite's frequency
+  (NOAA-15 137.620, NOAA-18 137.9125, NOAA-19 137.100 MHz) as it comes over the
+  horizon and the picture builds itself: the decoder finds the line sync on its
+  own, holds it through fades, and **measures and cancels your receiver's clock
+  error** so the image does not slant — there is nothing to click, and the
+  **Slant ±** trim is only there if you want to nudge it. **View** switches
+  between the whole 2080-word line (both channels, sync bars and telemetry
+  wedges included) and channel **A** or **B** on their own; **Save** writes a PNG
+  to `~/.local/share/machpsdr/apt/`, **Clear** starts a new pass.
+
+  Unlike the other image decoders, APT does **not** listen to the demodulated
+  audio: an APT signal is about 34 kHz wide, which is wider than the widest NFM
+  filter and far narrower than WFM, so the decoder takes the **raw I/Q** and runs
+  its own wideband-FM front-end. That has three consequences worth knowing: the
+  receive filter setting does not affect the picture (it only changes what you
+  hear); the **±3 kHz of Doppler over a pass needs no tracking at all**; and the
+  receiver's own **sample rate must be at least ~48 kHz** for the signal to fit —
+  it wants a wide DDC (192 kHz or more) or an SDR such as an RTL dongle through
+  SoapySDR. If you tune with CTUN/freetune, the decoder follows the **cursor**,
+  so the satellite can sit anywhere in the visible span.
 
 - **FT8 / FT4 decoding.** Choose **FT8** or **FT4** from the Decode-block selector
   while the active receiver is in **DIGU** (or **DIGL**) — no separate window. The

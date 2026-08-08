@@ -80,6 +80,8 @@
 #include "wefax_panel.h"
 #include "cw_decoder.h"
 #include "cw_panel.h"
+#include "apt_decoder.h"
+#include "apt_panel.h"
 #endif
 #ifdef HFDL
 #include "hfdl_decoder.h"
@@ -110,7 +112,7 @@ static GtkWidget *add_wideband_b;
 // a panel occupies the slot.
 static gboolean panels_idle(RADIO *r) {
   return r->ft8_panel==NULL && r->sstv_panel==NULL &&
-         r->wefax_panel==NULL && r->cw_panel==NULL &&
+         r->wefax_panel==NULL && r->cw_panel==NULL && r->apt_panel==NULL &&
 #ifdef HFDL
          r->hfdl_panel==NULL &&
 #endif
@@ -842,6 +844,7 @@ static gboolean rx_stack_balance(gpointer data) {
   if(r->sstv_panel!=NULL)  n++;
   if(r->wefax_panel!=NULL) n++;
   if(r->cw_panel!=NULL)    n++;
+  if(r->apt_panel!=NULL)   n++;
 #ifdef HFDL
   if(r->hfdl_panel!=NULL)  n++;
 #endif
@@ -947,6 +950,13 @@ void radio_rebuild_rx_stack(RADIO *r) {
     GtkWidget *parent=gtk_widget_get_parent(r->cw_panel);
     child_remove_from_parent(r->cw_panel);
     tables[n++]=r->cw_panel;
+  }
+  // The APT image panel is likewise mutually exclusive with the other decoder
+  // panels and occupies the second-receiver slot.
+  if(r->apt_panel!=NULL) {
+    g_object_ref(r->apt_panel);
+    child_remove_from_parent(r->apt_panel);
+    tables[n++]=r->apt_panel;
   }
 #ifdef HFDL
   // The HFDL message panel is likewise mutually exclusive with the other decoder
@@ -1079,6 +1089,7 @@ static const char *decode_mode_label(int m) {
     case DECODE_WEFAX: return "WEFAX";
     case DECODE_CW:    return "CW";
     case DECODE_HFDL:  return "HFDL";
+    case DECODE_APT:   return "APT";
   }
   return "?";
 }
@@ -1086,7 +1097,7 @@ static const char *decode_mode_label(int m) {
 // Bitmask of decode_mode_t values valid in the active RX's current mode.
 // Practice: never offer a decoder the current mode can't use.
 //   DIGU/DIGL (HF digital SSB): FT8, FT4, SSTV, WEFAX
-//   FMN       (VHF/ISS narrow FM): SSTV only
+//   FMN       (VHF narrow FM): SSTV (ISS) and APT (NOAA weather satellites)
 //   anything else: nothing
 static int decode_valid_mask(RECEIVER *rx) {
   if(rx==NULL) return 0;
@@ -1100,8 +1111,16 @@ static int decode_valid_mask(RECEIVER *rx) {
 #endif
     return m;
   }
-  if(rx->mode_a==FMN)
-    return (1<<DECODE_OFF)|(1<<DECODE_SSTV);   // ISS/VHF SSTV over narrow FM only
+  if(rx->mode_a==FMN) {
+    int m = (1<<DECODE_OFF)|(1<<DECODE_SSTV);  // ISS/VHF SSTV over narrow FM
+#ifdef SSTV
+    // APT takes raw I/Q and runs its own wideband FM front-end, so the demod
+    // mode does not affect the decode — FMN is simply where a 137 MHz downlink
+    // is listened to, and the natural place to offer it.
+    m |= (1<<DECODE_APT);
+#endif
+    return m;
+  }
 #ifdef SSTV
   if(rx->mode_a==CWL || rx->mode_a==CWU) return (1<<DECODE_OFF)|(1<<DECODE_CW);
 #endif
@@ -1130,9 +1149,9 @@ static void decode_sel_sync(RADIO *r) {
   g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
   if(rebuild) {
     gtk_string_list_splice(sl,0,g_list_model_get_n_items(G_LIST_MODEL(sl)),NULL);
-    int *modes = g_new0(int, DECODE_HFDL+1);
+    int *modes = g_new0(int, DECODE_APT+1);
     int n = 0;
-    for(int m=DECODE_OFF;m<=DECODE_HFDL;m++) if(mask & (1<<m)) {
+    for(int m=DECODE_OFF;m<=DECODE_APT;m++) if(mask & (1<<m)) {
       gtk_string_list_append(sl,decode_mode_label(m));
       modes[n++] = m;
     }
@@ -1184,6 +1203,7 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   radio_sstv_panel_sync(r);  // close the SSTV image panel if we left SSTV
   radio_wefax_panel_sync(r); // close the WEFAX image panel if we left WEFAX
   radio_cw_panel_sync(r);    // close the CW text panel if we left CW
+  radio_apt_panel_sync(r);   // close the APT image panel if we left APT
 #endif
 #ifdef HFDL
   radio_hfdl_panel_sync(r);  // close the HFDL message panel if we left HFDL
@@ -1268,6 +1288,43 @@ static void wefax_expand_cb(GtkButton *b, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->wefax_panel_open = !r->wefax_panel_open;
   radio_wefax_panel_sync(r);
+}
+
+// Show or hide the embedded APT image panel.  Like the SSTV/WEFAX panels it
+// takes the second-receiver slot, but only in narrowband FM (FMN — where a
+// 137 MHz weather-satellite downlink is listened to).  Leaving APT or FMN
+// closes it.  GTK thread only.
+void radio_apt_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean aptmode = (r->active_receiver!=NULL && r->active_receiver->mode_a==FMN) &&
+                     r->decode_mode==DECODE_APT;
+  if(!aptmode) r->apt_panel_open=FALSE;
+  gboolean want = aptmode && r->apt_panel_open;
+  gboolean have = (r->apt_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->apt_panel=apt_panel_create();
+    g_object_ref_sink(r->apt_panel);
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->apt_panel;
+    r->apt_panel=NULL;                          // hide from the rebuild below
+    child_remove_from_parent(p);
+    g_object_unref(p);                          // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      panels_idle(r));
+}
+
+// Bottom-bar "Show APT" toggle: open/close the APT image panel (in place of RX2).
+static void apt_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->apt_panel_open = !r->apt_panel_open;
+  radio_apt_panel_sync(r);
 }
 
 // Show or hide the embedded CW text panel.  Like the SSTV/WEFAX panels it takes
@@ -1379,6 +1436,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->wefax_denoise=atoi(value);
   value=getProperty("radio.wefax_invert");
   if(value!=NULL) r->wefax_invert=atoi(value);
+  value=getProperty("radio.apt_channel");
+  if(value!=NULL) r->apt_channel=atoi(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -1671,6 +1730,8 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean sstv_cap = digi || (rx!=NULL && rx->mode_a==FMN);
   // CW (Morse) decoder is valid only in the CW modes.
   gboolean cw_cap = rx!=NULL && (rx->mode_a==CWL || rx->mode_a==CWU);
+  // APT (NOAA weather satellites) is VHF FM — offered in FMN.
+  gboolean apt_cap = rx!=NULL && rx->mode_a==FMN;
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
@@ -1682,6 +1743,7 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean sstv_active = sstv_cap && r->decode_mode==DECODE_SSTV;
   gboolean wefax_active = digi && r->decode_mode==DECODE_WEFAX;   // HF USB radiofax
   gboolean cw_active = cw_cap && r->decode_mode==DECODE_CW;
+  gboolean apt_active = apt_cap && r->decode_mode==DECODE_APT;
 #ifdef HFDL
   // HFDL (aviation HF data link) is HF USB — offered in DIGU only.
   gboolean hfdl_active = digu && r->decode_mode==DECODE_HFDL;
@@ -1699,6 +1761,7 @@ static gboolean rds_update_cb(gpointer data) {
     else if(sstv_active) title = "SSTV";
     else if(wefax_active) title = "WEFAX";
     else if(cw_active) title = "CW";
+    else if(apt_active) title = "APT";
 #ifdef HFDL
     else if(hfdl_active) title = "HFDL";
 #endif
@@ -1881,6 +1944,23 @@ static gboolean rds_update_cb(gpointer data) {
     snprintf(ft8buf,sizeof(ft8buf),"CW decoder support not built in");
 #endif
   }
+  else if(apt_active) {
+    // APT: the image lives in the big panel; the bottom block carries the sync
+    // state, the line count and the slant the clock servo has settled on — which
+    // is what tells the operator whether the pass is being tracked at all.
+    show_ft8 = TRUE;
+#ifdef SSTV
+    apt_status_t ast; apt_decoder_get_status(&ast);
+    if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "APT");
+    if(r->apt_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines", ast.status, ast.lines);
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines\n(Show APT to view the image)",
+               ast.status, ast.lines);
+#else
+    snprintf(ft8buf,sizeof(ft8buf),"APT support not built in");
+#endif
+  }
 #ifdef HFDL
   else if(hfdl_active) {
     // HFDL: a compact listening/throughput readout, plus the newest decoded text.
@@ -1979,6 +2059,12 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_widget_set_visible(r->cw_expand_btn, cw_active);
     gtk_button_set_label(GTK_BUTTON(r->cw_expand_btn),
                          r->cw_panel_open?"Hide CW":"Show CW");
+  }
+  // The "Show APT" toggle: shown in FMN with the APT decoder selected.
+  if(r->apt_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->apt_expand_btn, apt_active);
+    gtk_button_set_label(GTK_BUTTON(r->apt_expand_btn),
+                         r->apt_panel_open?"Hide APT":"Show APT");
   }
 #ifdef HFDL
   // The "Show HFDL" toggle: shown in DIGU with the HFDL decoder selected.
@@ -2177,6 +2263,14 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_valign(r->cw_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->cw_expand_btn,"clicked",G_CALLBACK(cw_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->cw_expand_btn);
+
+  // "Show APT" toggle: opens/closes the APT image panel (in place of RX2).
+  // Shown only in FMN with the APT decoder selected (see rds_update_cb).
+  r->apt_expand_btn=gtk_button_new_with_label("Show APT");
+  gtk_widget_set_name(r->apt_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->apt_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->apt_expand_btn,"clicked",G_CALLBACK(apt_expand_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(dec_ctl),r->apt_expand_btn);
 #endif
 #ifdef HFDL
   // "Show HFDL" toggle: opens/closes the HFDL message panel (in place of RX2).
@@ -2531,6 +2625,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->wefax_autophase = TRUE;   // continuous auto-phasing (self-align)
   r->wefax_denoise = TRUE;     // impulse-noise despeckle
   r->wefax_invert = FALSE;     // positive image (black-on-white) by default
+  r->apt_panel = NULL;
+  r->apt_panel_open = FALSE;
+  r->apt_channel = 0;          // show the whole 2080-word line by default
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port

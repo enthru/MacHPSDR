@@ -158,6 +158,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.wefax_denoise",value);
   sprintf(value,"%d",radio->wefax_invert);
   setProperty("radio.wefax_invert",value);
+  sprintf(value,"%d",radio->apt_channel);
+  setProperty("radio.apt_channel",value);
   sprintf(value,"%d",radio->ft8_tx_offset);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);

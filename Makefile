@@ -115,9 +115,9 @@ SSTV_INCLUDE=SSTV
 
 ifeq ($(SSTV_INCLUDE),SSTV)
 SSTV_OPTIONS=-D SSTV
-SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c
-SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h
-SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o
+SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c apt_decoder.c apt_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h apt_decoder.h apt_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o apt_decoder.o apt_panel.o
 endif
 
 # HFDL (aviation HF Data Link, ARINC 635) receive decoder — parity 4.5.
@@ -544,6 +544,23 @@ hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 	  $(filter-out hfdl_panel.o,$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
 
+# Headless APT harness: feeds a demodulated-audio WAV (the format APT recordings
+# circulate in) or one of our own I/Q recordings into the decoder and writes the
+# decoded picture out as a PNG; `--selftest` needs no recording at all.  Same
+# reason as hfdl-offline: verify the decoder without starting the app.
+#   make apt-offline && ./apt_offline --selftest
+#   ./apt_offline noaa.wav -o pass.png
+#   ./apt_offline rec_iq.wav --iq 137100000 137100000 -o pass.png
+.PHONY: apt-offline
+apt-offline: apt_offline
+# Links only the decoder (no GTK, no WDSP, no audio): apt_decoder.c needs
+# gdk-pixbuf for the image it hands back, and nothing else.
+apt_offline: tools/apt_offline.c apt_decoder.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/apt_offline.c \
+	  apt_decoder.o log.o \
+	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
+
 prebuild:
 	rm -f version.o
 
@@ -575,8 +592,8 @@ clean:
 	-rm -f hfdl_lib/*.o hfdl_lib/*.d \
 	       hfdl_lib/libfec/*.o hfdl_lib/libfec/*.d
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline
-	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM
+	-rm -f $(PROGRAM) hfdl_offline apt_offline
+	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM apt_offline.dSYM
 	-rm -rf $(APP_NAME).app
 
 APP_NAME=MacHPSDR

@@ -211,7 +211,8 @@ The bottom bar's **Decode** module carries a **decoder selector**. No decoder ru
 by default — pick one to start it. The selector only lists the decoders usable in
 the current mode: **DIGU / DIGL** offers **Off / FT8 / FT4 / SSTV / WEFAX**; **NFM
 (FMN)**, where only SSTV applies (VHF/ISS SSTV over narrow FM), offers just
-**Off / SSTV**. The image decoders (SSTV, WEFAX) are covered in §8; FT8/FT4 below.
+**Off / SSTV / APT** (VHF/ISS SSTV over narrow FM, and NOAA weather-satellite
+pictures). The image decoders (SSTV, WEFAX, APT) are covered in §8; FT8/FT4 below.
 The choice is remembered between sessions.
 
 In the **data modes (DIGU/DIGL)**, and whenever any decoder is running, **every
@@ -354,7 +355,7 @@ decoder's output for the same frame.)*
 
 ---
 
-## 8. SSTV and WEFAX — images and weather fax
+## 8. SSTV, WEFAX and APT — images, weather fax and satellites
 
 Two self-contained image decoders share the Decode-module selector with FT8. Like
 FT8 they run at full audio level regardless of the volume/mute, so you can decode
@@ -410,6 +411,30 @@ just work:
 Tune the station in **DIGU/USB** ~1.9 kHz below its assigned frequency (so black
 lands on 1500 Hz, white on 2300 Hz) and give it a **wide receive filter (~1.9 kHz,
 e.g. 1000–2900 Hz)** — too narrow and the fast black↔white transitions smear.
+
+---
+
+### APT — NOAA weather-satellite pictures (receive only)
+
+Pick **APT** from the selector (in **NFM** — the 137 MHz downlink is FM) and press
+**Show APT**. Tune the satellite as it rises (NOAA-15 137.620, NOAA-18 137.9125,
+NOAA-19 137.100 MHz) and the picture builds itself: the decoder finds the line sync
+on its own, holds it through fades, and measures and cancels your receiver's clock
+error, so the image does not slant. There is nothing to click.
+
+- **View** shows the whole 2080-word line (both channels, sync bars and telemetry
+  wedges) or channel **A** / **B** alone.
+- **Slant ±** is a manual trim, there only if you want to nudge the automatic one.
+- **Save** writes a PNG to `~/.local/share/machpsdr/apt/`; **Clear** starts a new pass.
+
+APT is the one decoder that does not listen to the demodulated audio: the signal is
+~34 kHz wide — wider than the widest NFM filter and far narrower than WFM — so it
+takes the raw I/Q and runs its own wideband-FM front-end. Three consequences: the
+receive filter changes only what you hear, not the picture; the ±3 kHz of Doppler
+over a pass needs no tracking at all; and the receiver's sample rate must be at
+least ~48 kHz — a wide DDC (192 kHz or more), or an SDR such as an RTL dongle over
+SoapySDR. With CTUN/freetune the decoder follows the **cursor**, so the satellite
+may sit anywhere in the visible span.
 
 ---
 

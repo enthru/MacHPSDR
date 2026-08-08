@@ -94,6 +94,7 @@ typedef enum {
   DECODE_WEFAX,     // WEFAX / HF radiofax image decoder
   DECODE_CW,        // CW (Morse) audio->text decoder
   DECODE_HFDL,      // HFDL (aviation HF data link) I/Q decoder (HFDL build flag)
+  DECODE_APT,       // APT (NOAA weather satellite) image I/Q decoder (VHF FM)
 } decode_mode_t;
 
 typedef struct _radio {
@@ -135,6 +136,9 @@ typedef struct _radio {
   gboolean wefax_autophase;// continuous auto-phasing / self-align (default TRUE)
   gboolean wefax_denoise;  // WEFAX impulse-noise despeckle (default TRUE)
   gboolean wefax_invert;   // WEFAX negative image / white<->black (default FALSE)
+  GtkWidget *apt_panel;    // embedded APT image panel (NULL unless open in FMN+APT)
+  gboolean apt_panel_open; // user toggled the APT image panel on (in place of RX2)
+  gint apt_channel;        // APT view: 0 = whole line, 1 = channel A, 2 = channel B
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
@@ -355,6 +359,7 @@ typedef struct _radio {
   GtkWidget *wefax_expand_btn;// bottom-bar toggle: open/close the WEFAX image panel (DIGU/DIGL)
   GtkWidget *cw_expand_btn;  // bottom-bar toggle: open/close the CW text panel (CWL/CWU)
   GtkWidget *hfdl_expand_btn;// bottom-bar toggle: open/close the HFDL message panel (DIGU)
+  GtkWidget *apt_expand_btn; // bottom-bar toggle: open/close the APT image panel (FMN)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
@@ -393,6 +398,7 @@ extern void radio_sstv_panel_sync(RADIO *r);
 extern void radio_wefax_panel_sync(RADIO *r);
 extern void radio_cw_panel_sync(RADIO *r);
 extern void radio_hfdl_panel_sync(RADIO *r);
+extern void radio_apt_panel_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

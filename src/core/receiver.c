@@ -72,6 +72,7 @@
 #ifdef SSTV
 #include "sstv_decoder.h"
 #include "wefax_decoder.h"
+#include "apt_decoder.h"
 #include "cw_decoder.h"
 #include "cw_keyer.h"
 #endif
@@ -1515,6 +1516,7 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     radio_sstv_panel_sync(radio);
     radio_wefax_panel_sync(radio);
     radio_cw_panel_sync(radio);
+    radio_apt_panel_sync(radio);
   }
 #endif
 #ifdef HFDL
@@ -1937,6 +1939,25 @@ static void full_rx_buffer(RECEIVER *rx) {
                                                     : (long long)rx->frequency_a;
       hfdl_decoder_add_iq_at(rx->iq_input_buffer, rx->buffer_size,
                              rx->sample_rate, (long long)rx->frequency_a, cursor);
+    }
+  }
+#endif
+#ifdef SSTV
+  // APT (NOAA weather satellites) decoder tap: raw off-air complex I/Q, for the
+  // same reason as HFDL — the signal is ~34 kHz of FM, which is wider than our
+  // widest FMN filter and far narrower than WFM, so the decoder brings its own
+  // front-end rather than tapping the demodulated audio the way SSTV/WEFAX do.
+  // The demod mode therefore only affects what the operator hears.
+  if(radio->active_receiver==rx) {
+    gboolean apt_on = (rx->mode_a==FMN) && radio->decode_mode==DECODE_APT;
+    apt_decoder_set_enabled(apt_on);
+    if(apt_on) {
+      // As for HFDL: decode where the operator is pointing (the CTUN/freetune
+      // cursor), which without CTUN is the receiver centre.
+      long long cursor = (rx->ctun || rx->freetune) ? (long long)rx->ctun_frequency
+                                                    : (long long)rx->frequency_a;
+      apt_decoder_add_iq(rx->iq_input_buffer, rx->buffer_size,
+                         (double)rx->sample_rate, (long long)rx->frequency_a, cursor);
     }
   }
 #endif
