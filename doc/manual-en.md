@@ -440,8 +440,9 @@ exposure. One satellite is decoded at a time — whichever the cursor is on.
 APT is the one decoder that does not listen to the demodulated audio: the signal is
 ~34 kHz wide — wider than the widest NFM filter and far narrower than WFM — so it
 takes the raw I/Q and runs its own wideband-FM front-end. Three consequences: the
-receive filter changes only what you hear, not the picture; the ±3 kHz of Doppler
-over a pass needs no tracking at all; and the receiver's sample rate must be at
+receive filter changes only what you hear, not the picture; Doppler over a pass needs no tuning at all (the
+carrier shift goes out with the DC term, and the ±25 ppm it puts on the line
+clock is absorbed by the servo that removes slant); and the receiver's sample rate must be at
 least ~48 kHz — a wide DDC (192 kHz or more), or an SDR such as an RTL dongle over
 SoapySDR. With CTUN/freetune the decoder follows the **cursor**, so the satellite
 may sit anywhere in the visible span.

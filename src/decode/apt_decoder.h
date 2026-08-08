@@ -34,10 +34,19 @@
  *
  *  - The video is AM on a 2400 Hz subcarrier rather than direct FM-audio tone
  *    coding, so the detector is a 2400 Hz quadrature mixer + low-pass +
- *    magnitude.  That also makes the decode immune to mistuning and Doppler:
- *    a carrier offset lands as DC at the discriminator output, which the
- *    subcarrier mix pushes to −2400 Hz and the video low-pass throws away.
- *    (Doppler at 137 MHz is ±3 kHz — well inside the front-end's own filter.)
+ *    magnitude.  That is also what makes mistuning harmless: a carrier offset
+ *    lands as DC at the discriminator output, which the subcarrier mix pushes
+ *    to −2400 Hz and the video low-pass throws away.
+ *
+ * Doppler over a pass therefore arrives in two parts, and only one of them is
+ * a non-event.  The carrier shift (±3.4 kHz at 137 MHz) is the harmless one —
+ * it is that same DC term, and it stays inside the front-end's ±22 kHz filter
+ * even added to the signal's own ±17 kHz.  The other part is real: the whole
+ * transmission is time-scaled by v/c, so the LINE CLOCK arrives about ±25 ppm
+ * off and swings through zero as the satellite passes overhead.  That is what
+ * the clock servo tracks — MEASURED on a real NOAA-18 pass, where the recovered
+ * trim walks smoothly from −20 to +25 ppm across nine minutes and the picture
+ * comes out square anyway.
  *
  * Line format (2 lines/s, 4160 words/s, 2080 words per line):
  *   sync A 39 | space A 47 | image A 909 | telemetry A 45 |

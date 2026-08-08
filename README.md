@@ -342,7 +342,10 @@ you've dialled in.
   filter and far narrower than WFM, so the decoder takes the **raw I/Q** and runs
   its own wideband-FM front-end. That has three consequences worth knowing: the
   receive filter setting does not affect the picture (it only changes what you
-  hear); the **±3 kHz of Doppler over a pass needs no tracking at all**; and the
+  hear); **Doppler over a pass needs no tuning at all** — the ±3.4 kHz carrier
+  shift is discarded along with the DC term, and the ±25 ppm that the same
+  Doppler puts on the *line clock* is absorbed by the servo that removes slant,
+  which was watched doing exactly that across a real pass; and the
   receiver's own **sample rate must be at least ~48 kHz** for the signal to fit —
   it wants a wide DDC (192 kHz or more) or an SDR such as an RTL dongle through
   SoapySDR. If you tune with CTUN/freetune, the decoder follows the **cursor**,

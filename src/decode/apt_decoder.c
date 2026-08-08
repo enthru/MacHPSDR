@@ -62,11 +62,38 @@
 // ---- video low-pass (both paths) ------------------------------------------
 #define VF_TAPS     33
 
-// Sync lock thresholds on the normalised (Pearson) sync-A correlation.
-#define LOCK_CORR   0.55
-#define HOLD_CORR   0.30
-#define MISS_MAX    6                    // lines tolerated before dropping lock
+// Sync thresholds on the normalised (Pearson) sync-A correlation.
+//
+// A raw score threshold on its own is NOT enough, and getting that wrong is the
+// classic failure of this kind of decoder (the CW decoder streamed garbage on
+// band noise until it grew a squelch).  The correlation runs over 39 words, so
+// on noise it has a standard deviation of about 1/sqrt(39) = 0.16 — but the
+// search takes the MAX over hundreds of trial positions, which pushes the noise
+// score far higher: MEASURED at 0.62 on pure noise (see the selftest).  A
+// decoder that locks there paints a picture out of nothing and, worse, lets the
+// noise drag the clock servo, destroying the ppm it measured during the pass.
+//
+// So acquisition also demands the thing noise cannot fake: a sync that comes
+// back at the SAME place line after line.  Noise maxima jump around the line at
+// random, so requiring LOCK_RUN consecutive lines to agree on the position makes
+// a false lock vanishingly unlikely — and lets the score threshold stay low
+// enough for a weak pass to still get in.
+#define LOCK_CORR   0.65                 // per-line score needed to be a candidate
+#define LOCK_RUN    3                    // consecutive lines that must agree
+#define LOCK_TOL    0.005                // position agreement, as a fraction of a line
+// Once locked, only a sync THIS good is trusted to move the line phase and drive
+// the clock servo; anything weaker is treated as a fade and simply free-runs on
+// the geometry already measured.  Losing the sync for longer than MISS_MAX drops
+// the lock, and then nothing is drawn until it comes back.
+#define TRIM_CORR   0.75                 // above the 0.69 noise max, below a real 0.9+
+#define MISS_MAX    10                   // lines of fade ridden out (5 s)
 #define CLOCK_GAIN  0.15                 // integral gain of the line-period servo
+// Ceiling on what ONE line may do to the clock estimate.  A real sync moves by a
+// sample or two per line (100 ppm is 3 samples), so a large correction is never
+// the clock — it is a bad correlation, and without this ceiling a single weak
+// line late in a pass can undo a measurement that hundreds of good lines built.
+// Twenty ppm per line still converges from cold in a couple of dozen lines.
+#define CLOCK_STEP_MAX 20.0
 
 // What counts as "this is a different transmission, start a new picture".
 // Mirrors wefax_decoder.c, where the start-tone detector calls begin_page():
@@ -127,6 +154,8 @@ static double  clock_trim = 0.0;             // ppm, automatic slant servo
 static gboolean locked = FALSE;
 static int     miss = 0;
 static int     unlocked_lines = 0;           // consecutive lines with no sync
+static double  cand_off = 0.0;               // candidate sync position within the line
+static int     cand_run = 0;                 // consecutive lines agreeing on it
 static double  last_corr = 0.0;
 // Where the front-end is actually listening, in absolute Hz.  Published for the
 // readout: a decoder pointed somewhere other than the operator believes looks
@@ -192,7 +221,7 @@ static void do_reset(void) {
   vf_pos = 0; sc_r = 1.0; sc_i = 0.0; sc_n = 0;
   ring_w = 0;
   line_start = 0.0; clock_trim = 0.0; locked = FALSE; miss = 0; last_corr = 0.0;
-  unlocked_lines = 0;
+  unlocked_lines = 0; cand_off = 0.0; cand_run = 0;
   black_lvl = white_lvl = 0.0; levels_seeded = FALSE;
   g_mutex_lock(&lock_img);
   memset(img, 0, sizeof(img));
@@ -414,11 +443,23 @@ static void process_line(void) {
   last_corr = best;
 
   if (!locked) {
+    // Candidate tracking: does this line's best position agree with the last
+    // one's?  A real sync sits at the same offset every line (drifting by only
+    // a sample or so from the clock error); noise picks a fresh place each time.
+    double off_in_line = bestpos - line_start;
     if (best >= LOCK_CORR) {
+      if (cand_run > 0 && fabs(off_in_line - cand_off) < line_len * LOCK_TOL) cand_run++;
+      else cand_run = 1;
+      cand_off = off_in_line;
+    } else {
+      cand_run = 0;
+    }
+
+    if (cand_run >= LOCK_RUN) {
       // Sync back after a long silence is a new pass, not a continuation — wipe
       // before the first line lands, but keep the position we just found.
       if (unlocked_lines > NEWPASS_LINES) clear_image("signal returned");
-      locked = TRUE; miss = 0; unlocked_lines = 0;
+      locked = TRUE; miss = 0; unlocked_lines = 0; cand_run = 0;
       line_start = bestpos;
       log_info("APT: sync locked (corr %.2f)\n", best);
     } else {
@@ -433,7 +474,7 @@ static void process_line(void) {
       return;
     }
   } else {
-    if (best >= HOLD_CORR) {
+    if (best >= TRIM_CORR) {
       // Proportional phase correction plus an integral term on the line period:
       // the phase error accumulating line after line IS the sample-clock error,
       // and feeding it back as ppm is what keeps the picture from slanting
@@ -443,14 +484,21 @@ static void process_line(void) {
       // about a sample in 24 000, so the ppm jitter K feeds back is negligible.
       double err = bestpos - line_start;
       line_start = bestpos;
-      clock_trim += 1e6 * err / line_len * CLOCK_GAIN;
+      double step = 1e6 * err / line_len * CLOCK_GAIN;
+      if (step >  CLOCK_STEP_MAX) step =  CLOCK_STEP_MAX;
+      if (step < -CLOCK_STEP_MAX) step = -CLOCK_STEP_MAX;
+      clock_trim += step;
       if (clock_trim >  5000.0) clock_trim =  5000.0;
       if (clock_trim < -5000.0) clock_trim = -5000.0;
       miss = 0;
     } else if (++miss > MISS_MAX) {
-      locked = FALSE;
+      locked = FALSE; cand_run = 0;
       log_info("APT: sync lost\n");
     }
+    // Between the two: a fade.  The line keeps its predicted position and the
+    // clock trim is left exactly where the good syncs put it — letting a weak
+    // correlation move either would throw away the measurement that a whole
+    // pass of strong syncs paid for.
   }
 
   decode_line(line_start, line_len);

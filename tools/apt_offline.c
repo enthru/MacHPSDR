@@ -272,6 +272,37 @@ static int selftest(void) {
     if (err > 100.0) { printf("  slant: FAIL (clock servo did not converge)\n"); fails++; }
   }
 
+  // --- pure noise: the decoder must stay silent.  A 39-point correlation has a
+  // noise standard deviation around 1/sqrt(39) = 0.16, and the search takes the
+  // MAX over hundreds of positions, so random noise reaches surprisingly high
+  // scores — if the thresholds sit below that, the decoder locks onto nothing,
+  // paints garbage and (worse) lets the noise drag the clock servo, destroying
+  // the ppm it measured during the pass.  Same class of bug as the CW decoder
+  // streaming garbage on band noise before it grew a squelch.
+  printf("APT selftest: pure noise must not lock\n");
+  {
+    const double RATE = 62500.0;
+    long n = (long)(RATE * 20);
+    double *iq = g_new(double, (size_t)n * 2);
+    for (long i = 0; i < n; i++) { iq[i*2] = urand(); iq[i*2+1] = urand(); }
+    apt_decoder_set_enabled(FALSE);
+    apt_decoder_set_enabled(TRUE);
+    double worst_corr = -2.0;
+    for (long i = 0; i < n; i += 4096) {
+      int blk = (int)MIN(4096L, n - i);
+      apt_decoder_add_iq(iq + i * 2, blk, RATE, 137000000LL, 137000000LL);
+      apt_status_t st; apt_decoder_get_status(&st);
+      if (st.quality > worst_corr) worst_corr = st.quality;
+    }
+    apt_status_t st; apt_decoder_get_status(&st);
+    printf("  noise: best correlation reached %.2f, %d lines drawn, %s\n",
+           worst_corr, st.lines, st.locked ? "LOCKED" : "not locked");
+    if (st.locked || st.lines > 0) {
+      printf("  noise: FAIL (locked onto noise)\n");
+      fails++;
+    }
+  }
+
   // --- retune to another satellite: the second pass must be a NEW picture, not
   // extra lines appended under the first.  Without that the two passes share one
   // strip and one exposure and both are ruined — the reason WEFAX calls
@@ -325,6 +356,14 @@ int main(int argc, char **argv) {
   apt_decoder_set_enabled(TRUE);
   apt_decoder_set_channel(0);
 
+  // Progress trace: print the servo's state every 30 s of recording.  This is
+  // how the clock/Doppler behaviour over a pass is read — the line clock arrives
+  // scaled by the satellite's own v/c (about ±25 ppm, changing sign as it passes
+  // overhead), so the recovered ppm should drift smoothly through the pass on
+  // top of the receiver's fixed error.
+  long trace_every = (long)(rate * 30);
+  long next_trace = trace_every;
+
   const int BLK = 4096;
   double *d = g_new(double, (size_t)BLK * 2);
   if (iq_mode) {
@@ -334,12 +373,26 @@ int main(int argc, char **argv) {
       int blk = (int)MIN((long)BLK, nframes - i);
       for (int k = 0; k < blk * 2; k++) d[k] = buf[(i * 2) + k] / 32768.0;
       apt_decoder_add_iq(d, blk, (double)rate, centre, cursor);
+      if (i >= next_trace) {
+        apt_status_t st; apt_decoder_get_status(&st);
+        printf("  t=%4.0f s  lines %4d  sync %.2f  clock %+7.1f ppm  %s\n",
+               (double)i / rate, st.lines, st.quality, st.clock_ppm,
+               st.locked ? "lock" : "----");
+        next_trace += trace_every;
+      }
     }
   } else {
     for (long i = 0; i < nframes; i += BLK) {
       int blk = (int)MIN((long)BLK, nframes - i);
       for (int k = 0; k < blk; k++) d[k] = buf[(i + k) * chans] / 32768.0;
       apt_decoder_add_audio(d, blk, 1, (double)rate);
+      if (i >= next_trace) {
+        apt_status_t st; apt_decoder_get_status(&st);
+        printf("  t=%4.0f s  lines %4d  sync %.2f  clock %+7.1f ppm  %s\n",
+               (double)i / rate, st.lines, st.quality, st.clock_ppm,
+               st.locked ? "lock" : "----");
+        next_trace += trace_every;
+      }
     }
   }
   g_free(d); g_free(buf);
