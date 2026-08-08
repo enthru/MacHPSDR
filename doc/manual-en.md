@@ -425,7 +425,21 @@ error, so the image does not slant. There is nothing to click.
 - **View** shows the whole 2080-word line (both channels, sync bars and telemetry
   wedges) or channel **A** / **B** alone.
 - **Slant ±** is a manual trim, there only if you want to nudge the automatic one.
-- **Save** writes a PNG to `~/.local/share/machpsdr/apt/`; **Clear** starts a new pass.
+- **Save** asks where to write a PNG, and always writes the **whole line** at full
+  resolution whatever **View** is showing; **Clear** starts a new pass.
+- **Contrast** / **Brightness** trim the automatic exposure. They are applied where
+  the picture is handed to the screen, so moving a slider re-maps the whole image
+  rather than leaving a seam at the line you moved it on.
+- **Auto-save pass** (on by default) writes the picture to disk by itself when a
+  pass ends: a retune, 30 seconds without sync, or the decoder switched off. The
+  wipe that starts the next picture is automatic and a pass cannot be repeated, so
+  without this an operator who stepped away comes back to an empty panel.
+  **Folder…** chooses where (default `~/.local/share/machpsdr/apt/`). An explicit
+  **Clear** does *not* save — it means "this one is rubbish, start again".
+- The image **scrolls and zooms**: wheel scrolls back through the pass, **Ctrl+wheel**
+  zooms about the pointer up to full resolution, drag pans, double-click returns to
+  fit. At the bottom the view keeps following the newest lines; scrolled up, it
+  stays put. (The SSTV and WEFAX panels do the same.)
 - The panel and the Decode block show **which frequency is being decoded** — the
   decoder follows the cursor, and one aimed elsewhere looks like a dead pass.
 - The spectrum and the waterfall both draw the **window the decoder accepts** as

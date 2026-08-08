@@ -1294,6 +1294,13 @@ static void wefax_expand_cb(GtkButton *b, gpointer data) {
 // takes the second-receiver slot, but only in narrowband FM (FMN — where a
 // 137 MHz weather-satellite downlink is listened to).  Leaving APT or FMN
 // closes it.  GTK thread only.
+void radio_apt_settings_sync(RADIO *r) {
+  if(r==NULL) return;
+  apt_decoder_set_channel(r->apt_channel);
+  apt_decoder_set_levels(r->apt_contrast, r->apt_brightness);
+  apt_decoder_set_autosave(r->apt_autosave, r->apt_save_dir);
+}
+
 void radio_apt_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean aptmode = (r->active_receiver!=NULL && r->active_receiver->mode_a==FMN) &&
@@ -1438,6 +1445,14 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->wefax_invert=atoi(value);
   value=getProperty("radio.apt_channel");
   if(value!=NULL) r->apt_channel=atoi(value);
+  value=getProperty("radio.apt_autosave");
+  if(value!=NULL) r->apt_autosave=atoi(value);
+  value=getProperty("radio.apt_save_dir");
+  if(value!=NULL) { strncpy(r->apt_save_dir,value,sizeof(r->apt_save_dir)-1); r->apt_save_dir[sizeof(r->apt_save_dir)-1]='\0'; }
+  value=getProperty("radio.apt_contrast");
+  if(value!=NULL) r->apt_contrast=atof(value);
+  value=getProperty("radio.apt_brightness");
+  if(value!=NULL) r->apt_brightness=atof(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -2634,6 +2649,12 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->apt_panel = NULL;
   r->apt_panel_open = FALSE;
   r->apt_channel = 0;          // show the whole 2080-word line by default
+  // Auto-save defaults ON: a pass is unrepeatable and the wipe is automatic, so
+  // the cost of being wrong the other way is a lost picture, not a stray file.
+  r->apt_autosave = TRUE;
+  r->apt_save_dir[0] = '\0';   // ~/.local/share/machpsdr/apt
+  r->apt_contrast = 1.0;       // the picture as decoded
+  r->apt_brightness = 0.0;
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
@@ -2673,6 +2694,13 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   }
 
   radio_restore_state(r);
+
+#ifdef SSTV
+  // The APT decoder is driven straight from the I/Q tap, so it can be running
+  // with no panel ever opened — push the persisted settings into it here rather
+  // than from the panel, or an unattended pass would auto-save nowhere.
+  radio_apt_settings_sync(r);
+#endif
 
   // Fake test device: default to 384 kHz (a wideband-FM signal ~180 kHz then sits
   // in the middle of the span with margin). The rate is selectable in the Radio

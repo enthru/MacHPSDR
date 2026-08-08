@@ -20,6 +20,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "apt_decoder.h"
 #include "log.h"
@@ -120,6 +121,15 @@ static gboolean enabled = FALSE;
 static volatile gboolean reset_req = FALSE;
 static volatile int      p_channel = 0;      // 0 = whole line, 1 = A, 2 = B
 static volatile double   slant_ppm = 0.0;
+static volatile double   p_contrast = 1.0;   // manual exposure trim, applied on output
+static volatile double   p_bright = 0.0;
+static volatile gboolean p_autosave = FALSE;
+static char              save_dir[512];      // guarded by lock_img
+// A pass is 15 minutes; anything shorter than half a minute of picture is a
+// fragment of a fly-by or a false start, and auto-saving those would bury the
+// real passes in junk.
+#define AUTOSAVE_MIN_LINES 60
+static void autosave_locked(const char *why);   // defined below, needs the image state
 
 // front-end
 static double  fe_h[FE_TAPS];
@@ -237,10 +247,114 @@ void apt_decoder_set_enabled(gboolean on) {
   enabled = on;
   if (on && !tpl_ready) tpl_init();
   if (on) reset_req = TRUE;
+  else {
+    // Switching the decoder off (or leaving FMN / the APT selection) ends the
+    // pass just as surely as a retune does.
+    g_mutex_lock(&lock_img);
+    autosave_locked("decoder off");
+    g_mutex_unlock(&lock_img);
+  }
 }
 
 void apt_decoder_reset(void) { reset_req = TRUE; }
 void apt_decoder_set_channel(int ch) { if (ch >= 0 && ch <= 2) p_channel = ch; }
+
+void apt_decoder_set_levels(double contrast, double brightness) {
+  if (contrast < 0.1) contrast = 0.1;
+  if (contrast > 5.0) contrast = 5.0;
+  if (brightness < -128.0) brightness = -128.0;
+  if (brightness > 128.0) brightness = 128.0;
+  p_contrast = contrast;
+  p_bright = brightness;
+}
+
+void apt_decoder_set_autosave(gboolean on, const char *dir) {
+  g_mutex_lock(&lock_img);
+  p_autosave = on;
+  if (dir != NULL && dir[0] != '\0') g_strlcpy(save_dir, dir, sizeof(save_dir));
+  else save_dir[0] = '\0';
+  g_mutex_unlock(&lock_img);
+}
+
+// Manual exposure trim, as a lookup table over the automatically-levelled grey.
+static void build_lut(guint8 lut[256]) {
+  double c = p_contrast, b = p_bright;
+  for (int i = 0; i < 256; i++) {
+    double v = (i - 128.0) * c + 128.0 + b;
+    if (v < 0.0) v = 0.0;
+    if (v > 255.0) v = 255.0;
+    lut[i] = (guint8)(v + 0.5);
+  }
+}
+
+// --- auto-save --------------------------------------------------------------
+// The decode runs on the audio thread and a pass is several megabytes of PNG,
+// so the picture is copied out under the image lock and written by a throwaway
+// worker: neither the audio thread nor the UI waits on the encoder.
+typedef struct {
+  int     w, h;
+  guint8 *pix;          // w*h greyscale, LUT already applied
+  char    path[640];
+} apt_save_job;
+
+static gpointer save_worker(gpointer data) {
+  apt_save_job *j = data;
+  GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, j->w, j->h);
+  if (pb != NULL) {
+    guint8 *dst = gdk_pixbuf_get_pixels(pb);
+    int stride = gdk_pixbuf_get_rowstride(pb);
+    for (int y = 0; y < j->h; y++) {
+      const guint8 *src = j->pix + (size_t)y * j->w;
+      guint8 *row = dst + (size_t)y * stride;
+      for (int x = 0; x < j->w; x++)
+        row[x * 3] = row[x * 3 + 1] = row[x * 3 + 2] = src[x];
+    }
+    GError *err = NULL;
+    if (gdk_pixbuf_save(pb, j->path, "png", &err, NULL))
+      log_info("APT: auto-saved %s (%d lines)\n", j->path, j->h);
+    else {
+      log_error("APT: auto-save failed: %s\n", err ? err->message : "?");
+      if (err) g_error_free(err);
+    }
+    g_object_unref(pb);
+  }
+  g_free(j->pix);
+  g_free(j);
+  return NULL;
+}
+
+// Hand the finished pass to a writer thread.  MUST be called with lock_img held
+// (it reads the image buffer and save_dir), and never for an explicit Clear.
+static void autosave_locked(const char *why) {
+  if (!p_autosave || filled < AUTOSAVE_MIN_LINES) return;
+
+  char dir[640];
+  if (save_dir[0] != '\0') g_strlcpy(dir, save_dir, sizeof(dir));
+  else g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/apt", g_get_home_dir());
+  if (g_mkdir_with_parents(dir, 0755) != 0) {
+    log_error("APT: auto-save cannot create %s\n", dir);
+    return;
+  }
+
+  apt_save_job *j = g_new0(apt_save_job, 1);
+  j->w = WORDS;
+  j->h = filled;
+  j->pix = g_malloc((size_t)j->w * j->h);
+  guint8 lut[256];
+  build_lut(lut);
+  for (size_t i = 0; i < (size_t)j->w * j->h; i++) j->pix[i] = lut[img[i]];
+
+  time_t now = time(NULL);
+  struct tm tmv;
+  gmtime_r(&now, &tmv);
+  char ts[32];
+  strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+  g_snprintf(j->path, sizeof(j->path), "%s/apt_%s.png", dir, ts);
+
+  log_info("APT: saving pass (%s)\n", why);
+  GThread *t = g_thread_new("apt-save", save_worker, j);
+  if (t != NULL) g_thread_unref(t);
+}
 void   apt_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
 double apt_decoder_get_slant(void) { return slant_ppm; }
 double apt_decoder_get_bandwidth(void) { return fe_bw; }
@@ -255,6 +369,7 @@ double apt_decoder_get_bandwidth(void) { return fe_bw; }
 // spending 20 lines re-converging on a number we already knew.
 static void clear_image(const char *why) {
   g_mutex_lock(&lock_img);
+  autosave_locked(why);            // the pass about to be wiped cannot be repeated
   memset(img, 0, sizeof(img));
   cur_row = 0; filled = 0;
   ui.lines = 0; ui.locked = FALSE; ui.quality = 0.0;
@@ -629,11 +744,11 @@ void apt_decoder_get_status(apt_status_t *st) {
   st->tuned_hz = tuned_hz;   // audio-thread scalar; benign cross-thread read
 }
 
-GdkPixbuf *apt_decoder_get_image(void) {
-  int ch = p_channel;
-  int x0 = 0, w = WORDS;
-  if (ch == 1) { x0 = IMGA_OFF; w = IMG_LEN; }
-  else if (ch == 2) { x0 = IMGB_OFF; w = IMG_LEN; }
+// Shared by both accessors: copy out `w` columns from `x0`, through the manual
+// exposure LUT.
+static GdkPixbuf *build_image(int x0, int w) {
+  guint8 lut[256];
+  build_lut(lut);
 
   g_mutex_lock(&lock_img);
   int h = filled;
@@ -645,10 +760,22 @@ GdkPixbuf *apt_decoder_get_image(void) {
     const guint8 *src = &img[(size_t)y * WORDS + x0];
     guint8 *dst = pix + (size_t)y * stride;
     for (int x = 0; x < w; x++) {
-      guint8 v = src[x];
+      guint8 v = lut[src[x]];
       dst[x * 3] = dst[x * 3 + 1] = dst[x * 3 + 2] = v;
     }
   }
   g_mutex_unlock(&lock_img);
   return pb;
+}
+
+GdkPixbuf *apt_decoder_get_image(void) {
+  int ch = p_channel;
+  int x0 = 0, w = WORDS;
+  if (ch == 1) { x0 = IMGA_OFF; w = IMG_LEN; }
+  else if (ch == 2) { x0 = IMGB_OFF; w = IMG_LEN; }
+  return build_image(x0, w);
+}
+
+GdkPixbuf *apt_decoder_get_full_image(void) {
+  return build_image(0, WORDS);
 }

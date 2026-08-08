@@ -373,10 +373,15 @@ int main(int argc, char **argv) {
 
   const char *path = argv[1];
   const char *out = "apt.png";
+  const char *autosave_dir = NULL;
   int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
   for (int i = 2; i < argc; i++) {
-    if (!strcmp(argv[i], "--iq") && i + 2 < argc) {
+    if (!strcmp(argv[i], "--autosave") && i + 1 < argc) {
+      // Exercise the end-of-pass auto-save the panel turns on: the decoder
+      // writes the picture itself when the pass ends, on its own worker thread.
+      autosave_dir = argv[i+1]; i++;
+    } else if (!strcmp(argv[i], "--iq") && i + 2 < argc) {
       iq_mode = 1; centre = atoll(argv[i+1]); cursor = atoll(argv[i+2]); i += 2;
     } else if (!strcmp(argv[i], "--conj")) {
       // Swap I and Q, i.e. conjugate the recording: what you get from a receiver
@@ -395,6 +400,7 @@ int main(int argc, char **argv) {
 
   apt_decoder_set_enabled(TRUE);
   apt_decoder_set_channel(0);
+  if (autosave_dir) apt_decoder_set_autosave(TRUE, autosave_dir);
 
   // Progress trace: print the servo's state every 30 s of recording.  This is
   // how the clock/Doppler behaviour over a pass is read — the line clock arrives
@@ -441,5 +447,11 @@ int main(int argc, char **argv) {
 
   report();
   save_png(out);
+  if (autosave_dir) {
+    // Ending the decode ends the pass, which is one of the auto-save triggers.
+    apt_decoder_set_enabled(FALSE);
+    g_usleep(3 * G_USEC_PER_SEC);   // the PNG is encoded on a worker thread
+    printf("auto-save: check %s\n", autosave_dir);
+  }
   return 0;
 }

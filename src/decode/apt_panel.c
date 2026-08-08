@@ -46,6 +46,9 @@ typedef struct {
   GtkWidget *area;          // image drawing area
   GtkWidget *status;        // status label
   GtkWidget *slant_lbl;
+  GtkWidget *contrast;      // manual exposure trim
+  GtkWidget *bright;
+  GtkWidget *folder_btn;    // auto-save destination (tooltip carries the path)
   GdkPixbuf *pb;            // latest decoded image (owned)
   guint      timer;
   char       last_status[64];
@@ -106,23 +109,118 @@ static void slant_plus(GtkButton *b, gpointer data) {
 }
 static void clear_clicked(GtkButton *b, gpointer data) { apt_decoder_reset(); }
 
+// Where auto-saved passes go (and where the Save dialog starts).
+static void save_folder(char *out, gsize len) {
+  if (radio != NULL && radio->apt_save_dir[0] != '\0')
+    g_strlcpy(out, radio->apt_save_dir, len);
+  else
+    g_snprintf(out, len, "%s/.local/share/machpsdr/apt", g_get_home_dir());
+}
+
+// GTK4: GtkFileDialog is async — the chosen path arrives here (mirrors SSTV).
+static void save_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GFile *gf = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf == NULL) return;                       // cancelled / error
+  // Take the picture fresh rather than reusing the panel's: the panel shows the
+  // View crop, and a saved pass should keep the sync bars and telemetry wedges.
+  GdkPixbuf *pb = apt_decoder_get_full_image();
+  char *path = g_file_get_path(gf);
+  g_object_unref(gf);
+  if (pb != NULL) {
+    GError *err = NULL;
+    if (gdk_pixbuf_save(pb, path, "png", &err, NULL)) {
+      log_info("APT: saved %s\n", path);
+    } else {
+      log_error("APT: save failed: %s\n", err ? err->message : "?");
+      if (err) g_error_free(err);
+    }
+    g_object_unref(pb);
+  }
+  g_free(path);
+}
+
 static void save_clicked(GtkButton *b, gpointer data) {
   AptPanel *p = data;
   if (p->pb == NULL) return;
-  char dir[512], path[600];
-  g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/apt", g_get_home_dir());
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  char dir[512];
+  save_folder(dir, sizeof(dir));
   g_mkdir_with_parents(dir, 0755);
   time_t now = time(NULL);
   struct tm tmv; gmtime_r(&now, &tmv);
   char ts[32]; strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
-  g_snprintf(path, sizeof(path), "%s/apt_%s.png", dir, ts);
-  GError *err = NULL;
-  if (gdk_pixbuf_save(p->pb, path, "png", &err, NULL)) {
-    log_info("APT: saved %s\n", path);
-  } else {
-    log_error("APT: save failed: %s\n", err ? err->message : "?");
-    if (err) g_error_free(err);
+  char name[64]; g_snprintf(name, sizeof(name), "apt_%s.png", ts);
+
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Save APT image");
+  gtk_file_dialog_set_initial_name(dlg, name);
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  GtkFileFilter *filt = gtk_file_filter_new();
+  gtk_file_filter_set_name(filt, "PNG image");
+  gtk_file_filter_add_mime_type(filt, "image/png");
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filt);
+  g_object_unref(filt);
+  gtk_file_dialog_set_filters(dlg, G_LIST_MODEL(filters));
+  g_object_unref(filters);
+  gtk_file_dialog_save(dlg, GTK_WINDOW(top), NULL, save_done, p);
+  g_object_unref(dlg);
+}
+
+// --- exposure + auto-save ---------------------------------------------------
+static void levels_changed(GtkRange *r, gpointer data) {
+  AptPanel *p = data;
+  if (radio == NULL) return;
+  radio->apt_contrast = gtk_range_get_value(GTK_RANGE(p->contrast));
+  radio->apt_brightness = gtk_range_get_value(GTK_RANGE(p->bright));
+  apt_decoder_set_levels(radio->apt_contrast, radio->apt_brightness);
+  // The trim is applied where the picture is handed out, so the whole image
+  // re-maps on the next poll — no need to wait for new lines.
+  gtk_widget_queue_draw(p->area);
+}
+
+static void autosave_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
+  if (radio) radio->apt_autosave = on;
+  char dir[512];
+  save_folder(dir, sizeof(dir));
+  apt_decoder_set_autosave(on, dir);
+}
+
+// The dialog outlives the click, and the panel can be closed while it is open,
+// so this holds a ref on the button rather than the panel struct.
+static void folder_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GtkWidget *btn = data;
+  GFile *gf = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf != NULL) {
+    char *path = g_file_get_path(gf);
+    g_object_unref(gf);
+    if (path != NULL && radio != NULL) {
+      g_strlcpy(radio->apt_save_dir, path, sizeof(radio->apt_save_dir));
+      apt_decoder_set_autosave(radio->apt_autosave, radio->apt_save_dir);
+      gtk_widget_set_tooltip_text(btn, radio->apt_save_dir);
+      log_info("APT: save folder %s\n", radio->apt_save_dir);
+    }
+    g_free(path);
   }
+  g_object_unref(btn);
+}
+
+static void folder_clicked(GtkButton *b, gpointer data) {
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  char dir[512];
+  save_folder(dir, sizeof(dir));
+  g_mkdir_with_parents(dir, 0755);
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Folder for saved APT passes");
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  gtk_file_dialog_select_folder(dlg, GTK_WINDOW(top), NULL, folder_done,
+                                g_object_ref(b));
+  g_object_unref(dlg);
 }
 
 static void on_destroy(GtkWidget *w, gpointer data) {
@@ -174,20 +272,76 @@ GtkWidget *apt_panel_create(void) {
   gtk_box_append(GTK_BOX(bar), save);
   gtk_box_append(GTK_BOX(box), bar);
 
+  // Exposure + auto-save row.  The automatic per-line levels track the picture,
+  // but a hazy pass or a bright cloud deck still wants a manual nudge, and there
+  // was no way to give it one short of a rebuild.
+  GtkWidget *ebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  double c0 = (radio && radio->apt_contrast > 0.0) ? radio->apt_contrast : 1.0;
+  double b0 = radio ? radio->apt_brightness : 0.0;
+  apt_decoder_set_levels(c0, b0);
+
+  gtk_box_append(GTK_BOX(ebar), gtk_label_new("Contrast:"));
+  p->contrast = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.3, 3.0, 0.05);
+  gtk_range_set_value(GTK_RANGE(p->contrast), c0);
+  gtk_scale_set_draw_value(GTK_SCALE(p->contrast), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->contrast), GTK_POS_RIGHT);
+  gtk_scale_set_digits(GTK_SCALE(p->contrast), 2);
+  gtk_widget_set_size_request(p->contrast, 130, -1);
+  g_signal_connect(p->contrast, "value-changed", G_CALLBACK(levels_changed), p);
+  gtk_box_append(GTK_BOX(ebar), p->contrast);
+
+  gtk_box_append(GTK_BOX(ebar), gtk_label_new("Brightness:"));
+  p->bright = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -100.0, 100.0, 5.0);
+  gtk_range_set_value(GTK_RANGE(p->bright), b0);
+  gtk_scale_set_draw_value(GTK_SCALE(p->bright), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->bright), GTK_POS_RIGHT);
+  gtk_scale_set_digits(GTK_SCALE(p->bright), 0);
+  gtk_widget_set_size_request(p->bright, 130, -1);
+  g_signal_connect(p->bright, "value-changed", G_CALLBACK(levels_changed), p);
+  gtk_box_append(GTK_BOX(ebar), p->bright);
+
+  gboolean as0 = radio ? radio->apt_autosave : TRUE;
+  GtkWidget *asb = gtk_check_button_new_with_label("Auto-save pass");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(asb), as0);
+  gtk_widget_set_tooltip_text(asb,
+      "Write the picture to disk when the pass ends (retune, 30 s without sync, "
+      "or the decoder switched off). Clear does not save.");
+  g_signal_connect(asb, "toggled", G_CALLBACK(autosave_toggled), p);
+  gtk_box_append(GTK_BOX(ebar), asb);
+
+  p->folder_btn = gtk_button_new_with_label("Folder…");
+  char dir0[512];
+  save_folder(dir0, sizeof(dir0));
+  gtk_widget_set_tooltip_text(p->folder_btn, dir0);
+  g_signal_connect(p->folder_btn, "clicked", G_CALLBACK(folder_clicked), p);
+  gtk_box_append(GTK_BOX(ebar), p->folder_btn);
+  apt_decoder_set_autosave(as0, dir0);
+  gtk_box_append(GTK_BOX(box), ebar);
+
   // Image area.  Same treatment as WEFAX: a tall scrolling image fit to the
   // panel width and bottom-anchored (newest lines visible), mip-mapped down so
   // the 2080-px line keeps its detail instead of dropping every other column.
   p->area = gpu_image_new(on_source, p);
   gpu_image_set_fit(GPU_IMAGE(p->area), GPU_FIT_WIDTH_BOTTOM);
   gpu_image_set_filter(GPU_IMAGE(p->area), GSK_SCALING_FILTER_TRILINEAR);
+  // A pass is 2080 px wide and grows past a thousand lines; fit-to-width alone
+  // shows a thumbnail of it.  Wheel scrolls back through the pass, Ctrl+wheel
+  // zooms to full resolution, drag pans, double-click returns to fit.
+  gpu_image_set_zoomable(GPU_IMAGE(p->area), TRUE, TRUE);
   gtk_widget_set_size_request(p->area, 400, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);
   gtk_box_append(GTK_BOX(box), p->area);
 
+  GtkWidget *sline = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   p->status = gtk_label_new("Waiting for APT…");
   gtk_widget_set_halign(p->status, GTK_ALIGN_START);
-  gtk_box_append(GTK_BOX(box), p->status);
+  gtk_box_append(GTK_BOX(sline), p->status);
+  GtkWidget *hint = gtk_label_new("(wheel: scroll · Ctrl+wheel: zoom · drag: pan · double-click: fit)");
+  gtk_widget_set_hexpand(hint, TRUE);
+  gtk_widget_set_halign(hint, GTK_ALIGN_END);
+  gtk_box_append(GTK_BOX(sline), hint);
+  gtk_box_append(GTK_BOX(box), sline);
 
   p->last_status[0] = '\0';
   p->last_line = -1;

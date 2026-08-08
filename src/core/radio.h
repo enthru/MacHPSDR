@@ -139,6 +139,10 @@ typedef struct _radio {
   GtkWidget *apt_panel;    // embedded APT image panel (NULL unless open in FMN+APT)
   gboolean apt_panel_open; // user toggled the APT image panel on (in place of RX2)
   gint apt_channel;        // APT view: 0 = whole line, 1 = channel A, 2 = channel B
+  gboolean apt_autosave;   // write each finished APT pass to disk before it is wiped
+  char apt_save_dir[512];  // where to write them (empty = ~/.local/share/machpsdr/apt)
+  gdouble apt_contrast;    // manual exposure trim on the decoded picture (1.0 = as decoded)
+  gdouble apt_brightness;  // ...and its offset in grey levels (0 = as decoded)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
@@ -399,6 +403,10 @@ extern void radio_wefax_panel_sync(RADIO *r);
 extern void radio_cw_panel_sync(RADIO *r);
 extern void radio_hfdl_panel_sync(RADIO *r);
 extern void radio_apt_panel_sync(RADIO *r);
+// Push the persisted APT settings (view, exposure, auto-save) into the decoder.
+// Called at start-up as well as from the panel, because auto-saving a pass has
+// to work with the panel closed — that is the case it exists for.
+extern void radio_apt_settings_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

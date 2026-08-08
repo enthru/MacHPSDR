@@ -51,7 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
-| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, PNG save, and a fresh picture started automatically when you move to the next satellite. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to 1097 of 1098 possible lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the servo having measured the recorder's −127 ppm clock error)*. |
+| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, and a fresh picture started automatically when you move to the next satellite. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
@@ -321,8 +321,23 @@ you've dialled in.
   error** so the image does not slant — there is nothing to click, and the
   **Slant ±** trim is only there if you want to nudge it. **View** switches
   between the whole 2080-word line (both channels, sync bars and telemetry
-  wedges included) and channel **A** or **B** on their own; **Save** writes a PNG
-  to `~/.local/share/machpsdr/apt/`, **Clear** starts a new pass. The panel and the
+  wedges included) and channel **A** or **B** on their own; **Save** asks where to
+  write a PNG (and always writes the **whole line** at full resolution, whatever
+  **View** is showing), **Clear** starts a new pass. **Contrast** and
+  **Brightness** trim the automatic exposure — they re-map the whole picture, not
+  just the lines that arrive afterwards. **Auto-save pass** (on by default) writes
+  the picture to disk by itself whenever a pass ends — you retuned, the sync has
+  been gone for 30 seconds, or you switched the decoder off — because the wipe
+  that starts the next picture is automatic and a pass cannot be repeated;
+  **Folder…** chooses where (default `~/.local/share/machpsdr/apt/`). An explicit
+  **Clear** does not save: it means "this one is rubbish".
+
+  The picture is far bigger than the panel — 2080 px per line, and a full pass is
+  over a thousand lines — so the image **scrolls and zooms**: the wheel scrolls
+  back through the pass, **Ctrl+wheel** zooms about the pointer (up to full
+  resolution), dragging pans, and a double-click returns to fit. While the view
+  is at the bottom it keeps following the newest lines; scroll up and it stays
+  where you put it. The same applies to the **SSTV** and **WEFAX** panels. The panel and the
   Decode block both show **which frequency is actually being decoded** — the
   decoder follows the cursor, and one pointed somewhere other than you think
   looks exactly like a dead pass. The **spectrum and the waterfall both show the

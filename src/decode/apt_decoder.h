@@ -94,6 +94,21 @@ void apt_decoder_set_channel(int ch);
 void   apt_decoder_adjust_slant(double dppm);
 double apt_decoder_get_slant(void);
 
+// Manual exposure trim on top of the automatic per-line levels: `contrast` is a
+// gain about mid-grey (1.0 = the picture as decoded) and `brightness` an offset
+// in grey levels (0 = as decoded).  Applied where the picture is handed out, so
+// a change re-maps the WHOLE image — including the lines already on screen —
+// rather than leaving a seam at the moment the operator moved the slider.
+void apt_decoder_set_levels(double contrast, double brightness);
+
+// Write the picture to `dir` as a PNG when the decoder decides the pass is over:
+// a retune, a long silence (the same triggers that wipe the image and start the
+// next picture), or the decoder being switched off.  A pass takes ~15 minutes,
+// cannot be repeated, and the wipe is automatic — without this an operator who
+// stepped away comes back to an empty panel.  Explicit Clear does NOT save: it
+// means "this one is rubbish, start again".  `dir` may be NULL for the default.
+void apt_decoder_set_autosave(gboolean on, const char *dir);
+
 // Snapshot for the UI (polled on the GTK thread).
 typedef struct {
   gboolean locked;     // sync A is being tracked (only then are lines drawn)
@@ -118,5 +133,10 @@ double apt_decoder_get_bandwidth(void);
 // Fresh GdkPixbuf copy of the current image, cropped to the selected channel
 // (caller owns the ref), or NULL if nothing has been decoded yet.
 GdkPixbuf *apt_decoder_get_image(void);
+
+// The same, but the whole 2080-word line whatever the View crop is: saving a
+// pass should keep the sync bars and telemetry wedges, since those are what a
+// later radiometric calibration would need and they cannot be recovered.
+GdkPixbuf *apt_decoder_get_full_image(void);
 
 #endif
