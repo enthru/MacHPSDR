@@ -140,17 +140,22 @@ static void waterfall_overlay_cb(cairo_t *cr,int cwidth,int cheight,gpointer dat
     // APT front-end window: the same band the panadapter shows, so the operator
     // can see the satellite fitting inside it on whichever display is looking
     // at.  Geometry comes from the shared helper — the two must not drift.
-    // No caption here: that belongs on the panadapter's frequency ruler, and
-    // the waterfall has no ruler to put it on.
+    // No caption here: the panadapter carries it, and repeating it would only
+    // take waterfall rows.  The zone itself must be plainly visible though — a
+    // faint wash disappears over a bright waterfall, so the edges are solid and
+    // a bar runs along the top.
     {
       double axl=0.0,axr=0.0;
       if(receiver_apt_window(rx,&axl,&axr,NULL,0) && axr>0.0 && axl<cwidth) {
         cairo_set_source_rgba(cr, 0.2, 0.8, 0.9, 0.10);
-        cairo_rectangle(cr, axl, 0.0, axr-axl, (double)height);
+        cairo_rectangle(cr, axl, 0.0, axr-axl, height);
+        cairo_fill(cr);
+        cairo_set_source_rgba(cr, 0.3, 0.9, 1.0, 0.85);
+        cairo_rectangle(cr, axl, 0.0, 2.0, height);
+        cairo_rectangle(cr, axr-2.0, 0.0, 2.0, height);
         cairo_fill(cr);
         cairo_set_source_rgba(cr, 0.3, 0.9, 1.0, 0.55);
-        cairo_rectangle(cr, axl, 0.0, 1.0, (double)height);
-        cairo_rectangle(cr, axr-1.0, 0.0, 1.0, (double)height);
+        cairo_rectangle(cr, axl, 0.0, axr-axl, 3.0);
         cairo_fill(cr);
       }
     }
