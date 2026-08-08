@@ -878,10 +878,18 @@ static const char css_body[]=
 "        transparent 3px, alpha(@ACCENT_A,0.35) 3px,\n"
 "        alpha(@ACCENT_A,0.35) 4px, transparent 4px);\n"
 "    }\n"
-/* Hover tells you it is draggable before you try. */
-"  paned > separator:hover {\n"
-"    background-image: none;\n"
-"    background-color: alpha(@ACCENT_A,0.45);\n"
+/* Hover tells you it is draggable before you try — but only the line thickens,
+   not the whole box.  Filling the 7 px grab area made the cue look like a slab;
+   the target stays 7 px, the cue is 3 px. */
+"  paned.vertical > separator:hover {\n"
+"    background-image: linear-gradient(to bottom,\n"
+"        transparent 2px, alpha(@ACCENT_A,0.55) 2px,\n"
+"        alpha(@ACCENT_A,0.55) 5px, transparent 5px);\n"
+"    }\n"
+"  paned.horizontal > separator:hover {\n"
+"    background-image: linear-gradient(to right,\n"
+"        transparent 2px, alpha(@ACCENT_A,0.55) 2px,\n"
+"        alpha(@ACCENT_A,0.55) 5px, transparent 5px);\n"
 "    }\n"
 /* ---- Spectrum stack: a hairline inset frame so the (dark) panadapter+waterfall ----
    ---- read as an intentional panel, especially on light skins.               ---- */
@@ -899,8 +907,9 @@ static const char css_body[]=
 "        transparent 3px, @BORDER 3px, @BORDER 4px, transparent 4px);\n"
 "    }\n"
 "  #rx-spectrum > separator:hover {\n"
-"    background-image: none;\n"
-"    background-color: alpha(@ACCENT_A,0.45);\n"
+"    background-image: linear-gradient(to bottom,\n"
+"        transparent 2px, alpha(@ACCENT_A,0.55) 2px,\n"
+"        alpha(@ACCENT_A,0.55) 5px, transparent 5px);\n"
 "    }\n"
 /* ---- Configuration dialog: flat-dark, scoped under #config-dialog so the ----
    ---- main window (which paints its own named widgets) is never touched. ---- */
