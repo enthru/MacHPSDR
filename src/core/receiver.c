@@ -2239,13 +2239,27 @@ static void create_visual(RECEIVER *rx) {
   rx->wf_hpaned=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   rx->ft8_waterfall=NULL;
   gtk_box_append(GTK_BOX(rx->wf_hpaned), rx->vpaned);
-  gtk_grid_attach(GTK_GRID(rx->table), rx->wf_hpaned, 0, 1, 7, 2);
   gtk_widget_set_hexpand(rx->wf_hpaned, TRUE);
   gtk_widget_set_vexpand(rx->wf_hpaned, TRUE);
+  // The spectrum goes in through an overlay so the I/Q Player's scrub bar can
+  // float over the bottom of the waterfall instead of taking a row of its own
+  // below it.  A row of its own put the slider between the waterfall and the
+  // bottom of the RX block — and therefore between the waterfall and the pane
+  // handle, which belongs on the boundary between the spectrum and whatever is
+  // under it.  Overlaid, the waterfall really is the last thing in the block,
+  // and the handle lands where the eye expects it.  (It is also where every
+  // media player puts a transport bar.)
+  GtkWidget *spectrum_overlay=gtk_overlay_new();
+  gtk_overlay_set_child(GTK_OVERLAY(spectrum_overlay), rx->wf_hpaned);
+  gtk_grid_attach(GTK_GRID(rx->table), spectrum_overlay, 0, 1, 7, 2);
+  gtk_widget_set_hexpand(spectrum_overlay, TRUE);
+  gtk_widget_set_vexpand(spectrum_overlay, TRUE);
 
-  // I/Q Player scrub bar: a transport slider under the waterfall to seek within
-  // the looped recording. Only for the fake ("I/Q Player") device's primary RX;
-  // hidden until a file is actually playing (see update_timer_cb).
+  // I/Q Player scrub bar: a transport slider over the foot of the waterfall to
+  // seek within the looped recording. Only for the fake ("I/Q Player") device's
+  // primary RX; hidden until a file is actually playing (see update_timer_cb),
+  // and an invisible overlay child is not allocated, so on a real radio the
+  // waterfall is untouched.
   rx->iq_seek=NULL;
   rx->iq_seek_guard_us=0;
   if(radio->discovered->protocol==PROTOCOL_FAKE && rx->channel==0) {
@@ -2262,7 +2276,9 @@ static void create_visual(RECEIVER *rx) {
     g_signal_connect(iq_drag, "drag-begin",  G_CALLBACK(iq_seek_drag_begin),  rx);
     g_signal_connect(iq_drag, "drag-update", G_CALLBACK(iq_seek_drag_update), rx);
     gtk_widget_add_controller(rx->iq_seek, GTK_EVENT_CONTROLLER(iq_drag));
-    gtk_grid_attach(GTK_GRID(rx->table), rx->iq_seek, 0, 3, 7, 1);
+    gtk_widget_set_valign(rx->iq_seek, GTK_ALIGN_END);
+    gtk_widget_set_halign(rx->iq_seek, GTK_ALIGN_FILL);
+    gtk_overlay_add_overlay(GTK_OVERLAY(spectrum_overlay), rx->iq_seek);
   }
 
   gtk_widget_set_size_request(rx->table, -1, 180);

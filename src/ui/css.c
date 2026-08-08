@@ -565,6 +565,14 @@ static const char css_body[]=
    not-yet-played part of the track vanished against the black area below the
    waterfall. Give the whole trough a visible @SURFACE fill + border; the
    played portion is the @ACCENT_A highlight, the thumb an off-white knob. */
+/* The scrub bar floats over the foot of the waterfall, so it carries its own
+   dimmed backdrop — otherwise it would be unreadable over a bright trace. */
+"  #iq-seek {\n"
+"    background-color: alpha(@BACKGROUND,0.60);\n"
+"    border-radius: 6px;\n"
+"    padding: 2px 8px;\n"
+"    margin: 0px 6px 4px 6px;\n"
+"    }\n"
 "  #iq-seek trough {\n"
 "    background-color: @SURFACE;\n"
 "    border-color: @BORDER;\n"
