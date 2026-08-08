@@ -31,6 +31,7 @@
 #include <string.h>
 
 #include "hfdl_arinc.h"
+#include "hfdl_cpdlc.h"
 
 #define IMI_LEN      3
 #define AIR_REG_LEN  7
@@ -314,7 +315,7 @@ static gboolean is_addr(const char *s, int len) {
   return TRUE;
 }
 
-gboolean hfdl_arinc_decode(const char *txt, GString *out, int indent) {
+gboolean hfdl_arinc_decode(const char *txt, gboolean downlink, GString *out, int indent) {
   if (txt == NULL || out == NULL) return FALSE;
 
   // The envelope is ANCHORED: the ground address is the first thing in the
@@ -389,10 +390,10 @@ gboolean hfdl_arinc_decode(const char *txt, GString *out, int indent) {
     case IMI_CR1:
     case IMI_CC1:
     case IMI_DR1:
-      // FANS-1/A CPDLC is ASN.1 (PER); decoding it needs the generated ASN.1
-      // tree that makes up most of libacars, so the payload is identified and
-      // left as the hex already printed above.
-      emit(out, indent + 1, "CPDLC payload: %d octets (ASN.1, not decoded)", datalen);
+      // FANS-1/A CPDLC. Direction is not in the envelope and it decides the
+      // whole message: the same octets are a clearance as an uplink and a
+      // request as a downlink, so it comes from the HFDL frame that carried it.
+      if (datalen > 0) hfdl_cpdlc_decode(bin, datalen, !downlink, out, indent + 1);
       break;
     default:
       break;
@@ -467,7 +468,7 @@ gboolean hfdl_arinc_selftest(void) {
 
     char *msg = build_arinc("EGGXCDA", "ADS", ".G-ABCD", data, 11);
     g_string_truncate(out, 0);
-    if (!hfdl_arinc_decode(msg, out, 0)) {
+    if (!hfdl_arinc_decode(msg, TRUE, out, 0)) {
       g_printerr("[HFDL arinc selftest] basic report: not recognised as ARINC-622\n");
       ok = FALSE;
     } else if (!want(out, "basic report",
@@ -481,7 +482,7 @@ gboolean hfdl_arinc_selftest(void) {
     char *hex = strstr(bad, ".G-ABCD") + 7;
     hex[0] = (hex[0] == '0') ? '1' : '0';
     g_string_truncate(out, 0);
-    hfdl_arinc_decode(bad, out, 0);
+    hfdl_arinc_decode(bad, TRUE, out, 0);
     if (!want(out, "corrupt", (const char *[]){ "CRC FAIL", NULL })) ok = FALSE;
     g_free(bad);
     g_free(msg);
@@ -499,29 +500,32 @@ gboolean hfdl_arinc_selftest(void) {
     }
     char *msg = build_arinc("KZAKCDA", "ADS", ".N123AB", data, 7);
     g_string_truncate(out, 0);
-    hfdl_arinc_decode(msg, out, 0);
+    hfdl_arinc_decode(msg, TRUE, out, 0);
     if (!want(out, "flight id",
               (const char *[]){ "CRC OK", "Flight ID: BAW123", NULL })) ok = FALSE;
     g_free(msg);
   }
 
-  // (3) CPDLC is identified but not decoded.
+  // (3) CPDLC: the envelope is recognised and the payload handed to the ASN.1
+  //     decoder. These four octets happen to be a valid downlink saying AFFIRM,
+  //     which is what makes them a usable end-to-end check here; the real CPDLC
+  //     vectors live in hfdl_cpdlc_selftest().
   {
     uint8_t data[4] = { 0x01, 0x02, 0x03, 0x04 };
     char *msg = build_arinc("EDYYCDA", "AT1", ".D-AIBC", data, 4);
     g_string_truncate(out, 0);
-    hfdl_arinc_decode(msg, out, 0);
+    hfdl_arinc_decode(msg, TRUE, out, 0);
     if (!want(out, "cpdlc",
               (const char *[]){ "FANS-1/A CPDLC message", "CRC OK",
-                                "ASN.1, not decoded", NULL })) ok = FALSE;
+                                "CPDLC Downlink Message", "AFFIRM", NULL })) ok = FALSE;
     g_free(msg);
   }
 
   // (4) Ordinary ACARS text must NOT be claimed as ARINC-622.
   {
     g_string_truncate(out, 0);
-    if (hfdl_arinc_decode("0EH1441532SH", out, 0) ||
-        hfdl_arinc_decode("POS/ALT370/OVERHEAD.ADSXYZ", out, 0)) {
+    if (hfdl_arinc_decode("0EH1441532SH", TRUE, out, 0) ||
+        hfdl_arinc_decode("POS/ALT370/OVERHEAD.ADSXYZ", TRUE, out, 0)) {
       g_printerr("[HFDL arinc selftest] plain text was claimed as ARINC-622\n");
       ok = FALSE;
     }

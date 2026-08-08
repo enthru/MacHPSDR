@@ -802,7 +802,7 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
   // MIAM Single Transfer, and only the label keeps that apart.
   if (body_len > 0 && reasm != ACARS_REASM_IN_PROGRESS) {
     char *b0 = g_strndup(body, (gsize)body_len);
-    gboolean claimed = hfdl_arinc_decode(b0, out, indent + 1);
+    gboolean claimed = hfdl_arinc_decode(b0, downlink, out, indent + 1);
     if (!claimed && !strcmp(label, "H1")) {
       if (!hfdl_miam_decode(reg, b0, out, indent + 1))
         hfdl_ohma_decode(reg, b0, out, indent + 1);

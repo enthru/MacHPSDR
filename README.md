@@ -520,8 +520,11 @@ you've dialled in.
   with its segments reassembled and the compressed CORE payload decompressed and
   CRC-checked — and **OHMA** (label H1), whose BASE64/zlib envelope is unpacked
   and whose conversation is reassembled even when its parts arrive out of order.
-  FANS-1/A **CPDLC** payloads are identified but not decoded — they are
-  ASN.1, which is the bulk of libacars. The panel
+  FANS-1/A **CPDLC** — the controller-pilot conversation itself — is decoded as
+  well, through a vendored FANS-1/A ASN.1 tree: a position report comes out as
+  latitude, longitude, flight level, next fixes, ETA, wind and temperature, and
+  a clearance as the controller's own phrase ("AT [position] CONTACT
+  [icaounitname] [frequency]") with its fields filled in. The panel
   has three tabs — the running **decode**, a **Stations** table (who was heard,
   how long ago, UTC sync, frequencies in use) and an **Aircraft** table (ICAO,
   flight, last position) — plus a **channel drop-down + Tune** built from the

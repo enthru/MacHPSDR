@@ -353,8 +353,14 @@ decompressed and checked against its own ARINC CRC. **OHMA** (label H1) unpacks
 its BASE64 + zlib envelope and shows the version, conversation id and payload;
 an OHMA conversation split into parts is reassembled **even when the parts
 arrive out of order**, which is the one place ACARS block reassembly cannot
-help. FANS-1/A **CPDLC** payloads are identified but not decoded (they are
-ASN.1); their hex stays visible.
+help. FANS-1/A **CPDLC** — the controller-pilot conversation — is decoded too,
+through a vendored FANS-1/A ASN.1 tree. A position report comes out as latitude,
+longitude, time, flight level, the next fixes and their ETAs, wind and
+temperature; a clearance or request comes out as the controller's own phrase
+with its fields filled in, e.g. "AT [position] CONTACT [icaounitname]
+[frequency]" followed by the fix, the facility and the frequency. Direction
+matters and is taken from the HFDL frame: the same octets are a clearance as an
+uplink and a request as a downlink.
 
 *(Verified on a real off-air recording: on a 11387 kHz capture of the Riverhead,
 New York ground station the decoder produced squitters, a ground-station uplink

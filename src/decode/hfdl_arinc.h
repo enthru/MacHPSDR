@@ -28,9 +28,8 @@
  * decode the downlink reports; the message text still prints raw as well, so
  * nothing is hidden if a parse goes wrong.
  *
- * CPDLC payloads are ASN.1 (PER) and are NOT decoded — libacars needs a
- * generated ASN.1 tree for them, which is the bulk of that library. They are
- * identified and their length reported, and the hex stays visible.
+ * CPDLC payloads are ASN.1 (PER) and are handed to hfdl_cpdlc.c, which decodes
+ * them through the vendored FANS-1/A tree.
  *
  * Self-contained: GLib + the ACARS text, no GTK/RADIO. Audio-thread only, like
  * the rest of the HFDL application layer.
@@ -42,9 +41,12 @@
 #include <glib.h>
 
 // Look for an ARINC-622 message in `txt` (the decoded ACARS message text) and,
-// if one is there, append its decode to `out` at `indent`. Returns TRUE if the
-// text was recognised as ARINC-622 (whether or not every field parsed).
-gboolean hfdl_arinc_decode(const char *txt, GString *out, int indent);
+// if one is there, append its decode to `out` at `indent`. `downlink` is TRUE
+// for an air-to-ground message; the envelope does not carry the direction and
+// CPDLC needs it to pick between the uplink and downlink message sets. Returns
+// TRUE if the text was recognised as ARINC-622 (whether or not every field
+// parsed).
+gboolean hfdl_arinc_decode(const char *txt, gboolean downlink, GString *out, int indent);
 
 // Headless self-test: synthesises ARINC-622 envelopes (correct CRC) carrying
 // ADS-C basic reports / flight IDs and asserts the rendered text, plus a
