@@ -23,6 +23,7 @@
 #include <gtk/gtk.h>
 
 #include "sstv_decoder.h"
+#include "image_save.h"
 #include "log.h"
 
 #define SR              48000.0    // demod audio sample rate (Hz)
@@ -178,11 +179,51 @@ static void do_reset(void) {
   g_mutex_unlock(&lock);
 }
 
+// --- auto-save ---------------------------------------------------------------
+// The picture is wiped the instant the next transmission's VIS arrives, and that
+// transmission cannot be asked for again.  So the outgoing one is snapshotted
+// here and encoded by the shared worker (image_save.c) — this runs on the RX
+// audio thread, which has no business deflating a PNG.
+static volatile gboolean p_autosave = FALSE;
+static char              save_dir[512];      // guarded by `lock`
+// Below a quarter of the frame there is nothing worth keeping: that is a picture
+// the receiver caught the tail of, or a false start on noise.
+#define AUTOSAVE_MIN_FRAC 4
+
+static void autosave_current(const char *why) {
+  g_mutex_lock(&lock);
+  int w = img_w, h = cur_line;
+  gboolean want = p_autosave && mode != NULL && img_h > 0 &&
+                  h >= img_h / AUTOSAVE_MIN_FRAC && w > 0;
+  guint8 *pix = NULL;
+  char dir[512];
+  if (want) {
+    pix = g_malloc((size_t)w * h * 3);
+    memcpy(pix, img, (size_t)w * h * 3);     // rows are packed at img_w stride
+    g_strlcpy(dir, save_dir, sizeof(dir));
+  }
+  g_mutex_unlock(&lock);
+
+  if (pix != NULL) {
+    log_info("SSTV: saving picture (%s)\n", why);
+    image_save_async(pix, w, h, 3, dir, "sstv");
+  }
+}
+
+void sstv_decoder_set_autosave(gboolean on, const char *dir) {
+  g_mutex_lock(&lock);
+  p_autosave = on;
+  if (dir != NULL && dir[0] != '\0') g_strlcpy(save_dir, dir, sizeof(save_dir));
+  else save_dir[0] = '\0';
+  g_mutex_unlock(&lock);
+}
+
 void sstv_decoder_set_enabled(gboolean on) {
   if (on == enabled) return;
   enabled = on;
   if (on && !hcoef_ready) hcoef_init();
   if (on) reset_req = TRUE;   // fresh start each time the decoder is selected
+  else autosave_current("decoder off");
 }
 
 void sstv_decoder_set_mode(int vis) { forced_vis = vis; }
@@ -428,6 +469,7 @@ static double line_period_ms(void) { return line_period_of(mode); }
 // `sync0` (the sync between blue and red for Scottie; the line-start sync for
 // every other family).  Shared by the VIS path and the forced-mode sync anchor.
 static void start_decode(const sstv_mode_t *m, long sync0) {
+  autosave_current("new picture");   // the one on screen is about to be wiped
   mode = m;
   img_w = m->width; img_h = m->height;
   line_samples = (long)ms2smp(line_period_ms());

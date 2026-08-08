@@ -136,6 +136,12 @@ typedef struct _radio {
   gboolean wefax_autophase;// continuous auto-phasing / self-align (default TRUE)
   gboolean wefax_denoise;  // WEFAX impulse-noise despeckle (default TRUE)
   gboolean wefax_invert;   // WEFAX negative image / white<->black (default FALSE)
+  gboolean wefax_autosave; // write each finished WEFAX page to disk before it is wiped
+  char wefax_save_dir[512];// where (empty = ~/.local/share/machpsdr/wefax)
+  gdouble wefax_contrast;  // manual exposure trim on the decoded page (1.0 = as decoded)
+  gdouble wefax_brightness;// ...and its offset in grey levels (0 = as decoded)
+  gboolean sstv_autosave;  // write each SSTV picture to disk before the next one wipes it
+  char sstv_save_dir[512]; // where (empty = ~/.local/share/machpsdr/sstv)
   GtkWidget *apt_panel;    // embedded APT image panel (NULL unless open in FMN+APT)
   gboolean apt_panel_open; // user toggled the APT image panel on (in place of RX2)
   gint apt_channel;        // APT view: 0 = whole line, 1 = channel A, 2 = channel B
@@ -407,6 +413,8 @@ extern void radio_apt_panel_sync(RADIO *r);
 // Called at start-up as well as from the panel, because auto-saving a pass has
 // to work with the panel closed — that is the case it exists for.
 extern void radio_apt_settings_sync(RADIO *r);
+// The same for every image decoder (APT + SSTV + WEFAX auto-save and exposure).
+extern void radio_image_settings_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
 extern void radio_change_region(RADIO *r);

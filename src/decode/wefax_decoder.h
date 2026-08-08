@@ -68,6 +68,19 @@ void wefax_decoder_set_denoise(gboolean on);
 // (off); turn on if the signal comes in inverted (e.g. wrong sideband).
 void wefax_decoder_set_invert(gboolean on);
 
+// Manual exposure trim on top of the fixed tone→grey mapping: `contrast` is a
+// gain about mid-grey (1.0 = as decoded), `brightness` an offset in grey levels.
+// A weak or hazy chart comes out flat grey, and the decoder cannot fix that for
+// the operator — the levels are defined by the tone convention, not measured.
+// Applied on output, so a change re-maps the whole page rather than seaming it.
+void wefax_decoder_set_levels(double contrast, double brightness);
+
+// Write the page to `dir` as a PNG when the next start tone wipes it (or the
+// decoder is switched off).  Same reason as APT and SSTV: the wipe is automatic,
+// the transmission is not repeatable, and an unattended receiver is the normal
+// way to take a fax.  Explicit Clear does not save.
+void wefax_decoder_set_autosave(gboolean on, const char *dir);
+
 // Manual controls (GTK thread).  Start begins a fresh page now (as if a start
 // tone was seen); reset clears the image.
 void wefax_decoder_start(void);

@@ -23,6 +23,7 @@
 #include <time.h>
 
 #include "apt_decoder.h"
+#include "image_save.h"
 #include "log.h"
 
 // ---- APT line geometry (words; 4160 words/s, 2 lines/s) --------------------
@@ -288,72 +289,21 @@ static void build_lut(guint8 lut[256]) {
 }
 
 // --- auto-save --------------------------------------------------------------
-// The decode runs on the audio thread and a pass is several megabytes of PNG,
-// so the picture is copied out under the image lock and written by a throwaway
-// worker: neither the audio thread nor the UI waits on the encoder.
-typedef struct {
-  int     w, h;
-  guint8 *pix;          // w*h greyscale, LUT already applied
-  char    path[640];
-} apt_save_job;
-
-static gpointer save_worker(gpointer data) {
-  apt_save_job *j = data;
-  GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, j->w, j->h);
-  if (pb != NULL) {
-    guint8 *dst = gdk_pixbuf_get_pixels(pb);
-    int stride = gdk_pixbuf_get_rowstride(pb);
-    for (int y = 0; y < j->h; y++) {
-      const guint8 *src = j->pix + (size_t)y * j->w;
-      guint8 *row = dst + (size_t)y * stride;
-      for (int x = 0; x < j->w; x++)
-        row[x * 3] = row[x * 3 + 1] = row[x * 3 + 2] = src[x];
-    }
-    GError *err = NULL;
-    if (gdk_pixbuf_save(pb, j->path, "png", &err, NULL))
-      log_info("APT: auto-saved %s (%d lines)\n", j->path, j->h);
-    else {
-      log_error("APT: auto-save failed: %s\n", err ? err->message : "?");
-      if (err) g_error_free(err);
-    }
-    g_object_unref(pb);
-  }
-  g_free(j->pix);
-  g_free(j);
-  return NULL;
-}
-
-// Hand the finished pass to a writer thread.  MUST be called with lock_img held
-// (it reads the image buffer and save_dir), and never for an explicit Clear.
+// Hand the finished pass to the shared writer (image_save.c), which encodes the
+// PNG on a worker thread — a pass is several megabytes and this runs on the
+// audio thread.  MUST be called with lock_img held (it reads the image buffer
+// and save_dir), and never for an explicit Clear.
 static void autosave_locked(const char *why) {
   if (!p_autosave || filled < AUTOSAVE_MIN_LINES) return;
 
-  char dir[640];
-  if (save_dir[0] != '\0') g_strlcpy(dir, save_dir, sizeof(dir));
-  else g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/apt", g_get_home_dir());
-  if (g_mkdir_with_parents(dir, 0755) != 0) {
-    log_error("APT: auto-save cannot create %s\n", dir);
-    return;
-  }
-
-  apt_save_job *j = g_new0(apt_save_job, 1);
-  j->w = WORDS;
-  j->h = filled;
-  j->pix = g_malloc((size_t)j->w * j->h);
   guint8 lut[256];
   build_lut(lut);
-  for (size_t i = 0; i < (size_t)j->w * j->h; i++) j->pix[i] = lut[img[i]];
-
-  time_t now = time(NULL);
-  struct tm tmv;
-  gmtime_r(&now, &tmv);
-  char ts[32];
-  strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
-  g_snprintf(j->path, sizeof(j->path), "%s/apt_%s.png", dir, ts);
+  size_t n = (size_t)WORDS * filled;
+  guint8 *pix = g_malloc(n);
+  for (size_t i = 0; i < n; i++) pix[i] = lut[img[i]];
 
   log_info("APT: saving pass (%s)\n", why);
-  GThread *t = g_thread_new("apt-save", save_worker, j);
-  if (t != NULL) g_thread_unref(t);
+  image_save_async(pix, WORDS, filled, 1, save_dir, "apt");
 }
 void   apt_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
 double apt_decoder_get_slant(void) { return slant_ppm; }

@@ -1301,6 +1301,14 @@ void radio_apt_settings_sync(RADIO *r) {
   apt_decoder_set_autosave(r->apt_autosave, r->apt_save_dir);
 }
 
+void radio_image_settings_sync(RADIO *r) {
+  if(r==NULL) return;
+  radio_apt_settings_sync(r);
+  sstv_decoder_set_autosave(r->sstv_autosave, r->sstv_save_dir);
+  wefax_decoder_set_autosave(r->wefax_autosave, r->wefax_save_dir);
+  wefax_decoder_set_levels(r->wefax_contrast, r->wefax_brightness);
+}
+
 void radio_apt_panel_sync(RADIO *r) {
   if(r==NULL || r->rx_container==NULL) return;
   gboolean aptmode = (r->active_receiver!=NULL && r->active_receiver->mode_a==FMN) &&
@@ -1443,6 +1451,18 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->wefax_denoise=atoi(value);
   value=getProperty("radio.wefax_invert");
   if(value!=NULL) r->wefax_invert=atoi(value);
+  value=getProperty("radio.wefax_autosave");
+  if(value!=NULL) r->wefax_autosave=atoi(value);
+  value=getProperty("radio.wefax_save_dir");
+  if(value!=NULL) { strncpy(r->wefax_save_dir,value,sizeof(r->wefax_save_dir)-1); r->wefax_save_dir[sizeof(r->wefax_save_dir)-1]='\0'; }
+  value=getProperty("radio.wefax_contrast");
+  if(value!=NULL) r->wefax_contrast=atof(value);
+  value=getProperty("radio.wefax_brightness");
+  if(value!=NULL) r->wefax_brightness=atof(value);
+  value=getProperty("radio.sstv_autosave");
+  if(value!=NULL) r->sstv_autosave=atoi(value);
+  value=getProperty("radio.sstv_save_dir");
+  if(value!=NULL) { strncpy(r->sstv_save_dir,value,sizeof(r->sstv_save_dir)-1); r->sstv_save_dir[sizeof(r->sstv_save_dir)-1]='\0'; }
   value=getProperty("radio.apt_channel");
   if(value!=NULL) r->apt_channel=atoi(value);
   value=getProperty("radio.apt_autosave");
@@ -2646,6 +2666,14 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->wefax_autophase = TRUE;   // continuous auto-phasing (self-align)
   r->wefax_denoise = TRUE;     // impulse-noise despeckle
   r->wefax_invert = FALSE;     // positive image (black-on-white) by default
+  // Auto-save defaults ON for the same reason as APT: the page/picture is wiped
+  // automatically by the next transmission and cannot be asked for again.
+  r->wefax_autosave = TRUE;
+  r->wefax_save_dir[0] = '\0'; // ~/.local/share/machpsdr/wefax
+  r->wefax_contrast = 1.0;     // the page as decoded
+  r->wefax_brightness = 0.0;
+  r->sstv_autosave = TRUE;
+  r->sstv_save_dir[0] = '\0';  // ~/.local/share/machpsdr/sstv
   r->apt_panel = NULL;
   r->apt_panel_open = FALSE;
   r->apt_channel = 0;          // show the whole 2080-word line by default
@@ -2696,10 +2724,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   radio_restore_state(r);
 
 #ifdef SSTV
-  // The APT decoder is driven straight from the I/Q tap, so it can be running
-  // with no panel ever opened — push the persisted settings into it here rather
-  // than from the panel, or an unattended pass would auto-save nowhere.
-  radio_apt_settings_sync(r);
+  // The image decoders run straight off the RX taps, so they can be decoding
+  // with no panel ever opened — push the persisted settings into them here
+  // rather than from the panels, or an unattended pass/page/picture would
+  // auto-save nowhere.  That unattended case is the whole point of auto-save.
+  radio_image_settings_sync(r);
 #endif
 
   // Fake test device: default to 384 kHz (a wideband-FM signal ~180 kHz then sits

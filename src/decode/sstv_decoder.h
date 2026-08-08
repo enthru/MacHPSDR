@@ -69,6 +69,14 @@ GdkPixbuf *sstv_decoder_get_image(void);
 // Clear the image and return to hunting for the next VIS header.
 void sstv_decoder_reset(void);
 
+// Write the picture to `dir` as a PNG when it is about to be replaced — the next
+// transmission's VIS header, or the decoder being switched off.  On a busy SSTV
+// frequency pictures arrive back to back and each one wipes the last, so without
+// this the operator has to be at the panel with the mouse to keep any of them.
+// An explicit Clear does NOT save, and neither does a picture that barely
+// started.  `dir` may be NULL/empty for ~/.local/share/machpsdr/sstv.
+void sstv_decoder_set_autosave(gboolean on, const char *dir);
+
 // Fine slant / clock correction, in ppm added to the assumed pixel clock.
 void   sstv_decoder_adjust_slant(double dppm);
 double sstv_decoder_get_slant(void);

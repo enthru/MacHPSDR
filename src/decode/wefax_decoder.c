@@ -23,6 +23,7 @@
 #include <gtk/gtk.h>
 
 #include "wefax_decoder.h"
+#include "image_save.h"
 #include "log.h"
 
 #define SR              48000.0    // demod audio sample rate (Hz)
@@ -65,6 +66,8 @@ static volatile gboolean p_autostart = TRUE;
 static volatile gboolean p_autophase = TRUE;  // continuous auto-phasing (self-align)
 static volatile gboolean p_denoise   = TRUE;  // conditional-median despeckle
 static volatile gboolean p_invert    = FALSE; // negative image (white<->black)
+static volatile double   p_contrast  = 1.0;   // manual exposure trim, on output
+static volatile double   p_bright    = 0.0;
 static volatile gboolean start_req = FALSE;   // manual Start button
 static volatile gboolean reset_req = FALSE;
 static volatile double   slant_ppm = 0.0;     // slant/clock trim (GTK adds)
@@ -156,11 +159,55 @@ static void do_reset(void) {
   g_mutex_unlock(&lock);
 }
 
+// --- auto-save ---------------------------------------------------------------
+// The page is wiped by the next start tone, and a chart takes ten minutes to
+// arrive; taking fax unattended is the normal way to do it, so the outgoing page
+// is snapshotted here and encoded by the shared worker (image_save.c) rather
+// than on this, the RX audio thread.
+static volatile gboolean p_autosave = FALSE;
+static char              save_dir[512];   // guarded by `lock`
+// A minute of chart at the slowest rate.  Below that it is the tail of something
+// that was already ending, or a false start.
+#define AUTOSAVE_MIN_LINES 120
+static void build_lut(guint8 lut[256]);   // defined with the other setters below
+
+static void autosave_current(const char *why) {
+  g_mutex_lock(&lock);
+  int h = filled;
+  guint8 *pix = NULL;
+  char dir[512];
+  if (p_autosave && h >= AUTOSAVE_MIN_LINES) {
+    // Through the same table the screen uses, so the file looks like the page
+    // the operator was watching (exposure trim and invert included).
+    guint8 lut[256];
+    build_lut(lut);
+    size_t n = (size_t)IMG_W * h * 3;
+    pix = g_malloc(n);
+    for (size_t i = 0; i < n; i++) pix[i] = lut[img[i]];
+    g_strlcpy(dir, save_dir, sizeof(dir));
+  }
+  g_mutex_unlock(&lock);
+
+  if (pix != NULL) {
+    log_info("WEFAX: saving page (%s)\n", why);
+    image_save_async(pix, IMG_W, h, 3, dir, "wefax");
+  }
+}
+
+void wefax_decoder_set_autosave(gboolean on, const char *dir) {
+  g_mutex_lock(&lock);
+  p_autosave = on;
+  if (dir != NULL && dir[0] != '\0') g_strlcpy(save_dir, dir, sizeof(save_dir));
+  else save_dir[0] = '\0';
+  g_mutex_unlock(&lock);
+}
+
 void wefax_decoder_set_enabled(gboolean on) {
   if (on == enabled) return;
   enabled = on;
   if (on && !hcoef_ready) hcoef_init();
   if (on) reset_req = TRUE;
+  else autosave_current("decoder off");
 }
 
 void wefax_decoder_set_lpm(int lpm)  { if (lpm > 0) p_lpm = lpm; }
@@ -169,6 +216,28 @@ void wefax_decoder_set_autostart(gboolean on) { p_autostart = on; }
 void wefax_decoder_set_autophase(gboolean on) { p_autophase = on; }
 void wefax_decoder_set_denoise(gboolean on) { p_denoise = on; }
 void wefax_decoder_set_invert(gboolean on) { p_invert = on; }
+
+void wefax_decoder_set_levels(double contrast, double brightness) {
+  if (contrast < 0.1) contrast = 0.1;
+  if (contrast > 5.0) contrast = 5.0;
+  if (brightness < -128.0) brightness = -128.0;
+  if (brightness > 128.0) brightness = 128.0;
+  p_contrast = contrast;
+  p_bright = brightness;
+}
+
+// Manual exposure, as a lookup table over the decoded grey (the invert flag is
+// folded in here too, so the output path stays one table lookup per byte).
+static void build_lut(guint8 lut[256]) {
+  double c = p_contrast, b = p_bright;
+  gboolean inv = p_invert;
+  for (int i = 0; i < 256; i++) {
+    double v = (i - 128.0) * c + 128.0 + b;
+    if (v < 0.0) v = 0.0;
+    if (v > 255.0) v = 255.0;
+    lut[i] = (guint8)(inv ? 255.0 - v + 0.5 : v + 0.5);
+  }
+}
 
 void wefax_decoder_start(void) { start_req = TRUE; }
 void wefax_decoder_reset(void) { reset_req = TRUE; }
@@ -209,6 +278,7 @@ static inline guint8 clamp8(double v) {
 
 // Begin a fresh page: clear the image, arm the phasing servo, publish status.
 static void begin_page(const char *why) {
+  autosave_current(why);        // the page on screen is about to be wiped
   g_mutex_lock(&lock);
   memset(img, 0, sizeof(img));
   cur_row = 0; filled = 0;
@@ -451,12 +521,11 @@ GdkPixbuf *wefax_decoder_get_image(void) {
   GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, IMG_W, h);
   guint8 *pix = gdk_pixbuf_get_pixels(pb);
   int stride = gdk_pixbuf_get_rowstride(pb);
-  for (int y = 0; y < h; y++) {
-    if (p_invert)                                // negative image: white<->black
-      for (int b = 0; b < IMG_W * 3; b++) pix[y * stride + b] = 255 - img[y * IMG_W * 3 + b];
-    else
-      memcpy(pix + y * stride, img + y * IMG_W * 3, IMG_W * 3);
-  }
+  guint8 lut[256];
+  build_lut(lut);                                // exposure trim + invert
+  for (int y = 0; y < h; y++)
+    for (int b = 0; b < IMG_W * 3; b++)
+      pix[y * stride + b] = lut[img[y * IMG_W * 3 + b]];
   g_mutex_unlock(&lock);
   return pb;
 }

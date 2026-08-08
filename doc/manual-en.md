@@ -375,8 +375,13 @@ use FMN for Robot 36 / PD120).
   the VIS header, by recognising the mode from its sync-pulse line period, so you
   rarely need to choose anything. A **Mode** override, an automatic slant corrector
   with a manual **Slant ±** trim on top, and **AFC** (tracks ISS Doppler) are
-  provided. **Save** writes a PNG to `~/.local/share/machpsdr/sstv/`; **Clear**
-  resets.
+  provided. **Save** asks where to write a PNG; **Clear** resets. **Auto-save** (on
+  by default) writes each picture out by itself just before the next
+  transmission's VIS wipes it — pictures arrive back to back on a calling
+  frequency, and without it keeping one meant sitting at the panel with the
+  mouse; **Folder…** picks where (default `~/.local/share/machpsdr/sstv/`), and an
+  explicit Clear does not save. The image scrolls and zooms: wheel, **Ctrl+wheel**
+  about the pointer, drag to pan, double-click back to fit.
 - **Transmit** — the panel's **Tx** row: pick a **mode**, **Load…** any image
   (fitted to the mode's geometry preserving aspect ratio — letter-/pillar-boxed
   with black, not stretched — and previewed), and press **Send**. It transmits a
@@ -406,7 +411,14 @@ just work:
   black-on-white image.
 - To do it by hand: untick Auto-phase and **click the image** to set the left
   margin, use **Start** to begin a page, **Slant ±** to deskew.
-- **Save** writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over.
+- **Contrast** / **Brightness** trim the exposure of a weak or hazy chart. They
+  are applied on output, so the whole page re-maps rather than seaming.
+- **Save** asks where to write a PNG; **Clear** starts over. **Auto-save page**
+  (on by default) writes the page out by itself when the next start tone wipes it
+  — taking fax unattended is the normal way to do it — and **Folder…** picks where
+  (default `~/.local/share/machpsdr/wefax/`).
+- The image scrolls and zooms (wheel / **Ctrl+wheel** / double-click to fit),
+  which is what makes the native ~1810 px line readable in a small panel.
 
 Tune the station in **DIGU/USB** ~1.9 kHz below its assigned frequency (so black
 lands on 1500 Hz, white on 2300 Hz) and give it a **wide receive filter (~1.9 kHz,

@@ -21,11 +21,22 @@
 #include <time.h>
 #include <math.h>
 
+#include "discovered.h"
+#include "adc.h"
+#include "dac.h"
+#include "receiver.h"
+#include "transmitter.h"
+#include "wideband.h"
+#include "radio.h"
+
 #include "sstv_panel.h"
 #include "sstv_decoder.h"
 #include "sstv_encoder.h"
+#include "image_save.h"
 #include "gpu_image.h"
 #include "log.h"
+
+extern RADIO *radio;   // global application state (persisted SSTV settings)
 
 #define REFRESH_MS 200          // ~5 fps
 
@@ -182,6 +193,49 @@ static void save_clicked(GtkButton *b, gpointer data) {
   g_object_unref(dlg);
 }
 
+// --- auto-save --------------------------------------------------------------
+// On a busy SSTV frequency the next picture wipes the last one the moment its
+// VIS header arrives, so the decoder writes the outgoing one out itself.
+static void autosave_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
+  if (radio) radio->sstv_autosave = on;
+  sstv_decoder_set_autosave(on, radio ? radio->sstv_save_dir : NULL);
+}
+
+// The dialog outlives the click and the panel can be closed while it is open,
+// so this holds a ref on the button rather than the panel struct.
+static void folder_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GtkWidget *btn = data;
+  GFile *gf = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf != NULL) {
+    char *path = g_file_get_path(gf);
+    g_object_unref(gf);
+    if (path != NULL && radio != NULL) {
+      g_strlcpy(radio->sstv_save_dir, path, sizeof(radio->sstv_save_dir));
+      sstv_decoder_set_autosave(radio->sstv_autosave, radio->sstv_save_dir);
+      gtk_widget_set_tooltip_text(btn, radio->sstv_save_dir);
+      log_info("SSTV: save folder %s\n", radio->sstv_save_dir);
+    }
+    g_free(path);
+  }
+  g_object_unref(btn);
+}
+
+static void folder_clicked(GtkButton *b, gpointer data) {
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  char dir[512];
+  image_save_folder(dir, sizeof(dir), radio ? radio->sstv_save_dir : NULL, "sstv");
+  g_mkdir_with_parents(dir, 0755);
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Folder for saved SSTV pictures");
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  gtk_file_dialog_select_folder(dlg, GTK_WINDOW(top), NULL, folder_done,
+                                g_object_ref(b));
+  g_object_unref(dlg);
+}
+
 // --- transmit ---------------------------------------------------------------
 // Load an image to transmit (any format GdkPixbuf reads; scaled to the mode at
 // encode time).
@@ -290,6 +344,24 @@ GtkWidget *sstv_panel_create(void) {
   g_signal_connect(clr,  "clicked", G_CALLBACK(clear_clicked), p);
   gtk_box_append(GTK_BOX(bar),clr);
   gtk_box_append(GTK_BOX(bar),save);
+
+  gboolean as0 = radio ? radio->sstv_autosave : TRUE;
+  GtkWidget *asb = gtk_check_button_new_with_label("Auto-save");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(asb), as0);
+  gtk_widget_set_tooltip_text(asb,
+      "Write each picture to disk before the next transmission overwrites it. "
+      "Clear does not save.");
+  g_signal_connect(asb, "toggled", G_CALLBACK(autosave_toggled), p);
+  gtk_box_append(GTK_BOX(bar), asb);
+
+  GtkWidget *fbtn = gtk_button_new_with_label("Folder…");
+  char dir0[512];
+  image_save_folder(dir0, sizeof(dir0), radio ? radio->sstv_save_dir : NULL, "sstv");
+  gtk_widget_set_tooltip_text(fbtn, dir0);
+  g_signal_connect(fbtn, "clicked", G_CALLBACK(folder_clicked), p);
+  gtk_box_append(GTK_BOX(bar), fbtn);
+  sstv_decoder_set_autosave(as0, radio ? radio->sstv_save_dir : NULL);
+
   gtk_box_append(GTK_BOX(box),bar);
 
   // Transmit row: mode picker (concrete modes only), image loader, Send/Stop,

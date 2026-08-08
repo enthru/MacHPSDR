@@ -49,8 +49,8 @@ feature additions.
 | **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
-| **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, PNG save and image-file transmit. |
-| **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim and PNG save. Verified off-air. |
+| **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, a scrollable/zoomable view, PNG save, **auto-save of every received picture**, and image-file transmit. |
+| **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim, exposure trim, a scrollable/zoomable view, PNG save and **auto-save of every page**. Verified off-air. |
 | **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, and a fresh picture started automatically when you move to the next satellite. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
@@ -260,7 +260,13 @@ you've dialled in.
   manual **Slant ±** trim on top, **automatic frequency correction** (AFC — the
   picture stays correctly exposed and in sync as the ISS Doppler drifts, and the
   status shows the measured offset so you know when to nudge the dial), and
-  **Save** (writes a PNG to `~/.local/share/machpsdr/sstv/`) / **Clear** buttons. Decoding is self-contained
+  **Save** (asks where to write a PNG) / **Clear** buttons. **Auto-save** (on by
+  default) writes each picture out by itself just before the next transmission's
+  VIS header wipes it — on a busy calling frequency pictures arrive back to back,
+  and without it keeping one meant being at the panel with the mouse; **Folder…**
+  chooses where (default `~/.local/share/machpsdr/sstv/`), and an explicit Clear
+  does not save. The image also **scrolls and zooms** (wheel, Ctrl+wheel, drag,
+  double-click to fit). Decoding is self-contained
   (its own Hilbert-transform FM discriminator; no WDSP/FFT dependency) and, like
   FT8, runs at full audio level regardless of the volume/mute so you can decode
   silently.
@@ -300,8 +306,14 @@ you've dialled in.
   thin chart lines — untick it for a completely raw image. Weather fax is
   **black-on-white** by convention; if a signal comes in reversed (wrong
   sideband, or a station with opposite polarity) tick **Invert** to flip it to a
-  positive image. **Save**
-  writes a PNG to `~/.local/share/machpsdr/wefax/`; **Clear** starts over. The
+  positive image, and **Contrast** / **Brightness** trim the exposure of a weak or
+  hazy chart — they re-map the whole page, not just the lines that arrive next.
+  **Save** asks where to write a PNG; **Clear** starts over. **Auto-save page**
+  (on by default) writes the page out by itself when the next start tone wipes it
+  — taking fax unattended is the normal way to do it — with **Folder…** to choose
+  where (default `~/.local/share/machpsdr/wefax/`). The image **scrolls and
+  zooms** (wheel, Ctrl+wheel, drag), which is what makes the native ~1810 px line
+  readable in a small panel. The
   image is decoded at the fax's native resolution (~1810 px/line for IOC 576) so
   the fine chart lines stay sharp rather than blurring to faint grey. Tune the
   station in **DIGU/USB** ~1.9 kHz below its assigned frequency so black lands on

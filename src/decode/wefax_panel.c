@@ -30,6 +30,7 @@
 #include "radio.h"
 
 #include "wefax_panel.h"
+#include "image_save.h"
 #include "wefax_decoder.h"
 #include "gpu_image.h"
 #include "log.h"
@@ -47,6 +48,8 @@ typedef struct {
   GtkWidget *area;          // image drawing area
   GtkWidget *status;        // status label
   GtkWidget *slant_lbl;
+  GtkWidget *contrast;      // manual exposure trim
+  GtkWidget *bright;
   GdkPixbuf *pb;            // latest decoded image (owned)
   guint      timer;
   char       last_status[64];
@@ -155,23 +158,105 @@ static void slant_plus(GtkButton *b, gpointer data) {
 static void start_clicked(GtkButton *b, gpointer data) { wefax_decoder_start(); }
 static void clear_clicked(GtkButton *b, gpointer data) { wefax_decoder_reset(); }
 
+// GTK4: GtkFileDialog is async — the chosen path arrives here (mirrors SSTV/APT,
+// which ask where to write rather than dropping the file somewhere by decree).
+static void save_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GFile *gf = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf == NULL) return;                       // cancelled / error
+  GdkPixbuf *pb = wefax_decoder_get_image();    // fresh, at full width
+  char *path = g_file_get_path(gf);
+  g_object_unref(gf);
+  if (pb != NULL) {
+    GError *err = NULL;
+    if (gdk_pixbuf_save(pb, path, "png", &err, NULL)) {
+      log_info("WEFAX: saved %s\n", path);
+    } else {
+      log_error("WEFAX: save failed: %s\n", err ? err->message : "?");
+      if (err) g_error_free(err);
+    }
+    g_object_unref(pb);
+  }
+  g_free(path);
+}
+
 static void save_clicked(GtkButton *b, gpointer data) {
   WefaxPanel *p = data;
   if (p->pb == NULL) return;
-  char dir[512], path[600];
-  g_snprintf(dir, sizeof(dir), "%s/.local/share/machpsdr/wefax", g_get_home_dir());
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  char dir[512];
+  image_save_folder(dir, sizeof(dir), radio ? radio->wefax_save_dir : NULL, "wefax");
   g_mkdir_with_parents(dir, 0755);
   time_t now = time(NULL);
   struct tm tmv; gmtime_r(&now, &tmv);
   char ts[32]; strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
-  g_snprintf(path, sizeof(path), "%s/wefax_%s.png", dir, ts);
-  GError *err = NULL;
-  if (gdk_pixbuf_save(p->pb, path, "png", &err, NULL)) {
-    log_info("WEFAX: saved %s\n", path);
-  } else {
-    log_error("WEFAX: save failed: %s\n", err ? err->message : "?");
-    if (err) g_error_free(err);
+  char name[64]; g_snprintf(name, sizeof(name), "wefax_%s.png", ts);
+
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Save WEFAX page");
+  gtk_file_dialog_set_initial_name(dlg, name);
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  GtkFileFilter *filt = gtk_file_filter_new();
+  gtk_file_filter_set_name(filt, "PNG image");
+  gtk_file_filter_add_mime_type(filt, "image/png");
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filt);
+  g_object_unref(filt);
+  gtk_file_dialog_set_filters(dlg, G_LIST_MODEL(filters));
+  g_object_unref(filters);
+  gtk_file_dialog_save(dlg, GTK_WINDOW(top), NULL, save_done, p);
+  g_object_unref(dlg);
+}
+
+// --- exposure + auto-save ---------------------------------------------------
+static void levels_changed(GtkRange *r, gpointer data) {
+  WefaxPanel *p = data;
+  if (radio == NULL) return;
+  radio->wefax_contrast = gtk_range_get_value(GTK_RANGE(p->contrast));
+  radio->wefax_brightness = gtk_range_get_value(GTK_RANGE(p->bright));
+  wefax_decoder_set_levels(radio->wefax_contrast, radio->wefax_brightness);
+  gtk_widget_queue_draw(p->area);   // applied on output: the whole page re-maps
+}
+
+static void autosave_toggled(GtkCheckButton *b, gpointer data) {
+  gboolean on = gtk_check_button_get_active(b);
+  if (radio) radio->wefax_autosave = on;
+  wefax_decoder_set_autosave(on, radio ? radio->wefax_save_dir : NULL);
+}
+
+// The dialog outlives the click and the panel can be closed while it is open,
+// so this holds a ref on the button rather than the panel struct.
+static void folder_done(GObject *src, GAsyncResult *res, gpointer data) {
+  GtkWidget *btn = data;
+  GFile *gf = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (gf != NULL) {
+    char *path = g_file_get_path(gf);
+    g_object_unref(gf);
+    if (path != NULL && radio != NULL) {
+      g_strlcpy(radio->wefax_save_dir, path, sizeof(radio->wefax_save_dir));
+      wefax_decoder_set_autosave(radio->wefax_autosave, radio->wefax_save_dir);
+      gtk_widget_set_tooltip_text(btn, radio->wefax_save_dir);
+      log_info("WEFAX: save folder %s\n", radio->wefax_save_dir);
+    }
+    g_free(path);
   }
+  g_object_unref(btn);
+}
+
+static void folder_clicked(GtkButton *b, gpointer data) {
+  GtkWidget *top = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(b)));
+  char dir[512];
+  image_save_folder(dir, sizeof(dir), radio ? radio->wefax_save_dir : NULL, "wefax");
+  g_mkdir_with_parents(dir, 0755);
+  GtkFileDialog *dlg = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dlg, "Folder for saved WEFAX pages");
+  GFile *folder = g_file_new_for_path(dir);
+  gtk_file_dialog_set_initial_folder(dlg, folder);
+  g_object_unref(folder);
+  gtk_file_dialog_select_folder(dlg, GTK_WINDOW(top), NULL, folder_done,
+                                g_object_ref(b));
+  g_object_unref(dlg);
 }
 
 static void on_destroy(GtkWidget *w, gpointer data) {
@@ -265,6 +350,52 @@ GtkWidget *wefax_panel_create(void) {
   gtk_box_append(GTK_BOX(bar),clr);
   gtk_box_append(GTK_BOX(bar),save);
   gtk_box_append(GTK_BOX(box),bar);
+
+  // Exposure + auto-save row.  A weak or hazy chart comes out flat grey and the
+  // decoder cannot fix that by itself — the tone→grey mapping is a convention,
+  // not a measurement — so the operator gets the two knobs.
+  GtkWidget *ebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  double c0 = (radio && radio->wefax_contrast > 0.0) ? radio->wefax_contrast : 1.0;
+  double b0 = radio ? radio->wefax_brightness : 0.0;
+  wefax_decoder_set_levels(c0, b0);
+
+  gtk_box_append(GTK_BOX(ebar), gtk_label_new("Contrast:"));
+  p->contrast = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.3, 3.0, 0.05);
+  gtk_range_set_value(GTK_RANGE(p->contrast), c0);
+  gtk_scale_set_draw_value(GTK_SCALE(p->contrast), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->contrast), GTK_POS_RIGHT);
+  gtk_scale_set_digits(GTK_SCALE(p->contrast), 2);
+  gtk_widget_set_size_request(p->contrast, 130, -1);
+  g_signal_connect(p->contrast, "value-changed", G_CALLBACK(levels_changed), p);
+  gtk_box_append(GTK_BOX(ebar), p->contrast);
+
+  gtk_box_append(GTK_BOX(ebar), gtk_label_new("Brightness:"));
+  p->bright = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -100.0, 100.0, 5.0);
+  gtk_range_set_value(GTK_RANGE(p->bright), b0);
+  gtk_scale_set_draw_value(GTK_SCALE(p->bright), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(p->bright), GTK_POS_RIGHT);
+  gtk_scale_set_digits(GTK_SCALE(p->bright), 0);
+  gtk_widget_set_size_request(p->bright, 130, -1);
+  g_signal_connect(p->bright, "value-changed", G_CALLBACK(levels_changed), p);
+  gtk_box_append(GTK_BOX(ebar), p->bright);
+
+  gboolean as0 = radio ? radio->wefax_autosave : TRUE;
+  GtkWidget *asb = gtk_check_button_new_with_label("Auto-save page");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(asb), as0);
+  gtk_widget_set_tooltip_text(asb,
+      "Write the page to disk when the next start tone wipes it (or the decoder "
+      "is switched off). Clear does not save.");
+  g_signal_connect(asb, "toggled", G_CALLBACK(autosave_toggled), p);
+  gtk_box_append(GTK_BOX(ebar), asb);
+
+  GtkWidget *fbtn = gtk_button_new_with_label("Folder…");
+  char dir0[512];
+  image_save_folder(dir0, sizeof(dir0), radio ? radio->wefax_save_dir : NULL, "wefax");
+  gtk_widget_set_tooltip_text(fbtn, dir0);
+  g_signal_connect(fbtn, "clicked", G_CALLBACK(folder_clicked), p);
+  gtk_box_append(GTK_BOX(ebar), fbtn);
+  wefax_decoder_set_autosave(as0, radio ? radio->wefax_save_dir : NULL);
+  gtk_box_append(GTK_BOX(box), ebar);
 
   // Slant row.
   GtkWidget *sbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
