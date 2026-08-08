@@ -1147,8 +1147,8 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // Only while APT is the running decoder on this receiver.
   if(radio!=NULL && rx==radio->active_receiver && rx->mode_a==FMN &&
      radio->decode_mode==DECODE_APT) {
-    double xl=0.0,xr=0.0; char acap[48];
-    if(receiver_apt_window(rx,&xl,&xr,acap,sizeof(acap)) && xr>0.0 && xl<display_width) {
+    double xl=0.0,xr=0.0;
+    if(receiver_apt_window(rx,&xl,&xr,NULL,0) && xr>0.0 && xl<display_width) {
       // A wash rather than a solid band: it is wide (44 kHz), and it must not
       // bury the trace it exists to let you look at.  The caption is NOT drawn
       // here — it belongs on the frequency ruler, which is painted further down
@@ -1164,17 +1164,10 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       n_rect(snapshot,xr-2.0,0.0,2.0,(double)display_height,&edge);
       GdkRGBA bar=nrgba(0.3,0.9,1.0,0.55);
       n_rect(snapshot,xl,0.0,xr-xl,3.0,&bar);
-      // Caption at the band's LEFT EDGE, just under the bar.  Not in the middle
-      // (that is where the centre marker sits, the one place it cannot be read)
-      // and not on the frequency ruler either, where it competes with the tuning
-      // frequency labels.
-      int cw=0,chh=0;
-      pango_layout_get_pixel_size(label12(widget,acap),&cw,&chh);
-      double cx=xl+5.0;
-      if(cx<2.0) cx=2.0;
-      if(cx>display_width-cw-2.0) cx=display_width-cw-2.0;
-      GdkRGBA capc=nrgba(0.6,0.95,1.0,0.95), capbg=nrgba(0.0,0.0,0.0,0.55);
-      n_text_boxed(snapshot,widget,cx,17.0,&capc,&capbg,acap,NULL);
+      // The caption is NOT emitted here: everything drawn this early is struck
+      // through by the graticule and the dB/frequency rulings that come later.
+      // It goes at the end of the frame, with the I/Q Player readout, for the
+      // same reason spelled out there.
     }
   }
 #endif
@@ -1463,6 +1456,29 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
      (radio->cluster_spots_on==0 || radio->cluster_spots_on==2)) {
     receiver_draw_cluster_spots_nodes(snapshot, widget, rx, display_width);
   }
+
+#ifdef SSTV
+  // ---- APT window caption (drawn ON TOP, same reason as the readout below:
+  //      anything emitted earlier is struck through by the graticule and the
+  //      dB/frequency rulings) ------------------------------------------------
+  // At the band's LEFT EDGE, not its middle — the middle is where the centre
+  // marker stands, and a caption on the marker is the one place it cannot be
+  // read.  Not on the frequency ruler either, where it would read as another
+  // tuning-frequency label.
+  {
+    double axl=0.0,axr=0.0; char acap[48];
+    if(receiver_apt_window(rx,&axl,&axr,acap,sizeof(acap)) &&
+       axr>0.0 && axl<display_width) {
+      int cw=0,chh=0;
+      pango_layout_get_pixel_size(label12(widget,acap),&cw,&chh);
+      double cx=axl+5.0;
+      if(cx<2.0) cx=2.0;
+      if(cx>display_width-cw-2.0) cx=display_width-cw-2.0;
+      GdkRGBA capc=nrgba(0.6,0.95,1.0,0.95), capbg=nrgba(0.0,0.0,0.0,0.65);
+      n_text_boxed(snapshot,widget,cx,17.0,&capc,&capbg,acap,NULL);
+    }
+  }
+#endif
 
   // ---- I/Q Player readout (top-right, drawn ON TOP so the graticule doesn't
   //      strike through it — the black box only hides the ruling if it, and the
