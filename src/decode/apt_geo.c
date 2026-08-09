@@ -413,6 +413,8 @@ void apt_geo_set_row_times(const double *unix_utc, int n) {
 void apt_geo_set_time_offset(double seconds) { time_offset = seconds; }
 double apt_geo_get_time_offset(void) { return time_offset; }
 
+double apt_geo_row_utc(double row) { return row_to_unix(row); }
+
 gboolean apt_geo_ready(void) { return sel >= 0 && base_set; }
 
 // ---- projection -----------------------------------------------------------

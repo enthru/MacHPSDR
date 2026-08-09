@@ -117,6 +117,13 @@ void apt_geo_set_time_base(double unix_utc_row0);
 void apt_geo_set_time_offset(double seconds);
 double apt_geo_get_time_offset(void);
 
+// UTC (unix seconds) at which an image row was received, trim included — the row
+// stamps when there are any, the uniform fallback otherwise.  This is the time
+// every projection in this module is computed at, so anything that wants to
+// reason about WHEN a row was taken (illumination, a clock check) must ask for
+// it here rather than recomputing it from the base and the row number.
+double apt_geo_row_utc(double row);
+
 // TRUE when a satellite is selected and a time base is set — i.e. when the
 // projection can be computed at all.
 gboolean apt_geo_ready(void);

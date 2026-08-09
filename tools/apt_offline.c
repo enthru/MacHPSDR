@@ -164,6 +164,392 @@ static void geo_report(int lines) {
   printf("  round-trip pixel -> lat/lon -> pixel: worst %.4g px\n", worst);
 }
 
+// --- time-base scan --------------------------------------------------------
+// Which time base is right is the one thing about the georeferencing that
+// cannot be settled from inside the geometry: every number in geo_report() is
+// derived from the capture time, so all of them stay self-consistent however
+// wrong that time is.  The only outside evidence is the picture itself — a
+// coastline is a brightness edge, so the projection is right when the projected
+// coastline lands on edges and wrong when it lands on featureless sea or
+// unbroken cloud.
+//
+// Score = (mean gradient at the projected coast points) / (mean gradient at the
+// same points displaced a long way).  The ratio, not the raw gradient: a Δ that
+// happens to look at a cloudier part of the world would win on raw gradient
+// alone, and the displaced control moves with it.
+//
+// It answers honestly when it cannot answer: over cloud-covered ocean there is
+// no coastline signal to find and the ratio stays near 1 for every Δ.  That is a
+// result — it means the recording cannot settle its own time base — and is not
+// to be read as agreement with whichever Δ scored 1.02.
+#define TS_VIDEO_A0  86
+#define TS_VIDEO_A1  994
+#define TS_VIDEO_B0  1126
+#define TS_VIDEO_B1  2034
+#define TS_CTRL      60      // control displacement, px (~240 km either way)
+
+typedef struct { int w, h; float *g; } TS_GRAD;
+
+// |∇I| of the smoothed picture, over the two video areas only (the sync bars and
+// telemetry wedges are the strongest edges in the frame and none of them is a
+// coast).
+static void ts_gradient(GdkPixbuf *pb, TS_GRAD *out) {
+  int w = gdk_pixbuf_get_width(pb), h = gdk_pixbuf_get_height(pb);
+  int stride = gdk_pixbuf_get_rowstride(pb), nch = gdk_pixbuf_get_n_channels(pb);
+  const guchar *px = gdk_pixbuf_get_pixels(pb);
+
+  float *sm = g_new0(float, (size_t)w * h);
+  // 5×5 box blur, separable: APT noise is per-sample and a raw difference is
+  // mostly noise.
+  float *tmp = g_new0(float, (size_t)w * h);
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      float s = 0; int n = 0;
+      for (int d = -2; d <= 2; d++) {
+        int xx = x + d; if (xx < 0 || xx >= w) continue;
+        s += px[(size_t)y * stride + (size_t)xx * nch]; n++;
+      }
+      tmp[(size_t)y * w + x] = s / n;
+    }
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      float s = 0; int n = 0;
+      for (int d = -2; d <= 2; d++) {
+        int yy = y + d; if (yy < 0 || yy >= h) continue;
+        s += tmp[(size_t)yy * w + x]; n++;
+      }
+      sm[(size_t)y * w + x] = s / n;
+    }
+  g_free(tmp);
+
+  float *g = g_new0(float, (size_t)w * h);
+  for (int y = 3; y < h - 3; y++)
+    for (int x = 3; x < w - 3; x++) {
+      if (!((x >= TS_VIDEO_A0 && x < TS_VIDEO_A1) || (x >= TS_VIDEO_B0 && x < TS_VIDEO_B1)))
+        continue;
+      float gx = sm[(size_t)y * w + x + 3] - sm[(size_t)y * w + x - 3];
+      float gy = sm[(size_t)(y + 3) * w + x] - sm[(size_t)(y - 3) * w + x];
+      g[(size_t)y * w + x] = fabsf(gx) + fabsf(gy);
+    }
+  g_free(sm);
+  out->w = w; out->h = h; out->g = g;
+}
+
+static gboolean ts_at(const TS_GRAD *G, double row, double word, double *v) {
+  int x = (int)(word + 0.5), y = (int)(row + 0.5);
+  if (x < 3 || x >= G->w - 3 || y < 3 || y >= G->h - 3) return FALSE;
+  if (!((x >= TS_VIDEO_A0 && x < TS_VIDEO_A1) || (x >= TS_VIDEO_B0 && x < TS_VIDEO_B1)))
+    return FALSE;
+  *v = G->g[(size_t)y * G->w + x];
+  return TRUE;
+}
+
+// Lat/lon bounds of the swath, so continents that cannot be in it are rejected
+// before anything is projected.  Same sampling as apt_map.c's own (private)
+// version — a whole-file copy would be worse than fifteen duplicated lines.
+static void ts_bbox(int lines, double *la0, double *la1, double *lo0, double *lo1,
+                    gboolean *wraps) {
+  *la0 = 90.0; *la1 = -90.0; *lo0 = 180.0; *lo1 = -180.0;
+  for (int i = 0; i <= 16; i++) {
+    double row = (lines - 1.0) * i / 16.0;
+    for (int j = 0; j <= 8; j++) {
+      double la, lo;
+      if (!apt_geo_pixel_to_latlon(row, 86.0 + 908.0 * j / 8.0, &la, &lo)) continue;
+      if (la < *la0) *la0 = la;
+      if (la > *la1) *la1 = la;
+      if (lo < *lo0) *lo0 = lo;
+      if (lo > *lo1) *lo1 = lo;
+    }
+  }
+  *wraps = (*la1 > 78.0 || *la0 < -78.0 || (*lo1 - *lo0) > 180.0);
+}
+
+// One Δ: project the world coastline, then score it at every fine sub-shift.
+//
+// The sub-shift is what makes the search possible at all.  A wrong time base
+// moves the picture along the track at 7 km/s, so the score has a peak only a
+// few seconds wide — a scan that steps in minutes jumps straight over it and
+// reports "no agreement anywhere", which is exactly what the first version of
+// this did.  But a small change in Δ is, to a very good approximation, just a
+// translation in rows (1 row = 0.5 s): the swath geometry barely rotates over a
+// few tens of seconds.  So the expensive part — a root-find per vertex — is done
+// once per coarse step, and ±TS_SHIFT rows of fine shifts are then free.
+#define TS_SHIFT  64                 // ±32 s around each coarse step
+#define TS_MAXPT  40000
+
+static double ts_score(const TS_GRAD *G, int lines, double delta,
+                       int *n_out, double *best_shift) {
+  apt_geo_set_time_offset(delta);
+
+  double la0, la1, lo0, lo1;
+  gboolean wraps;
+  ts_bbox(lines, &la0, &la1, &lo0, &lo1, &wraps);
+  const double M = 2.0;
+  la0 -= M; la1 += M; lo0 -= M; lo1 += M;
+
+  static float pr[TS_MAXPT], pw[TS_MAXPT];
+  int npt = 0;
+
+  // The projection is searched over a widened row range, because a point that
+  // falls off the picture at this Δ may well be on it after a sub-shift.
+  for (int i = 0; i < apt_coast_count() && npt < TS_MAXPT; i++) {
+    float plo0, plo1, pla0, pla1;
+    apt_coast_bbox(i, &plo0, &plo1, &pla0, &pla1);
+    if (pla1 < la0 || pla0 > la1) continue;
+    if (!wraps && (plo1 < lo0 || plo0 > lo1)) continue;
+
+    int np = 0;
+    const APT_COAST_PT *p = apt_coast_polyline(i, &np);
+    for (int k = 0; k < np && npt < TS_MAXPT; k += 4) {   // 620 m spacing -> 2.5 km
+      double row, word;
+      if (!apt_geo_latlon_to_pixel(p[k].lat, p[k].lon, -TS_SHIFT, lines - 1 + TS_SHIFT,
+                                   &row, &word))
+        continue;
+      pr[npt] = (float)row; pw[npt] = (float)word; npt++;
+    }
+  }
+
+  double best = 0.0; int best_s = 0, best_n = 0;
+  for (int s = -TS_SHIFT; s <= TS_SHIFT; s++) {
+    double sum = 0.0, ctrl = 0.0;
+    int n = 0, nc = 0;
+    for (int i = 0; i < npt; i++) {
+      double row = pr[i] + s, word = pw[i], v;
+      if (!ts_at(G, row, word, &v)) continue;
+      sum += v; n++;
+      // Control: the same point moved far enough that it is certainly not on
+      // this piece of coast, in four directions so the comparison stays local.
+      const int dr[4] = { TS_CTRL, -TS_CTRL, 0, 0 };
+      const int dw[4] = { 0, 0, TS_CTRL, -TS_CTRL };
+      for (int d = 0; d < 4; d++) {
+        double cv;
+        if (ts_at(G, row + dr[d], word + dw[d], &cv)) { ctrl += cv; nc++; }
+      }
+    }
+    if (n < 200 || nc < 200) continue;           // too little coast to say anything
+    double sc = (sum / n) / (ctrl / nc);
+    if (sc > best) { best = sc; best_s = s; best_n = n; }
+  }
+
+  if (n_out) *n_out = best_n;
+  if (best_shift) *best_shift = best_s * APT_LINE_SECONDS;
+  return best;
+}
+
+static void time_scan(int lines, double lo, double hi, double step) {
+  if (!apt_geo_ready()) { printf("timescan: no TLE or no time base\n"); return; }
+  if (!apt_coast_load(NULL)) { printf("timescan: no coastline file\n"); return; }
+
+  GdkPixbuf *pb = apt_decoder_get_full_image();
+  if (!pb) { printf("timescan: no image\n"); return; }
+  TS_GRAD G;
+  ts_gradient(pb, &G);
+  g_object_unref(pb);
+
+  double keep = apt_geo_get_time_offset();
+  printf("timescan: %+.0f .. %+.0f s step %.0f  (score = coast edge / control edge; "
+         "1.00 = no agreement)\n", lo, hi, step);
+
+  double best = 0.0, best_d = 0.0;
+  for (double d = lo; d <= hi + 1e-6; d += step) {
+    int n = 0; double sh = 0.0;
+    double s = ts_score(&G, lines, d, &n, &sh);
+    double sl = 0, so = 0, alt = 0;
+    apt_geo_subpoint(lines / 2.0, &sl, &so, &alt);
+    if (n > 0)
+      printf("  %+8.0f s  coast pts %6d  best %+8.1f s  score %6.3f   mid-subpoint %7.2f %8.2f\n",
+             d, n, d + sh, s, sl, so);
+    if (s > best) { best = s; best_d = d + sh; }
+  }
+  printf("timescan: best %+.1f s (score %.3f)\n", best_d, best);
+
+  apt_geo_set_time_offset(keep);
+  g_free(G.g);
+}
+
+// --- telemetry wedges ------------------------------------------------------
+// Each 909-word video area is followed by a 45-word telemetry column carrying a
+// 16-wedge frame, repeated every 128 lines: wedges 1–8 are a calibration
+// staircase, 9 is zero, 10–15 are temperatures, and **16 is the channel ID** —
+// its level equals the staircase step whose number is the AVHRR channel in that
+// video area.  It is worth reading because it is the only statement the
+// transmission makes about ITSELF: channel 1 or 2 in area A means the scene was
+// sunlit (they are the visible channels), channel 3 means it was not, and area B
+// coming out as 4 is the check that the reading is right at all.
+#define TEL_A0  995
+#define TEL_B0  2035
+#define TEL_W   45
+
+static void tel_column(GdkPixbuf *pb, int x0, double *out, int h) {
+  int stride = gdk_pixbuf_get_rowstride(pb), nch = gdk_pixbuf_get_n_channels(pb);
+  const guchar *px = gdk_pixbuf_get_pixels(pb);
+  for (int y = 0; y < h; y++) {
+    double s = 0;
+    for (int x = x0; x < x0 + TEL_W; x++) s += px[(size_t)y * stride + (size_t)x * nch];
+    out[y] = s / TEL_W;
+  }
+}
+
+static void telemetry_report(void) {
+  GdkPixbuf *pb = apt_decoder_get_full_image();
+  if (pb == NULL) return;
+  int h = gdk_pixbuf_get_height(pb);
+  if (gdk_pixbuf_get_width(pb) < 2080 || h < 140) { g_object_unref(pb); return; }
+
+  double *ta = g_new0(double, h), *tb = g_new0(double, h);
+  tel_column(pb, TEL_A0, ta, h);
+  tel_column(pb, TEL_B0, tb, h);
+  g_object_unref(pb);
+
+  // A wedge is 8 lines; find the phase that makes the wedges most distinct.
+  int phase = 0; double bestv = -1;
+  for (int p = 0; p < 8; p++) {
+    int n = (h - p) / 8;
+    double m = 0, m2 = 0;
+    for (int i = 0; i < n; i++) {
+      double s = 0;
+      for (int k = 0; k < 8; k++) s += ta[p + i * 8 + k];
+      s /= 8; m += s; m2 += s * s;
+    }
+    m /= n; double var = m2 / n - m * m;
+    if (var > bestv) { bestv = var; phase = p; }
+  }
+  int nw = (h - phase) / 8;
+  double *wa = g_new0(double, nw), *wb = g_new0(double, nw);
+  for (int i = 0; i < nw; i++) {
+    double sa = 0, sb = 0;
+    for (int k = 0; k < 8; k++) { sa += ta[phase + i * 8 + k]; sb += tb[phase + i * 8 + k]; }
+    wa[i] = sa / 8; wb[i] = sb / 8;
+  }
+  g_free(ta); g_free(tb);
+
+  // Wedge 8 is white and wedge 9 is zero, so that fall is the frame boundary and
+  // the only alignment needed.
+  int ca[6] = {0}, cb[6] = {0}, frames = 0;
+  for (int i = 9; i + 7 < nw; i++) {
+    if (!(wa[i-1] > 200.0 && wa[i] < 80.0)) continue;      // i = wedge 9
+    int f = i - 8;                                        // f = wedge 1
+    gboolean rising = TRUE;
+    for (int k = 0; k < 7; k++) if (wa[f+k+1] <= wa[f+k]) rising = FALSE;
+    if (!rising) continue;
+    frames++;
+    for (int c = 0; c < 2; c++) {
+      const double *w = c ? wb : wa;
+      double best = 1e30; int id = 0;
+      for (int s = 0; s < 8; s++) {
+        double d = fabs(w[f + s] - w[f + 15]);            // f+15 = wedge 16
+        if (d < best) { best = d; id = s + 1; }
+      }
+      if (id >= 1 && id <= 5) { if (c) cb[id]++; else ca[id]++; }
+    }
+  }
+
+  if (frames == 0) { printf("telemetry: no complete wedge frame found\n"); g_free(wa); g_free(wb); return; }
+  int ida = 0, idb = 0;
+  for (int i = 1; i <= 5; i++) { if (ca[i] > ca[ida]) ida = i; if (cb[i] > cb[idb]) idb = i; }
+  static const char *chan[6] = { "?", "1 (visible 0.63 um)", "2 (near IR 0.86 um)",
+                                 "3 (3.7 um / 1.6 um)", "4 (IR 10.8 um)", "5 (IR 12 um)" };
+  printf("telemetry: %d wedge frames; channel A = AVHRR %s, channel B = AVHRR %s\n",
+         frames, chan[ida], chan[idb]);
+  if (ida == 1 || ida == 2)
+    printf("  -> area A is a VISIBLE channel: the scene was sunlit.\n");
+  else if (ida == 3)
+    printf("  -> area A is 3.7/1.6 um: night (3.7) or day (1.6) — not decisive on its own.\n");
+  g_free(wa); g_free(wb);
+}
+
+// --- solar geometry --------------------------------------------------------
+// Sun elevation at a ground point, NOAA's low-precision algorithm (good to a
+// hundredth of a degree, which is four orders of magnitude better than this is
+// being asked to decide).  It exists here because illumination is the one thing
+// the picture says about the capture time that survives total cloud cover: a
+// visible-channel image cannot have been taken in the dark, and the way its
+// brightness runs along the pass is a fingerprint of the sun's position.
+static double sun_elevation(double unix_utc, double lat, double lon) {
+  double jd = unix_utc / 86400.0 + 2440587.5;
+  double n = jd - 2451545.0;
+  double L = fmod(280.460 + 0.9856474 * n, 360.0);        // mean longitude
+  double g = fmod(357.528 + 0.9856003 * n, 360.0) * M_PI / 180.0;
+  double lam = (L + 1.915 * sin(g) + 0.020 * sin(2 * g)) * M_PI / 180.0;
+  double eps = (23.439 - 0.0000004 * n) * M_PI / 180.0;
+  double dec = asin(sin(eps) * sin(lam));
+  double ra = atan2(cos(eps) * sin(lam), cos(lam));       // radians
+  double gmst = fmod(18.697374558 + 24.06570982441908 * n, 24.0);
+  if (gmst < 0) gmst += 24.0;
+  double ha = gmst * 15.0 * M_PI / 180.0 + lon * M_PI / 180.0 - ra;
+  double la = lat * M_PI / 180.0;
+  double s = sin(la) * sin(dec) + cos(la) * cos(dec) * cos(ha);
+  if (s > 1) s = 1; if (s < -1) s = -1;
+  return asin(s) * 180.0 / M_PI;
+}
+
+// Does the modelled illumination along the pass match the brightness the visible
+// channel actually recorded?  The picture's own contrast servo flattens the
+// absolute levels, so the observable is the ratio of the visible area to the
+// infrared one — the IR channel does not care about the sun, so the ratio keeps
+// the illumination trend while the servo cancels out of both.
+#define SUN_ROWS 24
+static void sun_scan(int lines, double lo, double hi, double step) {
+  if (!apt_geo_ready()) { printf("sunscan: no TLE or no time base\n"); return; }
+  GdkPixbuf *pb = apt_decoder_get_full_image();
+  if (pb == NULL || lines < 100) { if (pb) g_object_unref(pb); return; }
+  int h = gdk_pixbuf_get_height(pb);
+  int stride = gdk_pixbuf_get_rowstride(pb), nch = gdk_pixbuf_get_n_channels(pb);
+  const guchar *px = gdk_pixbuf_get_pixels(pb);
+
+  double obs[SUN_ROWS], rows[SUN_ROWS];
+  for (int i = 0; i < SUN_ROWS; i++) {
+    int y0 = (int)((double)i * h / SUN_ROWS), y1 = (int)((double)(i + 1) * h / SUN_ROWS);
+    double sa = 0, sb = 0;
+    for (int y = y0; y < y1; y++)
+      for (int x = 86; x < 995; x++) {
+        sa += px[(size_t)y * stride + (size_t)x * nch];
+        sb += px[(size_t)y * stride + (size_t)(x + 1040) * nch];
+      }
+    obs[i] = (sb > 0) ? sa / sb : 0.0;
+    rows[i] = 0.5 * (y0 + y1);
+  }
+  g_object_unref(pb);
+
+  double keep = apt_geo_get_time_offset();
+  printf("sunscan: %+.0f .. %+.0f s step %.0f  (r = correlation of modelled "
+         "illumination with the visible/IR brightness ratio)\n", lo, hi, step);
+  double best_r = -2.0, best_d = 0.0;
+  for (double d = lo; d <= hi + 1e-6; d += step) {
+    apt_geo_set_time_offset(d);
+    double mu[SUN_ROWS], elev[SUN_ROWS];
+    double emin = 999, emax = -999;
+    gboolean ok = TRUE;
+    for (int i = 0; i < SUN_ROWS; i++) {
+      double la, lo2, alt;
+      if (!apt_geo_subpoint(rows[i], &la, &lo2, &alt)) { ok = FALSE; break; }
+      double t = apt_geo_row_utc(rows[i]);           // includes the trim
+      double e = sun_elevation(t, la, lo2);
+      if (e < emin) emin = e;
+      if (e > emax) emax = e;
+      elev[i] = e;
+      mu[i] = e > 0 ? sin(e * M_PI / 180.0) : 0.0;
+    }
+    if (!ok) continue;
+    // Pearson r between model and observation.
+    double mm = 0, mo = 0;
+    for (int i = 0; i < SUN_ROWS; i++) { mm += mu[i]; mo += obs[i]; }
+    mm /= SUN_ROWS; mo /= SUN_ROWS;
+    double smm = 0, soo = 0, smo = 0;
+    for (int i = 0; i < SUN_ROWS; i++) {
+      smm += (mu[i]-mm)*(mu[i]-mm); soo += (obs[i]-mo)*(obs[i]-mo);
+      smo += (mu[i]-mm)*(obs[i]-mo);
+    }
+    double r = (smm > 0 && soo > 0) ? smo / sqrt(smm * soo) : 0.0;
+    printf("  %+7.0f s  sun %+6.1f -> %+6.1f deg (range %+.0f..%+.0f)   r %+.3f%s\n",
+           d, elev[0], elev[SUN_ROWS-1], emin, emax, r,
+           emax < 0 ? "   DARK — a visible-channel picture is impossible" : "");
+    if (emax > 0 && r > best_r) { best_r = r; best_d = d; }
+  }
+  printf("sunscan: best %+.0f s (r %+.3f)\n", best_d, best_r);
+  apt_geo_set_time_offset(keep);
+}
+
 // --- map overlay -----------------------------------------------------------
 // The only honest test of the projection: put a map on the picture and look at
 // whether the coast is where the coast is.  Every number in geo_report() can be
@@ -528,7 +914,7 @@ int main(int argc, char **argv) {
       "usage: %s <file.wav> [-o out.png]\n"
       "       %s <file.wav> --iq <centre_hz> <cursor_hz> [-o out.png]\n"
       "       %s <file.wav> ... --tle <file> [--utc <YYYY-MM-DDTHH:MM:SSZ>] [--trim <s>] [--coast]\n"
-      "       %s <file.wav> ... [--rotate off|180|north]\n"
+      "       %s <file.wav> ... [--rotate off|180|north] [--timescan <lo> <hi> <step>]\n"
       "       %s --selftest\n", argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
@@ -543,6 +929,9 @@ int main(int argc, char **argv) {
   int sat_catnr = 0;
   int coast = 0;
   int rotate = 0;                  // 0 = as received, 1 = 180°, 2 = north-up
+  int timescan = 0, sunscan = 0;
+  double ts_lo = 0, ts_hi = 0, ts_step = 0;
+  double ss_lo = 0, ss_hi = 0, ss_step = 0;
   const char *rowtimes_path = NULL;
   int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
@@ -552,6 +941,24 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[i], "--trim") && i + 1 < argc) { geo_trim = atof(argv[++i]); continue; }
     if (!strcmp(argv[i], "--sat")  && i + 1 < argc) { sat_catnr = atoi(argv[++i]); continue; }
     if (!strcmp(argv[i], "--coast")) { coast = 1; continue; }
+    // Sweep the time base and score the projected coastline against the
+    // picture's own edges — the only test of the projection that does not come
+    // from the projection itself.
+    // The same sweep judged by illumination instead of coastlines: it is the
+    // test that still works when the scene is solid cloud, because the sun does
+    // not care what is under it.
+    if (!strcmp(argv[i], "--sunscan") && i + 3 < argc) {
+      sunscan = 1;
+      ss_lo = atof(argv[i+1]); ss_hi = atof(argv[i+2]); ss_step = atof(argv[i+3]);
+      i += 3;
+      continue;
+    }
+    if (!strcmp(argv[i], "--timescan") && i + 3 < argc) {
+      timescan = 1;
+      ts_lo = atof(argv[i+1]); ts_hi = atof(argv[i+2]); ts_step = atof(argv[i+3]);
+      i += 3;
+      continue;
+    }
     // Orientation, the same three settings the panel offers.  "north" needs an
     // orbit to ask, so it does nothing without --tle — which is the point: a
     // rotation on a guess is worse than none.
@@ -682,6 +1089,7 @@ int main(int argc, char **argv) {
   g_free(d); g_free(buf);
 
   report();
+  telemetry_report();
 
   int geo_lines = 0;
   if (tle_path) {
@@ -698,6 +1106,8 @@ int main(int argc, char **argv) {
     else if (utc0 > 0.0) apt_geo_set_time_base(utc0);
     geo_report(n);
     geo_lines = n;
+    if (timescan) time_scan(n, ts_lo, ts_hi, ts_step);
+    if (sunscan)  sun_scan(n, ss_lo, ss_hi, ss_step);
   }
 
   // Orientation, decided exactly as radio.c decides it: 180° on request, and on
