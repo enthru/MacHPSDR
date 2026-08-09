@@ -1368,13 +1368,19 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
             int waits = 0;
             int xruns = 0;
             int guard = 0;
-            // Budget: about as long as this block lasts (2048 frames = 43 ms).
-            // Waiting longer than the audio we are handing over would push the
-            // stall back onto the RX thread; waiting less throws the block away
-            // while the card was about to have room.
+            // Budget: two PERIODS, not a whole block.  A healthy card frees
+            // space one period at a time, so one period plus a margin is all a
+            // transient can need — while a block's worth (43 ms) is long enough
+            // to be felt upstream: measured on the reporter's box, waiting that
+            // long per block dragged the RX thread's own output from 48000 down
+            // to 30000-43000 frames/s (maxgap 80 ms).  This loop runs ON the RX
+            // thread, so a stall here is not merely late audio, it is the whole
+            // DSP/decoder chain missing its deadline.
+            snd_pcm_uframes_t abuf=0,aper=0;
+            if(snd_pcm_get_params(rx->playback_handle,&abuf,&aper)!=0 || aper==0)
+              aper=1024;
             const gint64 deadline =
-              g_get_monotonic_time() +
-              (gint64)rx->local_audio_buffer_size*1000000/48000;
+              g_get_monotonic_time() + 2*(gint64)aper*1000000/48000;
             while(frames > 0 && ++guard <= 64) {
               rc = snd_pcm_writei(rx->playback_handle, p, frames);
               if(rc > 0) {
@@ -1388,6 +1394,13 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
                 // to alsa-lib, so make it explicit rather than depend on it.
                 if(snd_pcm_state(rx->playback_handle)==SND_PCM_STATE_PREPARED)
                   snd_pcm_start(rx->playback_handle);
+                // A device that is full and STILL has no space after a wait is
+                // not jittering, it is slower than the radio (or, as seen on a
+                // virtio card under a sound server, RUNNING and draining
+                // nothing at all — delay pinned at the full buffer, every block
+                // dropped).  Waiting longer cannot conjure space and only holds
+                // up the RX thread, so drop the rest of the block now.
+                if(waits>0 && snd_pcm_avail_update(rx->playback_handle)<=0) break;
                 if(g_get_monotonic_time() >= deadline) break;  // give up, drop the rest
                 waits++;
                 // The card frees space one PERIOD at a time (1024 frames =

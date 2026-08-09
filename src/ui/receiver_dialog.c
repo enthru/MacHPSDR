@@ -678,11 +678,57 @@ static void mute_while_tx_cb(GtkWidget *widget, gpointer data) {
   rx->mute_while_transmitting = rx->mute_while_transmitting == TRUE?FALSE:TRUE;
 }
 
+static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data);
+
+// Open rx->audio_name, and if that device will not open, fall back to "System
+// Default" instead of giving up on local audio altogether.
+//
+// The device an operator picks can be legitimately unavailable — a raw
+// plughw:/dmix: entry is refused with EBUSY the moment a sound server owns the
+// card, which on a desktop is most of the time.  The old behaviour was to
+// clear rx->local_audio, untick the box and LEAVE rx->audio_name pointing at
+// the device that just failed, so ticking the box again retried the same busy
+// device, failed again, and unticked itself: local audio could not be turned
+// back on at all without restarting.  (Reported from a running session on
+// Linux/ALSA.)  Falling back keeps the receiver audible and leaves the
+// drop-down showing what is actually playing.
+static gboolean audio_open_with_fallback(RECEIVER *rx) {
+  if(audio_open_output(rx)>=0) return TRUE;
+  if(rx->audio_name!=NULL && strcmp(rx->audio_name,AUDIO_SYSTEM_DEFAULT_NAME)==0)
+    return FALSE;                       // already the fallback — nothing left to try
+
+  log_info("audio: %s would not open, falling back to System Default\n",
+           rx->audio_name==NULL?"(none)":rx->audio_name);
+  if(rx->audio_name!=NULL) g_free(rx->audio_name);
+  rx->audio_name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+  rx->output_index=-1;
+  if(audio_open_output(rx)<0) return FALSE;
+
+  // Point the drop-down at what is now really playing.  Blocked, or setting it
+  // would re-enter audio_choice_cb and close the stream we just opened.
+  if(rx->audio_choice_b!=NULL) {
+    for(int j=0;j<n_output_devices;j++) {
+      if(output_devices[j].name!=NULL &&
+         strcmp(output_devices[j].name,AUDIO_SYSTEM_DEFAULT_NAME)==0) {
+        g_signal_handlers_block_matched(rx->audio_choice_b,
+                                        G_SIGNAL_MATCH_FUNC|G_SIGNAL_MATCH_DATA,
+                                        0,0,NULL,(gpointer)audio_choice_cb,rx);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(rx->audio_choice_b),j);
+        g_signal_handlers_unblock_matched(rx->audio_choice_b,
+                                          G_SIGNAL_MATCH_FUNC|G_SIGNAL_MATCH_DATA,
+                                          0,0,NULL,(gpointer)audio_choice_cb,rx);
+        break;
+      }
+    }
+  }
+  return TRUE;
+}
+
 static void local_audio_cb(GtkWidget *widget,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->local_audio=gtk_check_button_get_active(GTK_CHECK_BUTTON (widget));
   if(rx->local_audio) {
-    if(audio_open_output(rx)<0) {
+    if(!audio_open_with_fallback(rx)) {
       rx->local_audio=FALSE;
       gtk_check_button_set_active(GTK_CHECK_BUTTON (widget),FALSE);
     }
@@ -711,13 +757,12 @@ static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
     i=(int)gtk_drop_down_get_selected(widget);
     if(rx->audio_name!=NULL) {
       g_free(rx->audio_name);
-      //rx->audio_name=NULL;
+      rx->audio_name=NULL;      // freed and not cleared left this dangling when i<0
     }
     if(i>=0) {
-      rx->audio_name=g_new0(gchar,strlen(output_devices[i].name)+1);
+      rx->audio_name=g_strdup(output_devices[i].name);
       rx->output_index=output_devices[i].index;
-      strcpy(rx->audio_name,output_devices[i].name);
-      if(audio_open_output(rx)<0) {
+      if(!audio_open_with_fallback(rx)) {
         rx->local_audio=FALSE;
         gtk_check_button_set_active(GTK_CHECK_BUTTON (rx->local_audio_b),FALSE);
       }
