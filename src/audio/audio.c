@@ -712,13 +712,23 @@ log_info("audio_open_output: ALSA: %s\n",rx->audio_name);
       int i;
       char hw[128];
 
-      i=0;
-      while(i<127 && rx->audio_name[i]!=' ') {
-        hw[i]=rx->audio_name[i];
-        i++;
+      // The list entries carry the card name after the PCM name ("plughw:0,0
+      // VirtIO SoundCard"), so the device is everything up to the first space —
+      // but the string may have no space at all, and the loop must then stop at
+      // the terminator rather than run on into whatever follows in memory.
+      if(strcmp(rx->audio_name,AUDIO_SYSTEM_DEFAULT_NAME)==0) {
+        // "default" is ALSA's own default PCM: the raw card on a bare-ALSA
+        // machine, and the sound server's plugin where one is running.
+        snprintf(hw,sizeof(hw),"default");
+      } else {
+        i=0;
+        while(i<(int)sizeof(hw)-1 && rx->audio_name[i]!=' ' && rx->audio_name[i]!='\0') {
+          hw[i]=rx->audio_name[i];
+          i++;
+        }
+        hw[i]='\0';
       }
-      hw[i]='\0';
-      
+
     log_info("audio_open_output: hw=%s\n",hw);
 
       for(i=0;i<FORMATS;i++) {
@@ -986,12 +996,22 @@ int audio_open_input(RADIO *r) {
         return -1;
       }
         
-      while(r->microphone_name[i]!=' ') {
-        hw[i]=r->microphone_name[i];
-        i++;
+      // Same as the output side — and this loop was additionally unbounded on
+      // BOTH ends: it stopped only at a space, so a name without one (every
+      // dmix: entry, and AUDIO_SYSTEM_DEFAULT_NAME) ran off the end of the
+      // string and off the end of a 64-byte stack buffer.
+      if(strcmp(r->microphone_name,AUDIO_SYSTEM_DEFAULT_NAME)==0) {
+        snprintf(hw,sizeof(hw),"default");
+      } else {
+        i=0;
+        while(i<(int)sizeof(hw)-1 && r->microphone_name[i]!=' ' && r->microphone_name[i]!='\0') {
+          hw[i]=r->microphone_name[i];
+          i++;
+        }
+        hw[i]='\0';
       }
-      hw[i]='\0';      
-      
+
+
       log_info("audio_open_input: hw=%s\n",hw);
 
       for(i=0;i<FORMATS;i++) {
@@ -1348,7 +1368,14 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
             int waits = 0;
             int xruns = 0;
             int guard = 0;
-            while(frames > 0 && ++guard <= 32) {
+            // Budget: about as long as this block lasts (2048 frames = 43 ms).
+            // Waiting longer than the audio we are handing over would push the
+            // stall back onto the RX thread; waiting less throws the block away
+            // while the card was about to have room.
+            const gint64 deadline =
+              g_get_monotonic_time() +
+              (gint64)rx->local_audio_buffer_size*1000000/48000;
+            while(frames > 0 && ++guard <= 64) {
               rc = snd_pcm_writei(rx->playback_handle, p, frames);
               if(rc > 0) {
                 p += (size_t)rc*(size_t)frame_bytes;
@@ -1356,8 +1383,19 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
                 continue;
               }
               if(rc == -EAGAIN) {
-                if(++waits > 10) break;                       // give up, drop the rest
-                if(snd_pcm_wait(rx->playback_handle, 5) <= 0) break;
+                // A full device buffer on a stream that was never started stays
+                // full for ever.  snd_pcm_set_params leaves the start threshold
+                // to alsa-lib, so make it explicit rather than depend on it.
+                if(snd_pcm_state(rx->playback_handle)==SND_PCM_STATE_PREPARED)
+                  snd_pcm_start(rx->playback_handle);
+                if(g_get_monotonic_time() >= deadline) break;  // give up, drop the rest
+                waits++;
+                // The card frees space one PERIOD at a time (1024 frames =
+                // 21 ms here), so a timeout is the ordinary outcome and must
+                // not end the write: the previous 5 ms wait timed out on nearly
+                // every block and dropped it whole, losing 97 % of the audio
+                // with the device perfectly healthy.  Only an error ends it.
+                if(snd_pcm_wait(rx->playback_handle, 10) < 0) break;
                 continue;
               }
               if(rc < 0) {
@@ -1377,6 +1415,22 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
               // device and the tail of each block is being dropped.
               if(snd_pcm_delay(rx->playback_handle,&delay)==0)
                 pa_alsa_dbg_fill=(int)delay;
+              // A dropped block is worth a line of its own, rate-limited: the
+              // PCM state is what separates "the card is slower than the radio"
+              // (RUNNING) from "the stream never started" (PREPARED), and the
+              // aggregate counters cannot tell those apart.
+              if(frames>0) {
+                static gint64 last_drop_log=0;
+                gint64 now=g_get_monotonic_time();
+                if(now-last_drop_log>1000000) {
+                  last_drop_log=now;
+                  log_info("audio_write: ALSA dropped %lu of %d frames "
+                           "(state=%s delay=%ld waits=%d xruns=%d)\n",
+                           (unsigned long)frames,rx->local_audio_buffer_size,
+                           snd_pcm_state_name(snd_pcm_state(rx->playback_handle)),
+                           (long)delay,waits,xruns);
+                }
+              }
               audio_stats_frame(rx,pa_alsa_dbg_fill,(int)frames,xruns,waits);
             }
           }
@@ -2159,6 +2213,25 @@ log_info("audio: create_audio: USE_PULSEAUDIO\n");
         n_input_devices=0;
         n_output_devices=0;
 
+        // Synthetic "System Default" first, exactly as the SoundIo and Pulse
+        // lists do (audio_open_*/USE_ALSA maps it to the ALSA "default" PCM).
+        // Without it this backend was unusable: a receiver's audio_name starts
+        // life as AUDIO_SYSTEM_DEFAULT_NAME and survives a backend switch, so
+        // selecting ALSA tried to open a PCM literally called
+        // "__system_default__" and every open failed with "Unknown PCM" — the
+        // operator had to know to also re-pick a device by hand.  "default" is
+        // additionally the only entry that works on a desktop running
+        // PulseAudio/PipeWire, where the raw card is already claimed by the
+        // sound server and plughw: returns EBUSY.
+        output_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+        output_devices[0].description=g_strdup("System Default");
+        output_devices[0].index=-1;
+        n_output_devices=1;
+        input_devices[0].name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
+        input_devices[0].description=g_strdup("System Default");
+        input_devices[0].index=-1;
+        n_input_devices=1;
+
         snd_ctl_card_info_alloca(&info);
         snd_pcm_info_alloca(&pcminfo);
         while (snd_card_next(&card) >= 0 && card >= 0) {
@@ -2222,8 +2295,10 @@ log_info("output_device: %s\n",device_id);
         void **hints, **n;
         char *name, *descr, *io;
 
+        // No dmix hints is not a reason to abandon the scan: the cards found
+        // above (and "System Default") are already listed.
         if (snd_device_name_hint(-1, "pcm", &hints) < 0)
-          return;
+          break;
         n = hints;
         while (*n != NULL) {
           name = snd_device_name_get_hint(*n, "NAME");
