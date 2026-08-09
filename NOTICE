@@ -42,6 +42,14 @@ unaffected. hfdl_lib/hfdl_crc.c is dumphfdl's crc16_ccitt.
 The embedded HFDL ground-station table in src/decode/hfdl_msg.c is a snapshot of
 dumphfdl's etc/systable.conf.
 
+The APT georeferencing includes the NORAD SGP4/SDP4 orbit propagator under
+sgp4sdp4/, taken verbatim from gpredict's src/sgpsdp/ (Neoklis Kyriazis' C port
+of T.S. Kelso's implementation of Spacetrack Report No. 3, plus Alexandru
+Csete's modifications, GPL version 2 or later); see sgp4sdp4/1_COPYING and
+sgp4sdp4/README-MACHPSDR. Its map overlay draws assets/coastline.bin, built by
+tools/make_coastline.py from Natural Earth 1:50m coastline data, which is in the
+public domain (naturalearthdata.com requires no permission, fee or attribution).
+
 This program is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 PARTICULAR PURPOSE. See the GNU General Public License for more details.

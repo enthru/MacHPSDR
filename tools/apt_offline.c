@@ -25,6 +25,7 @@
 #include <math.h>
 #include "apt_decoder.h"
 #include "apt_geo.h"
+#include "apt_coast.h"
 
 #define WORDS      2080
 #define WORD_RATE  4160.0
@@ -161,10 +162,9 @@ static void geo_report(int lines) {
 // right while the image sits 200 km from where it says it does, because the
 // numbers are all derived from the same time base and the same TLE.
 //
-// The file is plain text — "lon lat" per line, blank line between polylines —
-// so the test does not drag a shapefile/GeoJSON reader into the tool.  Long
-// segments are subdivided, since a straight line in lat/lon is not a straight
-// line in scan geometry.
+// The map is the vendored assets/coastline.bin (apt_coast.c).  Long segments are
+// subdivided, since a straight line in lat/lon is not a straight line in scan
+// geometry.
 static void draw_px(GdkPixbuf *pb, int x, int y, guchar r, guchar g, guchar b) {
   if (x < 0 || y < 0 || x >= gdk_pixbuf_get_width(pb) || y >= gdk_pixbuf_get_height(pb)) return;
   guchar *p = gdk_pixbuf_get_pixels(pb) + y * gdk_pixbuf_get_rowstride(pb)
@@ -172,23 +172,21 @@ static void draw_px(GdkPixbuf *pb, int x, int y, guchar r, guchar g, guchar b) {
   p[0] = r; p[1] = g; p[2] = b;
 }
 
-static int coast_overlay(GdkPixbuf *pb, const char *path, int lines) {
-  FILE *f = fopen(path, "r");
-  if (!f) { perror(path); return 0; }
-  char ln[128];
-  double plat = 0, plon = 0;
-  int have_prev = 0, drawn = 0;
+static int coast_overlay(GdkPixbuf *pb, int lines) {
+  if (!apt_coast_load(NULL)) return 0;
+  int drawn = 0;
 
-  while (fgets(ln, sizeof ln, f)) {
-    double lon, lat;
-    if (sscanf(ln, "%lf %lf", &lon, &lat) != 2) { have_prev = 0; continue; }
-    if (have_prev) {
+  for (int i = 0; i < apt_coast_count(); i++) {
+    int n = 0;
+    const APT_COAST_PT *p = apt_coast_polyline(i, &n);
+    for (int k = 1; k < n; k++) {
+      double plat = p[k-1].lat, plon = p[k-1].lon, lat = p[k].lat, lon = p[k].lon;
       // ~25 km steps: fine enough that a coast stays a line at 4 km/pixel.
       double d = hypot(lat - plat, (lon - plon) * cos(lat * M_PI / 180.0));
-      int n = (int)(d * 111.0 / 25.0) + 1;
-      if (n > 200) n = 200;
-      for (int i = 1; i <= n; i++) {
-        double la = plat + (lat - plat) * i / n, lo = plon + (lon - plon) * i / n;
+      int m = (int)(d * 111.0 / 25.0) + 1;
+      if (m > 200) m = 200;
+      for (int j = 0; j <= m; j++) {
+        double la = plat + (lat - plat) * j / m, lo = plon + (lon - plon) * j / m;
         double r, w;
         if (!apt_geo_latlon_to_pixel(la, lo, 0, lines - 1, &r, &w)) continue;
         int x = (int)(w + 0.5), y = (int)(r + 0.5);
@@ -197,17 +195,15 @@ static int coast_overlay(GdkPixbuf *pb, const char *path, int lines) {
         drawn++;
       }
     }
-    plat = lat; plon = lon; have_prev = 1;
   }
-  fclose(f);
   return drawn;
 }
 
-static void save_png(const char *out, const char *coast, int lines) {
+static void save_png(const char *out, int coast, int lines) {
   GdkPixbuf *pb = apt_decoder_get_image();
   if (!pb) { printf("no image decoded\n"); return; }
   if (coast && apt_geo_ready())
-    printf("coastline: %d points drawn\n", coast_overlay(pb, coast, lines));
+    printf("coastline: %d points drawn\n", coast_overlay(pb, lines));
   GError *err = NULL;
   if (gdk_pixbuf_save(pb, out, "png", &err, NULL))
     printf("wrote %s (%d x %d)\n", out, gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
@@ -505,7 +501,7 @@ int main(int argc, char **argv) {
     fprintf(stderr,
       "usage: %s <file.wav> [-o out.png]\n"
       "       %s <file.wav> --iq <centre_hz> <cursor_hz> [-o out.png]\n"
-      "       %s <file.wav> ... --tle <file> [--utc <YYYY-MM-DDTHH:MM:SSZ>] [--trim <s>]\n"
+      "       %s <file.wav> ... --tle <file> [--utc <YYYY-MM-DDTHH:MM:SSZ>] [--trim <s>] [--coast]\n"
       "       %s --selftest\n", argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
@@ -518,7 +514,7 @@ int main(int argc, char **argv) {
   const char *utc_str = NULL;
   double geo_trim = 0.0;
   int sat_catnr = 0;
-  const char *coast_path = NULL;
+  int coast = 0;
   const char *rowtimes_path = NULL;
   int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
@@ -527,7 +523,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[i], "--utc") && i + 1 < argc) { utc_str = argv[++i]; continue; }
     if (!strcmp(argv[i], "--trim") && i + 1 < argc) { geo_trim = atof(argv[++i]); continue; }
     if (!strcmp(argv[i], "--sat")  && i + 1 < argc) { sat_catnr = atoi(argv[++i]); continue; }
-    if (!strcmp(argv[i], "--coast") && i + 1 < argc) { coast_path = argv[++i]; continue; }
+    if (!strcmp(argv[i], "--coast")) { coast = 1; continue; }
     // The row -> UTC map the decoder built, one stamp per line.  A projection
     // that is off is nearly always the time base rather than the geometry, and
     // this is the only way to look at it.
@@ -665,7 +661,7 @@ int main(int argc, char **argv) {
     geo_lines = n;
   }
 
-  save_png(out, coast_path, geo_lines);
+  save_png(out, coast, geo_lines);
   if (autosave_dir) {
     // Ending the decode ends the pass, which is one of the auto-save triggers.
     apt_decoder_set_enabled(FALSE);

@@ -476,10 +476,12 @@ gboolean apt_geo_latlon_to_pixel(double lat, double lon, double row_lo, double r
   // The offset falls monotonically with the row (the satellite runs 7.4 km/s
   // against the ground point's 0.46 km/s), so the point is inside the rows we
   // have exactly when it is still ahead at the first and already behind at the
-  // last.  The test is deliberately non-strict at both ends: a point taken FROM
-  // the first or last row gives exactly zero there, and a strict test rejected
-  // it — which is every pixel of the top and bottom rows of the image.
-  double lo = row_lo, hi = row_hi, flo, fhi;
+  // last.  The bracket is opened half a row at each end because a point taken
+  // FROM the first or last row lands exactly on the boundary, where rounding
+  // decides the answer — and that is every pixel of the top and bottom rows of
+  // the image.  A result may therefore come back half a row outside the range;
+  // the caller is drawing into a raster and clips it anyway.
+  double lo = row_lo - 0.5, hi = row_hi + 0.5, flo, fhi;
   if (!along_track(lo, lat, lon, &flo, NULL)) return FALSE;
   if (!along_track(hi, lat, lon, &fhi, NULL)) return FALSE;
   if (flo < 0.0 || fhi > 0.0) return FALSE;
