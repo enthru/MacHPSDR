@@ -405,7 +405,10 @@ this link, rather than the specification alone. Verified against real off-air
 data: all seven messages in acarsdec's own four-channel test recording decode
 with correct CRC — registrations, flight numbers and message text — through the
 audio path, and again after being AM-remodulated onto a carrier 30 kHz off
-centre at 192 kHz and at 2.4 MS/s. Not yet run against a live VHF antenna here.)*
+centre at 192 kHz and at 2.4 MS/s. A real message also decodes in the running
+application from a recording played through the I/Q Player. A live VHF antenna
+would additionally cover the receive path at 131 MHz and Scan band on real
+multi-channel traffic; that has not been done here.)*
 
 ---
 
