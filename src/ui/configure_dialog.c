@@ -48,6 +48,7 @@
 #include "eer_dialog.h"
 #include "oc_dialog.h"
 #include "xvtr_dialog.h"
+#include "qo100_dialog.h"
 #include "receiver_dialog.h"
 #include "about_dialog.h"
 #include "wideband_dialog.h"
@@ -271,7 +272,11 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(merge_pages(2,create_radio_audio_dialog(radio),
                          create_recording_dialog(radio)),"Audio");
   add_page(create_cw_dialog(radio),"CW");
-  add_page(merge_pages(2,titled(create_xvtr_dialog(radio),"Transverters"),
+  // QO-100 sits with the transverters because that is what it is about: the
+  // satellite needs two of them (LNB down, 2.4 GHz up) and its beacon lock trims
+  // one of their LO errors.
+  add_page(merge_pages(3,titled(create_xvtr_dialog(radio),"Transverters"),
+                         create_qo100_dialog(radio),
                          titled(create_oc_dialog(radio),"Open Collector")),"Bands");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {

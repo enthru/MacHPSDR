@@ -483,6 +483,8 @@ ext.o\
 configure_dialog.o\
 labels_dialog.o\
 ppm_cal.o\
+qo100.o\
+qo100_dialog.o\
 bookmark_dialog.o\
 puresignal_dialog.o\
 oc_dialog.o\
@@ -615,6 +617,14 @@ apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o i
 	  apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o $(SGP4_LIB) \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo) -lm
 
+qo100-offline: qo100_offline
+# The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
+# to be provable off air. Links qo100.o alone; the handful of application
+# functions it calls are stubbed inside the harness (see tools/qo100_offline.c).
+qo100_offline: tools/qo100_offline.c qo100.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	  -o $@ tools/qo100_offline.c qo100.o log.o $(GTKLIBS) -lm
+
 prebuild:
 	rm -f version.o
 
@@ -648,8 +658,8 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline
-	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM
+	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline
+	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM
 	-rm -rf $(APP_NAME).app
 
 APP_NAME=MacHPSDR

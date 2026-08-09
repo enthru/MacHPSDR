@@ -19,7 +19,7 @@ general terms; it is not a per-button reference.
 
 On start MacHPSDR shows a **device-selection dialog** listing every radio it
 found. Pick one to open it. The list always ends with an **"I/Q Player"** entry —
-a hardware-free player for a recorded I/Q file (see §13); select it to try the UI
+a hardware-free player for a recorded I/Q file (see §14); select it to try the UI
 or replay a capture without a radio. With `--faker` the dialog is skipped and the
 I/Q Player starts straight away.
 
@@ -120,7 +120,7 @@ own VFO, panadapter and waterfall.
 - **PPM correction & auto-calibration** — corrects the reference-oscillator
   error (fractional ppm; applied on Protocol 1, Protocol 2 and SoapySDR alike).
   It can be measured automatically from a time-signal station's carrier — see
-  §10 (Configure → Display).
+  §11 (Configure → Display).
 
 ---
 
@@ -555,7 +555,79 @@ may sit anywhere in the visible span.
 
 ---
 
-## 9. I/Q + audio recorder
+## 9. QO-100 (Es'hail-2)
+
+QO-100 carries the only geostationary amateur transponder, so it is always in the
+same place in the sky and never needs tracking. Its narrow-band transponder takes
+**2400.050–2400.300 MHz** up and returns **10489.550–10489.800 MHz** down. It does
+not invert, and the translation is a constant **8089.500 MHz**. The three beacons
+sit at 10489.550 (CW), 10489.675 (400 bd BPSK) and 10489.800 (CW) — the outer two
+mark the band edges.
+
+Everything on the **Configure → Bands → QO-100** page exists because of the two
+converters on either side of that transponder.
+
+### Two converters, two VFOs
+
+Receive arrives through a 10 GHz LNB (local oscillator typically 9750 MHz) and
+transmit leaves through a completely separate 2.4 GHz transverter. So define
+**two** entries under **Configure → Bands → Transverters**: one covering the
+downlink with the LNB's LO, one covering the uplink with the transverter's LO.
+VFO A then follows the receive entry and VFO B the transmit one — each VFO takes
+its converter from its own frequency, so nothing else has to be told about it.
+
+### Transponder mode
+
+Tune the receiver anywhere on the downlink and press **Set up transponder mode**.
+VFO B is put on the matching uplink and the two are linked with the SAT split, so
+from then on tuning the receiver moves the transmitter with it. If your own
+converters do not translate by exactly the standard amount, adjust
+**Transponder offset**.
+
+### Band plan on the spectrum
+
+**Show the transponder band plan on the panadapter** draws the published plan as
+tinted segments under the trace, with the beacons marked. The transponder is only
+250 kHz wide and CW, digital modes and SSB each have their own part of it, so this
+is the quickest way to see that you are about to call in the wrong section.
+
+### Beacon level reference
+
+The transponder is shared, and the rule is that your downlink must not be louder
+than the beacon. No absolute figure in dBm can tell you that — it depends on your
+dish, LNB and preamp — so **Show the beacon level as a reference line** measures
+the beacon on your own display and draws a line at its level. Keep your signal
+under it.
+
+### Automatic LNB drift correction
+
+An LNB's oscillator is a free-running device sitting outdoors. It is normally out
+by anywhere from a few to some tens of kilohertz, and it moves: a few kHz over the
+first half hour as the dish warms up, and again when the sun comes off it. Every
+frequency the radio shows you is wrong by that amount.
+
+Switch on **Correct the LNB's drift against a beacon** and the receiver finds the
+beacon in the spectrum, compares where it is with where it should be, and trims
+the difference out continuously. The correction is stored with the receive band,
+so the next session starts already close. Your dial is never retuned, and the
+uplink converter — a different box with a different error — is never touched.
+
+Only the two CW beacons can be used as the reference. The middle beacon is BPSK
+and has no carrier to measure. The status line shows the current error and how much
+correction is being applied; **Re-acquire** starts the search again if you have
+moved a long way.
+
+The beacon must be inside the displayed span, and not right on the centre
+frequency (where it cannot be told apart from the receiver's own DC spike) — the
+status line will say so.
+
+> The correction loop has been verified end to end against synthetic signals,
+> including that it does not lock onto noise, but it has not yet been used on the
+> real satellite.
+
+---
+
+## 10. I/Q + audio recorder
 
 The **Record** button (SETUP module) captures the active receiver to
 `~/.local/share/machpsdr/`:
@@ -570,7 +642,7 @@ Which streams are written and the output folder are set in
 
 ---
 
-## 10. Configuration
+## 11. Configuration
 
 The **Configure** dialog groups settings into pages: Radio, Receiver,
 Transmitter, MIDI, Bookmarks, Diversity, PA, EER, PureSignal, **FT8**,
@@ -620,7 +692,7 @@ have not been tested on the air (no transmit hardware).*
 
 ---
 
-## 11. MIDI and keyboard control
+## 12. MIDI and keyboard control
 
 Any global **action** (tune, mode, filter, AGC, MOX, zoom, …) can be bound to a
 keyboard shortcut or a MIDI control via **MIDI learn**. On macOS MIDI uses
@@ -628,14 +700,14 @@ CoreMIDI. Mappings are saved to `midi.props`.
 
 ---
 
-## 12. Bookmarks
+## 13. Bookmarks
 
 Frequencies of interest can be saved as **bookmarks** and recalled from the
 bookmark dialog; bookmarks can also appear as markers on the panadapter.
 
 ---
 
-## 13. Testing without hardware (I/Q Player)
+## 14. Testing without hardware (I/Q Player)
 
 The synthetic SDR is offered in the device list as **"I/Q Player"** (always last):
 select it and click **Start Radio**. It loops a 16-bit stereo I/Q WAV through the

@@ -72,6 +72,7 @@
 #include "level_meter.h"
 #include "css.h"
 #include "dxcluster.h"
+#include "qo100.h"
 #include "pana_view.h"
 
 #define LINE_WIDTH 1.0
@@ -678,6 +679,80 @@ static void receiver_draw_cluster_spots_nodes(GtkSnapshot *snapshot, GtkWidget *
   dxcluster_unlock();
 }
 
+// QO-100 narrow-band transponder overlay: the band plan as tinted bands with the
+// beacons marked, and the beacon's own level as a horizontal reference line.
+//
+// Panadapter ONLY, deliberately — unlike the DX-cluster spots (point markers that
+// read fine over either widget and so get a 0/1/2 "where to draw" setting), this
+// is a frequency-axis annotation of the TRACE: tinted bands over a waterfall
+// would wash out the very thing the waterfall is for, and the level line has no
+// meaning on an axis that is time, not dB.
+//
+// The whole plan is nine segments, so this emits a handful of nodes and needs no
+// culling machinery beyond the on-screen test.
+static void receiver_draw_qo100_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
+                                      RECEIVER *rx, int display_width, int display_height,
+                                      double dbm_per_line) {
+  if(rx->hz_per_pixel==0.0) return;
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a-half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+  long long max_display=min_display+(long long)((double)display_width*rx->hz_per_pixel);
+
+  // Nothing to say if the operator is not looking at the transponder at all.
+  if(max_display<QO100_NB_DOWN_LOW-100000LL || min_display>QO100_NB_DOWN_HIGH+100000LL) return;
+
+  if(radio->qo100_bandplan) {
+    const double band_h=8.0;                       // thickness of the plan strip
+    double top=(double)display_height-band_h-16.0; // just above the frequency ruler
+    if(top<0.0) top=0.0;
+
+    for(int i=0;i<qo100_segment_count();i++) {
+      const QO100_SEGMENT *sg=qo100_segment(i);
+      double xl=((double)sg->low -(double)min_display)/rx->hz_per_pixel;
+      double xr=((double)sg->high-(double)min_display)/rx->hz_per_pixel;
+
+      if(sg->beacon) {
+        // A beacon is one frequency, not a span: a full-height marker line so it
+        // is visible whatever the zoom, plus its name.
+        if(xl<0.0 || xl>(double)display_width) continue;
+        GdkRGBA bc=nrgba(sg->r,sg->g,sg->b,0.75);
+        lm_line(snapshot, xl, 0.0, xl, (double)display_height-16.0, 1.0, &bc);
+        continue;
+      }
+
+      if(xr<0.0 || xl>(double)display_width) continue;
+      if(xl<0.0) xl=0.0;
+      if(xr>(double)display_width) xr=(double)display_width;
+      if(xr-xl<1.0) continue;
+
+      GdkRGBA fill=nrgba(sg->r,sg->g,sg->b,0.30);
+      lm_fill(snapshot, xl, top, xr-xl, band_h, &fill);
+
+      // Only label a segment wide enough on screen to hold its name, otherwise
+      // the strip turns into overlapping fragments of words.
+      double tw=lm_measure(widget, 10.0, sg->label);
+      if(xr-xl > tw+6.0) {
+        GdkRGBA tc=nrgba(sg->r,sg->g,sg->b,0.95);
+        lm_text(snapshot, widget, (xl+xr)/2.0-tw/2.0, top-2.0, 10.0, &tc, sg->label, FALSE);
+      }
+    }
+  }
+
+  // Beacon level reference: the line an operator's own downlink must stay under.
+  if(radio->qo100_beacon_ref && rx->qo100_ref_dbm>-999.0) {
+    double y=floor(((double)rx->panadapter_high-rx->qo100_ref_dbm)*dbm_per_line);
+    if(y>=0.0 && y<(double)display_height) {
+      GdkRGBA rc=nrgba(1.0,0.35,0.30,0.85);
+      lm_line(snapshot, 0.0, y, (double)display_width, y, 1.0, &rc);
+      char lbl[48];
+      snprintf(lbl,sizeof(lbl),"beacon %.0f dBm",rx->qo100_ref_dbm);
+      double tw=lm_measure(widget, 10.0, lbl);
+      double ty=(y>12.0)?y-2.0:y+12.0;   // flip below the line when it is at the top
+      lm_text(snapshot, widget, (double)display_width-tw-4.0, ty, 10.0, &rc, lbl, FALSE);
+    }
+  }
+}
+
 static gboolean first_time=TRUE;
 
 // Phosphor / "digital phosphor" persistence heatmap. EMA occupancy per cell (the
@@ -922,6 +997,42 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
     // Phosphor / "digital phosphor" persistence heatmap (half-res, GPU-upscaled).
     phosphor_accumulate(rx, display_width, display_height, samples, offset, attenuation, dbm_per_line);
+
+    // QO-100 beacon level reference. The transponder's rule is "do not put more
+    // signal through it than the beacon", and the only honest way to check that
+    // is to compare the two on the same display — an absolute dBm number depends
+    // on the dish, the LNB and the preamp and means nothing. So take the beacon's
+    // own level straight off the trace and remember it; the builder then draws it
+    // as a line the operator's own downlink must stay under.
+    //
+    // Smoothed hard, because the CW beacons key on and off for their ident: a
+    // fast follower would drop the line into the noise floor between characters.
+    // Fast up (a stronger reading is the real beacon appearing) and slow down.
+    if(radio->qo100_beacon_ref && rx->hz_per_pixel!=0.0) {
+      long long half=(long long)rx->sample_rate/2LL;
+      long long min_display=(rx->frequency_a-half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+      double bx=((double)qo100_beacon_frequency(radio->qo100_beacon_sel)-(double)min_display)
+                /rx->hz_per_pixel;
+      int c=(int)lround(bx);
+      if(c>=0 && c<display_width) {
+        // A carrier lands in one bin but wanders a little; take the strongest of
+        // a small neighbourhood so a half-bin offset does not read as a fade.
+        double best=-1000.0;
+        for(int d=-2;d<=2;d++) {
+          int cc=c+d;
+          if(cc<0 || cc>=display_width) continue;
+          double s2=(double)samples[cc+offset]+attenuation+radio->panadapter_calibration;
+          if(s2>best) best=s2;
+        }
+        if(rx->qo100_ref_dbm<-999.0) rx->qo100_ref_dbm=best;      // seed
+        else if(best>rx->qo100_ref_dbm) rx->qo100_ref_dbm=best;   // attack: immediate
+        else {
+          double tau=3.0;                                          // seconds to decay
+          double k=1.0/(tau*(double)(rx->fps>0?rx->fps:15));
+          rx->qo100_ref_dbm += (best-rx->qo100_ref_dbm)*k;
+        }
+      }
+    }
   }
 
   gtk_widget_queue_draw (rx->panadapter);
@@ -1449,6 +1560,11 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
                     attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
                     dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20),
                     FALSE, 1.0, pk, FALSE);
+  }
+
+  // ---- QO-100 transponder band plan + beacon level reference ---------------
+  if(radio->qo100_bandplan || radio->qo100_beacon_ref) {
+    receiver_draw_qo100_nodes(snapshot, widget, rx, display_width, display_height, dbm_per_line);
   }
 
   // ---- DX cluster spot overlay (GSK nodes — no full-window append_cairo) ----

@@ -94,6 +94,7 @@
 #include "cwdaemon.h"
 #include "dxcluster.h"
 #include "tci.h"
+#include "qo100.h"
 
 #ifdef MIDI
 #include "midi.h"
@@ -400,6 +401,11 @@ void frequency_changed(RECEIVER *rx) {
     }
     subrx_frequency_changed(rx);
   }
+
+  // VFO B keeps its own band/LO/LO-error so a cross-band split (satellite work:
+  // receive through an LNB, transmit through a different converter) computes the
+  // right TX IF. See receiver_sync_vfo_b_lo().
+  receiver_sync_vfo_b_lo(rx);
 
   // TCI (Phase A): push the new VFO to connected clients. No-op unless the
   // server is running and rx is the active receiver (see tci.c).
@@ -1597,6 +1603,16 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_log_udp_port=atoi(value);
   value=getProperty("radio.ft8_pskr");
   if(value!=NULL) r->ft8_pskr=atoi(value);
+  value=getProperty("radio.qo100_offset");
+  if(value!=NULL) r->qo100_offset=atoll(value);
+  value=getProperty("radio.qo100_bandplan");
+  if(value!=NULL) r->qo100_bandplan=atoi(value);
+  value=getProperty("radio.qo100_beacon_lock");
+  if(value!=NULL) r->qo100_beacon_lock=atoi(value);
+  value=getProperty("radio.qo100_beacon_sel");
+  if(value!=NULL) r->qo100_beacon_sel=atoi(value);
+  value=getProperty("radio.qo100_beacon_ref");
+  if(value!=NULL) r->qo100_beacon_ref=atoi(value);
   value=getProperty("radio.cluster_enable");
   if(value!=NULL) r->cluster_enable=atoi(value);
   value=getProperty("radio.cluster_spots_show");
@@ -2867,6 +2883,14 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port
   r->ft8_pskr = FALSE;         // PSK Reporter spotting off until call/grid set
+
+  // QO-100: the standard transponder translation, everything else off until the
+  // operator asks for it (this is a satellite most users never work).
+  r->qo100_offset = QO100_TP_OFFSET;
+  r->qo100_bandplan = FALSE;
+  r->qo100_beacon_lock = FALSE;
+  r->qo100_beacon_sel = 0;       // lower CW beacon
+  r->qo100_beacon_ref = FALSE;
 
   r->cluster_enable = FALSE;
   r->cluster_spots_show = TRUE;

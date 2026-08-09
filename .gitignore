@@ -48,6 +48,8 @@ acars_offline
 acars_offline.dSYM/
 apt_offline
 apt_offline.dSYM/
+qo100_offline
+qo100_offline.dSYM/
 
 # apt_offline default output (a decoded pass, regenerated on demand)
 apt.png

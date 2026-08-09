@@ -27,6 +27,7 @@ feature additions.
   - [Modes & decoding](#modes--decoding)
   - [SoapySDR / HackRF](#soapysdr--hackrf)
   - [Reliability & performance](#reliability--performance)
+  - [Satellite (QO-100)](#satellite-qo-100)
   - [HPSDR hardware](#hpsdr-hardware)
   - [Audio (macOS)](#audio-macos)
   - [macOS packaging](#macos-packaging)
@@ -55,6 +56,7 @@ feature additions.
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **VHF ACARS** | Decode **aviation VHF ACARS** (ARINC 618) in AM — 2400 bps MSK on an AM carrier, the short-range half of the same message system HFDL carries. Registration, flight, label and message body, with **multi-block reassembly and every ARINC-622 application (ADS-C, CPDLC, MIAM, OHMA) shared with the HFDL decoder**; a channel drop-down of the published frequencies, **Scan band** for every channel in the passband at once, and a message log. Mistuning is irrelevant (AM detection cannot see a carrier offset). Built with the same `HFDL_INCLUDE` flag, since the message layer is the same code *(**verified against the reference decoder's own off-air recording**: all seven messages in acarsdec's four-channel test capture decode with correct CRC, through both the audio and the I/Q path, and a real message decodes in the running application from an I/Q recording)*. |
+| **QO-100 (Es'hail-2)** | Work the geostationary narrow-band transponder without fighting your own hardware: **VFO B now carries its own transverter LO**, so receive through a 10 GHz LNB and transmit through a 2.4 GHz transverter at the same time; one click puts VFO B on the matching uplink and links the two; the **transponder band plan** is drawn over the spectrum; the **beacon's own level** is drawn as the line your signal must stay under; and an **automatic beacon lock** measures the LNB's drift against a CW beacon and trims it out continuously, so the displayed frequency stays true as the dish warms up. Set it up in **Configure → Bands** *(the loop is verified end-to-end against synthetic signals — `make qo100-offline` — including that it does not chase noise; not yet used on the real satellite)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters, Ctrl+scroll to resize one; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver, with a list editor in Configure → RX-N (per-notch on/off, exact frequency and width, and an **AF** mode that rides the dial instead). |
@@ -724,6 +726,63 @@ you've dialled in.
   controls and a hardware-untested disclaimer. Like PureSignal it is Protocol 1
   only and has not yet been verified on hardware in this fork; it requires a radio
   with two receivers/ADCs.
+
+### Satellite (QO-100)
+
+QO-100 (Es'hail-2) carries the only geostationary amateur transponder, and
+working it is less about the satellite than about the two converters on either
+side of it. The narrow-band transponder takes 2400.050–2400.300 MHz up and
+returns 10489.550–10489.800 MHz down, non-inverting, with a constant translation
+of 8089.500 MHz. Everything below exists because of what that arrangement does to
+a normal SDR.
+
+- **VFO B has its own transverter LO.** Receive comes down through an LNB
+  (LO 9750 MHz) and transmit goes up through a completely different 2.4 GHz
+  transverter, so the two VFOs need *different* converters — which previously was
+  not possible: VFO B silently kept VFO A's LO and the radio was commanded to a
+  nonsense intermediate frequency. Each VFO now takes its band, LO and LO error
+  from its own frequency, so you simply define two entries under
+  **Configure → Bands → Transverters** — one covering the downlink, one the
+  uplink — and both VFOs land on the right converter by themselves. (This is a
+  general fix: any cross-band split now works, not only this satellite.)
+- **Transponder mode in one click.** **Configure → Bands → QO-100** has a
+  **Set up transponder mode** button that puts VFO B on the uplink matching your
+  current downlink and links the pair with the non-inverting SAT split, so tuning
+  the receiver drags the transmitter with it. The translation is a spin-button, so
+  it can be trimmed.
+- **Band plan over the spectrum.** The transponder is 250 kHz wide with a
+  published plan — CW at the bottom, digital modes in the middle, SSB in the upper
+  half, beacons at both edges and in the centre. Switch it on and it is drawn as
+  tinted segments under the trace with the beacons marked, so you can see that you
+  are about to call CQ in the CW section.
+- **Beacon level reference.** The transponder is shared and the rule is that your
+  downlink must not be stronger than the beacon. An absolute dBm figure cannot
+  tell you that — it depends on your dish, LNB and preamp — so the beacon's own
+  level is measured off the trace and drawn as a horizontal line. Keep your
+  signal under it.
+- **Automatic LNB drift correction.** An LNB's local oscillator is a
+  free-running device sitting outdoors: it is out by anywhere from a few to some
+  tens of kilohertz, and it *moves* — a few kHz over the first half hour as the
+  dish warms, and again when the sun comes off it. The transponder carries its own
+  reference for exactly this, since the two CW beacons mark the band edges and are
+  on frequency by definition. Enable **Correct the LNB's drift against a beacon**
+  and the receiver finds one in the spectrum, compares where it is with where it
+  should be, and continuously trims the difference into the receive band's LO
+  error — which is saved, so the next session starts already close. It never
+  retunes your dial and never touches the uplink converter, which is a different
+  box with a different error.
+
+  Only the two CW beacons are offered: the middle beacon is 400 bd BPSK and has
+  no carrier to measure.
+
+  *Verification:* the correction loop retunes the radio, so a sign error would not
+  be a slightly wrong number — it would walk the receiver off the band. It is
+  therefore proved off air by `make qo100-offline && ./qo100_offline`, which runs
+  the shipped code against synthetic signals: both directions of LNB error
+  converge to under a hertz, a 35 kHz cold-start error is acquired, it still
+  converges with noise on the beacon, and — the case that matters most — **pure
+  noise produces no lock and does not move the radio at all**. It has not yet been
+  used on the real satellite.
 
 ### HPSDR hardware
 

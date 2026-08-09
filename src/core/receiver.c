@@ -44,6 +44,7 @@
 #include "radio.h"
 #include "recorder.h"
 #include "ppm_cal.h"
+#include "qo100.h"
 #include "main.h"
 #include "vfo.h"
 #include "meter.h"
@@ -490,8 +491,34 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
   }
 }
 
+/* VFO B carries its own band, LO and LO error, exactly as VFO A does — the TX
+   frequency computation reads them (transmitter_get_frequency(), and protocol2's
+   own copy of the same sum).  Nothing used to maintain them: lo_b was seeded from
+   lo_a when the receiver was created and afterwards only the XVTR dialog ever
+   wrote it, and then only if VFO B happened to sit in the edited band at that
+   moment.  A cross-band split — the normal way to work a satellite transponder,
+   where receive goes through one converter (a QO-100 LNB, LO 9750 MHz) and
+   transmit through a completely different one (a 2.4 GHz transverter) — was
+   therefore impossible: VFO B kept VFO A's LO and the radio was commanded to a
+   nonsense IF.  Deriving them from frequency_b is what set_band() already does
+   for VFO A, so the two VFOs now behave the same way.
+
+   Called from both frequency_changed() (VFO A moves, and the SAT/RSAT modes that
+   drag B along) and update_frequency() (every receiver_move_b() branch ends in
+   one), which between them cover every path that can move VFO B. */
+void receiver_sync_vfo_b_lo(RECEIVER *rx) {
+  if(rx==NULL) return;
+  int b=get_band_from_frequency(rx->frequency_b);
+  BAND *band=band_get_band(b);
+  if(band==NULL) return;
+  rx->band_b=b;
+  rx->lo_b=band->frequencyLO;
+  rx->error_b=band->errorLO;
+}
+
 void update_frequency(RECEIVER *rx) {
   if(!rx->locked) {
+    receiver_sync_vfo_b_lo(rx);
     if(rx->vfo!=NULL) {
       update_vfo(rx);
     }
@@ -1915,6 +1942,9 @@ static void full_rx_buffer(RECEIVER *rx) {
   // Tap the genuine off-air I/Q before the noise blanker mutates it in place.
   recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
   ppm_cal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
+  // QO-100 beacon lock: measures the LNB's LO drift off the raw spectrum, so it
+  // wants the same untouched buffer. No-op unless the operator enabled it.
+  qo100_beacon_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   scope_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   // TCI (Phase B): stream this off-air I/Q block to any iq_start client. No-op
   // with no IQ subscribers (single atomic read).
@@ -2793,6 +2823,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->panadapter_phase_gain=100;
   rx->panadapter_phase_source=0;
   rx->scope_ref=0.0;
+  rx->qo100_ref_dbm=-1000.0;   // not yet seeded (see the QO-100 reference line)
   g_mutex_init(&rx->scope_mutex);
 
   rx->waterfall_automatic=TRUE;

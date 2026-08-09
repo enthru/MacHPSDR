@@ -288,6 +288,12 @@ typedef struct _receiver {
   gint     panadapter_peak_decay;  // dB/second the held peak falls (0 = infinite hold)
   gfloat  *panadapter_peaks;       // per-pixel held maxima, sized rx->pixels (mirrors pixel_samples)
 
+  // QO-100 beacon level reference: an EMA of the beacon's own strength off the
+  // panadapter trace, used to draw the "do not transmit above this" line.
+  // Runtime only (a level measured from the current band and antenna means
+  // nothing on the next session), -1000.0 = not yet seeded.
+  gdouble  qo100_ref_dbm;
+
   gboolean panadapter_histogram;        // persistence/density heatmap display mode
   gint     panadapter_histogram_decay;  // persistence fade rate (1=slow..100=fast), tunable
   gfloat  *panadapter_histogram_bins;   // density buffer, sized W*H (screen coords), row index = i*H + yrow
@@ -535,6 +541,7 @@ extern void receiver_fps_changed(RECEIVER *rx);
 extern void receiver_refit_vpaned(RECEIVER *rx);
 extern void receiver_change_zoom(RECEIVER *rx,int zoom);
 extern void update_frequency(RECEIVER *rx);
+extern void receiver_sync_vfo_b_lo(RECEIVER *rx);
 extern void receiver_move(RECEIVER *rx,long long hz,gboolean round);
 extern void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round);
 extern void receiver_move_to(RECEIVER *rx,long long hz);
