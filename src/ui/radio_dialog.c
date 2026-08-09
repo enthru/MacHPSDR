@@ -1328,7 +1328,11 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
 
   GtkWidget *audio_frame=gtk_frame_new("Audio");
   GtkWidget *audio_grid=gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),TRUE);
+  // NOT row-homogeneous: this grid gained a second row (the backend-fallback
+  // message), and equal-height rows then split the frame between them and
+  // stretched the two drop-downs into tall boxes.  Homogeneous rows are only
+  // ever right for a grid whose rows really are the same kind of thing.
+  gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),FALSE);
   gtk_grid_set_column_homogeneous(GTK_GRID(audio_grid),FALSE);
   sui_style_group(audio_grid);
   gtk_frame_set_child(GTK_FRAME(audio_frame),audio_grid);
@@ -1355,6 +1359,8 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   audio_backend_status=gtk_label_new("");
   gtk_label_set_xalign(GTK_LABEL(audio_backend_status),0.0);
   gtk_label_set_wrap(GTK_LABEL(audio_backend_status),TRUE);
+  gtk_label_set_max_width_chars(GTK_LABEL(audio_backend_status),48);
+  gtk_widget_set_valign(audio_backend_status,GTK_ALIGN_START);
   gtk_widget_set_visible(audio_backend_status,FALSE);
   gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_status,0,1,3,1);
   // After the handler is connected, so the selection sync inside can block it.
