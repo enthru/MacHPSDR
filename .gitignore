@@ -46,3 +46,6 @@ hfdl_offline
 hfdl_offline.dSYM/
 apt_offline
 apt_offline.dSYM/
+
+# apt_offline default output (a decoded pass, regenerated on demand)
+apt.png

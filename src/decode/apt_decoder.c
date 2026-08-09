@@ -175,6 +175,26 @@ static double  last_corr = 0.0;
 // audio thread, read on the GTK thread — a scalar, benign.
 static long long tuned_hz = 0;
 
+// ---- stream clock ---------------------------------------------------------
+// Georeferencing needs to know WHEN each image row was transmitted, and neither
+// the row number nor the wall clock at the moment a row is finished will do:
+// rows are only drawn while sync is locked, so a fade leaves rows that are
+// adjacent in the image seconds apart on the clock.  So the decoder carries a
+// clock of its own — one wall-clock reading when the stream starts, everything
+// after it from the sample count, which is exact for a file and is the audio
+// clock live.  Each row is stamped from the sample its sync sits on.
+//
+// The stamp is the time the line was RECEIVED here, which differs from the time
+// it was imaged on board by the audio-path latency, the scan-to-transmission
+// delay in the spacecraft and up to 3 ms of propagation.  All three are
+// constants over a pass and all three are what the operator's time trim in
+// apt_geo is for; none is worth modelling.
+static double  stream_utc0 = 0.0;            // UTC at in_secs == 0 (0 = unknown)
+static double  in_secs = 0.0;                // stream time fed so far (s)
+static double  ring_utc0 = 0.0;              // UTC of envelope-ring sample 0
+static gboolean ring_utc_ok = FALSE;
+static double  row_time[BUF_H];              // UTC of each image row (with lock_img)
+
 // sync-A correlation template (mean-removed, unit-ish scale)
 static float   tpl[SYNCA_LEN];
 static double  tpl_norm = 0.0;
@@ -225,6 +245,15 @@ static void tpl_init(void) {
 
 static void set_status(const char *s) { g_strlcpy(ui.status, s, sizeof(ui.status)); }
 
+// Called at the top of both feed entry points, before the buffer is processed.
+// Live, the first buffer to arrive fixes the origin from the wall clock; a
+// caller that knows better (the offline tool, which reads the capture time out
+// of the WAV) has already set it.
+static void stream_clock_begin(void) {
+  if (stream_utc0 <= 0.0) stream_utc0 = g_get_real_time() / 1.0e6 - in_secs;
+  if (!ring_utc_ok) { ring_utc0 = stream_utc0 + in_secs; ring_utc_ok = TRUE; }
+}
+
 static void do_reset(void) {
   memset(fe_dI, 0, sizeof(fe_dI)); memset(fe_dQ, 0, sizeof(fe_dQ));
   fe_pos = 0; fe_cnt = 0;
@@ -232,6 +261,7 @@ static void do_reset(void) {
   memset(vf_dI, 0, sizeof(vf_dI)); memset(vf_dQ, 0, sizeof(vf_dQ));
   vf_pos = 0; sc_r = 1.0; sc_i = 0.0; sc_n = 0;
   ring_w = 0;
+  ring_utc_ok = FALSE;               // the ring numbering restarts with it
   line_start = 0.0; clock_trim = 0.0; locked = FALSE; miss = 0; last_corr = 0.0;
   unlocked_lines = 0; cand_off = 0.0; cand_run = 0;
   black_lvl = white_lvl = 0.0; levels_seeded = FALSE;
@@ -247,7 +277,12 @@ void apt_decoder_set_enabled(gboolean on) {
   if (on == enabled) return;
   enabled = on;
   if (on && !tpl_ready) tpl_init();
-  if (on) reset_req = TRUE;
+  if (on) {
+    reset_req = TRUE;
+    // A new session re-stamps from scratch; a caller with a known capture time
+    // sets it after this call.
+    stream_utc0 = 0.0; in_secs = 0.0; ring_utc_ok = FALSE;
+  }
   else {
     // Switching the decoder off (or leaving FMN / the APT selection) ends the
     // pass just as surely as a retune does.
@@ -446,8 +481,14 @@ static void decode_line(double L, double line_len) {
   if (cur_row >= BUF_H) {                       // scroll the top third off
     memmove(img, img + SCROLL * WORDS, (size_t)(BUF_H - SCROLL) * WORDS);
     memset(img + (size_t)(BUF_H - SCROLL) * WORDS, 0, (size_t)SCROLL * WORDS);
+    // The stamps travel with the rows they belong to — this is the whole point
+    // of keeping them per row rather than deriving a time from the row number.
+    memmove(row_time, row_time + SCROLL, (size_t)(BUF_H - SCROLL) * sizeof(double));
     cur_row = BUF_H - SCROLL;
   }
+  // The line's own sync position is the time of the whole row: all 909 words of
+  // a channel are one AVHRR scan, not a 0.25 s sweep (see apt_geo.h).
+  row_time[cur_row] = ring_utc_ok ? ring_utc0 + L / work_rate : 0.0;
   guint8 *dst = &img[(size_t)cur_row * WORDS];
   for (int x = 0; x < WORDS; x++) {
     double v = (row[x] - black_lvl) / span * 255.0;
@@ -588,8 +629,10 @@ void apt_decoder_add_audio(const gdouble *samples, int nframes, int stride, doub
   if (!enabled || rate <= 0.0) return;
   if (!tpl_ready) tpl_init();
   if (reset_req) { reset_req = FALSE; do_reset(); }
+  stream_clock_begin();
   video_configure(rate);
   for (int i = 0; i < nframes; i++) video_sample(samples[(size_t)i * stride]);
+  in_secs += nframes / rate;
   run_lines();
 }
 
@@ -620,6 +663,7 @@ void apt_decoder_add_iq(const gdouble *iq, int nframes, double rate,
   if (!enabled || rate <= 0.0) return;
   if (!tpl_ready) tpl_init();
   if (reset_req) { reset_req = FALSE; do_reset(); }
+  stream_clock_begin();
 
   double off = (double)(cursor_hz - centre_hz);
   tuned_hz = cursor_hz;
@@ -683,6 +727,7 @@ void apt_decoder_add_iq(const gdouble *iq, int nframes, double rate,
     double f = atan2(num, den) * work_rate / (2.0 * M_PI);   // Hz
     video_sample(f);
   }
+  in_secs += nframes / rate;
   run_lines();
 }
 
@@ -692,6 +737,21 @@ void apt_decoder_get_status(apt_status_t *st) {
   *st = ui;
   g_mutex_unlock(&lock_img);
   st->tuned_hz = tuned_hz;   // audio-thread scalar; benign cross-thread read
+}
+
+void apt_decoder_set_stream_utc(double unix_utc) {
+  stream_utc0 = unix_utc;
+  in_secs = 0.0;
+  ring_utc_ok = FALSE;
+}
+
+int apt_decoder_get_row_times(double *out, int max) {
+  g_mutex_lock(&lock_img);
+  int n = filled;
+  if (n > max) n = max;
+  if (n > 0) memcpy(out, row_time, (size_t)n * sizeof(double));
+  g_mutex_unlock(&lock_img);
+  return n;
 }
 
 // Shared by both accessors: copy out `w` columns from `x0`, through the manual

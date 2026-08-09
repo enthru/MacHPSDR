@@ -115,9 +115,16 @@ SSTV_INCLUDE=SSTV
 
 ifeq ($(SSTV_INCLUDE),SSTV)
 SSTV_OPTIONS=-D SSTV
-SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c apt_decoder.c apt_panel.c
-SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h apt_decoder.h apt_panel.h
-SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o apt_decoder.o apt_panel.o image_save.o
+SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c apt_decoder.c apt_geo.c apt_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h apt_decoder.h apt_geo.h apt_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o apt_decoder.o apt_geo.o apt_panel.o image_save.o
+
+# APT georeferencing needs an orbit propagator: the vendored SGP4/SDP4 tree
+# builds into its own archive through its own Makefile (like wdsp/ and
+# hfdl_lib/asn1/) — upstream code that must not be rebuilt with our warning
+# flags nor carried in the flat OBJS list.  See sgp4sdp4/README-MACHPSDR.
+SGP4_INCLUDES=-Isgp4sdp4
+SGP4_LIB=sgp4sdp4/libsgp4sdp4.a
 endif
 
 # HFDL (aviation HF Data Link, ARINC 635) receive decoder — parity 4.5.
@@ -237,7 +244,7 @@ ifeq ($(UNAME_S), Linux)
 # (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
 # but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
 # require `sudo make install` of an upstream WDSP.
-LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(HFDL_LIBS)
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
 # so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
@@ -246,7 +253,7 @@ RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)'
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
@@ -263,7 +270,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -528,6 +535,16 @@ hfdl-asn1:
 	$(MAKE) -C hfdl_lib/asn1
 endif
 
+# The vendored SGP4/SDP4 propagator (sgp4sdp4/), used by the APT georeferencing.
+# Same shape again: its own Makefile, order-only prereq.
+.PHONY: sgp4-local
+ifeq ($(SSTV_INCLUDE),SSTV)
+$(PROGRAM): | sgp4-local
+apt_offline: | sgp4-local
+sgp4-local:
+	$(MAKE) -C sgp4sdp4
+endif
+
 .PHONY: wdsp-local
 $(PROGRAM): | wdsp-local
 
@@ -571,10 +588,10 @@ hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 apt-offline: apt_offline
 # Links only the decoder (no GTK, no WDSP, no audio): apt_decoder.c needs
 # gdk-pixbuf for the image it hands back, and nothing else.
-apt_offline: tools/apt_offline.c apt_decoder.o image_save.o log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) \
+apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o image_save.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(SGP4_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/apt_offline.c \
-	  apt_decoder.o image_save.o log.o \
+	  apt_decoder.o apt_geo.o image_save.o log.o $(SGP4_LIB) \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
 
 prebuild:
@@ -608,6 +625,7 @@ clean:
 	-rm -f hfdl_lib/*.o hfdl_lib/*.d \
 	       hfdl_lib/libfec/*.o hfdl_lib/libfec/*.d
 	-$(MAKE) -C hfdl_lib/asn1 clean
+	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline apt_offline
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM apt_offline.dSYM

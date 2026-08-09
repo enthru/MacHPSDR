@@ -1,0 +1,37 @@
+SGP4/SDP4 orbit propagator — VENDORED, DO NOT EDIT
+==================================================
+
+What
+----
+The NORAD SGP4/SDP4 propagator: two-line element sets in, satellite position and
+velocity out.  Used by src/decode/apt_geo.c to georeference APT weather-satellite
+images (which pixel saw which point on the ground).
+
+Where from
+----------
+Verbatim copies of the sgpsdp/ directory of gpredict
+(github.com/csete/gpredict, src/sgpsdp/), which is itself Neoklis Kyriazis'
+2001 C port of Dr T.S. Kelso's Pascal implementation of NORAD's Spacetrack
+Report No. 3.  Files: sgp4sdp4.c/h, sgp_in.c, sgp_math.c, sgp_obs.c, sgp_time.c,
+solar.c, plus upstream's own 1_COPYING and 2_README.
+
+To update, re-copy from upstream — never hand-edit.  Everything MacHPSDR needs
+on top of it lives in src/decode/apt_geo.c.
+
+Licence
+-------
+See 1_COPYING: the Spacetrack Report No. 3 material is stated there to be free
+of copyright and open to unlimited public distribution, and Kyriazis makes no
+copyright claim on the C port.  sgp_in.c additionally carries gpredict's
+GPL-2.0-or-later header (Csete's modifications), which is compatible with this
+project's GPL-2.0-or-later and with the GPL-3.0 the HFDL build effectively
+takes on.
+
+Verification
+------------
+Upstream ships test-001.c/.tle and test-002.c/.tle, which check SGP4 and SDP4
+against the reference vectors printed in Spacetrack Report No. 3.  This copy was
+checked against test-001 (near-Earth SGP4, the case APT uses): agreement to
+better than 6 mm at t=0 and 6 m at t=1440 min.  It was cross-checked a second
+time against an independent implementation (python-sgp4) on the NOAA-18 element
+set used for APT, sub-satellite point agreeing to 0.06°.

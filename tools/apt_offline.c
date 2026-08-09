@@ -24,12 +24,14 @@
 #include <string.h>
 #include <math.h>
 #include "apt_decoder.h"
+#include "apt_geo.h"
 
 #define WORDS      2080
 #define WORD_RATE  4160.0
 #define IMGA_OFF   86
 #define IMG_LEN    909
 #define IMGB_OFF   1126
+#define CHAN_STEP  1040
 
 // --- WAV reading -----------------------------------------------------------
 static int rd32(FILE *f, unsigned *v) { unsigned char b[4]; if (fread(b,1,4,f)!=4) return 0;
@@ -37,7 +39,26 @@ static int rd32(FILE *f, unsigned *v) { unsigned char b[4]; if (fread(b,1,4,f)!=
 static int rd16(FILE *f, unsigned *v) { unsigned char b[2]; if (fread(b,1,2,f)!=2) return 0;
   *v = b[0] | (b[1]<<8); return 1; }
 
-static short *wav_read(const char *path, unsigned *rate, unsigned *chans, long *nframes) {
+// SDR recorders (SDRuno, SpectraVue and the rest of the SpectraVue-derived
+// family) put the capture time and the centre frequency in an `auxi` chunk.
+// Reading it is what lets a recording be georeferenced without the operator
+// having to remember when it was made — and it is exact, where a memory is not.
+// Layout: two Win32 SYSTEMTIMEs (8 × uint16: year, month, day-of-week, day,
+// hour, minute, second, millisecond) then centre frequency and sample rate.
+typedef struct { double utc; long long centre_hz; } WAV_AUXI;
+
+static void auxi_parse(const unsigned char *b, unsigned len, WAV_AUXI *ax) {
+  if (len < 36) return;
+  unsigned short st[8];
+  for (int i = 0; i < 8; i++) st[i] = (unsigned short)(b[i*2] | (b[i*2+1] << 8));
+  if (st[0] < 1980 || st[0] > 2200 || st[1] < 1 || st[1] > 12) return;
+  GDateTime *dt = g_date_time_new_utc(st[0], st[1], st[3], st[4], st[5], st[6]);
+  if (dt) { ax->utc = (double)g_date_time_to_unix(dt) + st[7] / 1000.0; g_date_time_unref(dt); }
+  ax->centre_hz = (long long)(b[32] | (b[33]<<8) | (b[34]<<16) | ((unsigned)b[35]<<24));
+}
+
+static short *wav_read(const char *path, unsigned *rate, unsigned *chans, long *nframes,
+                       WAV_AUXI *ax) {
   FILE *f = fopen(path, "rb");
   if (!f) { perror(path); return NULL; }
   unsigned v; char id[5] = {0};
@@ -46,6 +67,7 @@ static short *wav_read(const char *path, unsigned *rate, unsigned *chans, long *
   if (fread(id,1,4,f)!=4) { fclose(f); return NULL; }
   unsigned bits = 0; long data_len = 0;
   *rate = 0; *chans = 0;
+  if (ax) { ax->utc = 0.0; ax->centre_hz = 0; }
   for (;;) {
     if (fread(id,1,4,f)!=4) { fprintf(stderr,"no data chunk\n"); fclose(f); return NULL; }
     unsigned len; if (!rd32(f,&len)) { fclose(f); return NULL; }
@@ -54,6 +76,11 @@ static short *wav_read(const char *path, unsigned *rate, unsigned *chans, long *
       rd16(f,&fmt); rd16(f,&ch); rd32(f,&sr); rd32(f,&br); rd16(f,&ba); rd16(f,&bps);
       *chans = ch; *rate = sr; bits = bps;
       if (len > 16) fseek(f, len-16, SEEK_CUR);
+    } else if (!memcmp(id,"auxi",4) && ax != NULL && len <= 4096) {
+      unsigned char *b = g_malloc0(len);
+      if (fread(b, 1, len, f) == len) auxi_parse(b, len, ax);
+      g_free(b);
+      if (len & 1) fseek(f, 1, SEEK_CUR);
     } else if (!memcmp(id,"data",4)) { data_len = len; break; }
     else fseek(f, len + (len&1), SEEK_CUR);
   }
@@ -66,9 +93,121 @@ static short *wav_read(const char *path, unsigned *rate, unsigned *chans, long *
   return buf;
 }
 
-static void save_png(const char *out) {
+// --- georeferencing report -------------------------------------------------
+// The projection cannot be checked by round-tripping our own maths — that only
+// proves it is self-consistent — so this prints the quantities that have known
+// values outside this program: the swath width (NOAA publishes ~2900 km), the
+// along-track step (0.5 s of a ~7.4 km/s orbit seen from the ground), the
+// sub-satellite track, and whether the pass runs north-to-south.  A geometry
+// error big enough to matter shows up in one of them.
+static double gc_km(double lat1, double lon1, double lat2, double lon2) {
+  const double R = 6371.0, D = M_PI / 180.0;
+  double p1 = lat1*D, p2 = lat2*D, dp = (lat2-lat1)*D, dl = (lon2-lon1)*D;
+  double a = sin(dp/2)*sin(dp/2) + cos(p1)*cos(p2)*sin(dl/2)*sin(dl/2);
+  return 2.0 * R * atan2(sqrt(a), sqrt(1.0-a));
+}
+
+static void geo_report(int lines) {
+  if (!apt_geo_ready()) { printf("geo: not ready (no TLE or no time base)\n"); return; }
+
+  printf("geo: satellite %s, TLE age %+.2f days\n",
+         apt_geo_satellite() ? apt_geo_satellite() : "?", apt_geo_tle_age_days());
+
+  const double LEFT = IMGA_OFF, RIGHT = IMGA_OFF + IMG_LEN - 1;
+  int rows[3] = { 0, lines / 2, lines - 1 };
+  double mid_lat[3] = {0}, mid_lon[3] = {0};
+
+  for (int i = 0; i < 3; i++) {
+    double r = rows[i];
+    double sl, so, alt, ll, lo, rl, ro;
+    if (!apt_geo_subpoint(r, &sl, &so, &alt)) { printf("  row %4d: no frame\n", rows[i]); continue; }
+    gboolean okl = apt_geo_pixel_to_latlon(r, LEFT,  &ll, &lo);
+    gboolean okr = apt_geo_pixel_to_latlon(r, RIGHT, &rl, &ro);
+    mid_lat[i] = sl; mid_lon[i] = so;
+    printf("  row %4d  sub %7.3f %8.3f  alt %6.1f km", rows[i], sl, so, alt);
+    if (okl && okr)
+      printf("   left %7.3f %8.3f  right %7.3f %8.3f  swath %6.1f km",
+             ll, lo, rl, ro, gc_km(ll, lo, rl, ro));
+    printf("\n");
+  }
+
+  if (lines > 2) {
+    double step = gc_km(mid_lat[0], mid_lon[0], mid_lat[2], mid_lon[2]) / (rows[2] - rows[0]);
+    printf("  along-track %.2f km/row (%.1f km/s ground speed), pass runs %s\n",
+           step, step / APT_LINE_SECONDS,
+           mid_lat[2] < mid_lat[0] ? "north to south (descending — north-up image)"
+                                   : "south to north (ascending — image is upside down)");
+  }
+
+  // Self-consistency of the two directions.  Not proof of the geometry, but it
+  // does catch a broken inverse, and a large error means the root-find is not
+  // converging where it is being asked to.
+  double worst = 0.0;
+  for (int i = 0; i < 3; i++) {
+    for (double w = LEFT; w <= RIGHT; w += (RIGHT - LEFT) / 8.0) {
+      double la, lo, rr, ww;
+      if (!apt_geo_pixel_to_latlon(rows[i], w, &la, &lo)) continue;
+      if (!apt_geo_latlon_to_pixel(la, lo, 0, lines - 1, &rr, &ww)) { worst = 1e9; continue; }
+      double e = fabs(rr - rows[i]) + fabs(ww - w);
+      if (e > worst) worst = e;
+    }
+  }
+  printf("  round-trip pixel -> lat/lon -> pixel: worst %.4g px\n", worst);
+}
+
+// --- coastline overlay -----------------------------------------------------
+// The only honest test of the projection: put a map on the picture and look at
+// whether the coast is where the coast is.  Every number in geo_report() can be
+// right while the image sits 200 km from where it says it does, because the
+// numbers are all derived from the same time base and the same TLE.
+//
+// The file is plain text — "lon lat" per line, blank line between polylines —
+// so the test does not drag a shapefile/GeoJSON reader into the tool.  Long
+// segments are subdivided, since a straight line in lat/lon is not a straight
+// line in scan geometry.
+static void draw_px(GdkPixbuf *pb, int x, int y, guchar r, guchar g, guchar b) {
+  if (x < 0 || y < 0 || x >= gdk_pixbuf_get_width(pb) || y >= gdk_pixbuf_get_height(pb)) return;
+  guchar *p = gdk_pixbuf_get_pixels(pb) + y * gdk_pixbuf_get_rowstride(pb)
+              + x * gdk_pixbuf_get_n_channels(pb);
+  p[0] = r; p[1] = g; p[2] = b;
+}
+
+static int coast_overlay(GdkPixbuf *pb, const char *path, int lines) {
+  FILE *f = fopen(path, "r");
+  if (!f) { perror(path); return 0; }
+  char ln[128];
+  double plat = 0, plon = 0;
+  int have_prev = 0, drawn = 0;
+
+  while (fgets(ln, sizeof ln, f)) {
+    double lon, lat;
+    if (sscanf(ln, "%lf %lf", &lon, &lat) != 2) { have_prev = 0; continue; }
+    if (have_prev) {
+      // ~25 km steps: fine enough that a coast stays a line at 4 km/pixel.
+      double d = hypot(lat - plat, (lon - plon) * cos(lat * M_PI / 180.0));
+      int n = (int)(d * 111.0 / 25.0) + 1;
+      if (n > 200) n = 200;
+      for (int i = 1; i <= n; i++) {
+        double la = plat + (lat - plat) * i / n, lo = plon + (lon - plon) * i / n;
+        double r, w;
+        if (!apt_geo_latlon_to_pixel(la, lo, 0, lines - 1, &r, &w)) continue;
+        int x = (int)(w + 0.5), y = (int)(r + 0.5);
+        draw_px(pb, x, y, 255, 60, 60);
+        draw_px(pb, x + CHAN_STEP, y, 255, 60, 60);   // the same ground in channel B
+        drawn++;
+      }
+    }
+    plat = lat; plon = lon; have_prev = 1;
+  }
+  fclose(f);
+  return drawn;
+}
+
+static void save_png(const char *out, const char *coast, int lines) {
   GdkPixbuf *pb = apt_decoder_get_image();
   if (!pb) { printf("no image decoded\n"); return; }
+  if (coast && apt_geo_ready())
+    printf("coastline: %d points drawn\n", coast_overlay(pb, coast, lines));
   GError *err = NULL;
   if (gdk_pixbuf_save(pb, out, "png", &err, NULL))
     printf("wrote %s (%d x %d)\n", out, gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
@@ -366,7 +505,8 @@ int main(int argc, char **argv) {
     fprintf(stderr,
       "usage: %s <file.wav> [-o out.png]\n"
       "       %s <file.wav> --iq <centre_hz> <cursor_hz> [-o out.png]\n"
-      "       %s --selftest\n", argv[0], argv[0], argv[0]);
+      "       %s <file.wav> ... --tle <file> [--utc <YYYY-MM-DDTHH:MM:SSZ>] [--trim <s>]\n"
+      "       %s --selftest\n", argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
   if (!strcmp(argv[1], "--selftest")) return selftest();
@@ -374,9 +514,24 @@ int main(int argc, char **argv) {
   const char *path = argv[1];
   const char *out = "apt.png";
   const char *autosave_dir = NULL;
+  const char *tle_path = NULL;
+  const char *utc_str = NULL;
+  double geo_trim = 0.0;
+  int sat_catnr = 0;
+  const char *coast_path = NULL;
+  const char *rowtimes_path = NULL;
   int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
   for (int i = 2; i < argc; i++) {
+    if (!strcmp(argv[i], "--tle") && i + 1 < argc) { tle_path = argv[++i]; continue; }
+    if (!strcmp(argv[i], "--utc") && i + 1 < argc) { utc_str = argv[++i]; continue; }
+    if (!strcmp(argv[i], "--trim") && i + 1 < argc) { geo_trim = atof(argv[++i]); continue; }
+    if (!strcmp(argv[i], "--sat")  && i + 1 < argc) { sat_catnr = atoi(argv[++i]); continue; }
+    if (!strcmp(argv[i], "--coast") && i + 1 < argc) { coast_path = argv[++i]; continue; }
+    // The row -> UTC map the decoder built, one stamp per line.  A projection
+    // that is off is nearly always the time base rather than the geometry, and
+    // this is the only way to look at it.
+    if (!strcmp(argv[i], "--rowtimes") && i + 1 < argc) { rowtimes_path = argv[++i]; continue; }
     if (!strcmp(argv[i], "--autosave") && i + 1 < argc) {
       // Exercise the end-of-pass auto-save the panel turns on: the decoder
       // writes the picture itself when the pass ends, on its own worker thread.
@@ -394,13 +549,59 @@ int main(int argc, char **argv) {
   }
 
   unsigned rate, chans; long nframes;
-  short *buf = wav_read(path, &rate, &chans, &nframes);
+  WAV_AUXI ax;
+  short *buf = wav_read(path, &rate, &chans, &nframes, &ax);
   if (!buf) return 1;
   printf("file: %u Hz, %u ch, %ld frames (%.1f s)\n", rate, chans, nframes, (double)nframes/rate);
 
+  // Capture time: the command line wins over the recorder's own stamp, which
+  // wins over nothing at all (in which case the decoder stamps from the wall
+  // clock and the projection is meaningless — hence the warning).
+  double utc0 = 0.0;
+  if (utc_str) {
+    GDateTime *dt = g_date_time_new_from_iso8601(utc_str, NULL);
+    if (!dt) { fprintf(stderr, "cannot parse --utc %s\n", utc_str); return 2; }
+    utc0 = (double)g_date_time_to_unix(dt);
+    g_date_time_unref(dt);
+  } else if (ax.utc > 0.0) {
+    utc0 = ax.utc;
+  }
+  if (utc0 > 0.0) {
+    GDateTime *dt = g_date_time_new_from_unix_utc((gint64)utc0);
+    char *s = g_date_time_format(dt, "%Y-%m-%d %H:%M:%S");
+    printf("capture start: %s UTC%s%s\n", s, utc_str ? " (--utc)" : " (auxi chunk",
+           utc_str ? "" : ")");
+    g_free(s); g_date_time_unref(dt);
+    if (!utc_str && ax.centre_hz) printf("auxi centre: %lld Hz\n", ax.centre_hz);
+  }
+
   apt_decoder_set_enabled(TRUE);
   apt_decoder_set_channel(0);
+  if (utc0 > 0.0) apt_decoder_set_stream_utc(utc0);
   if (autosave_dir) apt_decoder_set_autosave(TRUE, autosave_dir);
+
+  if (tle_path) {
+    char *err = NULL;
+    if (!apt_geo_load_tle(tle_path, &err)) {
+      fprintf(stderr, "TLE: %s\n", err ? err : "failed");
+      g_free(err);
+      return 1;
+    }
+    // Same rule as the app: the bird is chosen by where the decoder is
+    // listening, not by a name typed twice.  A demodulated-audio file carries
+    // no frequency, so there --sat is the only way to say which satellite it is.
+    if (sat_catnr) {
+      if (!apt_geo_select_catnr(sat_catnr))
+        fprintf(stderr, "TLE: no element set for catalogue number %d\n", sat_catnr);
+    } else if (iq_mode) {
+      if (!apt_geo_select_freq(cursor))
+        fprintf(stderr, "TLE: no APT satellite near %lld Hz — use --sat <catnr>\n", cursor);
+    } else {
+      fprintf(stderr, "TLE: an audio file says nothing about which satellite it is"
+                      " — use --sat <catnr>\n");
+    }
+    apt_geo_set_time_offset(geo_trim);
+  }
 
   // Progress trace: print the servo's state every 30 s of recording.  This is
   // how the clock/Doppler behaviour over a pass is read — the line clock arrives
@@ -446,7 +647,25 @@ int main(int argc, char **argv) {
   g_free(d); g_free(buf);
 
   report();
-  save_png(out);
+
+  int geo_lines = 0;
+  if (tle_path) {
+    // The decoder's own per-row stamps, not row × 0.5 s: this is the map that
+    // survives the fades in the middle of a real pass.
+    static double rt[4096];
+    int n = apt_decoder_get_row_times(rt, (int)G_N_ELEMENTS(rt));
+    if (rowtimes_path) {
+      FILE *rf = fopen(rowtimes_path, "w");
+      if (rf) { for (int i = 0; i < n; i++) fprintf(rf, "%d %.6f\n", i, rt[i]); fclose(rf);
+                printf("wrote %s (%d rows)\n", rowtimes_path, n); }
+    }
+    if (n >= 2) apt_geo_set_row_times(rt, n);
+    else if (utc0 > 0.0) apt_geo_set_time_base(utc0);
+    geo_report(n);
+    geo_lines = n;
+  }
+
+  save_png(out, coast_path, geo_lines);
   if (autosave_dir) {
     // Ending the decode ends the pass, which is one of the auto-save triggers.
     apt_decoder_set_enabled(FALSE);

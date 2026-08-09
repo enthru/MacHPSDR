@@ -123,6 +123,20 @@ typedef struct {
 
 void apt_decoder_get_status(apt_status_t *st);
 
+// ---- when each row was received (georeferencing; see apt_geo.h) ------------
+
+// UTC (unix seconds) of the first sample of the stream about to be fed.  Live
+// this is not called at all — the decoder stamps the first buffer from the wall
+// clock — but a file has its capture time in it, and using that is what lets a
+// recording be georeferenced as exactly as a live pass.
+void apt_decoder_set_stream_utc(double unix_utc);
+
+// UTC of each image row, row 0 first, into a caller buffer of `max` doubles;
+// returns how many were written (the number of valid rows).  A row is stamped
+// from the sample its sync sits on, so the table survives both a fade — which
+// leaves neighbouring rows seconds apart — and the image buffer scrolling.
+int apt_decoder_get_row_times(double *out, int max);
+
 // Half-bandwidth of the front-end in Hz — what the decoder actually accepts
 // around its tuned frequency, which is the ±22 kHz design figure except on a
 // receiver too narrow to allow it, where it is whatever the rate permits.
