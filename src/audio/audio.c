@@ -257,6 +257,67 @@ static void audio_sink_warn(int channel,long produced,long dropped,double second
   g_idle_add(audio_sink_warning_idle,w);
 }
 
+// ---------------------------------------------------------------------------
+// "The audio backend you asked for is not available" dialog.
+//
+// A backend compiled into libsoundio is not the same as a backend that works:
+// JACK needs a running JACK server, and without one the connect fails and
+// create_audio() quietly falls back.  The label in Configure → Audio is only
+// read by somebody who goes there, so a request that cannot be honoured at
+// start-up — the usual case, since the choice is persisted — passed entirely
+// unannounced.  Say it once, where it cannot be missed.
+// ---------------------------------------------------------------------------
+static int audio_backend_warned_for=-2;       // request the last warning was about
+
+static gboolean audio_backend_warning_idle(gpointer data) {
+  char **names=(char **)data;                 // [0]=requested, [1]=in use
+  if(main_window!=NULL) {
+    char title[128];
+    char detail[512];
+    g_snprintf(title,sizeof title,"%s audio is not available",names[0]);
+    g_snprintf(detail,sizeof detail,
+      "The %s backend could not be started, so MacHPSDR is using %s instead.\n\n"
+      "%s is built into this application but needs its own server to be running "
+      "on the machine; nothing else about it is wrong.\n\n"
+      "Your choice is kept and will be tried again the next time audio starts, "
+      "so starting the server is all that is needed — there is no setting to "
+      "change here.",
+      names[0],names[1],names[0]);
+
+    GtkAlertDialog *dialog=gtk_alert_dialog_new("%s",title);
+    gtk_alert_dialog_set_detail(dialog,detail);
+    const char *buttons[]={ "OK", NULL };
+    gtk_alert_dialog_set_buttons(dialog,buttons);
+    gtk_alert_dialog_set_default_button(dialog,0);
+    gtk_alert_dialog_show(dialog,GTK_WINDOW(main_window));
+    g_object_unref(dialog);
+  }
+  g_free(names[0]);
+  g_free(names[1]);
+  g_free(names);
+  return G_SOURCE_REMOVE;
+}
+
+// Called from create_audio() once the backend has been resolved.  Warns only
+// when the request changes, so re-entering Configure → Audio (which rebuilds
+// the audio) cannot pop the same dialog again and again.
+static void audio_backend_check(int requested,int actual) {
+  if(actual<0 || requested<0 || !audio_backend_is_usable(requested)) return;
+  if(actual==requested) {                     // honoured — re-arm
+    audio_backend_warned_for=-2;
+    return;
+  }
+  if(audio_backend_warned_for==requested) return;
+  audio_backend_warned_for=requested;
+
+  log_error("audio: %s was requested but is unavailable; using %s\n",
+            audio_get_backend_name(requested),audio_get_backend_name(actual));
+  char **names=g_new0(char *,2);
+  names[0]=g_strdup(audio_get_backend_name(requested));
+  names[1]=g_strdup(audio_get_backend_name(actual));
+  g_idle_add(audio_backend_warning_idle,names);
+}
+
 // Called once per produced frame.  fill_frames is what is currently queued in
 // the sink, or -1 when the caller cannot cheaply tell (measuring it is only
 // worth doing on a block boundary).
@@ -2313,13 +2374,7 @@ void create_audio(int backend_index,const char *backend) {
       // be down, and the next run never tries it again.  The request and the
       // reality are two different things; audio_get_current_backend() reports
       // the second, and Configure → Audio shows both.
-      {
-        int cur=audio_get_current_backend();
-        if(cur>=0 && cur!=radio->which_audio_backend)
-          log_info("audio: %s was requested but %s is what connected\n",
-                   audio_get_backend_name(radio->which_audio_backend),
-                   soundio_backend_name(soundio->current_backend));
-      }
+      audio_backend_check(radio->which_audio_backend,audio_get_current_backend());
 
       soundio_build_device_lists();
       // Follow the system default output live when the user switches the macOS
