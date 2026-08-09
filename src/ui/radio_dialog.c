@@ -410,6 +410,7 @@ static void boost_cb(GtkWidget *widget, gpointer data) {
 static int backend_rows[MAX_AUDIO_BACKENDS];   // menu row -> soundio index
 static int n_backend_rows=0;
 static gulong audio_backend_signal_id=0;
+static GtkWidget *audio_backend_status=NULL;
 
 static int backend_row_of(int soundio_index) {
   for(int i=0;i<n_backend_rows;i++) if(backend_rows[i]==soundio_index) return i;
@@ -418,7 +419,17 @@ static int backend_row_of(int soundio_index) {
 
 // Point the menu at the backend that is really connected, without re-entering
 // the change handler (which would tear the audio down and build it again).
-static void sync_audio_backend_selection(RADIO *radio) {
+//
+// `asked` is the backend the operator picked, or -1 at build time.  When it is
+// not the one that connected, say so: JACK is listed because it is compiled
+// into libsoundio, but it only works with a server running, so on an ordinary
+// desktop selecting it snaps straight back to PulseAudio.  Unexplained, that
+// reads as a broken menu — "jack есть но не выбирается" — when it is in fact
+// the machine's answer.  Unlike Dummy this entry cannot simply be removed: it
+// is the right choice on a box that does run JACK, and the only way to find out
+// is to try, since probing means connecting and connecting means becoming a
+// JACK client.
+static void sync_audio_backend_selection(RADIO *radio,int asked) {
   int row=backend_row_of(radio->which_audio_backend);
   if(row<0 || audio_backend_combo_box==NULL) return;
   if(audio_backend_signal_id!=0)
@@ -426,6 +437,21 @@ static void sync_audio_backend_selection(RADIO *radio) {
   gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_backend_combo_box),row);
   if(audio_backend_signal_id!=0)
     g_signal_handler_unblock(audio_backend_combo_box,audio_backend_signal_id);
+
+  if(audio_backend_status!=NULL) {
+    if(asked>=0 && asked!=radio->which_audio_backend) {
+      char *msg=g_strdup_printf("%s is not available on this machine "
+                                "(no server running?) — using %s.",
+                                audio_get_backend_name(asked),
+                                audio_get_backend_name(radio->which_audio_backend));
+      gtk_label_set_text(GTK_LABEL(audio_backend_status),msg);
+      gtk_widget_set_visible(audio_backend_status,TRUE);
+      g_free(msg);
+    } else {
+      gtk_label_set_text(GTK_LABEL(audio_backend_status),"");
+      gtk_widget_set_visible(audio_backend_status,FALSE);
+    }
+  }
 }
 
 static void update_audio_backends(RADIO *radio) {
@@ -440,13 +466,14 @@ static void update_audio_backends(RADIO *radio) {
       backend_rows[n_backend_rows++]=i;
     }
   }
-  if(radio->which_audio_backend>=0) {
-    radio_change_audio_backend(radio,radio->which_audio_backend);
+  int asked=radio->which_audio_backend;
+  if(asked>=0) {
+    radio_change_audio_backend(radio,asked);
   }
   // create_audio() may have connected something other than what was asked for
   // (a backend can be built into libsoundio and still fail — JACK with no
   // server is the everyday case), and it writes back what it got.
-  sync_audio_backend_selection(radio);
+  sync_audio_backend_selection(radio,asked);
 }
 
 static void audio_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
@@ -463,7 +490,7 @@ static void audio_backend_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data)
   if(row<0 || row>=n_backend_rows) return;
 log_info("radio_dialog: audio_backend_cb: row=%d backend=%d\n",row,backend_rows[row]);
   radio_change_audio_backend(radio,backend_rows[row]);
-  sync_audio_backend_selection(radio);   // show what actually connected
+  sync_audio_backend_selection(radio,backend_rows[row]);  // show what connected
 }
 
 static void smeter_calibrate_changed_cb(GtkWidget *widget, gpointer data) {
@@ -1324,6 +1351,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_combo_box,2,0,1,1);
   audio_backend_signal_id=
     g_signal_connect(audio_backend_combo_box,"notify::selected",G_CALLBACK(audio_backend_cb),radio);
+
+  audio_backend_status=gtk_label_new("");
+  gtk_label_set_xalign(GTK_LABEL(audio_backend_status),0.0);
+  gtk_label_set_wrap(GTK_LABEL(audio_backend_status),TRUE);
+  gtk_widget_set_visible(audio_backend_status,FALSE);
+  gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_status,0,1,3,1);
   // After the handler is connected, so the selection sync inside can block it.
   // The row is NOT which_audio_backend any more — Dummy is filtered out of the
   // menu, so the two only coincide by accident.
