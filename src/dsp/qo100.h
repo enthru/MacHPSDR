@@ -36,17 +36,26 @@
  * Everything here is downlink frequencies unless the name says uplink.
  */
 
-/* Transponder edges and the three beacons (AMSAT-DL). The lower and upper
-   beacons ARE the transponder edges; the middle beacon sits in the centre and is
-   the reference the "keep your signal below the beacon" rule refers to. */
-#define QO100_NB_DOWN_LOW    10489550000LL   /* = lower beacon, CW */
-#define QO100_NB_DOWN_HIGH   10489800000LL   /* = upper beacon, CW */
-#define QO100_BEACON_LOWER   10489550000LL   /* CW */
-#define QO100_BEACON_MIDDLE  10489675000LL   /* 400 bd BPSK */
-#define QO100_BEACON_UPPER   10489800000LL   /* CW */
+/* Transponder edges and the three beacons, from AMSAT-DL's own band plan
+   (rev5, 14 Feb 2020, plus the later broadcast/emergency/multimedia additions).
+   The lower and upper beacons ARE the transponder edges; the middle beacon sits
+   in the centre.
 
-/* Uplink 2400.050…2400.300 MHz against downlink 10489.550…10489.800 MHz, so the
-   transponder is non-inverting with a constant translation of exactly this. */
+   NOTE the 2020 change: the narrow-band transponder was originally 250 kHz
+   (2400.050…2400.300 up / 10489.550…10489.800 down) and was EXTENDED to 500 kHz
+   on 14 Feb 2020. The older figures are still quoted in plenty of places —
+   AMSAT-UK's own satellite page still had them when this was checked on
+   2026-08-09 — so a reference that disagrees with these numbers is probably
+   just describing the pre-2020 transponder. */
+#define QO100_NB_DOWN_LOW    10489500000LL   /* = lower beacon */
+#define QO100_NB_DOWN_HIGH   10490000000LL   /* = upper beacon */
+#define QO100_BEACON_LOWER   10489500000LL   /* CW, F1A 400 Hz shift */
+#define QO100_BEACON_MIDDLE  10489750000LL   /* 400 bd BPSK */
+#define QO100_BEACON_UPPER   10490000000LL   /* CW and other modulations */
+
+/* Uplink 2400.000…2400.500 MHz against downlink 10489.500…10490.000 MHz, so the
+   transponder is non-inverting with a constant translation of exactly this — and
+   the extension did NOT change it, both edges still differ by this figure. */
 #define QO100_TP_OFFSET       8089500000LL   /* downlink - uplink */
 
 /* ---------------- band plan ---------------- */

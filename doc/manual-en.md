@@ -559,9 +559,9 @@ may sit anywhere in the visible span.
 
 QO-100 carries the only geostationary amateur transponder, so it is always in the
 same place in the sky and never needs tracking. Its narrow-band transponder takes
-**2400.050–2400.300 MHz** up and returns **10489.550–10489.800 MHz** down. It does
+**2400.000–2400.500 MHz** up and returns **10489.500–10490.000 MHz** down. It does
 not invert, and the translation is a constant **8089.500 MHz**. The three beacons
-sit at 10489.550 (CW), 10489.675 (400 bd BPSK) and 10489.800 (CW) — the outer two
+sit at 10489.500 (CW), 10489.750 (400 bd BPSK) and 10490.000 (CW) — the outer two
 mark the band edges.
 
 Everything on the **Configure → Bands → QO-100** page exists because of the two

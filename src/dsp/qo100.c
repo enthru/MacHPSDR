@@ -39,26 +39,34 @@ extern RADIO *radio;   // global application state
 // Band plan
 // ---------------------------------------------------------------------------
 //
-// AMSAT-DL's narrow-band transponder plan.  The three beacons and the two
-// transponder edges are exact and are what everything else here is anchored to;
-// the boundaries BETWEEN the mode segments are the published guidance and get
-// revised from time to time, so they live in this one table and nowhere else —
-// if the plan changes, edit here.
+// AMSAT-DL's narrow-band transponder plan, transcribed from their own published
+// band plan (rev5 of 14 Feb 2020) together with the broadcast, emergency and
+// multimedia-beacon slots added to the top segment afterwards.  Checked against
+// the source on 2026-08-09; the two renderings that carry it (the PDF and the
+// AMSAT-DL page) agree on everything they share.
+//
+// This is one table and the plan lives nowhere else — if AMSAT-DL revises it,
+// edit here.  What is worth knowing before doing so: the plan HAS been revised,
+// substantially.  The transponder was 250 kHz wide at launch and was extended to
+// 500 kHz in Feb 2020, and older figures are still in wide circulation.
 //
 // Segments are drawn as tinted bands under the trace and beacons as single
 // vertical markers, so the operator can see at a glance that they are calling CQ
 // in the CW section.
 
 static const QO100_SEGMENT segments[] = {
-  { QO100_BEACON_LOWER,  QO100_BEACON_LOWER,  "Beacon",  1.00, 0.85, 0.20, TRUE  },
-  { 10489555000LL, 10489580000LL, "CW",        0.30, 0.75, 1.00, FALSE },
-  { 10489580000LL, 10489650000LL, "NB digi",   0.55, 0.45, 1.00, FALSE },
-  { 10489650000LL, 10489675000LL, "Mixed",     0.60, 0.60, 0.60, FALSE },
-  { QO100_BEACON_MIDDLE, QO100_BEACON_MIDDLE, "Beacon",  1.00, 0.85, 0.20, TRUE  },
-  { 10489675000LL, 10489745000LL, "SSB",       0.30, 1.00, 0.50, FALSE },
-  { 10489745000LL, 10489770000LL, "Digi",      0.55, 0.45, 1.00, FALSE },
-  { 10489770000LL, 10489795000LL, "Mixed",     0.60, 0.60, 0.60, FALSE },
-  { QO100_BEACON_UPPER,  QO100_BEACON_UPPER,  "Beacon",  1.00, 0.85, 0.20, TRUE  },
+  { QO100_BEACON_LOWER,  QO100_BEACON_LOWER,  "Beacon",   1.00, 0.85, 0.20, TRUE  },
+  { 10489505000LL, 10489540000LL, "CW",        0.30, 0.75, 1.00, FALSE },
+  { 10489540000LL, 10489580000LL, "Digi 500",  0.55, 0.45, 1.00, FALSE },
+  { 10489580000LL, 10489650000LL, "Digi 2k7",  0.55, 0.45, 1.00, FALSE },
+  { 10489650000LL, 10489745000LL, "SSB",       0.30, 1.00, 0.50, FALSE },
+  { QO100_BEACON_MIDDLE, QO100_BEACON_MIDDLE, "Beacon",   1.00, 0.85, 0.20, TRUE  },
+  { 10489755000LL, 10489850000LL, "SSB",       0.30, 1.00, 0.50, FALSE },
+  { 10489850000LL, 10489858000LL, "News",      0.40, 0.80, 0.90, FALSE },
+  { 10489858000LL, 10489865000LL, "Emerg",     1.00, 0.45, 0.35, FALSE },
+  { 10489865000LL, 10489990000LL, "Mixed",     0.60, 0.60, 0.60, FALSE },
+  { 10489990000LL, 10489997000LL, "MM bcn",    1.00, 0.85, 0.20, FALSE },
+  { QO100_BEACON_UPPER,  QO100_BEACON_UPPER,  "Beacon",   1.00, 0.85, 0.20, TRUE  },
 };
 
 int qo100_segment_count(void) {
@@ -79,6 +87,15 @@ long long qo100_beacon_frequency(int sel) {
   // which is a SUPPRESSED-carrier signal — there is no spectral line for a
   // carrier tracker to lock to, and peak-picking its sidebands would measure the
   // modulation rather than the LNB.  It is still drawn in the band plan above.
+  //
+  // CAVEAT, not yet characterised against the real satellite: the lower beacon
+  // is F1A — frequency-shift keyed, 400 Hz shift — so while it sends its ident
+  // the line moves between two frequencies 400 Hz apart, and the published
+  // figure does not say which of them it names.  The loop degrades safely
+  // (acquisition needs three frames agreeing within LOCK_TOL 200 Hz, so a shift
+  // simply stops the update rather than dragging it), but whether the settled
+  // reading lands on the nominal frequency or 400 Hz off it is unknown until
+  // this is used on air.
   return (sel==1) ? QO100_BEACON_UPPER : QO100_BEACON_LOWER;
 }
 

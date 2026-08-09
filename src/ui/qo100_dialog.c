@@ -80,7 +80,7 @@ static void setup_cb(GtkWidget *w, gpointer data) {
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),buf);
   } else {
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),
-                       "Tune the receiver to the downlink (10489.550\342\200\23310489.800 MHz) first");
+                       "Tune the receiver to the downlink (10489.500\342\200\22310490.000 MHz) first");
   }
 }
 
@@ -132,8 +132,8 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   int row=0;
 
   GtkWidget *info=gtk_label_new(
-    "The geostationary narrow-band transponder: uplink 2400.050\342\200\2232400.300 MHz,\n"
-    "downlink 10489.550\342\200\21310489.800 MHz, non-inverting.\n"
+    "The geostationary narrow-band transponder: uplink 2400.000\342\200\2232400.500 MHz,\n"
+    "downlink 10489.500\342\200\22310490.000 MHz, non-inverting.\n"
     "\n"
     "Receive and transmit go through different converters, so define TWO entries\n"
     "under Transverters above \342\200\224 one covering the downlink with the LNB's LO\n"
@@ -193,7 +193,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),b_lbl,0,row,1,1);
   // Only the two CW beacons: the middle one is 400 bd BPSK and has no carrier to
   // measure (see qo100_beacon_frequency()).
-  const char *b_opts[]={"Lower, 10489.550 MHz (CW)","Upper, 10489.800 MHz (CW)",NULL};
+  const char *b_opts[]={"Lower, 10489.500 MHz (CW)","Upper, 10490.000 MHz (CW)",NULL};
   GtkWidget *b_dd=gtk_drop_down_new_from_strings(b_opts);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(b_dd),
                              (r->qo100_beacon_sel>=0 && r->qo100_beacon_sel<=1)?r->qo100_beacon_sel:0);

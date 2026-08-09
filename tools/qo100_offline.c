@@ -158,7 +158,7 @@ int main(int argc, char **argv) {
   //         3 kHz high must be corrected TOWARD zero, not away from it.
   {
     gboolean locked=FALSE;
-    double res=run_loop(3000.0,0.0,blocks,&locked,FS,10489600000LL);
+    double res=run_loop(3000.0,0.0,blocks,&locked,FS,10489540000LL);
     snprintf(d,sizeof(d),"3000 Hz -> %+.1f Hz left, locked=%d",res,locked);
     check("sign: positive LNB error converges",
           locked && fabs(res)<10.0, d);
@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
   //         pass if the test only ever pushed one direction.
   {
     gboolean locked=FALSE;
-    double res=run_loop(-4500.0,0.0,blocks,&locked,FS,10489600000LL);
+    double res=run_loop(-4500.0,0.0,blocks,&locked,FS,10489540000LL);
     snprintf(d,sizeof(d),"-4500 Hz -> %+.1f Hz left, locked=%d",res,locked);
     check("sign: negative LNB error converges",
           locked && fabs(res)<10.0, d);
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
   // ---- 3. a big cold-start error, the realistic case for a cheap LNB.
   {
     gboolean locked=FALSE;
-    double res=run_loop(35000.0,0.0,blocks,&locked,FS,10489600000LL);
+    double res=run_loop(35000.0,0.0,blocks,&locked,FS,10489540000LL);
     snprintf(d,sizeof(d),"35 kHz -> %+.1f Hz left, locked=%d",res,locked);
     check("wide acquisition (35 kHz off)", locked && fabs(res)<20.0, d);
   }
@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
   // ---- 4. with noise on it, since a real beacon is not a clean tone.
   {
     gboolean locked=FALSE;
-    double res=run_loop(2000.0,0.30,blocks,&locked,FS,10489600000LL);
+    double res=run_loop(2000.0,0.30,blocks,&locked,FS,10489540000LL);
     snprintf(d,sizeof(d),"2000 Hz + noise -> %+.1f Hz left, locked=%d",res,locked);
     check("converges with noise", locked && fabs(res)<25.0, d);
   }
@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
   //         use: a loop that chases noise walks the receiver off the band.
   //         (The same class of bug the APT sync detector had.)
   {
-    RECEIVER *rx=mk_rx(10489600000LL,FS);
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
     radio=mk_radio(rx);
     test_band.frequencyLO=9750000000LL;
     retunes=0;
@@ -218,19 +218,19 @@ int main(int argc, char **argv) {
   // ---- 6. a lower sample rate still covering the beacon.
   {
     gboolean locked=FALSE;
-    double res=run_loop(1500.0,0.0,blocks,&locked,96000,10489570000LL);
+    double res=run_loop(1500.0,0.0,blocks,&locked,96000,10489520000LL);
     snprintf(d,sizeof(d),"96 kHz, 1500 Hz -> %+.1f Hz left, locked=%d",res,locked);
     check("works at 96 kHz", locked && fabs(res)<10.0, d);
   }
 
   // ---- 7. the band plan and the transponder arithmetic, which are pure data.
   {
-    gboolean ok=qo100_in_transponder(10489675000LL) &&
-                !qo100_in_transponder(10489000000LL) &&
+    gboolean ok=qo100_in_transponder(10489750000LL) &&
+                !qo100_in_transponder(10489400000LL) &&
                 qo100_beacon_frequency(0)==QO100_BEACON_LOWER &&
                 qo100_beacon_frequency(1)==QO100_BEACON_UPPER &&
-                (QO100_BEACON_LOWER-QO100_TP_OFFSET)==2400050000LL &&
-                (QO100_BEACON_UPPER-QO100_TP_OFFSET)==2400300000LL;
+                (QO100_BEACON_LOWER-QO100_TP_OFFSET)==2400000000LL &&
+                (QO100_BEACON_UPPER-QO100_TP_OFFSET)==2400500000LL;
     snprintf(d,sizeof(d),"uplink edges %lld / %lld",
              (long long)(QO100_BEACON_LOWER-QO100_TP_OFFSET),
              (long long)(QO100_BEACON_UPPER-QO100_TP_OFFSET));
@@ -241,16 +241,26 @@ int main(int argc, char **argv) {
   //         so the overlay cannot draw a band that does not exist.
   {
     gboolean ok=TRUE;
-    long long prev=0;
+    long long prev=0, prev_high=0;
     for(int i=0;i<qo100_segment_count();i++) {
       const QO100_SEGMENT *s=qo100_segment(i);
       if(s->low>s->high) ok=FALSE;
       if(s->low<QO100_NB_DOWN_LOW || s->high>QO100_NB_DOWN_HIGH) ok=FALSE;
       if(s->low<prev) ok=FALSE;
+      // Two mode segments must never overlap — the plan assigns each slice of the
+      // transponder to exactly one use, and an overlap would draw two tinted
+      // bands over each other and tell the operator nothing. (Beacons are
+      // zero-width markers and legitimately sit inside a guard band, so they are
+      // exempt from the ordering-against-the-previous-end test.)
+      if(!s->beacon) {
+        if(prev_high>s->low) ok=FALSE;
+        prev_high=s->high;
+      }
       prev=s->low;
     }
-    snprintf(d,sizeof(d),"%d segments",qo100_segment_count());
-    check("band plan is ordered and inside the transponder", ok, d);
+    snprintf(d,sizeof(d),"%d segments spanning %.0f kHz",qo100_segment_count(),
+             (double)(QO100_NB_DOWN_HIGH-QO100_NB_DOWN_LOW)/1000.0);
+    check("band plan ordered, non-overlapping, in range", ok, d);
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

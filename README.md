@@ -731,8 +731,8 @@ you've dialled in.
 
 QO-100 (Es'hail-2) carries the only geostationary amateur transponder, and
 working it is less about the satellite than about the two converters on either
-side of it. The narrow-band transponder takes 2400.050–2400.300 MHz up and
-returns 10489.550–10489.800 MHz down, non-inverting, with a constant translation
+side of it. The narrow-band transponder takes 2400.000–2400.500 MHz up and
+returns 10489.500–10490.000 MHz down, non-inverting, with a constant translation
 of 8089.500 MHz. Everything below exists because of what that arrangement does to
 a normal SDR.
 
