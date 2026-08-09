@@ -410,7 +410,6 @@ static void boost_cb(GtkWidget *widget, gpointer data) {
 static int backend_rows[MAX_AUDIO_BACKENDS];   // menu row -> soundio index
 static int n_backend_rows=0;
 static gulong audio_backend_signal_id=0;
-static GtkWidget *audio_backend_status=NULL;
 
 static int backend_row_of(int soundio_index) {
   for(int i=0;i<n_backend_rows;i++) if(backend_rows[i]==soundio_index) return i;
@@ -443,22 +442,6 @@ static void sync_audio_backend_selection(RADIO *radio) {
       g_signal_handler_unblock(audio_backend_combo_box,audio_backend_signal_id);
   }
 
-  if(audio_backend_status!=NULL) {
-    if(radio->which_audio==USE_SOUNDIO && actual!=radio->which_audio_backend &&
-       audio_backend_is_usable(radio->which_audio_backend)) {
-      char *msg=g_strdup_printf("%s is not available on this machine "
-                                "(no server running?) — using %s.  Your choice "
-                                "is kept and tried again next time.",
-                                audio_get_backend_name(radio->which_audio_backend),
-                                audio_get_backend_name(actual));
-      gtk_label_set_text(GTK_LABEL(audio_backend_status),msg);
-      gtk_widget_set_visible(audio_backend_status,TRUE);
-      g_free(msg);
-    } else {
-      gtk_label_set_text(GTK_LABEL(audio_backend_status),"");
-      gtk_widget_set_visible(audio_backend_status,FALSE);
-    }
-  }
 }
 
 static void update_audio_backends(RADIO *radio) {
@@ -1361,14 +1344,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_combo_box,2,0,1,1);
   audio_backend_signal_id=
     g_signal_connect(audio_backend_combo_box,"notify::selected",G_CALLBACK(audio_backend_cb),radio);
-
-  audio_backend_status=gtk_label_new("");
-  gtk_label_set_xalign(GTK_LABEL(audio_backend_status),0.0);
-  gtk_label_set_wrap(GTK_LABEL(audio_backend_status),TRUE);
-  gtk_label_set_max_width_chars(GTK_LABEL(audio_backend_status),48);
-  gtk_widget_set_valign(audio_backend_status,GTK_ALIGN_START);
-  gtk_widget_set_visible(audio_backend_status,FALSE);
-  gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_status,0,1,3,1);
   // After the handler is connected, so the selection sync inside can block it.
   // The row is NOT which_audio_backend any more — Dummy is filtered out of the
   // menu, so the two only coincide by accident.
