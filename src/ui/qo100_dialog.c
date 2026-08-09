@@ -118,7 +118,8 @@ static void setup_cb(GtkWidget *w, gpointer data) {
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),buf);
   } else {
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),
-                       "Tune the receiver to the downlink (10489.500\342\200\22310490.000 MHz) first");
+                       "Could not set up \342\200\224 no free transverter slots. Clear two rows in "
+                       "Bands \342\206\222 Transverters.");
   }
 }
 
@@ -232,7 +233,9 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),setup,0,row++,2,1);
   g_signal_connect(setup,"clicked",G_CALLBACK(setup_cb),r);
 
-  qo100_setup_label=gtk_label_new("Puts VFO B on the matching uplink and links the two (SAT split).");
+  qo100_setup_label=gtk_label_new(
+    "Creates the converters if needed, tunes to the downlink, puts VFO B on the\n"
+    "matching uplink and links the two (SAT split).");
   gtk_widget_set_halign(qo100_setup_label,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(qo100_setup_label,12);
   gtk_grid_attach(GTK_GRID(grid),qo100_setup_label,0,row++,2,1);

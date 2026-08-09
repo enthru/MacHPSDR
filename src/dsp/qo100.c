@@ -110,11 +110,26 @@ long long qo100_beacon_frequency(int sel) {
 // nothing at all is heard, with no clue as to why.  Only the two LOs are the
 // operator's own hardware; everything else follows from the band plan.
 
-// Fill one transverter band. Mirrors save_xvtr() in xvtr_dialog.c exactly —
-// including seeding the three bandstack entries at min / middle / max — so an
-// entry made here is indistinguishable from a hand-typed one.
+// Three working spots for the band-stack, as downlink frequencies: the narrow
+// modes near the bottom, and two in the two SSB stretches either side of the
+// middle beacon.
+//
+// This is the one place that does NOT follow save_xvtr()'s convention, and
+// deliberately: that seeds min / middle / max, which here would be the lower
+// beacon, the middle beacon and the upper beacon — the three frequencies an
+// operator must specifically NOT transmit on. Landing a band-stack recall on a
+// beacon is worse than any consistency argument for keeping the convention.
+static const long long qo100_stack_rx[3] = {
+  10489560000LL,   // CW / narrow digimodes
+  10489700000LL,   // SSB, below the middle beacon
+  10489800000LL,   // SSB, above it
+};
+
+// Fill one transverter band. Otherwise mirrors save_xvtr() in xvtr_dialog.c, so
+// an entry made here is indistinguishable from a hand-typed one.
 static void fill_xvtr(BAND *b, const char *name,
-                      long long fmin, long long fmax, long long lo) {
+                      long long fmin, long long fmax, long long lo,
+                      long long shift) {
   g_strlcpy(b->title,name,sizeof(b->title));
   b->frequencyMin=fmin;
   b->frequencyMax=fmax;
@@ -123,11 +138,10 @@ static void fill_xvtr(BAND *b, const char *name,
   if(bs!=NULL) {
     for(int i=0;i<bs->entries;i++) {
       BANDSTACK_ENTRY *e=&bs->entry[i];
-      switch(i) {
-        case 0:  e->frequency=fmin; break;
-        case 1:  e->frequency=fmin+((fmax-fmin)/2LL); break;
-        default: e->frequency=fmax; break;
-      }
+      long long f=qo100_stack_rx[(i<3)?i:2]-shift;   // shift = 0 for RX, the offset for TX
+      if(f<fmin) f=fmin;
+      if(f>fmax) f=fmax;
+      e->frequency=f;
       e->mode=USB;          // the transponder is non-inverting: USB both ways
       e->filter=F6;
     }
@@ -177,9 +191,9 @@ gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz) {
   // thing this function could do.
   long long rx_err=rb->errorLO, tx_err=tb->errorLO;
 
-  fill_xvtr(rb,QO100_XVTR_RX_TITLE,QO100_NB_DOWN_LOW,QO100_NB_DOWN_HIGH,lnb);
+  fill_xvtr(rb,QO100_XVTR_RX_TITLE,QO100_NB_DOWN_LOW,QO100_NB_DOWN_HIGH,lnb,0);
   fill_xvtr(tb,QO100_XVTR_TX_TITLE,
-            QO100_NB_DOWN_LOW-offset,QO100_NB_DOWN_HIGH-offset,txlo);
+            QO100_NB_DOWN_LOW-offset,QO100_NB_DOWN_HIGH-offset,txlo,offset);
   rb->errorLO=rx_err;
   tb->errorLO=tx_err;
 
@@ -202,12 +216,37 @@ gboolean qo100_transponder_setup(RADIO *r) {
   RECEIVER *rx=r->active_receiver;
   if(rx==NULL) return FALSE;
 
-  // Refuse politely rather than silently dragging VFO B somewhere absurd: this
-  // only means anything when the receiver is actually on the downlink.  A little
-  // slack past each edge so being parked on a beacon still counts.
+  // Do the whole job rather than refusing half of it. An earlier version bailed
+  // out unless the operator had already tuned to the downlink and built the two
+  // transverters by hand — but "set up transponder mode" is an unambiguous
+  // instruction, and there is nothing here the button cannot do itself:
+  //
+  //   * the converters are a known shape once the two LOs are known, and those
+  //     have sensible defaults (a standard LNB, and no uplink converter);
+  //   * the tuning ceiling only rises once a transverter covering 10.49 GHz
+  //     exists (see receiver_max_frequency), so the converters MUST be created
+  //     before the dial is moved — which is exactly the ordering below and the
+  //     reason doing this by hand was easy to get stuck on;
+  //   * set_band() then restores the band-stack entry, which carries the right
+  //     LO, mode and filter with it.
+  int rxs=find_xvtr_slot(QO100_XVTR_RX_TITLE);
+  BAND *rb=(rxs>=0)?band_get_band(rxs):NULL;
+  if(rb==NULL || strcmp(rb->title,QO100_XVTR_RX_TITLE)!=0) {
+    if(!qo100_create_transverters(r,NULL,0)) return FALSE;   // no free slots
+    rxs=find_xvtr_slot(QO100_XVTR_RX_TITLE);
+    rb=(rxs>=0)?band_get_band(rxs):NULL;
+    if(rb==NULL) return FALSE;
+  }
+
+  // A little slack past each edge so being parked on a beacon still counts as
+  // "already there" and the operator's own frequency is not thrown away.
   const long long slack=50000LL;
   if(rx->frequency_a < QO100_NB_DOWN_LOW-slack ||
-     rx->frequency_a > QO100_NB_DOWN_HIGH+slack) return FALSE;
+     rx->frequency_a > QO100_NB_DOWN_HIGH+slack) {
+    // Band-stack entry 1 is the SSB stretch below the middle beacon — a place to
+    // land that is neither a beacon nor the CW section.
+    set_band(rx,rxs,1);
+  }
 
   long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
   rx->frequency_b=rx->frequency_a-offset;

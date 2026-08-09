@@ -745,18 +745,20 @@ a normal SDR.
   (This is a general fix: any cross-band split now works, not only this
   satellite. The tuning ceiling also follows a configured transverter now —
   the old hard 6 GHz cap made a 10.49 GHz dial untunable.)
-- **The two transverter entries are written for you.** Give the QO-100 page your
-  two local oscillators — the LNB's (9750 MHz for a standard universal LNB) and
-  the uplink converter's (0 if the radio reaches 2.4 GHz by itself) — and press
-  **Create the two transverter entries**. The band edges, the bandstacks and the
-  sideband all follow from the band plan, so the numbers that have to agree
-  cannot disagree. Pressing it again updates the same two rows rather than using
-  more of the eight slots, and keeps their measured LO error.
-- **Transponder mode in one click.** **Configure → QO-100** has a
-  **Set up transponder mode** button that puts VFO B on the uplink matching your
-  current downlink and links the pair with the non-inverting SAT split, so tuning
-  the receiver drags the transmitter with it. The translation is a spin-button, so
-  it can be trimmed.
+- **One button does the whole setup.** Give **Configure → QO-100** your two local
+  oscillators — the LNB's (9750 MHz for a standard universal LNB) and the uplink
+  converter's (0 if the radio reaches 2.4 GHz by itself) — and press **Set up
+  transponder mode**. It writes the two transverter entries if they do not exist,
+  tunes to the downlink, and puts VFO B on the matching uplink linked by the
+  non-inverting SAT split, so from then on tuning the receiver drags the
+  transmitter with it. The band edges, band-stacks and sideband all follow from
+  the band plan, so the numbers that have to agree cannot disagree, and the
+  band-stack lands on working frequencies rather than on the beacons. If you are
+  already on the downlink your frequency is left alone. The translation is a
+  spin-button, so it can be trimmed, and **Create the two transverter entries**
+  remains separately if that is all you want; pressing it again updates the same
+  two rows rather than using more of the eight slots, and keeps their measured
+  LO error.
 - **Band plan over the spectrum.** The transponder is 250 kHz wide with a
   published plan — CW at the bottom, digital modes in the middle, SSB in the upper
   half, beacons at both edges and in the centre. Switch it on and it is drawn as

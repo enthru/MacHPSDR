@@ -585,10 +585,13 @@ been measured, so it is safe to correct an LO figure later.
 
 ### Transponder mode
 
-Tune the receiver anywhere on the downlink and press **Set up transponder mode**.
-VFO B is put on the matching uplink and the two are linked with the SAT split, so
-from then on tuning the receiver moves the transmitter with it. If your own
-converters do not translate by exactly the standard amount, adjust
+Press **Set up transponder mode**. It does everything: creates the two
+transverter entries if they are not there yet, tunes to the downlink, puts VFO B
+on the matching uplink and links the two with the SAT split, so from then on
+tuning the receiver moves the transmitter with it. If you are already somewhere
+on the downlink your frequency is kept as it is.
+
+If your own converters do not translate by exactly the standard amount, adjust
 **Transponder offset**.
 
 ### Band plan on the spectrum

@@ -69,6 +69,22 @@ void update_frequency(RECEIVER *rx) { (void)rx; }
 void receiver_sync_vfo_b_lo(RECEIVER *rx) { (void)rx; }
 void transmitter_set_mode(TRANSMITTER *tx, int m) { (void)tx; (void)m; }
 
+// Stands in for band.c:set_band(): restore the band-stack entry and the band's
+// LO, which is the part qo100.c depends on.
+void set_band(RECEIVER *rx, int band, int bs_entry) {
+  BAND *b=band_get_band(band);
+  if(b==NULL || rx==NULL) return;
+  int e=(bs_entry>=0)?bs_entry:0;
+  if(b->bandstack!=NULL && e<b->bandstack->entries) {
+    rx->frequency_a=b->bandstack->entry[e].frequency;
+    rx->mode_a=b->bandstack->entry[e].mode;
+    rx->filter_a=b->bandstack->entry[e].filter;
+  }
+  rx->band_a=band;
+  rx->lo_a=b->frequencyLO;
+  rx->error_a=b->errorLO;
+}
+
 // ---- signal generation ------------------------------------------------------
 
 // Fill a receiver-format I/Q block. The buffer order is (Q, I) — the receiver's
@@ -308,10 +324,8 @@ int main(int argc, char **argv) {
       tb->frequencyMax==QO100_NB_DOWN_HIGH-QO100_TP_OFFSET &&
       tb->frequencyLO==1968000000LL &&
       // and the uplink band must be exactly the published 2400.000-2400.500
-      tb->frequencyMin==2400000000LL && tb->frequencyMax==2400500000LL &&
-      // bandstack seeded like a hand-typed entry: min / middle / max
-      rb->bandstack->entry[0].frequency==QO100_NB_DOWN_LOW &&
-      rb->bandstack->entry[2].frequency==QO100_NB_DOWN_HIGH;
+      tb->frequencyMin==2400000000LL && tb->frequencyMax==2400500000LL;
+      // (what the band-stack is seeded with is case 14's business)
     snprintf(d,sizeof(d),"rx %lld..%lld tx %lld..%lld",
              rb?(long long)rb->frequencyMin:0, rb?(long long)rb->frequencyMax:0,
              tb?(long long)tb->frequencyMin:0, tb?(long long)tb->frequencyMax:0);
@@ -361,6 +375,75 @@ int main(int argc, char **argv) {
           !ok && written==0, d);
     g_free(r);
     bands_init();
+  }
+
+  // ---- 12. cold start: nothing configured, receiver on 20 m. One press must
+  //          build the converters, tune to the downlink and set the split — the
+  //          ORDER matters, because the tuning ceiling only rises once a
+  //          transverter covering 10.49 GHz exists.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(14200000LL,FS);   // parked on 20 m, nowhere near the satellite
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    radio=r;
+    gboolean ok=qo100_transponder_setup(r);
+    gboolean on_downlink=qo100_in_transponder(rx->frequency_a);
+    long long expect_b=rx->frequency_a-QO100_TP_OFFSET;
+    int made=0;
+    for(int i=BANDS;i<BANDS+XVTRS;i++)
+      if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0 ||
+         strcmp(test_bands[i].title,QO100_XVTR_TX_TITLE)==0) made++;
+    snprintf(d,sizeof(d),"A=%lld B=%lld split=%d rows=%d",
+             (long long)rx->frequency_a,(long long)rx->frequency_b,rx->split,made);
+    check("cold start: one press does converters+tune+split",
+          ok && made==2 && on_downlink && rx->frequency_b==expect_b &&
+          rx->split==SPLIT_SAT && rx->mode_a==USB, d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 13. ...but an operator already on the downlink keeps their frequency:
+  //          the button must not yank them off the QSO they are in.
+  {
+    bands_init();
+    RADIO *r0=g_new0(RADIO,1);
+    char msg[160];
+    qo100_create_transverters(r0,msg,sizeof(msg));
+    g_free(r0);
+    RECEIVER *rx=mk_rx(10489743000LL,FS);      // mid-QSO, an odd frequency
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    radio=r;
+    qo100_transponder_setup(r);
+    snprintf(d,sizeof(d),"A stayed at %lld",(long long)rx->frequency_a);
+    check("already on the downlink: frequency untouched",
+          rx->frequency_a==10489743000LL &&
+          rx->frequency_b==10489743000LL-QO100_TP_OFFSET, d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 14. the band-stack must not park the operator on a beacon, which is
+  //          precisely where min/middle/max would have put all three entries.
+  {
+    bands_init();
+    RADIO *r=g_new0(RADIO,1);
+    char msg[160];
+    qo100_create_transverters(r,msg,sizeof(msg));
+    gboolean clear=TRUE;
+    BAND *rb=NULL;
+    for(int i=BANDS;i<BANDS+XVTRS;i++)
+      if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0) rb=&test_bands[i];
+    for(int e=0;rb!=NULL && e<rb->bandstack->entries;e++) {
+      long long f=rb->bandstack->entry[e].frequency;
+      if(f==QO100_BEACON_LOWER || f==QO100_BEACON_MIDDLE || f==QO100_BEACON_UPPER) clear=FALSE;
+      if(!qo100_in_transponder(f)) clear=FALSE;
+    }
+    snprintf(d,sizeof(d),"%lld / %lld / %lld",
+             rb?(long long)rb->bandstack->entry[0].frequency:0,
+             rb?(long long)rb->bandstack->entry[1].frequency:0,
+             rb?(long long)rb->bandstack->entry[2].frequency:0);
+    check("band-stack lands on working spots, not beacons", clear, d);
+    g_free(r);
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");
