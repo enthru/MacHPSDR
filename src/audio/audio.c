@@ -184,11 +184,88 @@ static inline gboolean audio_debug_on(void) {
   return audio_debug==1;
 }
 
+// ---------------------------------------------------------------------------
+// "The sound device is not taking the audio" warning.
+//
+// A sink that accepts far less than 48000 frames per second of wall clock is
+// not a thing this application can fix — the surplus has to go somewhere and
+// the only honest place is the bin (resampling to the sink's apparent rate
+// would play everything slowed and pitched down, and fall further behind for
+// ever).  What we CAN stop doing is failing in silence: measured on a Linux VM
+// with an emulated virtio card under PipeWire, the sink took ~20500 frames/s
+// against 48000 produced, so 57 % of the audio was discarded and the operator
+// got no sound and not one word of explanation.  Say it once, with the numbers.
+//
+// Deliberately once per audio_open_output(): the condition persists for as long
+// as the device does, and a dialog every five seconds would be worse than the
+// bug.  Re-armed on the next open, so trying another device gets its own
+// verdict.
+// ---------------------------------------------------------------------------
+static gint audio_sink_warned=0;              // re-armed by audio_open_output()
+
+typedef struct {
+  int  channel;
+  long produced;
+  long dropped;
+  double seconds;
+} AUDIO_SINK_WARNING;
+
+static gboolean audio_sink_warning_idle(gpointer data) {
+  AUDIO_SINK_WARNING *w=(AUDIO_SINK_WARNING *)data;
+  if(main_window!=NULL) {
+    double taken=(double)(w->produced-w->dropped)/w->seconds;
+    char detail[640];
+    g_snprintf(detail,sizeof detail,
+      "The audio device is accepting only about %.0f of the 48000 frames per "
+      "second that receiver %d produces, so %.0f%% of the audio is being "
+      "discarded.  Playback will be broken up or silent.\n\n"
+      "This is a fault in the audio path outside MacHPSDR, not a setting in it "
+      "— most often an emulated sound device in a virtual machine, or a "
+      "PulseAudio/PipeWire server running with too little headroom.\n\n"
+      "Worth trying, in this order: pick a different output device, or another "
+      "backend in Configure → Audio (the native PulseAudio backend is usually "
+      "the most reliable one on Linux); check whether other applications play "
+      "cleanly on this machine at all; raise the sound server's buffer "
+      "headroom.\n\n"
+      "Run with MACHPSDR_AUDIO_DEBUG=1 for per-window figures.",
+      taken, w->channel, 100.0*(double)w->dropped/(double)w->produced);
+
+    GtkAlertDialog *dialog=gtk_alert_dialog_new("Audio output is not keeping up");
+    gtk_alert_dialog_set_detail(dialog,detail);
+    const char *buttons[]={ "OK", NULL };
+    gtk_alert_dialog_set_buttons(dialog,buttons);
+    gtk_alert_dialog_set_default_button(dialog,0);
+    gtk_alert_dialog_show(dialog,GTK_WINDOW(main_window));
+    g_object_unref(dialog);
+  }
+  g_free(w);
+  return G_SOURCE_REMOVE;
+}
+
+// Runs on the RX audio thread, so the dialog is handed to the GTK thread.
+static void audio_sink_warn(int channel,long produced,long dropped,double seconds) {
+  if(!g_atomic_int_compare_and_exchange(&audio_sink_warned,0,1)) return;
+  log_error("audio: sink took %ld of %ld frames in %.1f s (%.0f%% discarded) "
+            "— see the warning dialog\n",
+            produced-dropped,produced,seconds,
+            100.0*(double)dropped/(double)produced);
+  AUDIO_SINK_WARNING *w=g_new0(AUDIO_SINK_WARNING,1);
+  w->channel=channel;
+  w->produced=produced;
+  w->dropped=dropped;
+  w->seconds=seconds;
+  g_idle_add(audio_sink_warning_idle,w);
+}
+
 // Called once per produced frame.  fill_frames is what is currently queued in
 // the sink, or -1 when the caller cannot cheaply tell (measuring it is only
 // worth doing on a block boundary).
+//
+// The accounting runs ALWAYS, not only under MACHPSDR_AUDIO_DEBUG: the drop
+// ratio is what raises the warning above, and a fault nobody can see is the
+// thing being fixed here.  Only the printing, and the sink-fill measurement at
+// the call sites (which costs a real query on Pulse/ALSA), stay behind the flag.
 static void audio_stats_frame(RECEIVER *rx,int fill_frames,int dropped,int xruns,int waits) {
-  if(!audio_debug_on()) return;
   if(rx->channel<0 || rx->channel>=MAX_RECEIVERS) return;
   AUDIO_STATS *s=&astats[rx->channel];
 
@@ -219,6 +296,13 @@ static void audio_stats_frame(RECEIVER *rx,int fill_frames,int dropped,int xruns
   gint64 window=now-s->t0;
   if(window<5000000) return;
 
+  // A quarter of the audio thrown away is not jitter, it is a sink that cannot
+  // take the stream.  (Ordinary hiccups on a healthy device measured 144-288
+  // frames per 5 s window here, i.e. about a tenth of one per cent.)
+  if(s->produced>0 && s->dropped*4>=s->produced)
+    audio_sink_warn(rx->channel,s->produced,s->dropped,(double)window/1e6);
+
+  if(audio_debug_on()) {
   log_info("audio dbg RX%d: %ld frames in %.2f s = %.0f/s  fill %d..%d  "
            "maxgap %.1f ms  dropped %ld  xrun %ld  wait %ld  "
            "underflow %d  sio out %ld zero %ld\n",
@@ -229,6 +313,7 @@ static void audio_stats_frame(RECEIVER *rx,int fill_frames,int dropped,int xruns
            (double)s->max_gap_us/1000.0,
            s->dropped, s->xruns, s->waits,
            underflow_count, sio_consumed, sio_zerofill);
+  }
 
   s->t0=now;
   s->produced=0;
@@ -520,6 +605,15 @@ int audio_open_output(RECEIVER *rx) {
 #ifndef __APPLE__
   pa_sample_spec sample_spec;
 #endif
+  // A different device deserves its own verdict, so re-arm the "sink is not
+  // taking the audio" warning and restart the measurement window — otherwise
+  // the outgoing device's drops would be charged to the incoming one.
+  g_atomic_int_set(&audio_sink_warned,0);
+  if(rx->channel>=0 && rx->channel<MAX_RECEIVERS) {
+    astats[rx->channel].t0=0;
+    astats[rx->channel].produced=0;
+    astats[rx->channel].dropped=0;
+  }
   switch(radio->which_audio) {
     case USE_SOUNDIO: {
 log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
@@ -1257,10 +1351,11 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
           memcpy(buf, &samples[0], fill_count);
           soundio_ring_buffer_advance_write_ptr(rx->ring_buffer, fill_count);
         }
-        if(audio_debug_on())
-          audio_stats_frame(rx,
-                            soundio_ring_buffer_fill_count(rx->ring_buffer)/(int)(sizeof(float)*2),
-                            refused,0,0);
+        audio_stats_frame(rx,
+                          audio_debug_on()
+                            ? soundio_ring_buffer_fill_count(rx->ring_buffer)/(int)(sizeof(float)*2)
+                            : -1,
+                          refused,0,0);
       }
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
@@ -1295,7 +1390,7 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
           pa_alsa_dbg_fill=(lat==(pa_usec_t)-1)?-1:(int)(lat*48ULL/1000ULL);
         }
       }
-      if(audio_debug_on()) audio_stats_frame(rx,pa_alsa_dbg_fill,0,0,0);
+      audio_stats_frame(rx,audio_debug_on()?pa_alsa_dbg_fill:-1,0,0,0);
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
@@ -1444,13 +1539,15 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
                            (long)delay,waits,xruns);
                 }
               }
-              audio_stats_frame(rx,pa_alsa_dbg_fill,(int)frames,xruns,waits);
             }
+            // Outside the debug block: the drop count feeds the warning.
+            audio_stats_frame(rx,audio_debug_on()?pa_alsa_dbg_fill:-1,
+                              (int)frames,xruns,waits);
           }
           rx->local_audio_buffer_offset=0;
         }
-        if(audio_debug_on() && rx->local_audio_buffer_offset!=0)
-          audio_stats_frame(rx,pa_alsa_dbg_fill,0,0,0);
+        if(rx->local_audio_buffer_offset!=0)
+          audio_stats_frame(rx,audio_debug_on()?pa_alsa_dbg_fill:-1,0,0,0);
       }
 
       g_mutex_unlock(&rx->local_audio_mutex);
@@ -1701,21 +1798,18 @@ log_info("audio: state_cb: PA_CONTEXT_READY\n");
 // nothing to filter on macOS, and probing there would cost real time on
 // Bluetooth and pop the microphone-permission prompt during a device scan.
 #ifndef __APPLE__
-// The USE_ALSA backend's equivalent of the SoundIo probe below — the comment
-// above applies to it word for word, and it is where the reasoning bites
-// hardest: with PulseAudio or PipeWire running, the server owns the card, so
-// every raw plughw:/dmix: entry is refused with EBUSY and the whole list bar
-// "System Default" was decoration.  With no sound server they all open and are
-// all listed, which is why they are still enumerated rather than dropped.
-static gboolean alsa_pcm_opens(const char *name,snd_pcm_stream_t stream) {
-  snd_pcm_t *t=NULL;
-  int e=snd_pcm_open(&t,name,stream,SND_PCM_NONBLOCK);
-  if(e>=0) { snd_pcm_close(t); return TRUE; }
-  log_info("audio: ALSA %s '%s' not usable: %s\n",
-           stream==SND_PCM_STREAM_PLAYBACK?"output":"input",name,snd_strerror(e));
-  return FALSE;
-}
-
+// NOTE — the USE_ALSA backend deliberately has NO equivalent of the SoundIo
+// probe below, and it must not grow one again.  Filtering the ALSA list by
+// opening each candidate was tried (2026-08-09) and REVERTED the same day: it
+// cost the reporter their working output, half a second of audio and then
+// silence.  Opening a PCM and closing it milliseconds before the real
+// audio_open_output() is not free — the card, or a sound server holding it, is
+// entitled to still be releasing it — so the probe can itself be what makes the
+// device unavailable, which is the exact opposite of the intent.  A device that
+// will not open is handled where it can be handled safely: at the point of use,
+// by audio_open_with_fallback() in receiver_dialog.c, which falls back to
+// System Default and says on screen why.  SoundIo's probe is a different case
+// (its own API, its own open path, and years of use here) and stays.
 static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
   struct SoundIoOutStream *test=soundio_outstream_create(device);
   if(test==NULL) return FALSE;
@@ -2282,13 +2376,9 @@ log_info("audio: create_audio: USE_PULSEAUDIO\n");
             snd_pcm_info_set_device(pcminfo, dev);
             snd_pcm_info_set_subdevice(pcminfo, 0);
 
-            char pcm[32];
-            snprintf(pcm, sizeof(pcm), "plughw:%d,%d", card, dev);
-
             // input devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_CAPTURE);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
-                alsa_pcm_opens(pcm, SND_PCM_STREAM_CAPTURE)) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_input_devices<MAX_AUDIO_DEVICES) {
@@ -2305,8 +2395,7 @@ log_info("input_device: %s\n",device_id);
 
             // ouput devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_PLAYBACK);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
-                alsa_pcm_opens(pcm, SND_PCM_STREAM_PLAYBACK)) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_output_devices<MAX_AUDIO_DEVICES) {
@@ -2341,8 +2430,7 @@ log_info("output_device: %s\n",device_id);
           // snd_device_name_get_hint returns NULL for a hint the PCM does not
           // carry (DESC is routinely absent), so neither pointer may be walked
           // before it is checked.
-          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0 &&
-             alsa_pcm_opens(name, SND_PCM_STREAM_PLAYBACK)) {
+          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0) {
             if(n_output_devices<MAX_AUDIO_DEVICES) {
               output_devices[n_output_devices].name=g_new0(char,strlen(name)+1);
               strcpy(output_devices[n_output_devices].name,name);
