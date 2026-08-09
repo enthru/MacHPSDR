@@ -80,9 +80,10 @@ static void make_xvtr_cb(GtkWidget *w, gpointer data) {
   char msg[160];
   gboolean ok=qo100_create_transverters(r,msg,sizeof(msg));
   if(ok) {
-    // The Transverters frame sits on this very page with its entry widgets
-    // already filled, so it has to be told; and any receiver already sitting in
-    // one of the two bands needs the new LO pushed into it.
+    // Every Configure page is built when the dialog opens, so the Transverters
+    // rows already have their entry widgets filled from the old values and would
+    // sit there showing stale text on the Bands tab. Refresh them; and push the
+    // new LO into any receiver already sitting in one of the two bands.
     for(int b=BANDS;b<BANDS+XVTRS;b++) {
       BAND *band=band_get_band(b);
       if(band==NULL) continue;
@@ -173,9 +174,9 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "downlink 10489.500\342\200\22310490.000 MHz, non-inverting.\n"
     "\n"
     "Receive and transmit go through different converters, so the satellite needs\n"
-    "two entries under Transverters above. Give the two local oscillators here and\n"
-    "they will be written for you; VFO A then follows the receive entry and VFO B\n"
-    "the transmit one.");
+    "two entries under Bands \342\206\222 Transverters. Give the two local oscillators\n"
+    "here and they will be written for you; VFO A then follows the receive entry\n"
+    "and VFO B the transmit one.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
@@ -208,8 +209,8 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   g_signal_connect(mk,"clicked",G_CALLBACK(make_xvtr_cb),r);
 
   qo100_xvtr_label=gtk_label_new(
-    "Writes \"" QO100_XVTR_RX_TITLE "\" and \"" QO100_XVTR_TX_TITLE "\" above. "
-    "Pressing it again updates\nthose two rows rather than using more slots, and keeps their LO error.");
+    "Writes \"" QO100_XVTR_RX_TITLE "\" and \"" QO100_XVTR_TX_TITLE "\" into Bands \342\206\222 Transverters.\n"
+    "Pressing it again updates those two rows rather than using more slots,\nand keeps their LO error.");
   gtk_widget_set_halign(qo100_xvtr_label,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(qo100_xvtr_label,12);
   gtk_grid_attach(GTK_GRID(grid),qo100_xvtr_label,0,row++,2,1);

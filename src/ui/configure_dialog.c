@@ -272,12 +272,15 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(merge_pages(2,create_radio_audio_dialog(radio),
                          create_recording_dialog(radio)),"Audio");
   add_page(create_cw_dialog(radio),"CW");
-  // QO-100 sits with the transverters because that is what it is about: the
-  // satellite needs two of them (LNB down, 2.4 GHz up) and its beacon lock trims
-  // one of their LO errors.
-  add_page(merge_pages(3,titled(create_xvtr_dialog(radio),"Transverters"),
-                         create_qo100_dialog(radio),
+  add_page(merge_pages(2,titled(create_xvtr_dialog(radio),"Transverters"),
                          titled(create_oc_dialog(radio),"Open Collector")),"Bands");
+  // QO-100 gets its own tab rather than riding along with the transverters. It
+  // does drive two of them, but it is a whole operating mode — converters,
+  // transponder split, band-plan overlay, level reference and a beacon-tracking
+  // loop — and burying that under "Bands" both hides it and overfills that page.
+  // It is placed straight after Bands because the two converters are where its
+  // setup begins.
+  add_page(create_qo100_dialog(radio),"QO-100");
 
   for(i=0;i<radio->discovered->supported_receivers;i++) {
     // Skip hidden receivers (show_rx==FALSE): a diversity hidden RX or a

@@ -564,14 +564,15 @@ not invert, and the translation is a constant **8089.500 MHz**. The three beacon
 sit at 10489.500 (CW), 10489.750 (400 bd BPSK) and 10490.000 (CW) — the outer two
 mark the band edges.
 
-Everything on the **Configure → Bands → QO-100** page exists because of the two
+Everything on the **Configure → QO-100** page exists because of the two
 converters on either side of that transponder.
 
 ### Two converters, two VFOs
 
 Receive arrives through a 10 GHz LNB (local oscillator typically 9750 MHz) and
 transmit leaves through a completely separate 2.4 GHz transverter, so the
-satellite needs two entries under **Transverters**. You do not have to type them:
+satellite needs two entries under **Bands → Transverters**. You do not have to
+type them:
 fill in the two local oscillators — **Downlink converter (LNB) LO** (9750 MHz for
 a standard universal LNB) and **Uplink converter LO** (leave it at 0 if your radio
 reaches 2.4 GHz without a transverter) — and press **Create the two transverter
