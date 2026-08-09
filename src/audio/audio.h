@@ -60,5 +60,7 @@ extern void audio_refresh_devices(void);
 extern void create_audio(int backend_index,const char *backend);
 extern int audio_get_backends(RADIO *r);
 extern const char *audio_get_backend_name(int backend);
+extern gboolean audio_backend_is_usable(int backend_index);
+extern int audio_get_current_backend(void);
 
 #endif

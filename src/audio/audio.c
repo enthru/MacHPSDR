@@ -2306,6 +2306,18 @@ void create_audio(int backend_index,const char *backend) {
         return;
       }
 
+      // Record what actually connected, which may not be what was asked for
+      // (auto-selection above).  The Configure → Audio menu reads this back, so
+      // it names the backend that is playing rather than the one that failed.
+      {
+        int cur=audio_get_current_backend();
+        if(cur>=0 && cur!=radio->which_audio_backend) {
+          log_info("audio: backend in use is %s (index %d), not the one selected\n",
+                   soundio_backend_name(soundio->current_backend),cur);
+          radio->which_audio_backend=cur;
+        }
+      }
+
       soundio_build_device_lists();
       // Follow the system default output live when the user switches the macOS
       // output device.  On macOS this is event-driven (instant, no polling) via
@@ -2483,6 +2495,32 @@ log_info("output_device: name=%s descr=%s\n",name,descr);
 #endif
   }
   log_info("n_input_devices=%d\n", n_input_devices);
+}
+
+// Is this soundio backend one an operator may actually choose?  Dummy is not:
+// it enumerates a fake "Dummy Output Device" and silently discards everything
+// written to it, and create_audio() refuses it and substitutes a real backend —
+// so offering it in the menu was a lie in both directions.  Picking it appeared
+// to work (real device names, real audio) because a different backend had
+// quietly been used instead.
+gboolean audio_backend_is_usable(int backend_index) {
+  if(soundio==NULL) return FALSE;
+  if(backend_index<0 || backend_index>=soundio_backend_count(soundio)) return FALSE;
+  enum SoundIoBackend b=soundio_get_backend(soundio,backend_index);
+  return b!=SoundIoBackendDummy && b!=SoundIoBackendNone;
+}
+
+// Index of the backend that is actually connected right now, or -1.  The
+// selection an operator made is only a request: a backend can be compiled into
+// libsoundio and still fail to connect (JACK with no server running is the
+// everyday case), and create_audio() then auto-picks a working one.  Without
+// this the menu went on showing "JACK" while PulseAudio was playing.
+int audio_get_current_backend(void) {
+  if(soundio==NULL) return -1;
+  int n=soundio_backend_count(soundio);
+  for(int i=0;i<n;i++)
+    if(soundio_get_backend(soundio,i)==soundio->current_backend) return i;
+  return -1;
 }
 
 int audio_get_backends(RADIO *r) {

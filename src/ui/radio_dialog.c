@@ -402,18 +402,51 @@ static void boost_cb(GtkWidget *widget, gpointer data) {
   radio->mic_boost=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
+// The menu no longer lists every soundio backend (Dummy is filtered out), so a
+// row number is not a backend index any more.  radio->which_audio_backend stays
+// the soundio index — it is persisted, and create_audio() resolves it — and
+// this table maps between the two.
+#define MAX_AUDIO_BACKENDS 16
+static int backend_rows[MAX_AUDIO_BACKENDS];   // menu row -> soundio index
+static int n_backend_rows=0;
+static gulong audio_backend_signal_id=0;
+
+static int backend_row_of(int soundio_index) {
+  for(int i=0;i<n_backend_rows;i++) if(backend_rows[i]==soundio_index) return i;
+  return -1;
+}
+
+// Point the menu at the backend that is really connected, without re-entering
+// the change handler (which would tear the audio down and build it again).
+static void sync_audio_backend_selection(RADIO *radio) {
+  int row=backend_row_of(radio->which_audio_backend);
+  if(row<0 || audio_backend_combo_box==NULL) return;
+  if(audio_backend_signal_id!=0)
+    g_signal_handler_block(audio_backend_combo_box,audio_backend_signal_id);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_backend_combo_box),row);
+  if(audio_backend_signal_id!=0)
+    g_signal_handler_unblock(audio_backend_combo_box,audio_backend_signal_id);
+}
+
 static void update_audio_backends(RADIO *radio) {
   int i;
   GtkStringList *ab_sl=GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_backend_combo_box)));
   gtk_string_list_splice(ab_sl,0,g_list_model_get_n_items(G_LIST_MODEL(ab_sl)),NULL);
+  n_backend_rows=0;
   if(radio->which_audio==USE_SOUNDIO) {
-    for(i=0;i<audio_get_backends(radio);i++) {
-      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(audio_backend_combo_box))),audio_get_backend_name(i));
+    for(i=0;i<audio_get_backends(radio) && n_backend_rows<MAX_AUDIO_BACKENDS;i++) {
+      if(!audio_backend_is_usable(i)) continue;
+      gtk_string_list_append(ab_sl,audio_get_backend_name(i));
+      backend_rows[n_backend_rows++]=i;
     }
   }
   if(radio->which_audio_backend>=0) {
     radio_change_audio_backend(radio,radio->which_audio_backend);
   }
+  // create_audio() may have connected something other than what was asked for
+  // (a backend can be built into libsoundio and still fail — JACK with no
+  // server is the everyday case), and it writes back what it got.
+  sync_audio_backend_selection(radio);
 }
 
 static void audio_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
@@ -426,9 +459,11 @@ log_info("radio_dialog: audio_cb: selected=%d\n",selected);
 
 static void audio_backend_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int selected=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
-log_info("radio_dialog: audio_backend_cb: selected=%d\n",selected);
-  radio_change_audio_backend(radio,selected);
+  int row=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+  if(row<0 || row>=n_backend_rows) return;
+log_info("radio_dialog: audio_backend_cb: row=%d backend=%d\n",row,backend_rows[row]);
+  radio_change_audio_backend(radio,backend_rows[row]);
+  sync_audio_backend_selection(radio);   // show what actually connected
 }
 
 static void smeter_calibrate_changed_cb(GtkWidget *widget, gpointer data) {
@@ -1286,10 +1321,13 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(audio_grid),backend_label,1,0,1,1);
 
   audio_backend_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
-  update_audio_backends(radio);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(audio_backend_combo_box),radio->which_audio_backend);
   gtk_grid_attach(GTK_GRID(audio_grid),audio_backend_combo_box,2,0,1,1);
-  g_signal_connect(audio_backend_combo_box,"notify::selected",G_CALLBACK(audio_backend_cb),radio);
+  audio_backend_signal_id=
+    g_signal_connect(audio_backend_combo_box,"notify::selected",G_CALLBACK(audio_backend_cb),radio);
+  // After the handler is connected, so the selection sync inside can block it.
+  // The row is NOT which_audio_backend any more — Dummy is filtered out of the
+  // menu, so the two only coincide by accident.
+  update_audio_backends(radio);
 
 
   GtkWidget *calibration_frame=gtk_frame_new("Calibration [dBm]");
