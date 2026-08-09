@@ -115,9 +115,9 @@ SSTV_INCLUDE=SSTV
 
 ifeq ($(SSTV_INCLUDE),SSTV)
 SSTV_OPTIONS=-D SSTV
-SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c apt_decoder.c apt_geo.c apt_coast.c apt_panel.c
-SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h apt_decoder.h apt_geo.h apt_coast.h apt_panel.h
-SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o apt_decoder.o apt_geo.o apt_coast.o apt_panel.o image_save.o
+SSTV_SOURCES= sstv_decoder.c sstv_encoder.c sstv_panel.c wefax_decoder.c wefax_panel.c cw_decoder.c cw_panel.c cw_encoder.c cw_keyer.c apt_decoder.c apt_geo.c apt_coast.c apt_map.c apt_panel.c
+SSTV_HEADERS= sstv_decoder.h sstv_encoder.h sstv_panel.h wefax_decoder.h wefax_panel.h cw_decoder.h cw_panel.h cw_encoder.h cw_keyer.h apt_decoder.h apt_geo.h apt_coast.h apt_map.h apt_panel.h
+SSTV_OBJS= sstv_decoder.o sstv_encoder.o sstv_panel.o wefax_decoder.o wefax_panel.o cw_decoder.o cw_panel.o cw_encoder.o cw_keyer.o apt_decoder.o apt_geo.o apt_coast.o apt_map.o apt_panel.o image_save.o
 
 # APT georeferencing needs an orbit propagator: the vendored SGP4/SDP4 tree
 # builds into its own archive through its own Makefile (like wdsp/ and
@@ -588,11 +588,11 @@ hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 apt-offline: apt_offline
 # Links only the decoder (no GTK, no WDSP, no audio): apt_decoder.c needs
 # gdk-pixbuf for the image it hands back, and nothing else.
-apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o image_save.o log.o
+apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(SGP4_INCLUDES) \
-	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/apt_offline.c \
-	  apt_decoder.o apt_geo.o apt_coast.o image_save.o log.o $(SGP4_LIB) \
-	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
+	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0 cairo) -o $@ tools/apt_offline.c \
+	  apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o $(SGP4_LIB) \
+	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo) -lm
 
 prebuild:
 	rm -f version.o

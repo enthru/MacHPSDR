@@ -82,6 +82,7 @@
 #include "cw_panel.h"
 #include "apt_decoder.h"
 #include "apt_panel.h"
+#include "apt_geo.h"
 #endif
 #ifdef HFDL
 #include "hfdl_decoder.h"
@@ -1299,6 +1300,18 @@ void radio_apt_settings_sync(RADIO *r) {
   apt_decoder_set_channel(r->apt_channel);
   apt_decoder_set_levels(r->apt_contrast, r->apt_brightness);
   apt_decoder_set_autosave(r->apt_autosave, r->apt_save_dir);
+  // Georeferencing: load the element sets now rather than when the panel opens.
+  // A pass is unrepeatable and the panel is often opened part-way through one;
+  // a failure here is silent because a missing TLE file only means no map.
+  if(r->apt_map) {
+    char *path = (r->apt_tle_path[0] != '\0') ? g_strdup(r->apt_tle_path)
+                                              : apt_geo_default_tle_path();
+    char *err = NULL;
+    if(!apt_geo_load_tle(path, &err)) { log_info("apt: %s\n", err ? err : "no element sets"); }
+    g_free(err);
+    g_free(path);
+  }
+  apt_geo_set_time_offset(r->apt_time_trim);
 }
 
 void radio_image_settings_sync(RADIO *r) {
@@ -1473,6 +1486,12 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->apt_contrast=atof(value);
   value=getProperty("radio.apt_brightness");
   if(value!=NULL) r->apt_brightness=atof(value);
+  value=getProperty("radio.apt_map");
+  if(value!=NULL) r->apt_map=atoi(value);
+  value=getProperty("radio.apt_time_trim");
+  if(value!=NULL) r->apt_time_trim=atof(value);
+  value=getProperty("radio.apt_tle_path");
+  if(value!=NULL) { strncpy(r->apt_tle_path,value,sizeof(r->apt_tle_path)-1); r->apt_tle_path[sizeof(r->apt_tle_path)-1]='\0'; }
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -2683,6 +2702,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->apt_save_dir[0] = '\0';   // ~/.local/share/machpsdr/apt
   r->apt_contrast = 1.0;       // the picture as decoded
   r->apt_brightness = 0.0;
+  r->apt_map = FALSE;          // the map needs element sets; off until asked for
+  r->apt_time_trim = 0.0;
+  r->apt_tle_path[0] = '\0';   // ~/.local/share/machpsdr/tle.txt
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port

@@ -32,7 +32,7 @@
 
 #define COAST_SCALE 180.0f          // int16 units per degree (see the generator)
 
-typedef struct { int first, n; } POLY;
+typedef struct { int first, n; float lon_min, lon_max, lat_min, lat_max; } POLY;
 
 static APT_COAST_PT *pts = NULL;
 static POLY         *polys = NULL;
@@ -111,13 +111,20 @@ gboolean apt_coast_load(const char *path) {
     while (npts + (int)n > cap) { cap *= 2; pts = g_renew(APT_COAST_PT, pts, cap); }
     polys[npolys].first = npts;
     polys[npolys].n = (int)n;
+    float lo0 = 181.0f, lo1 = -181.0f, la0 = 91.0f, la1 = -91.0f;
     for (guint32 k = 0; k < n; k++) {
       gint16 v[2];
       if (fread(v, 2, 2, f) != 2) { discard(); fclose(f); return FALSE; }
       pts[npts].lon = v[0] / COAST_SCALE;
       pts[npts].lat = v[1] / COAST_SCALE;
+      if (pts[npts].lon < lo0) lo0 = pts[npts].lon;
+      if (pts[npts].lon > lo1) lo1 = pts[npts].lon;
+      if (pts[npts].lat < la0) la0 = pts[npts].lat;
+      if (pts[npts].lat > la1) la1 = pts[npts].lat;
       npts++;
     }
+    polys[npolys].lon_min = lo0; polys[npolys].lon_max = lo1;
+    polys[npolys].lat_min = la0; polys[npolys].lat_max = la1;
     npolys++;
   }
   fclose(f);
@@ -126,6 +133,15 @@ gboolean apt_coast_load(const char *path) {
 }
 
 int apt_coast_count(void) { return npolys; }
+
+void apt_coast_bbox(int i, float *lon_min, float *lon_max,
+                    float *lat_min, float *lat_max) {
+  if (i < 0 || i >= npolys) return;
+  if (lon_min) *lon_min = polys[i].lon_min;
+  if (lon_max) *lon_max = polys[i].lon_max;
+  if (lat_min) *lat_min = polys[i].lat_min;
+  if (lat_max) *lat_max = polys[i].lat_max;
+}
 
 const APT_COAST_PT *apt_coast_polyline(int i, int *n) {
   if (i < 0 || i >= npolys) { if (n) *n = 0; return NULL; }

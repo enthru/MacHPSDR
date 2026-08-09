@@ -51,7 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, a scrollable/zoomable view, PNG save, **auto-save of every received picture**, and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim, exposure trim, a scrollable/zoomable view, PNG save and **auto-save of every page**. Verified off-air. |
-| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, and a fresh picture started automatically when you move to the next satellite. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
+| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, a fresh picture started automatically when you move to the next satellite, and a **map over the picture** — coastline, graticule and ground track from the satellite's orbit, with the position under the pointer read out. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
@@ -357,6 +357,24 @@ you've dialled in.
   ruler, so you can see the satellite sitting inside it rather than taking it on
   trust — worth a glance, because the signal is ~34 kHz wide and the window is
   about 44 kHz.
+
+  **Map.** Tick **Map** and the picture stops being a picture: the coastline, a
+  10° graticule and the ground track are drawn over it, and the position under
+  the pointer is read out in the corner. This is worked out rather than guessed
+  — the satellite's orbit from a two-line element set, the time each line was
+  received, and the AVHRR scan geometry, giving the ground point every pixel
+  saw. **TLE…** points at an element-set file (a celestrak `weather.txt` will
+  do; the default is `~/.local/share/machpsdr/tle.txt`), and the satellite is
+  picked from the frequency you are decoding, not typed in again. Element sets
+  go stale — the panel shows the age and says so past a week.
+
+  The one control that matters is **Time trim**. The orbit is good to about a
+  kilometre; the clock is not, and a second of clock error is about seven
+  kilometres along the ground track. The trim absorbs all of it at once — a
+  stale element set, a PC clock nobody set, the delay through the audio path —
+  so nudge it until the coast sits on the coast. The map is drawn from the
+  decoder's own per-line timing rather than from counting lines, so a fade in
+  the middle of a pass does not shift everything after it.
 
   A **new picture is started automatically** when the decoder decides it is
   looking at a different transmission: either you retuned the cursor more than

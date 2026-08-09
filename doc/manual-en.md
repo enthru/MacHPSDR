@@ -463,6 +463,17 @@ error, so the image does not slant. There is nothing to click.
   without this an operator who stepped away comes back to an empty panel.
   **Folder…** chooses where (default `~/.local/share/machpsdr/apt/`). An explicit
   **Clear** does *not* save — it means "this one is rubbish, start again".
+- **Map** draws the coastline, a 10° graticule and the ground track over the
+  picture and reads out the position under the pointer, worked out from the
+  satellite's orbit, the time each line arrived and the scan geometry. **TLE…**
+  points at an element-set file (a celestrak `weather.txt` will do; the default
+  is `~/.local/share/machpsdr/tle.txt`); the satellite is taken from the
+  frequency being decoded rather than typed in again, and the panel shows how
+  old the element set is and says so past a week.
+- **Time trim** is the control that matters. The orbit is good to about a
+  kilometre, the clock is not, and one second is about seven kilometres along
+  the track — the trim absorbs a stale element set, an unset PC clock and the
+  audio-path delay at once, so nudge it until the coast sits on the coast.
 - The image **scrolls and zooms**: wheel scrolls back through the pass, **Ctrl+wheel**
   zooms about the pointer up to full resolution, drag pans, double-click returns to
   fit. At the bottom the view keeps following the newest lines; scrolled up, it

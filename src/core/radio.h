@@ -149,6 +149,9 @@ typedef struct _radio {
   char apt_save_dir[512];  // where to write them (empty = ~/.local/share/machpsdr/apt)
   gdouble apt_contrast;    // manual exposure trim on the decoded picture (1.0 = as decoded)
   gdouble apt_brightness;  // ...and its offset in grey levels (0 = as decoded)
+  gboolean apt_map;        // draw the coastline/graticule map over the APT picture
+  gdouble apt_time_trim;   // operator's time offset for the map, seconds (see apt_geo.h)
+  char apt_tle_path[512];  // element sets for the georeferencing (empty = the default path)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)

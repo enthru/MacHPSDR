@@ -372,6 +372,19 @@ void gpu_image_set_zoomable(GpuImage *self, gboolean on, gboolean drag_pan) {
   }
 }
 
+// The inverse, for an overlay that has something to draw at a known place in the
+// picture (the APT map): the overlay callback works in widget coordinates, and
+// only the widget knows the current scale and pan.
+gboolean gpu_image_image_to_widget(GpuImage *self, double ix, double iy,
+                                   double *wx, double *wy) {
+  if (self->img_w <= 0 || self->img_h <= 0) return FALSE;
+  double s = current_scale(self);
+  if (s <= 0.0) return FALSE;
+  if (wx) *wx = (ix - self->off_x) * s;
+  if (wy) *wy = (iy - self->off_y) * s;
+  return TRUE;
+}
+
 gboolean gpu_image_widget_to_image(GpuImage *self, double wx, double wy,
                                    double *ix, double *iy) {
   if (self->img_w <= 0 || self->img_h <= 0) return FALSE;

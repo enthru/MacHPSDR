@@ -48,4 +48,10 @@ gboolean apt_coast_load(const char *path);
 int apt_coast_count(void);
 const APT_COAST_PT *apt_coast_polyline(int i, int *n);
 
+// Bounding box of polyline `i`, computed at load.  The projection of a single
+// vertex costs a root-find down the image rows, so rejecting whole continents
+// that cannot be in the swath is what makes drawing the map affordable.
+void apt_coast_bbox(int i, float *lon_min, float *lon_max,
+                    float *lat_min, float *lat_max);
+
 #endif

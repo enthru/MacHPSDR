@@ -89,6 +89,13 @@ void gpu_image_set_zoomable(GpuImage *self, gboolean on, gboolean drag_pan);
 gboolean gpu_image_widget_to_image(GpuImage *self, double wx, double wy,
                                    double *ix, double *iy);
 
+// The inverse, for an overlay drawing something anchored in the picture (the APT
+// map): the overlay works in widget coordinates and only the widget knows the
+// current scale and pan.  TRUE once an image is displayed; the result may lie
+// outside the widget, which the caller is expected to clip.
+gboolean gpu_image_image_to_widget(GpuImage *self, double ix, double iy,
+                                   double *wx, double *wy);
+
 G_END_DECLS
 
 #endif

@@ -31,6 +31,8 @@
 
 #include "apt_panel.h"
 #include "apt_decoder.h"
+#include "apt_geo.h"
+#include "apt_map.h"
 #include "gpu_image.h"
 #include "log.h"
 
@@ -44,6 +46,11 @@ static const char *CHAN_LABELS[] = { "Both", "Channel A", "Channel B" };
 
 typedef struct {
   GtkWidget *area;          // image drawing area
+  GtkWidget *geo_lbl;       // satellite / TLE age, or why there is no map
+  GtkWidget *pos_lbl;       // lat/lon under the pointer
+  GtkWidget *trim_spin;
+  gboolean   map_on;
+  int        map_lines;     // rows the map cache was last given
   GtkWidget *status;        // status label
   GtkWidget *slant_lbl;
   GtkWidget *contrast;      // manual exposure trim
@@ -58,6 +65,77 @@ typedef struct {
 static GdkPixbuf *on_source(gpointer data) {
   AptPanel *p = data;
   return p->pb;
+}
+
+// Full-line word of the displayed picture's leftmost column: the View crop is
+// what the decoder handed us, and the projection works in full-line words.
+static int chan_x0(void) {
+  int ch = radio ? radio->apt_channel : 0;
+  return (ch == 1) ? 86 : (ch == 2) ? 1126 : 0;
+}
+
+// The map is cached in image coordinates; this is the only thing that knows how
+// the view is currently scaled and panned.
+static gboolean map_xform(double ix, double iy, double *ox, double *oy, gpointer user) {
+  return gpu_image_image_to_widget(GPU_IMAGE(user), ix, iy, ox, oy);
+}
+
+static void on_overlay(cairo_t *cr, int width, int height, gpointer data) {
+  AptPanel *p = data;
+  if (!p->map_on || p->pb == NULL || !apt_geo_ready()) return;
+  apt_map_draw(cr, width, height, map_xform, p->area);
+}
+
+// Where is the pointer on the ground?  This is the readout the whole feature
+// exists for — a picture you can ask a question of, rather than look at.
+static void on_motion(GtkEventControllerMotion *m, double x, double y, gpointer data) {
+  AptPanel *p = data;
+  if (!p->map_on || p->pb == NULL) return;
+  double ix, iy, lat, lon;
+  if (apt_geo_ready() &&
+      gpu_image_widget_to_image(GPU_IMAGE(p->area), x, y, &ix, &iy) &&
+      apt_geo_pixel_to_latlon(iy, chan_x0() + ix, &lat, &lon)) {
+    char buf[64];
+    g_snprintf(buf, sizeof(buf), "%.2f\u00b0%c  %.2f\u00b0%c",
+               fabs(lat), lat >= 0 ? 'N' : 'S', fabs(lon), lon >= 0 ? 'E' : 'W');
+    gtk_label_set_text(GTK_LABEL(p->pos_lbl), buf);
+  } else {
+    gtk_label_set_text(GTK_LABEL(p->pos_lbl), "");
+  }
+}
+
+// ---- georeferencing --------------------------------------------------------
+// Everything the map needs, refreshed on the same tick as the picture: the
+// satellite (chosen by where the decoder is listening, never typed twice), the
+// decoder's per-row time stamps, and the operator's time trim.
+static void geo_tick(AptPanel *p, const apt_status_t *st) {
+  if (!p->map_on) return;
+
+  if (apt_geo_satellite() == NULL && st->tuned_hz > 0) apt_geo_select_freq(st->tuned_hz);
+
+  static double rt[2048];
+  int n = apt_decoder_get_row_times(rt, (int)G_N_ELEMENTS(rt));
+  if (n >= 2) apt_geo_set_row_times(rt, n);
+
+  char buf[160];
+  if (apt_geo_satellite() == NULL) {
+    g_snprintf(buf, sizeof(buf), "no element set for %.3f MHz",
+               st->tuned_hz > 0 ? (double)st->tuned_hz / 1e6 : 0.0);
+  } else if (!apt_geo_ready()) {
+    g_snprintf(buf, sizeof(buf), "%s — waiting for lines", apt_geo_satellite());
+  } else {
+    double age = apt_geo_tle_age_days();
+    g_snprintf(buf, sizeof(buf), "%s   TLE %+.1f d%s", apt_geo_satellite(), age,
+               fabs(age) > 7.0 ? "  (stale)" : "");
+  }
+  gtk_label_set_text(GTK_LABEL(p->geo_lbl), buf);
+
+  if (p->pb != NULL && apt_geo_ready()) {
+    int lines = gdk_pixbuf_get_height(p->pb);
+    int width = gdk_pixbuf_get_width(p->pb);
+    apt_map_update(lines, chan_x0(), width);
+    if (lines != p->map_lines) { p->map_lines = lines; gtk_widget_queue_draw(p->area); }
+  }
 }
 
 static gboolean tick(gpointer data) {
@@ -85,6 +163,7 @@ static gboolean tick(gpointer data) {
     p->pb = np;
     gtk_widget_queue_draw(p->area);
   }
+  geo_tick(p, &st);
   return G_SOURCE_CONTINUE;
 }
 
@@ -223,6 +302,70 @@ static void folder_clicked(GtkButton *b, gpointer data) {
   g_object_unref(dlg);
 }
 
+// ---- map controls ----------------------------------------------------------
+static void map_toggled(GtkCheckButton *b, gpointer data) {
+  AptPanel *p = data;
+  p->map_on = gtk_check_button_get_active(b);
+  if (radio) radio->apt_map = p->map_on;
+  if (p->map_on && radio) {
+    char *path = (radio->apt_tle_path[0] != '\0') ? g_strdup(radio->apt_tle_path)
+                                                  : apt_geo_default_tle_path();
+    char *err = NULL;
+    if (!apt_geo_load_tle(path, &err))
+      gtk_label_set_text(GTK_LABEL(p->geo_lbl), err ? err : "no element sets");
+    g_free(err);
+    g_free(path);
+  } else {
+    apt_map_invalidate();
+    gtk_label_set_text(GTK_LABEL(p->pos_lbl), "");
+  }
+  p->map_lines = -1;
+  gtk_widget_queue_draw(p->area);
+}
+
+static void trim_changed(GtkSpinButton *sb, gpointer data) {
+  AptPanel *p = data;
+  double v = gtk_spin_button_get_value(sb);
+  if (radio) radio->apt_time_trim = v;
+  apt_geo_set_time_offset(v);
+  p->map_lines = -1;
+  gtk_widget_queue_draw(p->area);
+}
+
+static void tle_done(GObject *src, GAsyncResult *res, gpointer data) {
+  AptPanel *p = data;
+  GFile *f = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, NULL);
+  if (f == NULL) return;                       // cancelled
+  char *path = g_file_get_path(f);
+  if (path != NULL) {
+    char *err = NULL;
+    if (apt_geo_load_tle(path, &err)) {
+      if (radio) g_strlcpy(radio->apt_tle_path, path, sizeof(radio->apt_tle_path));
+      p->map_lines = -1;
+      gtk_widget_queue_draw(p->area);
+    } else {
+      gtk_label_set_text(GTK_LABEL(p->geo_lbl), err ? err : "no element sets");
+    }
+    g_free(err);
+    g_free(path);
+  }
+  g_object_unref(f);
+}
+
+static void tle_clicked(GtkButton *b, gpointer data) {
+  AptPanel *p = data;
+  GtkFileDialog *d = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(d, "Two-line element sets");
+  if (radio && radio->apt_tle_path[0] != '\0') {
+    GFile *f = g_file_new_for_path(radio->apt_tle_path);
+    gtk_file_dialog_set_initial_file(d, f);
+    g_object_unref(f);
+  }
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(b));
+  gtk_file_dialog_open(d, GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL, NULL, tle_done, p);
+  g_object_unref(d);
+}
+
 static void on_destroy(GtkWidget *w, gpointer data) {
   AptPanel *p = data;
   if (p->timer) g_source_remove(p->timer);
@@ -318,6 +461,51 @@ GtkWidget *apt_panel_create(void) {
   apt_decoder_set_autosave(as0, dir0);
   gtk_box_append(GTK_BOX(box), ebar);
 
+  // Map row.  The satellite is never typed — it comes from where the decoder is
+  // listening — so what is left for the operator is the element sets, whether to
+  // draw at all, and the time trim, which is the control that actually slides
+  // the coastline onto the coast (see apt_geo.h on why the clock is the weak
+  // link and the orbit is not).
+  GtkWidget *mbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  p->map_on = radio ? radio->apt_map : FALSE;
+  p->map_lines = -1;
+  GtkWidget *mapb = gtk_check_button_new_with_label("Map");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(mapb), p->map_on);
+  gtk_widget_set_tooltip_text(mapb,
+      "Draw the coastline, a 10\u00b0 graticule and the ground track over the "
+      "picture, and report the position under the pointer. Needs element sets "
+      "for the satellite.");
+  g_signal_connect(mapb, "toggled", G_CALLBACK(map_toggled), p);
+  gtk_box_append(GTK_BOX(mbar), mapb);
+
+  GtkWidget *tleb = gtk_button_new_with_label("TLE\u2026");
+  gtk_widget_set_tooltip_text(tleb,
+      "Two-line element sets (a celestrak weather.txt will do). Without a file "
+      "the default is ~/.local/share/machpsdr/tle.txt.");
+  g_signal_connect(tleb, "clicked", G_CALLBACK(tle_clicked), p);
+  gtk_box_append(GTK_BOX(mbar), tleb);
+
+  gtk_box_append(GTK_BOX(mbar), gtk_label_new("Time trim:"));
+  p->trim_spin = gtk_spin_button_new_with_range(-600.0, 600.0, 0.5);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(p->trim_spin), 1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->trim_spin), radio ? radio->apt_time_trim : 0.0);
+  gtk_widget_set_tooltip_text(p->trim_spin,
+      "Seconds added to the capture time. One second is about 7 km along track, "
+      "and it absorbs a stale element set, a wrong clock and the audio latency "
+      "at once \u2014 nudge it until the coast sits on the coast.");
+  g_signal_connect(p->trim_spin, "value-changed", G_CALLBACK(trim_changed), p);
+  gtk_box_append(GTK_BOX(mbar), p->trim_spin);
+
+  p->geo_lbl = gtk_label_new("");
+  gtk_box_append(GTK_BOX(mbar), p->geo_lbl);
+  p->pos_lbl = gtk_label_new("");
+  gtk_widget_set_hexpand(p->pos_lbl, TRUE);
+  gtk_widget_set_halign(p->pos_lbl, GTK_ALIGN_END);
+  gtk_box_append(GTK_BOX(mbar), p->pos_lbl);
+  gtk_box_append(GTK_BOX(box), mbar);
+
+  if (p->map_on && radio) apt_geo_set_time_offset(radio->apt_time_trim);
+
   // Image area.  Same treatment as WEFAX: a tall scrolling image fit to the
   // panel width and bottom-anchored (newest lines visible), mip-mapped down so
   // the 2080-px line keeps its detail instead of dropping every other column.
@@ -328,6 +516,12 @@ GtkWidget *apt_panel_create(void) {
   // shows a thumbnail of it.  Wheel scrolls back through the pass, Ctrl+wheel
   // zooms to full resolution, drag pans, double-click returns to fit.
   gpu_image_set_zoomable(GPU_IMAGE(p->area), TRUE, TRUE);
+  gpu_image_set_overlay(GPU_IMAGE(p->area), on_overlay);
+  {
+    GtkEventController *mc = gtk_event_controller_motion_new();
+    g_signal_connect(mc, "motion", G_CALLBACK(on_motion), p);
+    gtk_widget_add_controller(p->area, mc);
+  }
   gtk_widget_set_size_request(p->area, 400, 80);
   gtk_widget_set_hexpand(p->area, TRUE);
   gtk_widget_set_vexpand(p->area, TRUE);

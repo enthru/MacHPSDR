@@ -26,6 +26,8 @@
 #include "apt_decoder.h"
 #include "apt_geo.h"
 #include "apt_coast.h"
+#include "apt_map.h"
+#include <cairo.h>
 
 #define WORDS      2080
 #define WORD_RATE  4160.0
@@ -156,54 +158,61 @@ static void geo_report(int lines) {
   printf("  round-trip pixel -> lat/lon -> pixel: worst %.4g px\n", worst);
 }
 
-// --- coastline overlay -----------------------------------------------------
+// --- map overlay -----------------------------------------------------------
 // The only honest test of the projection: put a map on the picture and look at
 // whether the coast is where the coast is.  Every number in geo_report() can be
 // right while the image sits 200 km from where it says it does, because the
 // numbers are all derived from the same time base and the same TLE.
 //
-// The map is the vendored assets/coastline.bin (apt_coast.c).  Long segments are
-// subdivided, since a straight line in lat/lon is not a straight line in scan
-// geometry.
-static void draw_px(GdkPixbuf *pb, int x, int y, guchar r, guchar g, guchar b) {
-  if (x < 0 || y < 0 || x >= gdk_pixbuf_get_width(pb) || y >= gdk_pixbuf_get_height(pb)) return;
-  guchar *p = gdk_pixbuf_get_pixels(pb) + y * gdk_pixbuf_get_rowstride(pb)
-              + x * gdk_pixbuf_get_n_channels(pb);
-  p[0] = r; p[1] = g; p[2] = b;
+// This deliberately goes through apt_map.c — the same cache and the same drawing
+// the panel uses, with the identity transform in place of the widget's scale and
+// pan — so what is checked here is the code that runs in the app.
+static gboolean identity_xform(double ix, double iy, double *ox, double *oy, gpointer u) {
+  *ox = ix; *oy = iy;
+  return TRUE;
 }
 
-static int coast_overlay(GdkPixbuf *pb, int lines) {
-  if (!apt_coast_load(NULL)) return 0;
-  int drawn = 0;
+static void map_overlay(GdkPixbuf *pb, int lines) {
+  int w = gdk_pixbuf_get_width(pb), h = gdk_pixbuf_get_height(pb);
+  apt_map_update(lines, 0, w);
 
-  for (int i = 0; i < apt_coast_count(); i++) {
-    int n = 0;
-    const APT_COAST_PT *p = apt_coast_polyline(i, &n);
-    for (int k = 1; k < n; k++) {
-      double plat = p[k-1].lat, plon = p[k-1].lon, lat = p[k].lat, lon = p[k].lon;
-      // ~25 km steps: fine enough that a coast stays a line at 4 km/pixel.
-      double d = hypot(lat - plat, (lon - plon) * cos(lat * M_PI / 180.0));
-      int m = (int)(d * 111.0 / 25.0) + 1;
-      if (m > 200) m = 200;
-      for (int j = 0; j <= m; j++) {
-        double la = plat + (lat - plat) * j / m, lo = plon + (lon - plon) * j / m;
-        double r, w;
-        if (!apt_geo_latlon_to_pixel(la, lo, 0, lines - 1, &r, &w)) continue;
-        int x = (int)(w + 0.5), y = (int)(r + 0.5);
-        draw_px(pb, x, y, 255, 60, 60);
-        draw_px(pb, x + CHAN_STEP, y, 255, 60, 60);   // the same ground in channel B
-        drawn++;
-      }
+  // gdk-pixbuf is RGB and cairo wants ARGB32, so draw the map on a transparent
+  // surface and composite it back by hand rather than converting the picture.
+  cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+  cairo_t *cr = cairo_create(surf);
+  apt_map_draw(cr, w, h, identity_xform, NULL);
+  cairo_destroy(cr);
+  cairo_surface_flush(surf);
+
+  const unsigned char *src = cairo_image_surface_get_data(surf);
+  int sstride = cairo_image_surface_get_stride(surf);
+  guchar *dst = gdk_pixbuf_get_pixels(pb);
+  int dstride = gdk_pixbuf_get_rowstride(pb), nch = gdk_pixbuf_get_n_channels(pb);
+  for (int y = 0; y < h; y++) {
+    const guint32 *sp = (const guint32 *)(src + (size_t)y * sstride);
+    guchar *dp = dst + (size_t)y * dstride;
+    for (int x = 0; x < w; x++) {
+      guint32 px = sp[x];
+      unsigned a = px >> 24;
+      if (a == 0) continue;
+      // Cairo ARGB32 is premultiplied.
+      unsigned r = (px >> 16) & 0xff, g = (px >> 8) & 0xff, b = px & 0xff;
+      guchar *o = dp + x * nch;
+      o[0] = (guchar)(r + o[0] * (255 - a) / 255);
+      o[1] = (guchar)(g + o[1] * (255 - a) / 255);
+      o[2] = (guchar)(b + o[2] * (255 - a) / 255);
     }
   }
-  return drawn;
+  cairo_surface_destroy(surf);
 }
 
 static void save_png(const char *out, int coast, int lines) {
   GdkPixbuf *pb = apt_decoder_get_image();
   if (!pb) { printf("no image decoded\n"); return; }
-  if (coast && apt_geo_ready())
-    printf("coastline: %d points drawn\n", coast_overlay(pb, lines));
+  if (coast && apt_geo_ready()) {
+    map_overlay(pb, lines);
+    printf("map: coastline, graticule and ground track drawn\n");
+  }
   GError *err = NULL;
   if (gdk_pixbuf_save(pb, out, "png", &err, NULL))
     printf("wrote %s (%d x %d)\n", out, gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
