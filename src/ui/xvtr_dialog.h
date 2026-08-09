@@ -20,3 +20,10 @@
 extern GtkWidget *create_xvtr_dialog(RADIO *radio);
 extern void save_xvtr(void);
 extern void lo_error_update(int band,long long offset);
+/* Re-fill one transverter row's entry widgets from the bands table. Needed when
+   something other than this page writes a band (the QO-100 page creates the two
+   converters the satellite needs), since the entries are only populated when the
+   dialog is built and would otherwise show stale text on the very same page.
+   No-op when the Configure dialog is not open. */
+extern void xvtr_dialog_refresh_row(int band);
+extern void update_receiver(int band);

@@ -172,6 +172,8 @@ typedef struct _radio {
   gboolean qo100_bandplan;     // draw the transponder band plan over the spectrum
   gboolean qo100_beacon_lock;  // continuously trim the LNB's LO error against a beacon
   gint     qo100_beacon_sel;   // which beacon: 0 = lower (CW), 1 = upper (CW)
+  long long qo100_lnb_lo;      // receive converter (LNB) local oscillator, Hz
+  long long qo100_tx_lo;       // uplink converter local oscillator, Hz (0 = none)
   gboolean qo100_beacon_ref;   // draw a level reference line at the beacon's strength
   // DX cluster client (P4.2): telnet spot feed + panadapter overlay. Persisted.
   gboolean cluster_enable;      // connect to DX cluster

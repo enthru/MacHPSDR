@@ -74,6 +74,27 @@ extern const QO100_SEGMENT *qo100_segment(int index);
 /* TRUE when f (absolute downlink Hz) is inside the narrow-band transponder. */
 extern gboolean qo100_in_transponder(long long f);
 
+/* ---------------- converters ---------------- */
+
+/* Titles of the two transverter entries the QO-100 page creates. They are also
+   how it FINDS them again, so pressing the button twice edits the same two rows
+   instead of eating two more of the eight slots. */
+#define QO100_XVTR_RX_TITLE "QO-100 RX"
+#define QO100_XVTR_TX_TITLE "QO-100 TX"
+
+/* The near-universal LNB: a standard universal LNB's low band. Worth a default
+   because almost every QO-100 station starts here; the uplink converter has no
+   equivalent (it depends entirely on the operator's IF), so its default is 0 =
+   no converter, i.e. a radio that reaches 2.4 GHz by itself. */
+#define QO100_DEFAULT_LNB_LO  9750000000LL
+
+/* Create (or update) the two transverter bands the satellite needs, from the LO
+   frequencies persisted on RADIO. Returns FALSE with a reason in `msg` if there
+   are not enough free transverter slots. An existing entry's LO ERROR is kept —
+   it is the beacon lock's accumulated measurement, not something to reset
+   because the operator pressed the button again. */
+extern gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz);
+
 /* ---------------- transponder mode ---------------- */
 
 /* Put VFO B on the uplink that matches VFO A's downlink and link the two with the

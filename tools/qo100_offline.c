@@ -40,10 +40,30 @@
 
 RADIO *radio;                       // the global qo100.c reads
 
-static BAND test_band;
+// A real bands table: the transverter-creation code hunts for free slots across
+// it, so a single shared band would make that logic untestable.
+static BAND      test_bands[BANDS+XVTRS];
+static BANDSTACK test_stacks[BANDS+XVTRS];
+static BANDSTACK_ENTRY test_entries[BANDS+XVTRS][3];
 static int  retunes;                // how many times the loop moved the radio
 
-BAND *band_get_band(int b) { (void)b; return &test_band; }
+#define test_band test_bands[0]
+
+static void bands_init(void) {
+  memset(test_bands,0,sizeof(test_bands));
+  memset(test_stacks,0,sizeof(test_stacks));
+  memset(test_entries,0,sizeof(test_entries));
+  for(int i=0;i<BANDS+XVTRS;i++) {
+    test_stacks[i].entries=3;
+    test_stacks[i].entry=test_entries[i];
+    test_bands[i].bandstack=&test_stacks[i];
+  }
+}
+
+BAND *band_get_band(int b) {
+  if(b<0 || b>=BANDS+XVTRS) return NULL;
+  return &test_bands[b];
+}
 void frequency_changed(RECEIVER *rx) { (void)rx; retunes++; }
 void update_frequency(RECEIVER *rx) { (void)rx; }
 void receiver_sync_vfo_b_lo(RECEIVER *rx) { (void)rx; }
@@ -148,6 +168,7 @@ static void check(const char *name, gboolean ok, const char *detail) {
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
   char d[160];
+  bands_init();
 
   // How many blocks one FFT frame needs, plus the settling the loop takes: the
   // frame is 32768 samples and the correction is fractional, so allow plenty.
@@ -261,6 +282,85 @@ int main(int argc, char **argv) {
     snprintf(d,sizeof(d),"%d segments spanning %.0f kHz",qo100_segment_count(),
              (double)(QO100_NB_DOWN_HIGH-QO100_NB_DOWN_LOW)/1000.0);
     check("band plan ordered, non-overlapping, in range", ok, d);
+  }
+
+  // ---- 9. the two transverter entries are created correctly. These are the
+  //         numbers that, typed wrong by hand, produce a radio that hears
+  //         nothing and gives no clue why — which is the reason the button
+  //         exists at all.
+  {
+    bands_init();
+    RADIO *r=g_new0(RADIO,1);
+    r->qo100_lnb_lo=QO100_DEFAULT_LNB_LO;
+    r->qo100_tx_lo=1968000000LL;          // 432 MHz IF, a common uplink converter
+    r->qo100_offset=QO100_TP_OFFSET;
+    char msg[160];
+    gboolean ok=qo100_create_transverters(r,msg,sizeof(msg));
+    BAND *rb=NULL,*tb=NULL;
+    for(int i=BANDS;i<BANDS+XVTRS;i++) {
+      if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0) rb=&test_bands[i];
+      if(strcmp(test_bands[i].title,QO100_XVTR_TX_TITLE)==0) tb=&test_bands[i];
+    }
+    gboolean good = ok && rb!=NULL && tb!=NULL &&
+      rb->frequencyMin==QO100_NB_DOWN_LOW && rb->frequencyMax==QO100_NB_DOWN_HIGH &&
+      rb->frequencyLO==QO100_DEFAULT_LNB_LO &&
+      tb->frequencyMin==QO100_NB_DOWN_LOW-QO100_TP_OFFSET &&
+      tb->frequencyMax==QO100_NB_DOWN_HIGH-QO100_TP_OFFSET &&
+      tb->frequencyLO==1968000000LL &&
+      // and the uplink band must be exactly the published 2400.000-2400.500
+      tb->frequencyMin==2400000000LL && tb->frequencyMax==2400500000LL &&
+      // bandstack seeded like a hand-typed entry: min / middle / max
+      rb->bandstack->entry[0].frequency==QO100_NB_DOWN_LOW &&
+      rb->bandstack->entry[2].frequency==QO100_NB_DOWN_HIGH;
+    snprintf(d,sizeof(d),"rx %lld..%lld tx %lld..%lld",
+             rb?(long long)rb->frequencyMin:0, rb?(long long)rb->frequencyMax:0,
+             tb?(long long)tb->frequencyMin:0, tb?(long long)tb->frequencyMax:0);
+    check("transverter entries written correctly", good, d);
+    g_free(r);
+  }
+
+  // ---- 10. pressing the button again must UPDATE the same two rows, not eat
+  //          two more slots — and must not throw away the LO error, which on the
+  //          receive row is the beacon lock's accumulated measurement.
+  {
+    bands_init();
+    RADIO *r=g_new0(RADIO,1);
+    r->qo100_lnb_lo=QO100_DEFAULT_LNB_LO;
+    char msg[160];
+    qo100_create_transverters(r,msg,sizeof(msg));
+    // pretend the beacon lock has been running
+    for(int i=BANDS;i<BANDS+XVTRS;i++)
+      if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0) test_bands[i].errorLO=-12345;
+    r->qo100_lnb_lo=9749800000LL;         // operator corrects the LNB figure
+    qo100_create_transverters(r,msg,sizeof(msg));
+    int nrx=0,ntx=0; long long kept=0,lo=0;
+    for(int i=BANDS;i<BANDS+XVTRS;i++) {
+      if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0) {
+        nrx++; kept=test_bands[i].errorLO; lo=test_bands[i].frequencyLO;
+      }
+      if(strcmp(test_bands[i].title,QO100_XVTR_TX_TITLE)==0) ntx++;
+    }
+    snprintf(d,sizeof(d),"rows rx=%d tx=%d, errorLO kept %lld, LO now %lld",nrx,ntx,kept,lo);
+    check("second press updates in place, keeps LO error",
+          nrx==1 && ntx==1 && kept==-12345 && lo==9749800000LL, d);
+    g_free(r);
+  }
+
+  // ---- 11. no free slots: refuse, and do not half-write.
+  {
+    bands_init();
+    for(int i=BANDS;i<BANDS+XVTRS;i++) g_strlcpy(test_bands[i].title,"taken",16);
+    RADIO *r=g_new0(RADIO,1);
+    char msg[160];
+    gboolean ok=qo100_create_transverters(r,msg,sizeof(msg));
+    int written=0;
+    for(int i=BANDS;i<BANDS+XVTRS;i++)
+      if(strcmp(test_bands[i].title,"taken")!=0) written++;
+    snprintf(d,sizeof(d),"returned %d, rows touched %d",ok,written);
+    check("full transverter table is refused, not clobbered",
+          !ok && written==0, d);
+    g_free(r);
+    bands_init();
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

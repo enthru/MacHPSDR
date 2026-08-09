@@ -107,6 +107,24 @@ void save_xvtr (void) {
   }
 }
 
+void xvtr_dialog_refresh_row(int band) {
+  if(radio==NULL || radio->dialog==NULL) return;      // widgets only exist while open
+  if(band<BANDS || band>=BANDS+XVTRS) return;
+  if(title[band]==NULL) return;
+  BAND *xvtr=band_get_band(band);
+  if(xvtr==NULL) return;
+  char temp[32];
+  gtk_editable_set_text(GTK_EDITABLE(title[band]),xvtr->title);
+  sprintf(temp,"%f",(double)xvtr->frequencyMin/1000000.0);
+  gtk_editable_set_text(GTK_EDITABLE(min_frequency[band]),temp);
+  sprintf(temp,"%f",(double)xvtr->frequencyMax/1000000.0);
+  gtk_editable_set_text(GTK_EDITABLE(max_frequency[band]),temp);
+  sprintf(temp,"%f",(double)xvtr->frequencyLO/1000000.0);
+  gtk_editable_set_text(GTK_EDITABLE(lo_frequency[band]),temp);
+  sprintf(temp,"%lld",(long long)xvtr->errorLO);
+  gtk_editable_set_text(GTK_EDITABLE(lo_error[band]),temp);
+}
+
 void update_receiver(int band) {
   int i;
   RECEIVER *rx;

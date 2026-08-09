@@ -30,6 +30,7 @@
 #include "band.h"
 #include "radio.h"
 #include "mode.h"
+#include "filter.h"
 #include "log.h"
 #include "qo100.h"
 
@@ -100,6 +101,99 @@ long long qo100_beacon_frequency(int sel) {
 }
 
 // ---------------------------------------------------------------------------
+// Converters
+// ---------------------------------------------------------------------------
+//
+// Typing two transverter rows by hand is exactly the friction this page exists
+// to remove, and it is also where the numbers get fat-fingered: the band edges
+// and the LO have to agree or the radio is commanded to a nonsense IF and
+// nothing at all is heard, with no clue as to why.  Only the two LOs are the
+// operator's own hardware; everything else follows from the band plan.
+
+// Fill one transverter band. Mirrors save_xvtr() in xvtr_dialog.c exactly —
+// including seeding the three bandstack entries at min / middle / max — so an
+// entry made here is indistinguishable from a hand-typed one.
+static void fill_xvtr(BAND *b, const char *name,
+                      long long fmin, long long fmax, long long lo) {
+  g_strlcpy(b->title,name,sizeof(b->title));
+  b->frequencyMin=fmin;
+  b->frequencyMax=fmax;
+  b->frequencyLO=lo;
+  BANDSTACK *bs=b->bandstack;
+  if(bs!=NULL) {
+    for(int i=0;i<bs->entries;i++) {
+      BANDSTACK_ENTRY *e=&bs->entry[i];
+      switch(i) {
+        case 0:  e->frequency=fmin; break;
+        case 1:  e->frequency=fmin+((fmax-fmin)/2LL); break;
+        default: e->frequency=fmax; break;
+      }
+      e->mode=USB;          // the transponder is non-inverting: USB both ways
+      e->filter=F6;
+    }
+  }
+}
+
+// Find the slot already holding this entry, else the first empty one, else -1.
+static int find_xvtr_slot(const char *name) {
+  int free_slot=-1;
+  for(int i=BANDS;i<BANDS+XVTRS;i++) {
+    BAND *b=band_get_band(i);
+    if(b==NULL) continue;
+    if(strcmp(b->title,name)==0) return i;
+    if(free_slot<0 && strlen(b->title)==0) free_slot=i;
+  }
+  return free_slot;
+}
+
+gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz) {
+  if(r==NULL) return FALSE;
+
+  int rxs=find_xvtr_slot(QO100_XVTR_RX_TITLE);
+  int txs=find_xvtr_slot(QO100_XVTR_TX_TITLE);
+  // Both names are resolved before anything is written, and the two must not
+  // land in the same empty slot.
+  if(rxs>=0 && txs==rxs) {
+    txs=-1;
+    for(int i=BANDS;i<BANDS+XVTRS;i++) {
+      BAND *b=band_get_band(i);
+      if(i!=rxs && b!=NULL && strlen(b->title)==0) { txs=i; break; }
+    }
+  }
+  if(rxs<0 || txs<0) {
+    if(msg!=NULL) snprintf(msg,msgsz,
+      "No free transverter slots — clear two rows above first");
+    return FALSE;
+  }
+
+  long long lnb=(r->qo100_lnb_lo!=0)?r->qo100_lnb_lo:QO100_DEFAULT_LNB_LO;
+  long long txlo=r->qo100_tx_lo;      // 0 is legitimate: the radio reaches 2.4 GHz itself
+  long long offset=(r->qo100_offset!=0)?r->qo100_offset:QO100_TP_OFFSET;
+
+  BAND *rb=band_get_band(rxs), *tb=band_get_band(txs);
+  // Keep whatever LO error is already there: on the receive entry that is the
+  // beacon lock's accumulated measurement of this very LNB, and throwing it away
+  // because the operator pressed the button again would be the one destructive
+  // thing this function could do.
+  long long rx_err=rb->errorLO, tx_err=tb->errorLO;
+
+  fill_xvtr(rb,QO100_XVTR_RX_TITLE,QO100_NB_DOWN_LOW,QO100_NB_DOWN_HIGH,lnb);
+  fill_xvtr(tb,QO100_XVTR_TX_TITLE,
+            QO100_NB_DOWN_LOW-offset,QO100_NB_DOWN_HIGH-offset,txlo);
+  rb->errorLO=rx_err;
+  tb->errorLO=tx_err;
+
+  if(msg!=NULL) snprintf(msg,msgsz,
+    "RX %.3f\342\200\223%.3f MHz (LO %.3f) \342\200\242 TX %.3f\342\200\223%.3f MHz (LO %.3f)",
+    (double)QO100_NB_DOWN_LOW/1e6,(double)QO100_NB_DOWN_HIGH/1e6,(double)lnb/1e6,
+    (double)(QO100_NB_DOWN_LOW-offset)/1e6,(double)(QO100_NB_DOWN_HIGH-offset)/1e6,
+    (double)txlo/1e6);
+  log_info("qo100: transverters in slots %d/%d, LNB LO %lld Hz, uplink LO %lld Hz\n",
+           rxs,txs,lnb,txlo);
+  return TRUE;
+}
+
+// ---------------------------------------------------------------------------
 // Transponder mode
 // ---------------------------------------------------------------------------
 
@@ -134,7 +228,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
   frequency_changed(rx);
   update_frequency(rx);
 
-  log_info("qo100: transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)",
+  log_info("qo100: transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)\n",
            (long long)rx->frequency_a,(long long)rx->frequency_b,offset);
   return TRUE;
 }

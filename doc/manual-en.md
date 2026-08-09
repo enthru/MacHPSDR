@@ -570,11 +570,17 @@ converters on either side of that transponder.
 ### Two converters, two VFOs
 
 Receive arrives through a 10 GHz LNB (local oscillator typically 9750 MHz) and
-transmit leaves through a completely separate 2.4 GHz transverter. So define
-**two** entries under **Configure → Bands → Transverters**: one covering the
-downlink with the LNB's LO, one covering the uplink with the transverter's LO.
-VFO A then follows the receive entry and VFO B the transmit one — each VFO takes
-its converter from its own frequency, so nothing else has to be told about it.
+transmit leaves through a completely separate 2.4 GHz transverter, so the
+satellite needs two entries under **Transverters**. You do not have to type them:
+fill in the two local oscillators — **Downlink converter (LNB) LO** (9750 MHz for
+a standard universal LNB) and **Uplink converter LO** (leave it at 0 if your radio
+reaches 2.4 GHz without a transverter) — and press **Create the two transverter
+entries**. Everything else follows from the band plan.
+
+VFO A then follows the receive entry and VFO B the transmit one, because each VFO
+takes its converter from its own frequency. Pressing the button again updates the
+same two rows rather than using up more slots, and keeps whatever LO error has
+been measured, so it is safe to correct an LO figure later.
 
 ### Transponder mode
 

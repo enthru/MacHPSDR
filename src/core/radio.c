@@ -1611,6 +1611,10 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->qo100_beacon_lock=atoi(value);
   value=getProperty("radio.qo100_beacon_sel");
   if(value!=NULL) r->qo100_beacon_sel=atoi(value);
+  value=getProperty("radio.qo100_lnb_lo");
+  if(value!=NULL) r->qo100_lnb_lo=atoll(value);
+  value=getProperty("radio.qo100_tx_lo");
+  if(value!=NULL) r->qo100_tx_lo=atoll(value);
   value=getProperty("radio.qo100_beacon_ref");
   if(value!=NULL) r->qo100_beacon_ref=atoi(value);
   value=getProperty("radio.cluster_enable");
@@ -2890,6 +2894,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->qo100_bandplan = FALSE;
   r->qo100_beacon_lock = FALSE;
   r->qo100_beacon_sel = 0;       // lower CW beacon
+  r->qo100_lnb_lo = QO100_DEFAULT_LNB_LO;  // standard universal LNB, low band
+  r->qo100_tx_lo = 0;            // 0 = the radio reaches 2.4 GHz without a converter
   r->qo100_beacon_ref = FALSE;
 
   r->cluster_enable = FALSE;

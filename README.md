@@ -741,10 +741,17 @@ a normal SDR.
   transverter, so the two VFOs need *different* converters — which previously was
   not possible: VFO B silently kept VFO A's LO and the radio was commanded to a
   nonsense intermediate frequency. Each VFO now takes its band, LO and LO error
-  from its own frequency, so you simply define two entries under
-  **Configure → Bands → Transverters** — one covering the downlink, one the
-  uplink — and both VFOs land on the right converter by themselves. (This is a
-  general fix: any cross-band split now works, not only this satellite.)
+  from its own frequency, so both land on the right converter by themselves.
+  (This is a general fix: any cross-band split now works, not only this
+  satellite. The tuning ceiling also follows a configured transverter now —
+  the old hard 6 GHz cap made a 10.49 GHz dial untunable.)
+- **The two transverter entries are written for you.** Give the QO-100 page your
+  two local oscillators — the LNB's (9750 MHz for a standard universal LNB) and
+  the uplink converter's (0 if the radio reaches 2.4 GHz by itself) — and press
+  **Create the two transverter entries**. The band edges, the bandstacks and the
+  sideband all follow from the band plan, so the numbers that have to agree
+  cannot disagree. Pressing it again updates the same two rows rather than using
+  more of the eight slots, and keeps their measured LO error.
 - **Transponder mode in one click.** **Configure → Bands → QO-100** has a
   **Set up transponder mode** button that puts VFO B on the uplink matching your
   current downlink and links the pair with the non-inverting SAT split, so tuning

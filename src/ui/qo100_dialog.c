@@ -25,8 +25,11 @@
 #include "discovered.h"
 #include "adc.h"
 #include "dac.h"
+#include "bandstack.h"
+#include "band.h"
 #include "radio.h"
 #include "settings_ui.h"
+#include "xvtr_dialog.h"
 #include "qo100.h"
 #include "qo100_dialog.h"
 
@@ -36,6 +39,7 @@
 // and PPM status readouts).
 static GtkWidget *qo100_status_label;
 static GtkWidget *qo100_setup_label;
+static GtkWidget *qo100_xvtr_label;
 static guint      qo100_poll_id;
 
 static void status_refresh(void) {
@@ -57,6 +61,39 @@ static void qo100_dialog_destroy(GtkWidget *widget, gpointer data) {
   if(qo100_poll_id!=0) { g_source_remove(qo100_poll_id); qo100_poll_id=0; }
   qo100_status_label=NULL;
   qo100_setup_label=NULL;
+  qo100_xvtr_label=NULL;
+}
+
+static void lnb_lo_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->qo100_lnb_lo=(long long)llround(gtk_spin_button_get_value(GTK_SPIN_BUTTON(w))*1.0e6);
+}
+
+static void tx_lo_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->qo100_tx_lo=(long long)llround(gtk_spin_button_get_value(GTK_SPIN_BUTTON(w))*1.0e6);
+}
+
+static void make_xvtr_cb(GtkWidget *w, gpointer data) {
+  (void)w;
+  RADIO *r=(RADIO *)data;
+  char msg[160];
+  gboolean ok=qo100_create_transverters(r,msg,sizeof(msg));
+  if(ok) {
+    // The Transverters frame sits on this very page with its entry widgets
+    // already filled, so it has to be told; and any receiver already sitting in
+    // one of the two bands needs the new LO pushed into it.
+    for(int b=BANDS;b<BANDS+XVTRS;b++) {
+      BAND *band=band_get_band(b);
+      if(band==NULL) continue;
+      if(strcmp(band->title,QO100_XVTR_RX_TITLE)==0 ||
+         strcmp(band->title,QO100_XVTR_TX_TITLE)==0) {
+        xvtr_dialog_refresh_row(b);
+        update_receiver(b);
+      }
+    }
+  }
+  if(qo100_xvtr_label!=NULL) gtk_label_set_text(GTK_LABEL(qo100_xvtr_label),msg);
 }
 
 static void offset_cb(GtkWidget *w, gpointer data) {
@@ -135,14 +172,47 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "The geostationary narrow-band transponder: uplink 2400.000\342\200\2232400.500 MHz,\n"
     "downlink 10489.500\342\200\22310490.000 MHz, non-inverting.\n"
     "\n"
-    "Receive and transmit go through different converters, so define TWO entries\n"
-    "under Transverters above \342\200\224 one covering the downlink with the LNB's LO\n"
-    "(9750 MHz for a standard universal LNB), one covering the uplink with the\n"
-    "2.4 GHz transverter's LO. VFO A then follows the receive entry and VFO B the\n"
-    "transmit one.");
+    "Receive and transmit go through different converters, so the satellite needs\n"
+    "two entries under Transverters above. Give the two local oscillators here and\n"
+    "they will be written for you; VFO A then follows the receive entry and VFO B\n"
+    "the transmit one.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
+
+  // ---- converters ----------------------------------------------------------
+  GtkWidget *lnb_lbl=gtk_label_new("Downlink converter (LNB) LO (MHz):");
+  gtk_widget_set_halign(lnb_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),lnb_lbl,0,row,1,1);
+  GtkWidget *lnb=gtk_spin_button_new_with_range(0.0,12000.0,0.001);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(lnb),3);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(lnb),
+                            (double)(r->qo100_lnb_lo!=0?r->qo100_lnb_lo:QO100_DEFAULT_LNB_LO)/1.0e6);
+  gtk_widget_set_halign(lnb,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),lnb,1,row++,1,1);
+  g_signal_connect(lnb,"value-changed",G_CALLBACK(lnb_lo_cb),r);
+
+  GtkWidget *txlo_lbl=gtk_label_new("Uplink converter LO (MHz, 0 = none):");
+  gtk_widget_set_halign(txlo_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),txlo_lbl,0,row,1,1);
+  GtkWidget *txlo=gtk_spin_button_new_with_range(0.0,2400.0,0.001);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(txlo),3);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(txlo),(double)r->qo100_tx_lo/1.0e6);
+  gtk_widget_set_halign(txlo,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),txlo,1,row++,1,1);
+  g_signal_connect(txlo,"value-changed",G_CALLBACK(tx_lo_cb),r);
+
+  GtkWidget *mk=gtk_button_new_with_label("Create the two transverter entries");
+  gtk_widget_set_halign(mk,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),mk,0,row++,2,1);
+  g_signal_connect(mk,"clicked",G_CALLBACK(make_xvtr_cb),r);
+
+  qo100_xvtr_label=gtk_label_new(
+    "Writes \"" QO100_XVTR_RX_TITLE "\" and \"" QO100_XVTR_TX_TITLE "\" above. "
+    "Pressing it again updates\nthose two rows rather than using more slots, and keeps their LO error.");
+  gtk_widget_set_halign(qo100_xvtr_label,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(qo100_xvtr_label,12);
+  gtk_grid_attach(GTK_GRID(grid),qo100_xvtr_label,0,row++,2,1);
 
   // ---- transponder ---------------------------------------------------------
   GtkWidget *off_lbl=gtk_label_new("Transponder offset (MHz):");
