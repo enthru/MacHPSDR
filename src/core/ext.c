@@ -122,7 +122,7 @@ int ext_set_frequency_b(void *data) {
 
   g_mutex_lock(&f->rx->mutex);
   if(f->rx!=NULL && !f->rx->locked) {
-    long long fmax=receiver_max_frequency();
+    long long fmax=receiver_max_frequency(f->rx);
     long long nf=f->frequency;
     if(!((nf <= 0    && nf < f->rx->frequency_b) ||
          (nf >  fmax && nf > f->rx->frequency_b))) {

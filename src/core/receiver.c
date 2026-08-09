@@ -542,16 +542,34 @@ void update_frequency(RECEIVER *rx) {
    Without this the dial simply cannot be tuned there — and because the guard is
    directional (it rejects only moves pushing FURTHER out of range), a frequency
    restored from a saved bandstack could be tuned downwards but never back up,
-   which is a worse failure than being refused outright. */
-long long receiver_max_frequency(void) {
+   which is a worse failure than being refused outright.
+
+   The transverter's ceiling gets a MARGIN on top, because a transverter's
+   min/max are a band plan, not the range of the converter — an LNB does not stop
+   working one hertz above the frequency the operator typed in. Stopping exactly
+   on the declared edge is what an operator actually runs into: with ctun or
+   freetune the cursor is what the guard clamps, so a signal at the top of the
+   band can be seen at the right-hand edge of the display but never brought to
+   the middle of it, since the centre only follows the cursor and the cursor is
+   already against the stop. The margin is the receiver's own span (floored at
+   1 MHz), which is exactly the amount needed to centre either edge of the band —
+   and this is a sanity cap against a runaway edit, not a safety interlock, so
+   being generous with it costs nothing. */
+long long receiver_max_frequency(RECEIVER *rx) {
   long long cap = 6000000000LL;
   if(radio != NULL && radio->discovered != NULL) {
     long long dev = (long long)radio->discovered->frequency_max;
     if(dev > 0 && dev < cap) cap = dev;
   }
+  long long xvtr_top = 0;
   for(int b=BANDS;b<BANDS+XVTRS;b++) {
     BAND *xb=band_get_band(b);
-    if(xb!=NULL && strlen(xb->title)>0 && xb->frequencyMax>cap) cap=xb->frequencyMax;
+    if(xb!=NULL && strlen(xb->title)>0 && xb->frequencyMax>xvtr_top) xvtr_top=xb->frequencyMax;
+  }
+  if(xvtr_top > 0) {
+    long long margin = 1000000LL;
+    if(rx != NULL && (long long)rx->sample_rate > margin) margin = (long long)rx->sample_rate;
+    if(xvtr_top + margin > cap) cap = xvtr_top + margin;
   }
   return cap;
 }
@@ -561,7 +579,7 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
   if(!rx->locked) {
     /* freetune forces ctun-like behaviour but clamps to span */
     gboolean use_ctun = rx->ctun || rx->freetune;
-    long long fmax = receiver_max_frequency();
+    long long fmax = receiver_max_frequency(rx);
 
     /* Keep the frequency inside [0, fmax]. The value that actually moves is
        ctun_frequency (+hz) in ctun/freetune, and frequency_a (-hz) otherwise —
@@ -624,7 +642,7 @@ void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
     // Keep VFO B inside [0, fmax] (6 GHz / device max). As with VFO A, reject
     // only moves that push further out of range so a frequency already above the
     // device max can still be tuned back down.
-    long long fmax = receiver_max_frequency();
+    long long fmax = receiver_max_frequency(rx);
     long long nf = rx->frequency_b + hz;
     if ((nf <= 0   && nf < rx->frequency_b) ||
         (nf > fmax && nf > rx->frequency_b)) return;

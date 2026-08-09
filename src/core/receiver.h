@@ -530,7 +530,7 @@ extern void receiver_set_notch_af(RECEIVER *rx, int idx, gboolean af);
 extern gboolean receiver_has_af_notch(RECEIVER *rx);
 
 // Upper tuning limit (6 GHz, or the discovered device's own maximum).
-extern long long receiver_max_frequency(void);
+extern long long receiver_max_frequency(RECEIVER *rx);
 
 extern void receiver_save_state(RECEIVER *rx);
 extern void receiver_restore_state(RECEIVER *rx);
