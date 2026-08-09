@@ -78,6 +78,7 @@
 #endif
 #ifdef HFDL
 #include "hfdl_decoder.h"
+#include "acars_decoder.h"
 #endif
 // Shared "a decoder is tapping this RX's audio" machinery (unity WDSP panel
 // gain + software listen-volume) is used by both the FT8/FT4 and the SSTV
@@ -1520,7 +1521,10 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
   }
 #endif
 #ifdef HFDL
-  if(radio!=NULL && rx==radio->active_receiver) radio_hfdl_panel_sync(radio);
+  if(radio!=NULL && rx==radio->active_receiver) {
+    radio_hfdl_panel_sync(radio);
+    radio_acars_panel_sync(radio);
+  }
 #endif
   // TCI (Phase A): mirror the mode change to connected clients (no-op unless
   // the server runs and rx is the active receiver; see tci.c).
@@ -1939,6 +1943,20 @@ static void full_rx_buffer(RECEIVER *rx) {
                                                     : (long long)rx->frequency_a;
       hfdl_decoder_add_iq_at(rx->iq_input_buffer, rx->buffer_size,
                              rx->sample_rate, (long long)rx->frequency_a, cursor);
+    }
+    // VHF ACARS: the same shape, on AM.  Also raw I/Q — the decoder runs its own
+    // AM detector because the channel is 25 kHz wide and, unlike the audio-fed
+    // decoders, it must be able to sit on a channel other than the one being
+    // listened to (that is what Scan band does).
+    gboolean acars_on = (rx->mode_a==AM || rx->mode_a==SAM) &&
+                        radio->decode_mode==DECODE_ACARS;
+    acars_decoder_set_enabled(acars_on);
+    if(acars_on) {
+      acars_decoder_set_scan(radio->acars_scan);
+      long long cursor = (rx->ctun || rx->freetune) ? (long long)rx->ctun_frequency
+                                                    : (long long)rx->frequency_a;
+      acars_decoder_add_iq(rx->iq_input_buffer, rx->buffer_size,
+                           rx->sample_rate, (long long)rx->frequency_a, cursor);
     }
   }
 #endif

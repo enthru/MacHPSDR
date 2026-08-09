@@ -95,7 +95,12 @@ typedef enum {
   DECODE_CW,        // CW (Morse) audio->text decoder
   DECODE_HFDL,      // HFDL (aviation HF data link) I/Q decoder (HFDL build flag)
   DECODE_APT,       // APT (NOAA weather satellite) image I/Q decoder (VHF FM)
+  DECODE_ACARS,     // VHF ACARS (aviation VHF data link) I/Q decoder (HFDL build flag)
 } decode_mode_t;
+
+// Last entry of decode_mode_t — the decoder-selector rebuild walks up to it, so
+// a new decoder added below without moving this would never be offered.
+#define DECODE_LAST DECODE_ACARS
 
 typedef struct _radio {
   DISCOVERED *discovered;
@@ -130,6 +135,10 @@ typedef struct _radio {
   gboolean hfdl_panel_open;// user toggled the HFDL message panel on (in place of RX2)
   gboolean hfdl_log;       // append decoded HFDL messages to ~/.local/share/machpsdr/hfdl_log.txt
   gboolean hfdl_scan;      // decode every known HFDL channel in the passband, not just the dial
+  GtkWidget *acars_panel;  // embedded VHF ACARS message panel (NULL unless open in AM+ACARS)
+  gboolean acars_panel_open;// user toggled the ACARS message panel on (in place of RX2)
+  gboolean acars_log;      // append decoded ACARS messages to ~/.local/share/machpsdr/acars_log.txt
+  gboolean acars_scan;     // decode every known ACARS channel in the passband, not just the cursor
   gint wefax_lpm;          // WEFAX lines per minute (60/90/120/240; default 120)
   gint wefax_ioc;          // WEFAX Index Of Cooperation (576/288; default 576)
   gboolean wefax_autostart;// auto-detect the WEFAX start tone (default TRUE)
@@ -375,6 +384,7 @@ typedef struct _radio {
   GtkWidget *cw_expand_btn;  // bottom-bar toggle: open/close the CW text panel (CWL/CWU)
   GtkWidget *hfdl_expand_btn;// bottom-bar toggle: open/close the HFDL message panel (DIGU)
   GtkWidget *apt_expand_btn; // bottom-bar toggle: open/close the APT image panel (FMN)
+  GtkWidget *acars_expand_btn;// bottom-bar toggle: open/close the ACARS message panel (AM)
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
@@ -413,6 +423,7 @@ extern void radio_sstv_panel_sync(RADIO *r);
 extern void radio_wefax_panel_sync(RADIO *r);
 extern void radio_cw_panel_sync(RADIO *r);
 extern void radio_hfdl_panel_sync(RADIO *r);
+extern void radio_acars_panel_sync(RADIO *r);
 extern void radio_apt_panel_sync(RADIO *r);
 // Push the persisted APT settings (view, exposure, auto-save) into the decoder.
 // Called at start-up as well as from the panel, because auto-saving a pass has

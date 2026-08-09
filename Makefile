@@ -151,9 +151,13 @@ ifeq ($(UNAME_S), Linux)
 HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
 HFDL_LIBS=-lliquid -lz $(HFDL_ASN1_LIB)
 endif
-HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_asn1.c hfdl_cpdlc.c hfdl_miam.c hfdl_ohma.c hfdl_util.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c hfdl_lib/vstring.c
-HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_asn1.h hfdl_cpdlc.h hfdl_miam.h hfdl_ohma.h hfdl_util.h hfdl_pdu.h hfdl_panel.h
-HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_fec.o hfdl_frame.o hfdl_msg.o hfdl_arinc.o hfdl_asn1.o hfdl_cpdlc.o hfdl_miam.o hfdl_ohma.o hfdl_util.o hfdl_pdu.o hfdl_panel.o hfdl_lib/libfec/viterbi27_port.o hfdl_lib/hfdl_crc.o hfdl_lib/vstring.o
+HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_asn1.c hfdl_cpdlc.c hfdl_miam.c hfdl_ohma.c hfdl_util.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c hfdl_lib/vstring.c acars_demod.c acars_decoder.c acars_panel.c
+HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_asn1.h hfdl_cpdlc.h hfdl_miam.h hfdl_ohma.h hfdl_util.h hfdl_pdu.h hfdl_panel.h acars_demod.h acars_decoder.h acars_panel.h
+# VHF ACARS rides on the same flag: its whole application layer IS hfdl_msg.c
+# (message header, reassembly, ARINC-622/CPDLC/MIAM/OHMA), so there is nothing
+# to build without HFDL and no second GPL story to tell — the link differs, the
+# messages do not.
+HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_fec.o hfdl_frame.o hfdl_msg.o hfdl_arinc.o hfdl_asn1.o hfdl_cpdlc.o hfdl_miam.o hfdl_ohma.o hfdl_util.o hfdl_pdu.o hfdl_panel.o hfdl_lib/libfec/viterbi27_port.o hfdl_lib/hfdl_crc.o hfdl_lib/vstring.o acars_demod.o acars_decoder.o acars_panel.o
 # The FANS-1/A ASN.1 tree (asn1c output + runtime, ~240 sources) is built into
 # its own archive by its own Makefile, like wdsp/ — it has no business in the
 # flat OBJS list, and it must never be rebuilt with our warning flags.
@@ -531,6 +535,7 @@ ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJ
 ifeq ($(HFDL_INCLUDE),HFDL)
 $(PROGRAM): | hfdl-asn1
 hfdl_offline: | hfdl-asn1
+acars_offline: | hfdl-asn1
 hfdl-asn1:
 	$(MAKE) -C hfdl_lib/asn1
 endif
@@ -575,6 +580,22 @@ hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/hfdl_offline.c \
 	  $(filter-out hfdl_panel.o,$(HFDL_OBJS)) log.o \
+	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
+
+# Headless VHF ACARS harness: `--selftest` needs no recording, and it also eats
+# I/Q recordings or the AM-demodulated-audio WAVs ACARS circulates as.  Same
+# reason as hfdl-offline: verify the decoder without starting the app.
+#   make acars-offline && ./acars_offline --selftest
+#   ./acars_offline rec_iq.wav 131550000 131550000
+#   ./acars_offline --audio acars_audio.wav
+.PHONY: acars-offline
+acars-offline: acars_offline
+# Links the ACARS chain plus the HFDL application layer it decodes messages
+# with; the two panel objects are what pull GTK in, so they are filtered out.
+acars_offline: tools/acars_offline.c $(HFDL_OBJS) log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/acars_offline.c \
+	  $(filter-out hfdl_panel.o acars_panel.o,$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
 
 # Headless APT harness: feeds a demodulated-audio WAV (the format APT recordings
@@ -627,8 +648,8 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline apt_offline
-	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM apt_offline.dSYM
+	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline
+	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM
 	-rm -rf $(APP_NAME).app
 
 APP_NAME=MacHPSDR

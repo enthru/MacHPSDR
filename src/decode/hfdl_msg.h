@@ -60,6 +60,17 @@ gboolean hfdl_msg_decode(const uint8_t *buf, int len, GString *out);
 // Drop the aircraft-id -> ICAO cache (called when the decoder resets).
 void hfdl_msg_reset(void);
 
+// Decode one bare ACARS block — SOH first, DEL last, CRC pair in place, parity
+// bits untouched — and append the rendered decode to out. This is the same
+// parser HFDL's enveloped-data HFNPDUs go through, exported because VHF ACARS
+// (acars_decoder.c) carries the identical block over a completely different
+// radio link: the message layer, the multi-block reassembly and every ATS
+// application inside it (ARINC-622/ADS-C/CPDLC, MIAM, OHMA) are shared.
+// Returns TRUE if the block parsed. Audio-thread only, like the rest of this
+// module — the reassembly table is shared with HFDL, which is safe because
+// radio->decode_mode selects exactly one decoder at a time.
+gboolean hfdl_msg_acars_block(const uint8_t *buf, int len, GString *out, int indent);
+
 // Ground-station name from the embedded system-table snapshot, or NULL.
 const char *hfdl_msg_gs_name(uint8_t gs_id);
 

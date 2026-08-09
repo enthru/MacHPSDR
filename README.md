@@ -54,6 +54,7 @@ feature additions.
 | **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, **north-up rotation** for northbound passes, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, a fresh picture started automatically when you move to the next satellite, and a **map over the picture** — coastline, graticule and ground track from the satellite's orbit, with the position under the pointer read out and **one-click download of the current element sets**. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
+| **VHF ACARS** | Decode **aviation VHF ACARS** (ARINC 618) in AM — 2400 bps MSK on an AM carrier, the short-range half of the same message system HFDL carries. Registration, flight, label and message body, with **multi-block reassembly and every ARINC-622 application (ADS-C, CPDLC, MIAM, OHMA) shared with the HFDL decoder**; a channel drop-down of the published frequencies, **Scan band** for every channel in the passband at once, and a message log. Mistuning is irrelevant (AM detection cannot see a carrier offset). Built with the same `HFDL_INCLUDE` flag, since the message layer is the same code *(**verified against the reference decoder's own off-air recording**: all seven messages in acarsdec's four-channel test capture decode with correct CRC, through both the audio and the I/Q path; not yet run against a live VHF antenna here)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
 | **TCI server** | Built-in TCI (Expert Electronics) server over WebSocket — loggers and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO, mode and PTT, pull the live **I/Q stream** (`iq_start`) for a skimmer/panadapter, and exchange **RX/TX audio** (`audio_start`) as a digital-mode VAC replacement — no virtual cable. Enable in **Configure → Network** *(control + I/Q + audio all implemented; verified with a WebSocket test client, not yet against a commercial logger; TX audio path unverified on air like the rest of the TX chain)*. |
 | **Manual notch (MNF)** | Ctrl+click the RX spectrum to drop or remove your own notch filters, Ctrl+scroll to resize one; stored by absolute frequency (stay on-signal as you tune), up to 16 per receiver, with a list editor in Configure → RX-N (per-notch on/off, exact frequency and width, and an **AF** mode that rides the dial instead). |
@@ -574,6 +575,40 @@ you've dialled in.
   carrying two logon confirmations with real ICAO addresses, aircraft position and
   performance reports, and ACARS message text byte-for-byte identical to the
   reference decoder's output for the same frame.)*
+
+- **VHF ACARS — the same messages, on the airband.** ACARS on VHF (129–137 MHz)
+  is the link airliners use inside range of a ground station, and it carries the
+  same messages HFDL does over a far simpler radio layer: 2400 bps MSK on an AM
+  carrier. So the decoder is small and the payoff is large — the physical layer
+  is new (NCO downmix, decimating channel filter, AM detection, a coherent MSK
+  demodulator with the bit clock derived from the 1800 Hz carrier phase, then the
+  SYN/SOH framing with odd parity per byte and a CRC-16 over the block), and
+  everything above it **is** the HFDL application layer: message header,
+  multi-block reassembly, ARINC-622/ADS-C, FANS-1/A CPDLC, MIAM and OHMA all come
+  out of a VHF message exactly as they do out of an HF one. Select **ACARS** from
+  the Decode block in **AM** and press **Show ACARS** for the panel (a running
+  **Messages** view and an **Aircraft** table: registration, flight, label,
+  channel, when last heard, message count), with **Log** appending everything to
+  `~/.local/share/machpsdr/acars_log.txt`. The channel drop-down carries the
+  published frequencies — 131.550 MHz is the worldwide primary — and **Tune**
+  moves the CTUN cursor rather than your whole view when it can. **Scan band**
+  decodes every published channel inside the passband at once (they are 25 kHz
+  apart, so a wide receiver holds several). Two things it inherits from taking
+  raw I/Q rather than audio: **mistuning does not matter at all** — AM detection
+  is the envelope, which cannot see a carrier offset, so there is no equivalent
+  of HFDL's carrier search — and neither does an I/Q swap. A block that fails its
+  CRC even after a single-bit repair is counted but never printed as if it were a
+  message. Built by the same `HFDL_INCLUDE` flag, because the message layer is
+  literally the same code. *(The demodulator and framing follow `acarsdec`, the
+  reference implementation, rather than being derived from the specification
+  alone — the same discipline as the HFDL port, and for the same reason: a
+  decoder tested only against its own modulator can agree with itself about a
+  wrong wire format. **Verified against real off-air data**: all seven messages
+  in acarsdec's own four-channel test recording decode with correct CRC —
+  registrations, flight numbers, message text — through the audio path, and again
+  after AM-remodulating them onto a carrier 30 kHz off centre at 192 kHz and at
+  2.4 MS/s. There is a self-test needing no recording at all. Not yet run against
+  a live VHF antenna here.)*
 
 ### SoapySDR / HackRF
 

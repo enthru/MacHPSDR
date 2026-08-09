@@ -42,6 +42,12 @@ unaffected. hfdl_lib/hfdl_crc.c is dumphfdl's crc16_ccitt.
 The embedded HFDL ground-station table in src/decode/hfdl_msg.c is a snapshot of
 dumphfdl's etc/systable.conf.
 
+The VHF ACARS decoder (src/decode/acars_*.c, built by the same HFDL_INCLUDE flag
+because it shares that decoder's message layer) has its MSK demodulator and
+frame state machine ported from acarsdec (Thierry Leconte), which is licensed
+under the GNU Lesser General Public License version 2; see the license headers
+in acarsdec's msk.c and acars.c. The LGPL permits this use in a GPL program.
+
 The APT georeferencing includes the NORAD SGP4/SDP4 orbit propagator under
 sgp4sdp4/, taken verbatim from gpredict's src/sgpsdp/ (Neoklis Kyriazis' C port
 of T.S. Kelso's implementation of Spacetrack Report No. 3, plus Alexandru

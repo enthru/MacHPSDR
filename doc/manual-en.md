@@ -368,6 +368,45 @@ carrying two logon confirmations with genuine ICAO addresses, aircraft position
 and performance reports, and ACARS message text identical to a reference
 decoder's output for the same frame.)*
 
+**ACARS on VHF — the same messages, closer in.** Within range of a ground
+station airliners use ACARS on VHF (129–137 MHz) instead of HFDL, and it carries
+the same messages over a much simpler radio layer: 2400 bps MSK on an AM
+carrier. MacHPSDR decodes it with the **same message layer as HFDL**, so the
+header, multi-block reassembly, ARINC-622/ADS-C, CPDLC, MIAM and OHMA all come
+out of a VHF message exactly as they do out of an HF one.
+
+Put the receiver in **AM** and choose **ACARS** from the Decode selector;
+**Show ACARS** opens the panel, and the Decode block shows the signal level, the
+message count, how many blocks failed their CRC, the channel being decoded and
+the last few lines of text. The decoder takes the raw I/Q, so with **CTUN or
+freetune the cursor picks the channel** and the receiver can stay where it is;
+the panel's channel drop-down and **Tune** do that for you (131.550 MHz is the
+worldwide primary channel, and the list names the region each one belongs to).
+
+**You cannot mistune it.** AM detection is the envelope of the signal, which
+does not change when the carrier is off frequency, so anywhere inside the
+channel decodes identically — there is no equivalent of HFDL's carrier search
+because there is nothing to search for.
+
+**Scan band** decodes every published channel that falls inside the receiver's
+passband at once — they are 25 kHz apart, so a wide receiver holds several — and
+each line is then labelled with the channel it came from.
+
+Every message line starts with the time it was heard, the signal level and
+whether the CRC checked out; a single bad bit is repaired using the CRC, and a
+block still failing after that is counted but never printed as though it were a
+message. **Log** appends everything to
+`~/.local/share/machpsdr/acars_log.txt`. The **Aircraft** tab is the standing
+picture next to the scrolling decode: registration, flight, last label, channel,
+how long ago it was heard and how many messages it sent.
+
+*(The demodulator and the framing follow `acarsdec`, the reference decoder for
+this link, rather than the specification alone. Verified against real off-air
+data: all seven messages in acarsdec's own four-channel test recording decode
+with correct CRC — registrations, flight numbers and message text — through the
+audio path, and again after being AM-remodulated onto a carrier 30 kHz off
+centre at 192 kHz and at 2.4 MS/s. Not yet run against a live VHF antenna here.)*
+
 ---
 
 ## 8. SSTV, WEFAX and APT — images, weather fax and satellites

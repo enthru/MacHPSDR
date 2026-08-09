@@ -835,6 +835,11 @@ static gboolean acars_decode(const uint8_t *buf, int len, GString *out, int inde
 
 // --- HFNPDU ----------------------------------------------------------------
 
+// Same block, arriving over VHF instead of inside an HFNPDU (acars_decoder.c).
+gboolean hfdl_msg_acars_block(const uint8_t *buf, int len, GString *out, int indent) {
+  return acars_decode(buf, len, out, indent);
+}
+
 static const char *hfnpdu_type_name(uint8_t t) {
   switch (t) {
     case HFNPDU_SYSTEM_TABLE:         return "System table (partial)";

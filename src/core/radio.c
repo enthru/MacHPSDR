@@ -87,6 +87,8 @@
 #ifdef HFDL
 #include "hfdl_decoder.h"
 #include "hfdl_panel.h"
+#include "acars_decoder.h"
+#include "acars_panel.h"
 #endif
 
 #include "cwdaemon.h"
@@ -115,7 +117,7 @@ static gboolean panels_idle(RADIO *r) {
   return r->ft8_panel==NULL && r->sstv_panel==NULL &&
          r->wefax_panel==NULL && r->cw_panel==NULL && r->apt_panel==NULL &&
 #ifdef HFDL
-         r->hfdl_panel==NULL &&
+         r->hfdl_panel==NULL && r->acars_panel==NULL &&
 #endif
          r->receivers < r->discovered->supported_receivers;
 }
@@ -848,6 +850,7 @@ static gboolean rx_stack_balance(gpointer data) {
   if(r->apt_panel!=NULL)   n++;
 #ifdef HFDL
   if(r->hfdl_panel!=NULL)  n++;
+  if(r->acars_panel!=NULL) n++;
 #endif
   if(n<2) { r->rx_paned_restore=FALSE; return FALSE; }
 
@@ -967,6 +970,12 @@ void radio_rebuild_rx_stack(RADIO *r) {
     GtkWidget *parent=gtk_widget_get_parent(r->hfdl_panel);
     child_remove_from_parent(r->hfdl_panel);
     tables[n++]=r->hfdl_panel;
+  }
+  // And the VHF ACARS message panel, on the same terms.
+  if(r->acars_panel!=NULL) {
+    g_object_ref(r->acars_panel);
+    child_remove_from_parent(r->acars_panel);
+    tables[n++]=r->acars_panel;
   }
 #endif
 
@@ -1091,6 +1100,7 @@ static const char *decode_mode_label(int m) {
     case DECODE_CW:    return "CW";
     case DECODE_HFDL:  return "HFDL";
     case DECODE_APT:   return "APT";
+    case DECODE_ACARS: return "ACARS";
   }
   return "?";
 }
@@ -1125,6 +1135,12 @@ static int decode_valid_mask(RECEIVER *rx) {
 #ifdef SSTV
   if(rx->mode_a==CWL || rx->mode_a==CWU) return (1<<DECODE_OFF)|(1<<DECODE_CW);
 #endif
+#ifdef HFDL
+  // VHF ACARS is amplitude modulation, so AM (and its synchronous variant) is
+  // where it is listened to.  As with APT the decode itself takes raw I/Q and
+  // brings its own detector, so the demod mode only decides what is heard.
+  if(rx->mode_a==AM || rx->mode_a==SAM) return (1<<DECODE_OFF)|(1<<DECODE_ACARS);
+#endif
   return 0;
 }
 
@@ -1150,9 +1166,9 @@ static void decode_sel_sync(RADIO *r) {
   g_signal_handlers_block_by_func(cb,G_CALLBACK(decode_sel_changed),r);
   if(rebuild) {
     gtk_string_list_splice(sl,0,g_list_model_get_n_items(G_LIST_MODEL(sl)),NULL);
-    int *modes = g_new0(int, DECODE_APT+1);
+    int *modes = g_new0(int, DECODE_LAST+1);
     int n = 0;
-    for(int m=DECODE_OFF;m<=DECODE_APT;m++) if(mask & (1<<m)) {
+    for(int m=DECODE_OFF;m<=DECODE_LAST;m++) if(mask & (1<<m)) {
       gtk_string_list_append(sl,decode_mode_label(m));
       modes[n++] = m;
     }
@@ -1208,6 +1224,7 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
 #endif
 #ifdef HFDL
   radio_hfdl_panel_sync(r);  // close the HFDL message panel if we left HFDL
+  radio_acars_panel_sync(r); // close the ACARS message panel if we left ACARS
 #endif
 }
 #endif
@@ -1461,6 +1478,42 @@ static void hfdl_expand_cb(GtkButton *b, gpointer data) {
   r->hfdl_panel_open = !r->hfdl_panel_open;
   radio_hfdl_panel_sync(r);
 }
+
+// Show or hide the embedded VHF ACARS message panel.  Same slot and the same
+// mutual exclusion as the HFDL panel, in AM/SAM with the ACARS decoder selected.
+void radio_acars_panel_sync(RADIO *r) {
+  if(r==NULL || r->rx_container==NULL) return;
+  gboolean acarsmode = (r->active_receiver!=NULL &&
+                        (r->active_receiver->mode_a==AM || r->active_receiver->mode_a==SAM)) &&
+                       r->decode_mode==DECODE_ACARS;
+  if(!acarsmode) r->acars_panel_open=FALSE;
+  gboolean want = acarsmode && r->acars_panel_open;
+  gboolean have = (r->acars_panel!=NULL);
+  if(want==have) return;
+
+  if(want) {
+    r->acars_panel=acars_panel_create();
+    g_object_ref_sink(r->acars_panel);
+    radio_rebuild_rx_stack(r);
+  } else {
+    GtkWidget *p=r->acars_panel;
+    r->acars_panel=NULL;                       // hide from the rebuild below
+    child_remove_from_parent(p);
+    g_object_unref(p);                         // finalize -> "destroy" -> stops its timer
+    radio_rebuild_rx_stack(r);
+  }
+
+  if(add_receiver_b!=NULL)
+    gtk_widget_set_sensitive(add_receiver_b,
+      panels_idle(r));
+}
+
+// Bottom-bar "Show ACARS" toggle: open/close the ACARS message panel (in place of RX2).
+static void acars_expand_cb(GtkButton *b, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->acars_panel_open = !r->acars_panel_open;
+  radio_acars_panel_sync(r);
+}
 #endif
 
 void add_receivers(RADIO *r) {
@@ -1484,6 +1537,10 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->hfdl_log=atoi(value);
   value=getProperty("radio.hfdl_scan");
   if(value!=NULL) r->hfdl_scan=atoi(value);
+  value=getProperty("radio.acars_log");
+  if(value!=NULL) r->acars_log=atoi(value);
+  value=getProperty("radio.acars_scan");
+  if(value!=NULL) r->acars_scan=atoi(value);
   value=getProperty("radio.wefax_lpm");
   if(value!=NULL) r->wefax_lpm=atoi(value);
   value=getProperty("radio.wefax_ioc");
@@ -1820,6 +1877,14 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean cw_cap = rx!=NULL && (rx->mode_a==CWL || rx->mode_a==CWU);
   // APT (NOAA weather satellites) is VHF FM — offered in FMN.
   gboolean apt_cap = rx!=NULL && rx->mode_a==FMN;
+  // VHF ACARS is amplitude modulation — offered in AM/SAM.  Without the HFDL
+  // build flag there is no ACARS decoder (its whole message layer is HFDL's),
+  // so AM offers nothing and the selector must stay hidden there.
+#ifdef HFDL
+  gboolean am_cap = rx!=NULL && (rx->mode_a==AM || rx->mode_a==SAM);
+#else
+  gboolean am_cap = FALSE;
+#endif
 #ifdef FT8
   char ft8buf[1024]; ft8buf[0]=0;    // multi-line FT8 readout (DIGU/DIGL)
   gboolean show_ft8=FALSE;
@@ -1835,6 +1900,7 @@ static gboolean rds_update_cb(gpointer data) {
 #ifdef HFDL
   // HFDL (aviation HF data link) is HF USB — offered in DIGU only.
   gboolean hfdl_active = digu && r->decode_mode==DECODE_HFDL;
+  gboolean acars_active = am_cap && r->decode_mode==DECODE_ACARS;
 #endif
   const char *ftname = r->decode_mode==DECODE_FT4 ? "FT4" : "FT8";
 #endif
@@ -1852,6 +1918,7 @@ static gboolean rds_update_cb(gpointer data) {
     else if(apt_active) title = "APT";
 #ifdef HFDL
     else if(hfdl_active) title = "HFDL";
+    else if(acars_active) title = "ACARS";
 #endif
 #endif
     gtk_label_set_text(GTK_LABEL(r->rds_title), title);
@@ -2114,6 +2181,46 @@ static gboolean rds_update_cb(gpointer data) {
       snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)",
                listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch);
   }
+  else if(acars_active) {
+    // VHF ACARS: same shape as the HFDL readout — a listening/level line plus
+    // the newest decoded text, peeked from the non-draining history so it never
+    // steals a message from the panel's drain.
+    show_ft8 = TRUE;
+    gboolean listening; int arate; glong amsgs;
+    acars_decoder_get_status(&listening, &arate, &amsgs);
+    double alvl = acars_decoder_get_level_db();
+    glong abad = acars_decoder_get_bad_count();
+    if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "ACARS");
+    char arecent[2048];
+    acars_decoder_get_recent(arecent, sizeof(arecent));
+    const int ACARS_READOUT_LINES = 4;
+    char *alast = arecent;
+    int alen = (int)strlen(arecent);
+    while(alen > 0 && (arecent[alen-1]=='\n' || arecent[alen-1]=='\r')) arecent[--alen]='\0';
+    if(alen > 0) {
+      int breaks = 0;
+      for(int p = alen-1; p >= 0; p--)
+        if(arecent[p]=='\n' && ++breaks == ACARS_READOUT_LINES) { alast = arecent+p+1; break; }
+    }
+    // Where the decoder is actually listening — the same lesson HFDL paid for:
+    // a decoder pointed elsewhere than the operator believes looks like a dead
+    // channel.
+    long long acur = 0; double aoff = 0.0;
+    acars_decoder_get_tuned(&acur, &aoff);
+    char ach[64];
+    if(acur > 0) snprintf(ach,sizeof(ach),"   ch %.4f MHz (%+.1f kHz)",
+                          (double)acur/1e6, aoff/1000.0);
+    else         ach[0]='\0';
+    if(*alast!='\0')
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld msg   %ld bad%s\n%s",
+               listening?"sig":"idle", alvl, amsgs, abad, ach, alast);
+    else if(r->acars_panel_open)
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld msg   %ld bad%s",
+               listening?"sig":"idle", alvl, amsgs, abad, ach);
+    else
+      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld msg   %ld bad%s\n(Show ACARS for the message panel)",
+               listening?"sig":"idle", alvl, amsgs, abad, ach);
+  }
 #endif
 #endif
 #ifdef FT8
@@ -2131,7 +2238,7 @@ static gboolean rds_update_cb(gpointer data) {
   // (FMN — for VHF SSTV like the ISS), kept in sync with radio->decode_mode
   // (which the FT8 panel's protocol combo can also change).
   if(r->decode_sel!=NULL) {
-    gtk_widget_set_visible(r->decode_sel, sstv_cap || cw_cap);
+    gtk_widget_set_visible(r->decode_sel, sstv_cap || cw_cap || am_cap);
     decode_sel_sync(r);   // repopulate per-mode rows + sync active to decode_mode
   }
   // The "FT8 Panel" toggle only makes sense in DIGU with an FT8/FT4 decoder.
@@ -2170,6 +2277,12 @@ static gboolean rds_update_cb(gpointer data) {
     gtk_widget_set_visible(r->hfdl_expand_btn, hfdl_active);
     gtk_button_set_label(GTK_BUTTON(r->hfdl_expand_btn),
                          r->hfdl_panel_open?"Hide HFDL":"Show HFDL");
+  }
+  // The "Show ACARS" toggle: shown in AM/SAM with the ACARS decoder selected.
+  if(r->acars_expand_btn!=NULL) {
+    gtk_widget_set_visible(r->acars_expand_btn, acars_active);
+    gtk_button_set_label(GTK_BUTTON(r->acars_expand_btn),
+                         r->acars_panel_open?"Hide ACARS":"Show ACARS");
   }
 #endif
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL) {
@@ -2378,6 +2491,12 @@ static void create_visual(RADIO *r) {
   gtk_widget_set_valign(r->hfdl_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->hfdl_expand_btn,"clicked",G_CALLBACK(hfdl_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->hfdl_expand_btn);
+
+  r->acars_expand_btn=gtk_button_new_with_label("Show ACARS");
+  gtk_widget_set_name(r->acars_expand_btn,"toolbar-button");
+  gtk_widget_set_valign(r->acars_expand_btn,GTK_ALIGN_START);
+  g_signal_connect(r->acars_expand_btn,"clicked",G_CALLBACK(acars_expand_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(dec_ctl),r->acars_expand_btn);
 #endif
 
   // Decode block content: the text column (expands) with the controls on the right.

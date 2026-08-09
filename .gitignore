@@ -44,6 +44,8 @@ build_warn.log
 .build-flags
 hfdl_offline
 hfdl_offline.dSYM/
+acars_offline
+acars_offline.dSYM/
 apt_offline
 apt_offline.dSYM/
 
