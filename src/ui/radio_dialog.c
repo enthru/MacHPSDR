@@ -90,6 +90,18 @@ static GtkWidget *dac0_antenna_combo_box;
 
 static GtkWidget *audio_backend_combo_box;
 
+// The ADC-0/ADC-1 combos are built per DISCOVERED DEVICE (only Hermes-2,
+// Angelia, Orion and Orion-2 get an ADC-1 frame at all), while the sensitivity
+// below is decided by the operator-selected MODEL — two independent things.  So
+// any radio whose model implies a second ADC but whose device did not build one
+// walked straight into gtk_widget_set_sensitive(NULL): two GTK-CRITICALs on the
+// console every time the Configure dialog was opened, on ordinary hardware and
+// on the I/Q Player alike.  Skipping a control that does not exist is the whole
+// fix; there is nothing to grey out.
+static void sui_set_sensitive(GtkWidget *w,gboolean on) {
+  if(w!=NULL) gtk_widget_set_sensitive(w,on);
+}
+
 static void radio_dialog_update_controls(void) {
 	log_info("%s: model=%d\n",__FUNCTION__,radio->model);
   switch(radio->model) {
@@ -124,39 +136,39 @@ static void radio_dialog_update_controls(void) {
   switch(radio->model) {
     case ANAN_7000DLE:
     case ANAN_8000DLE:
-      gtk_widget_set_sensitive(adc0_antenna_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc0_filters_combo_box, TRUE);
+      sui_set_sensitive(adc0_antenna_combo_box, TRUE);
+      sui_set_sensitive(adc0_filters_combo_box, TRUE);
       if(radio->adc[0].filters==AUTOMATIC) {
-        gtk_widget_set_sensitive(adc0_lpf_combo_box, FALSE);
-        gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
+        sui_set_sensitive(adc0_lpf_combo_box, FALSE);
+        sui_set_sensitive(adc0_hpf_combo_box, FALSE);
       } else {
-        gtk_widget_set_sensitive(adc0_hpf_combo_box, TRUE);
-        gtk_widget_set_sensitive(adc0_lpf_combo_box, TRUE);
+        sui_set_sensitive(adc0_hpf_combo_box, TRUE);
+        sui_set_sensitive(adc0_lpf_combo_box, TRUE);
       }
-      gtk_widget_set_sensitive(adc1_antenna_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc1_filters_combo_box, TRUE);
+      sui_set_sensitive(adc1_antenna_combo_box, TRUE);
+      sui_set_sensitive(adc1_filters_combo_box, TRUE);
       if(radio->adc[1].filters==AUTOMATIC) {
-        gtk_widget_set_sensitive(adc1_hpf_combo_box, FALSE);
+        sui_set_sensitive(adc1_hpf_combo_box, FALSE);
       } else {
-        gtk_widget_set_sensitive(adc1_hpf_combo_box, TRUE);
+        sui_set_sensitive(adc1_hpf_combo_box, TRUE);
       }
       break;
     case ANAN_100:
     case ANAN_100D:
     case ANAN_200D:
-      gtk_widget_set_sensitive(adc0_antenna_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc0_filters_combo_box, TRUE);
+      sui_set_sensitive(adc0_antenna_combo_box, TRUE);
+      sui_set_sensitive(adc0_filters_combo_box, TRUE);
       if(radio->adc[0].filters==AUTOMATIC) {
-        gtk_widget_set_sensitive(adc0_lpf_combo_box, FALSE);
-        gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
+        sui_set_sensitive(adc0_lpf_combo_box, FALSE);
+        sui_set_sensitive(adc0_hpf_combo_box, FALSE);
       } else {
-        gtk_widget_set_sensitive(adc0_hpf_combo_box, TRUE);
-        gtk_widget_set_sensitive(adc0_lpf_combo_box, TRUE);
+        sui_set_sensitive(adc0_hpf_combo_box, TRUE);
+        sui_set_sensitive(adc0_lpf_combo_box, TRUE);
       }
-      gtk_widget_set_sensitive(adc1_antenna_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc1_filters_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc0_lpf_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
+      sui_set_sensitive(adc1_antenna_combo_box, FALSE);
+      sui_set_sensitive(adc1_filters_combo_box, FALSE);
+      sui_set_sensitive(adc0_lpf_combo_box, FALSE);
+      sui_set_sensitive(adc0_hpf_combo_box, FALSE);
       break;
     case HERMES_LITE:
     case HERMES_LITE_2:
@@ -166,22 +178,22 @@ static void radio_dialog_update_controls(void) {
       break;
 #endif
     case ATLAS:
-      gtk_widget_set_sensitive(adc0_antenna_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc0_filters_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc0_lpf_combo_box, TRUE);
-      gtk_widget_set_sensitive(adc0_hpf_combo_box, TRUE);
+      sui_set_sensitive(adc0_antenna_combo_box, TRUE);
+      sui_set_sensitive(adc0_filters_combo_box, TRUE);
+      sui_set_sensitive(adc0_lpf_combo_box, TRUE);
+      sui_set_sensitive(adc0_hpf_combo_box, TRUE);
       break;
 
     default:
       log_info("%s: defualt set_sensitive\n",__FUNCTION__);
-      gtk_widget_set_sensitive(adc0_antenna_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc0_filters_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc0_lpf_combo_box, FALSE);
+      sui_set_sensitive(adc0_antenna_combo_box, FALSE);
+      sui_set_sensitive(adc0_filters_combo_box, FALSE);
+      sui_set_sensitive(adc0_hpf_combo_box, FALSE);
+      sui_set_sensitive(adc0_lpf_combo_box, FALSE);
 
-      gtk_widget_set_sensitive(adc1_antenna_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc1_filters_combo_box, FALSE);
-      gtk_widget_set_sensitive(adc1_hpf_combo_box, FALSE);
+      sui_set_sensitive(adc1_antenna_combo_box, FALSE);
+      sui_set_sensitive(adc1_filters_combo_box, FALSE);
+      sui_set_sensitive(adc1_hpf_combo_box, FALSE);
       break;
   }
 
@@ -313,11 +325,11 @@ static void adc0_filters_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
   RADIO *radio=(RADIO *)data;
   radio->adc[0].filters=(int)gtk_drop_down_get_selected(widget);
   if(radio->adc[0].filters==MANUAL) {
-    gtk_widget_set_sensitive(adc0_hpf_combo_box, TRUE);
-    gtk_widget_set_sensitive(adc0_lpf_combo_box, TRUE);
+    sui_set_sensitive(adc0_hpf_combo_box, TRUE);
+    sui_set_sensitive(adc0_lpf_combo_box, TRUE);
   } else {
-    gtk_widget_set_sensitive(adc0_hpf_combo_box, FALSE);
-    gtk_widget_set_sensitive(adc0_lpf_combo_box, FALSE);
+    sui_set_sensitive(adc0_hpf_combo_box, FALSE);
+    sui_set_sensitive(adc0_lpf_combo_box, FALSE);
   }
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
@@ -344,9 +356,9 @@ static void adc1_filters_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
   RADIO *radio=(RADIO *)data;
   radio->adc[1].filters=(int)gtk_drop_down_get_selected(widget);
   if(radio->adc[1].filters==MANUAL) {
-    gtk_widget_set_sensitive(adc1_hpf_combo_box, TRUE);
+    sui_set_sensitive(adc1_hpf_combo_box, TRUE);
   } else {
-    gtk_widget_set_sensitive(adc1_hpf_combo_box, FALSE);
+    sui_set_sensitive(adc1_hpf_combo_box, FALSE);
   }
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();

@@ -1701,6 +1701,21 @@ log_info("audio: state_cb: PA_CONTEXT_READY\n");
 // nothing to filter on macOS, and probing there would cost real time on
 // Bluetooth and pop the microphone-permission prompt during a device scan.
 #ifndef __APPLE__
+// The USE_ALSA backend's equivalent of the SoundIo probe below — the comment
+// above applies to it word for word, and it is where the reasoning bites
+// hardest: with PulseAudio or PipeWire running, the server owns the card, so
+// every raw plughw:/dmix: entry is refused with EBUSY and the whole list bar
+// "System Default" was decoration.  With no sound server they all open and are
+// all listed, which is why they are still enumerated rather than dropped.
+static gboolean alsa_pcm_opens(const char *name,snd_pcm_stream_t stream) {
+  snd_pcm_t *t=NULL;
+  int e=snd_pcm_open(&t,name,stream,SND_PCM_NONBLOCK);
+  if(e>=0) { snd_pcm_close(t); return TRUE; }
+  log_info("audio: ALSA %s '%s' not usable: %s\n",
+           stream==SND_PCM_STREAM_PLAYBACK?"output":"input",name,snd_strerror(e));
+  return FALSE;
+}
+
 static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
   struct SoundIoOutStream *test=soundio_outstream_create(device);
   if(test==NULL) return FALSE;
@@ -2267,9 +2282,13 @@ log_info("audio: create_audio: USE_PULSEAUDIO\n");
             snd_pcm_info_set_device(pcminfo, dev);
             snd_pcm_info_set_subdevice(pcminfo, 0);
 
+            char pcm[32];
+            snprintf(pcm, sizeof(pcm), "plughw:%d,%d", card, dev);
+
             // input devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_CAPTURE);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
+                alsa_pcm_opens(pcm, SND_PCM_STREAM_CAPTURE)) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_input_devices<MAX_AUDIO_DEVICES) {
@@ -2286,7 +2305,8 @@ log_info("input_device: %s\n",device_id);
 
             // ouput devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_PLAYBACK);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
+                alsa_pcm_opens(pcm, SND_PCM_STREAM_PLAYBACK)) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_output_devices<MAX_AUDIO_DEVICES) {
@@ -2321,7 +2341,8 @@ log_info("output_device: %s\n",device_id);
           // snd_device_name_get_hint returns NULL for a hint the PCM does not
           // carry (DESC is routinely absent), so neither pointer may be walked
           // before it is checked.
-          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0) {
+          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0 &&
+             alsa_pcm_opens(name, SND_PCM_STREAM_PLAYBACK)) {
             if(n_output_devices<MAX_AUDIO_DEVICES) {
               output_devices[n_output_devices].name=g_new0(char,strlen(name)+1);
               strcpy(output_devices[n_output_devices].name,name);

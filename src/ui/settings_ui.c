@@ -23,18 +23,33 @@
 #define SUI_GROUP_ROW_SP    4   // vertical gap between rows in a group
 #define SUI_GROUP_COL_SP    9   // horizontal gap between label and field
 
+// Apply row/column spacing to whatever container this is.  Not every page root
+// is a GtkGrid — the TX page is three GtkBoxes side by side, so that a short
+// frame is not stretched to match a tall one sharing a grid row — and calling
+// gtk_grid_set_*_spacing() on a box is two GTK-CRITICALs and no spacing.  A box
+// has one spacing, along its own orientation, so it takes the row or column
+// number depending on which way it runs.
+static void sui_spacing(GtkWidget *w,int row_sp,int col_sp) {
+  if(GTK_IS_GRID(w)) {
+    gtk_grid_set_row_spacing(GTK_GRID(w),row_sp);
+    gtk_grid_set_column_spacing(GTK_GRID(w),col_sp);
+  } else if(GTK_IS_BOX(w)) {
+    gtk_box_set_spacing(GTK_BOX(w),
+      gtk_orientable_get_orientation(GTK_ORIENTABLE(w))==GTK_ORIENTATION_HORIZONTAL
+        ? col_sp : row_sp);
+  }
+}
+
 void sui_style_page(GtkWidget *grid) {
   if(grid==NULL) return;
-  gtk_grid_set_row_spacing(GTK_GRID(grid),SUI_PAGE_ROW_SP);
-  gtk_grid_set_column_spacing(GTK_GRID(grid),SUI_PAGE_COL_SP);
+  sui_spacing(grid,SUI_PAGE_ROW_SP,SUI_PAGE_COL_SP);
   // Outer page margin is applied uniformly via CSS (#config-dialog notebook >
   // stack padding) so grid-pages and frame-pages get the same breathing room.
 }
 
 void sui_style_group(GtkWidget *grid) {
   if(grid==NULL) return;
-  gtk_grid_set_row_spacing(GTK_GRID(grid),SUI_GROUP_ROW_SP);
-  gtk_grid_set_column_spacing(GTK_GRID(grid),SUI_GROUP_COL_SP);
+  sui_spacing(grid,SUI_GROUP_ROW_SP,SUI_GROUP_COL_SP);
   gtk_widget_set_margin_top(grid,SUI_GROUP_MARGIN-2);
   gtk_widget_set_margin_bottom(grid,SUI_GROUP_MARGIN);
   gtk_widget_set_margin_start(grid,SUI_GROUP_MARGIN);

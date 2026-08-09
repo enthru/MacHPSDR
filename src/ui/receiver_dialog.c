@@ -97,27 +97,37 @@ static void adc_cb(GtkWidget *widget,gpointer data) {
   receiver_update_title(rx);
 }
 
-static gboolean filter_select_cb(GtkWidget *widget,gpointer data) {
-  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return TRUE;
+// These are plain GtkButtons (they only look like a radio group, via the orange
+// text on the selected one), so the signal is "clicked" and there is no active
+// state to interrogate.  Both of these used to be connected to "toggled" and to
+// open with gtk_check_button_get_active() — GTK3 radio-button code left behind
+// by the GTK4 port.  GtkButton has no "toggled" signal, so g_signal_connect
+// logged a GLib-GObject-CRITICAL for each one and the handler was NEVER
+// connected: the Var1/Var2 filter buttons and the FMN deviation buttons did
+// nothing at all when clicked.
+static void filter_select_cb(GtkWidget *widget,gpointer data) {
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   gint f=select->choice;
+  // Un-highlight whatever was selected before.  Only the Var1/Var2 buttons are
+  // actually attached to this grid (the loop that built one button per filter
+  // is commented out above), so for any other filter_a there is simply no
+  // widget at those coordinates — hence both NULL checks.
   GtkWidget *grid=gtk_widget_get_ancestor(widget, GTK_TYPE_GRID);
-  int x=rx->filter_a%FILTER_COLUMNS;
-  int y=rx->filter_a/FILTER_COLUMNS;
-  if(rx->filter_a>=FVar1) {
-    y=1+((rx->filter_a+4)/5);
-    x=0;
+  if(grid!=NULL) {
+    int x=rx->filter_a%FILTER_COLUMNS;
+    int y=rx->filter_a/FILTER_COLUMNS;
+    if(rx->filter_a>=FVar1) {
+      y=1+((rx->filter_a+4)/5);
+      x=0;
+    }
+    set_button_text_color(gtk_grid_get_child_at(GTK_GRID(grid),x,y),"black");
   }
-  GtkWidget *b=gtk_grid_get_child_at(GTK_GRID(grid),x,y);
-  set_button_text_color(b,"black");
   set_button_text_color(widget,"orange");
   receiver_filter_changed(rx,f);
-  return TRUE;
 }
 
-static gboolean deviation_select_cb(GtkWidget *widget,gpointer data) {
-  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return TRUE;
+static void deviation_select_cb(GtkWidget *widget,gpointer data) {
   SELECT *select=(SELECT *)data;
   RECEIVER *rx=select->rx;
   rx->deviation=select->choice;
@@ -132,7 +142,6 @@ static gboolean deviation_select_cb(GtkWidget *widget,gpointer data) {
   set_deviation(rx);
   if(radio->transmitter) transmitter_set_deviation(radio->transmitter);
   update_vfo(rx);
-  return TRUE;
 }
 
 static void var_spin_low_cb (GtkWidget *widget, gpointer data) {
@@ -200,7 +209,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=2500;
-      g_signal_connect(b,"toggled",G_CALLBACK(deviation_select_cb),(gpointer)select);
+      g_signal_connect(b,"clicked",G_CALLBACK(deviation_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,1,1,1,1);
 
       b=gtk_button_new_with_label("5.0K");
@@ -213,7 +222,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=5000;
-      g_signal_connect(b,"toggled",G_CALLBACK(deviation_select_cb),(gpointer)select);
+      g_signal_connect(b,"clicked",G_CALLBACK(deviation_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,2,1,1,1);
       }
       break;
@@ -232,7 +241,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
         select=g_new0(SELECT,1);
         select->rx=rx;
         select->choice=i;
-        g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
+        g_signal_connect(b,"clicked",G_CALLBACK(filter_select_cb),(gpointer)select);
         gtk_grid_attach(GTK_GRID(rx->filter_grid),b,i%FILTER_COLUMNS,i/FILTER_COLUMNS,1,1);
       }
       */
@@ -251,7 +260,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select=g_new0(SELECT,1);
       select->rx=rx;
       select->choice=i;
-      g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
+      g_signal_connect(b,"clicked",G_CALLBACK(filter_select_cb),(gpointer)select);
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,0,row,1,1);
 
       GtkWidget *var1_spin_low=gtk_spin_button_new_with_range(-8000.0,+8000.0,1.0);
@@ -281,7 +290,7 @@ log_info("update_filters: new filter grid %p\n",rx->filter_grid);
       select->rx=rx;
       select->choice=i;
       gtk_grid_attach(GTK_GRID(rx->filter_grid),b,0,row,1,1);
-      g_signal_connect(b,"toggled",G_CALLBACK(filter_select_cb),(gpointer)select);
+      g_signal_connect(b,"clicked",G_CALLBACK(filter_select_cb),(gpointer)select);
 
      GtkWidget *var2_spin_low=gtk_spin_button_new_with_range(-8000.0,+8000.0,1.0);
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(var2_spin_low),(double)band_filter->low);

@@ -24,6 +24,10 @@
 // keeps the per-widget semantics without leaking a provider on every call
 // (previously every mox toggle added a fresh provider to the widget context).
 void set_button_text_color(GtkWidget *widget, char *color) {
+  // Callers routinely pass the result of a lookup ("the button that is selected
+  // right now"), which legitimately has no widget — colouring nothing is the
+  // correct outcome there, not a pair of GTK-CRITICALs.
+  if (widget == NULL || color == NULL) return;
   static GtkCssProvider *provider = NULL;
   static GHashTable *colors = NULL;   // colour string -> class name
   static GString *css = NULL;
