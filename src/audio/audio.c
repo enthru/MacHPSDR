@@ -2306,16 +2306,19 @@ void create_audio(int backend_index,const char *backend) {
         return;
       }
 
-      // Record what actually connected, which may not be what was asked for
-      // (auto-selection above).  The Configure → Audio menu reads this back, so
-      // it names the backend that is playing rather than the one that failed.
+      // What actually connected may not be what was asked for (auto-selection
+      // above).  Note it, but do NOT write it into radio->which_audio_backend:
+      // that field is the operator's REQUEST and is persisted, so overwriting it
+      // silently discards a choice of JACK the moment JACK's server happens to
+      // be down, and the next run never tries it again.  The request and the
+      // reality are two different things; audio_get_current_backend() reports
+      // the second, and Configure → Audio shows both.
       {
         int cur=audio_get_current_backend();
-        if(cur>=0 && cur!=radio->which_audio_backend) {
-          log_info("audio: backend in use is %s (index %d), not the one selected\n",
-                   soundio_backend_name(soundio->current_backend),cur);
-          radio->which_audio_backend=cur;
-        }
+        if(cur>=0 && cur!=radio->which_audio_backend)
+          log_info("audio: %s was requested but %s is what connected\n",
+                   audio_get_backend_name(radio->which_audio_backend),
+                   soundio_backend_name(soundio->current_backend));
       }
 
       soundio_build_device_lists();
