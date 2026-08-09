@@ -44,12 +44,18 @@ extern RADIO *radio;   // global application state (persisted APT settings)
 static const char *CHAN_LABELS[] = { "Both", "Channel A", "Channel B" };
 #define N_CHAN 3
 
+// Orientation: as received / always turned / turned when the orbit says so.
+static const char *ROT_LABELS[] = { "As received", "180°", "North up" };
+#define N_ROT 3
+
 typedef struct {
   GtkWidget *area;          // image drawing area
   GtkWidget *geo_lbl;       // satellite / TLE age, or why there is no map
   GtkWidget *pos_lbl;       // lat/lon under the pointer
   GtkWidget *trim_spin;
   gboolean   map_on;
+  gboolean   flip;          // the decoder is handing the picture over rotated 180°
+  int        img_w, img_h;  // ...and its size, which the rotation is about
   int        map_lines;     // rows the map cache was last given
   GtkWidget *status;        // status label
   GtkWidget *slant_lbl;
@@ -74,16 +80,25 @@ static int chan_x0(void) {
   return (ch == 1) ? 86 : (ch == 2) ? 1126 : 0;
 }
 
-// The map is cached in image coordinates; this is the only thing that knows how
-// the view is currently scaled and panned.
+// The map is cached in the picture's OWN (unrotated) coordinates — that is what
+// the projection knows about — so a rotated picture is a half turn away from it,
+// and this is the one place that has to say so.  It is also the only thing that
+// knows how the view is currently scaled and panned.
+// Note `w - x`, not `(w-1) - x`: these are continuous coordinates, where pixel i
+// occupies [i, i+1) and its centre is i+0.5, so the mirror is about the edge of
+// the image and not about the centre of its last pixel.  The index form puts the
+// whole overlay one pixel out — small, systematic, and exactly the sort of thing
+// that is invisible by eye and obvious in a numeric test.
 static gboolean map_xform(double ix, double iy, double *ox, double *oy, gpointer user) {
-  return gpu_image_image_to_widget(GPU_IMAGE(user), ix, iy, ox, oy);
+  AptPanel *p = user;
+  if (p->flip) { ix = p->img_w - ix; iy = p->img_h - iy; }
+  return gpu_image_image_to_widget(GPU_IMAGE(p->area), ix, iy, ox, oy);
 }
 
 static void on_overlay(cairo_t *cr, int width, int height, gpointer data) {
   AptPanel *p = data;
   if (!p->map_on || p->pb == NULL || !apt_geo_ready()) return;
-  apt_map_draw(cr, width, height, map_xform, p->area);
+  apt_map_draw(cr, width, height, map_xform, p);
 }
 
 // Where is the pointer on the ground?  This is the readout the whole feature
@@ -92,9 +107,10 @@ static void on_motion(GtkEventControllerMotion *m, double x, double y, gpointer 
   AptPanel *p = data;
   if (!p->map_on || p->pb == NULL) return;
   double ix, iy, lat, lon;
-  if (apt_geo_ready() &&
-      gpu_image_widget_to_image(GPU_IMAGE(p->area), x, y, &ix, &iy) &&
-      apt_geo_pixel_to_latlon(iy, chan_x0() + ix, &lat, &lon)) {
+  gboolean got = apt_geo_ready() &&
+                 gpu_image_widget_to_image(GPU_IMAGE(p->area), x, y, &ix, &iy);
+  if (got && p->flip) { ix = p->img_w - ix; iy = p->img_h - iy; }
+  if (got && apt_geo_pixel_to_latlon(iy, chan_x0() + ix, &lat, &lon)) {
     char buf[64];
     g_snprintf(buf, sizeof(buf), "%.2f\u00b0%c  %.2f\u00b0%c",
                fabs(lat), lat >= 0 ? 'N' : 'S', fabs(lon), lon >= 0 ? 'E' : 'W');
@@ -109,13 +125,12 @@ static void on_motion(GtkEventControllerMotion *m, double x, double y, gpointer 
 // satellite (chosen by where the decoder is listening, never typed twice), the
 // decoder's per-row time stamps, and the operator's time trim.
 static void geo_tick(AptPanel *p, const apt_status_t *st) {
+  // The feeding itself belongs to radio.c and happens whether or not this panel
+  // is open — the north-up rotation has to reach the unattended auto-save too —
+  // so all that is left here is what only a panel can do: say what is going on
+  // and keep the projection cache in step with the picture.
+  radio_apt_geo_pump(radio);
   if (!p->map_on) return;
-
-  if (apt_geo_satellite() == NULL && st->tuned_hz > 0) apt_geo_select_freq(st->tuned_hz);
-
-  static double rt[2048];
-  int n = apt_decoder_get_row_times(rt, (int)G_N_ELEMENTS(rt));
-  if (n >= 2) apt_geo_set_row_times(rt, n);
 
   char buf[160];
   if (apt_geo_satellite() == NULL) {
@@ -161,6 +176,12 @@ static gboolean tick(gpointer data) {
   if (np != NULL) {
     if (p->pb != NULL) g_object_unref(p->pb);
     p->pb = np;
+    // Read the rotation back from the decoder rather than deriving it again:
+    // it is what actually produced this picture, so the overlay cannot end up a
+    // half turn out of step with it.
+    p->flip  = apt_decoder_get_flip();
+    p->img_w = gdk_pixbuf_get_width(np);
+    p->img_h = gdk_pixbuf_get_height(np);
     gtk_widget_queue_draw(p->area);
   }
   geo_tick(p, &st);
@@ -302,7 +323,169 @@ static void folder_clicked(GtkButton *b, gpointer data) {
   g_object_unref(dlg);
 }
 
+// ---- element sets over the network -----------------------------------------
+// Hand-feeding a TLE file is the only part of the map the operator has to do
+// outside the app, and it is also the part that goes off: element sets age, and
+// a week-old set is worth kilometres of error in the overlay.  Celestrak's
+// weather group is the public source everyone else uses and carries all three
+// APT birds.
+//
+// Fetched by running curl (or wget), not by linking an HTTP client: celestrak is
+// HTTPS-only, so the alternative is a TLS dependency — libsoup or libcurl — for
+// one button that downloads 600 bytes.  Both tools are on every macOS and
+// virtually every Linux, and if neither is there the operator still has TLE… and
+// a file.  Both accept several URLs in one invocation and concatenate the
+// replies, which is exactly the multi-satellite TLE file the loader wants.
+//
+// By CATALOGUE NUMBER rather than by group, though a group would be one request:
+// celestrak's `weather` group no longer lists NOAA 15/18/19 at all (checked
+// 2026-08-09 — 74 sets, none of them ours), and there is no `noaa` group to fall
+// back on.  A group is a curated list that can drop the three satellites this
+// decoder exists for; a catalogue number cannot.
+#define CELESTRAK_GP "https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&CATNR="
+static const char *TLE_URLS[] = {
+  CELESTRAK_GP "25338",   // NOAA 15 — 137.620 MHz
+  CELESTRAK_GP "28654",   // NOAA 18 — 137.9125 MHz
+  CELESTRAK_GP "33591",   // NOAA 19 — 137.100 MHz
+};
+
+// The download is async and the panel can be closed while it is in flight, so
+// this holds its own refs on the two widgets it touches (the same shape as
+// folder_done above).  A destroyed-but-referenced GtkWidget is still a valid
+// object; setting a label on one is a no-op the user never sees.
+typedef struct { GtkWidget *lbl; GtkWidget *area; } TleFetch;
+
+static void tle_fetch_free(TleFetch *f) {
+  g_object_unref(f->lbl);
+  g_object_unref(f->area);
+  g_free(f);
+}
+
+// Enough of a check that a captive portal's login page, or a celestrak error
+// message, cannot overwrite a working element-set file.
+static gboolean looks_like_tle(const char *s) {
+  gboolean l1 = FALSE, l2 = FALSE;
+  for (const char *p = s; p != NULL && *p != '\0'; ) {
+    if (p[0] == '1' && p[1] == ' ')      l1 = TRUE;
+    else if (p[0] == '2' && p[1] == ' ') l2 = TRUE;
+    const char *nl = strchr(p, '\n');
+    p = nl ? nl + 1 : NULL;
+  }
+  return l1 && l2;
+}
+
+static void fetch_done(GObject *src, GAsyncResult *res, gpointer data) {
+  TleFetch *f = data;
+  char *out = NULL;
+  GError *err = NULL;
+
+  if (!g_subprocess_communicate_utf8_finish(G_SUBPROCESS(src), res, &out, NULL, &err) ||
+      !g_subprocess_get_successful(G_SUBPROCESS(src)) ||
+      out == NULL || !looks_like_tle(out)) {
+    gtk_label_set_text(GTK_LABEL(f->lbl),
+                       err ? err->message : "element-set download failed");
+    log_error("APT: TLE download failed: %s\n",
+              err ? err->message : "no element sets in the reply");
+    if (err) g_error_free(err);
+    g_free(out);
+    tle_fetch_free(f);
+    return;
+  }
+
+  // Always to the default path, never over a file the operator chose: this
+  // button is "get me the current sets", not "replace whatever I curated".
+  char *path = apt_geo_default_tle_path();
+  char *dir = g_path_get_dirname(path);
+  g_mkdir_with_parents(dir, 0755);
+  g_free(dir);
+
+  if (!g_file_set_contents(path, out, -1, &err)) {
+    gtk_label_set_text(GTK_LABEL(f->lbl), err ? err->message : "cannot write TLE file");
+    log_error("APT: %s\n", err ? err->message : "cannot write TLE file");
+    if (err) g_error_free(err);
+  } else {
+    char *lerr = NULL;
+    int n = apt_geo_load_tle(path, &lerr);
+    if (n > 0) {
+      if (radio) g_strlcpy(radio->apt_tle_path, path, sizeof(radio->apt_tle_path));
+      char msg[128];
+      g_snprintf(msg, sizeof(msg), "%d element sets downloaded", n);
+      gtk_label_set_text(GTK_LABEL(f->lbl), msg);
+      log_info("APT: %d element set(s) downloaded to %s\n", n, path);
+      gtk_widget_queue_draw(f->area);
+    } else {
+      gtk_label_set_text(GTK_LABEL(f->lbl), lerr ? lerr : "no element sets");
+    }
+    g_free(lerr);
+  }
+  g_free(path);
+  g_free(out);
+  tle_fetch_free(f);
+}
+
+static void update_clicked(GtkButton *b, gpointer data) {
+  AptPanel *p = data;
+  // One URL from the environment replaces the lot — a mirror, a local file
+  // server, or a group query if celestrak ever carries these three again.
+  const char *env = g_getenv("MACHPSDR_TLE_URL");
+  const char *urls[G_N_ELEMENTS(TLE_URLS)];
+  unsigned nurl = 0;
+  if (env != NULL && env[0] != '\0') urls[nurl++] = env;
+  else for (unsigned i = 0; i < G_N_ELEMENTS(TLE_URLS); i++) urls[nurl++] = TLE_URLS[i];
+
+  GPtrArray *av = g_ptr_array_new();
+  g_ptr_array_add(av, (char *)"curl");
+  g_ptr_array_add(av, (char *)"-fsSL");
+  g_ptr_array_add(av, (char *)"--max-time");
+  g_ptr_array_add(av, (char *)"20");
+  for (unsigned i = 0; i < nurl; i++) g_ptr_array_add(av, (char *)urls[i]);
+  g_ptr_array_add(av, NULL);
+
+  GError *err = NULL;
+  const GSubprocessFlags flags = G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+                                 G_SUBPROCESS_FLAGS_STDERR_SILENCE;
+  GSubprocess *proc = g_subprocess_newv((const gchar * const *)av->pdata, flags, &err);
+  if (proc == NULL) {
+    g_clear_error(&err);
+    g_ptr_array_set_size(av, 0);
+    g_ptr_array_add(av, (char *)"wget");
+    g_ptr_array_add(av, (char *)"-qO-");
+    g_ptr_array_add(av, (char *)"--timeout=20");
+    for (unsigned i = 0; i < nurl; i++) g_ptr_array_add(av, (char *)urls[i]);
+    g_ptr_array_add(av, NULL);
+    proc = g_subprocess_newv((const gchar * const *)av->pdata, flags, &err);
+  }
+  g_ptr_array_free(av, TRUE);
+  if (proc == NULL) {
+    gtk_label_set_text(GTK_LABEL(p->geo_lbl), "no curl or wget to download with");
+    log_error("APT: cannot download element sets: %s\n", err ? err->message : "?");
+    g_clear_error(&err);
+    return;
+  }
+
+  gtk_label_set_text(GTK_LABEL(p->geo_lbl), "downloading element sets…");
+  TleFetch *f = g_new0(TleFetch, 1);
+  f->lbl  = g_object_ref(p->geo_lbl);
+  f->area = g_object_ref(p->area);
+  g_subprocess_communicate_utf8_async(proc, NULL, NULL, fetch_done, f);
+  g_object_unref(proc);
+}
+
 // ---- map controls ----------------------------------------------------------
+
+// Orientation.  An APT picture is north-up only because the satellite happened
+// to be going south; on a northbound pass the same scan geometry writes it
+// upside down, and the cure — in wxtoimg and noaa-apt alike — is a half turn.
+// "North up" asks the orbit which it is (and does nothing without element sets,
+// rather than guessing); "180°" is the manual override for when there is no TLE.
+static void rotate_changed(GtkDropDown *c, GParamSpec *ps, gpointer data) {
+  AptPanel *p = data;
+  if (radio == NULL) return;
+  radio->apt_rotate = (int)gtk_drop_down_get_selected(c);
+  radio_apt_settings_sync(radio);      // may need element sets it has not loaded
+  p->map_lines = -1;
+  gtk_widget_queue_draw(p->area);
+}
 static void map_toggled(GtkCheckButton *b, gpointer data) {
   AptPanel *p = data;
   p->map_on = gtk_check_button_get_active(b);
@@ -398,6 +581,22 @@ GtkWidget *apt_panel_create(void) {
   g_signal_connect(ch, "notify::selected", G_CALLBACK(chan_changed), p);
   gtk_box_append(GTK_BOX(bar), ch);
 
+  gtk_box_append(GTK_BOX(bar), gtk_label_new("Rotate:"));
+  GtkStringList *rot_sl = gtk_string_list_new(NULL);
+  for (int i = 0; i < N_ROT; i++) gtk_string_list_append(rot_sl, ROT_LABELS[i]);
+  GtkWidget *rot = gtk_drop_down_new(G_LIST_MODEL(rot_sl), NULL);
+  int rot0 = radio ? radio->apt_rotate : 0;
+  if (rot0 < 0 || rot0 >= N_ROT) rot0 = 0;
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(rot), rot0);
+  gtk_widget_set_tooltip_text(rot,
+      "A pass flown south→north writes the picture upside down. \"North up\" "
+      "asks the orbit which way this one went (element sets required) and turns "
+      "it if needed; \"180°\" always turns it. The rotation follows the "
+      "picture into Save and auto-save — but note that while a rotated pass "
+      "is still being decoded the newest lines arrive at the TOP.");
+  g_signal_connect(rot, "notify::selected", G_CALLBACK(rotate_changed), p);
+  gtk_box_append(GTK_BOX(bar), rot);
+
   GtkWidget *sm = gtk_button_new_with_label("Slant −");
   GtkWidget *sp = gtk_button_new_with_label("Slant +");
   p->slant_lbl = gtk_label_new("slant +0 ppm");
@@ -484,6 +683,14 @@ GtkWidget *apt_panel_create(void) {
       "the default is ~/.local/share/machpsdr/tle.txt.");
   g_signal_connect(tleb, "clicked", G_CALLBACK(tle_clicked), p);
   gtk_box_append(GTK_BOX(mbar), tleb);
+
+  GtkWidget *updb = gtk_button_new_with_label("Update");
+  gtk_widget_set_tooltip_text(updb,
+      "Download the current weather-satellite element sets from celestrak.org "
+      "to ~/.local/share/machpsdr/tle.txt. Sets more than about a week old cost "
+      "the overlay kilometres of accuracy.");
+  g_signal_connect(updb, "clicked", G_CALLBACK(update_clicked), p);
+  gtk_box_append(GTK_BOX(mbar), updb);
 
   gtk_box_append(GTK_BOX(mbar), gtk_label_new("Time trim:"));
   p->trim_spin = gtk_spin_button_new_with_range(-600.0, 600.0, 0.5);

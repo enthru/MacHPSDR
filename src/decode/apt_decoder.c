@@ -124,6 +124,7 @@ static volatile int      p_channel = 0;      // 0 = whole line, 1 = A, 2 = B
 static volatile double   slant_ppm = 0.0;
 static volatile double   p_contrast = 1.0;   // manual exposure trim, applied on output
 static volatile double   p_bright = 0.0;
+static volatile gboolean p_flip = FALSE;     // 180° rotation on output (north-up)
 static volatile gboolean p_autosave = FALSE;
 static char              save_dir[512];      // guarded by lock_img
 // A pass is 15 minutes; anything shorter than half a minute of picture is a
@@ -295,6 +296,14 @@ void apt_decoder_set_enabled(gboolean on) {
 void apt_decoder_reset(void) { reset_req = TRUE; }
 void apt_decoder_set_channel(int ch) { if (ch >= 0 && ch <= 2) p_channel = ch; }
 
+// 180° rotation of everything handed out (panel, Save, auto-save).  The decoder
+// itself cannot know which way the satellite was going — that comes from the
+// orbit, so the caller decides (see apt_geo_pass_ascending) — but the rotation
+// belongs here so that the picture, the manual save and the unattended auto-save
+// all come out the same way up.
+void     apt_decoder_set_flip(gboolean on) { p_flip = on; }
+gboolean apt_decoder_get_flip(void)        { return p_flip; }
+
 void apt_decoder_set_levels(double contrast, double brightness) {
   if (contrast < 0.1) contrast = 0.1;
   if (contrast > 5.0) contrast = 5.0;
@@ -335,7 +344,15 @@ static void autosave_locked(const char *why) {
   build_lut(lut);
   size_t n = (size_t)WORDS * filled;
   guint8 *pix = g_malloc(n);
-  for (size_t i = 0; i < n; i++) pix[i] = lut[img[i]];
+  if (p_flip) {
+    for (int y = 0; y < filled; y++) {
+      const guint8 *s = &img[(size_t)(filled - 1 - y) * WORDS];
+      guint8 *d = pix + (size_t)y * WORDS;
+      for (int x = 0; x < WORDS; x++) d[x] = lut[s[WORDS - 1 - x]];
+    }
+  } else {
+    for (size_t i = 0; i < n; i++) pix[i] = lut[img[i]];
+  }
 
   log_info("APT: saving pass (%s)\n", why);
   image_save_async(pix, WORDS, filled, 1, save_dir, "apt");
@@ -759,6 +776,9 @@ int apt_decoder_get_row_times(double *out, int max) {
 static GdkPixbuf *build_image(int x0, int w) {
   guint8 lut[256];
   build_lut(lut);
+  // Rotating here rather than with gdk_pixbuf_rotate_simple() costs nothing:
+  // the pixels are being copied out anyway, so it is a pair of reversed indices.
+  gboolean flip = p_flip;
 
   g_mutex_lock(&lock_img);
   int h = filled;
@@ -767,10 +787,10 @@ static GdkPixbuf *build_image(int x0, int w) {
   guint8 *pix = gdk_pixbuf_get_pixels(pb);
   int stride = gdk_pixbuf_get_rowstride(pb);
   for (int y = 0; y < h; y++) {
-    const guint8 *src = &img[(size_t)y * WORDS + x0];
+    const guint8 *src = &img[(size_t)(flip ? h - 1 - y : y) * WORDS + x0];
     guint8 *dst = pix + (size_t)y * stride;
     for (int x = 0; x < w; x++) {
-      guint8 v = lut[src[x]];
+      guint8 v = lut[src[flip ? w - 1 - x : x]];
       dst[x * 3] = dst[x * 3 + 1] = dst[x * 3 + 2] = v;
     }
   }

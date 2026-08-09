@@ -457,6 +457,13 @@ error, so the image does not slant. There is nothing to click.
 - **Contrast** / **Brightness** trim the automatic exposure. They are applied where
   the picture is handed to the screen, so moving a slider re-maps the whole image
   rather than leaving a seam at the line you moved it on.
+- **Rotate** decides which way up the picture comes out. It is north-up only
+  because the satellite was flying south; a northbound pass writes the same scan
+  upside down. **North up** asks the orbit which way this pass went and turns the
+  picture if it has to — it needs element sets, and leaves the picture alone
+  rather than guess without them — while **180°** always turns it. The rotation
+  goes with the picture into **Save** and auto-save, and the map turns with it;
+  while a rotated pass is still coming in the newest lines arrive at the *top*.
 - **Auto-save pass** (on by default) writes the picture to disk by itself when a
   pass ends: a retune, 30 seconds without sync, or the decoder switched off. The
   wipe that starts the next picture is automatic and a pass cannot be repeated, so
@@ -465,11 +472,13 @@ error, so the image does not slant. There is nothing to click.
   **Clear** does *not* save — it means "this one is rubbish, start again".
 - **Map** draws the coastline, a 10° graticule and the ground track over the
   picture and reads out the position under the pointer, worked out from the
-  satellite's orbit, the time each line arrived and the scan geometry. **TLE…**
-  points at an element-set file (a celestrak `weather.txt` will do; the default
-  is `~/.local/share/machpsdr/tle.txt`); the satellite is taken from the
-  frequency being decoded rather than typed in again, and the panel shows how
-  old the element set is and says so past a week.
+  satellite's orbit, the time each line arrived and the scan geometry.
+  **Update** downloads the current element sets for the three APT satellites
+  from celestrak.org and uses them at once; **TLE…** points at a file instead if
+  you keep your own (the default is `~/.local/share/machpsdr/tle.txt`). Either
+  way the satellite is taken from the frequency being decoded rather than typed
+  in again, and the panel shows how old the element set is and says so past a
+  week — which is when **Update** is worth pressing.
 - **Time trim** is the control that matters. The orbit is good to about a
   kilometre, the clock is not, and one second is about seven kilometres along
   the track — the trim absorbs a stale element set, an unset PC clock and the

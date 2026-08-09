@@ -152,6 +152,8 @@ typedef struct _radio {
   gboolean apt_map;        // draw the coastline/graticule map over the APT picture
   gdouble apt_time_trim;   // operator's time offset for the map, seconds (see apt_geo.h)
   char apt_tle_path[512];  // element sets for the georeferencing (empty = the default path)
+  gint apt_rotate;         // APT picture orientation: 0 = as received, 1 = always 180°,
+                           // 2 = north-up (180° on an ascending pass; needs element sets)
   gboolean ft8_log_udp;    // also send completed QSOs to a logger over the network
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
@@ -416,6 +418,7 @@ extern void radio_apt_panel_sync(RADIO *r);
 // Called at start-up as well as from the panel, because auto-saving a pass has
 // to work with the panel closed — that is the case it exists for.
 extern void radio_apt_settings_sync(RADIO *r);
+extern void radio_apt_geo_pump(RADIO *r);
 // The same for every image decoder (APT + SSTV + WEFAX auto-save and exposure).
 extern void radio_image_settings_sync(RADIO *r);
 #endif

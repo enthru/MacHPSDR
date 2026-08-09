@@ -349,9 +349,9 @@ int apt_geo_load_tle(const char *path, char **err) {
   cache_invalidate();
   if (old_sel_catnr) apt_geo_select_catnr(old_sel_catnr);
 
-  log_info("apt_geo: %d element set(s) from %s%s", nsats, path,
+  log_info("apt_geo: %d element set(s) from %s%s\n", nsats, path,
            bad ? " (some rejected)" : "");
-  if (over) log_info("apt_geo: %d further set(s) ignored (limit %d)", over, MAX_SATS);
+  if (over) log_info("apt_geo: %d further set(s) ignored (limit %d)\n", over, MAX_SATS);
   return nsats;
 }
 
@@ -451,6 +451,27 @@ gboolean apt_geo_subpoint(double row, double *lat, double *lon, double *alt_km) 
   }
   if (alt_km) *alt_km = g.alt;
   return TRUE;
+}
+
+gboolean apt_geo_pass_ascending(void) {
+  if (sel < 0 || !base_set) return FALSE;
+
+  // The middle of the picture: a pass is monotone in latitude except within a
+  // few seconds of the poles, and the middle is as far from that as the rows go.
+  double row = (row_utc_n >= 2) ? (row_utc_n - 1) * 0.5 : 0.0;
+  FRAME f;
+  if (!frame_at(row, &f)) return FALSE;
+
+  // North at the sub-satellite point is the rotation axis with its radial part
+  // removed; `fwd` is already horizontal, so the sign of its northward component
+  // IS the sign of the latitude rate.  (Two subpoints a few rows apart would say
+  // the same thing at twice the cost and with a subtraction of near-equal
+  // numbers in the middle of it.)
+  double up[3] = { f.pos.x, f.pos.y, f.pos.z };
+  v_norm(up);
+  double north[3] = { -up[2]*up[0], -up[2]*up[1], 1.0 - up[2]*up[2] };
+  v_norm(north);
+  return v_dot(f.fwd, north) > 0.0;
 }
 
 // Signed along-track offset of a ground point at a given row: positive while the

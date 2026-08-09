@@ -90,6 +90,16 @@ void apt_decoder_reset(void);
 // sync and telemetry included), 1 = channel A only, 2 = channel B only.
 void apt_decoder_set_channel(int ch);
 
+// Rotate everything handed out (panel, Save, auto-save) by 180°.  An APT picture
+// comes out north-up on a southbound (descending) pass and upside down on a
+// northbound one — the scan runs the other way across the ground — and the
+// standard cure, in wxtoimg and noaa-apt alike, is exactly this half turn.
+// Which way the satellite was going is an orbit question, so the DECISION lives
+// with the caller (apt_geo_pass_ascending) and only the rotation lives here,
+// where the unattended auto-save can see it too.
+void     apt_decoder_set_flip(gboolean on);
+gboolean apt_decoder_get_flip(void);
+
 // Fine slant / line-period trim in ppm, added to the automatic clock trim.
 void   apt_decoder_adjust_slant(double dppm);
 double apt_decoder_get_slant(void);

@@ -182,6 +182,8 @@ log_info("radio_save_state: %s\n",filename);
   sprintf(value,"%f",radio->apt_time_trim);
   setProperty("radio.apt_time_trim",value);
   setProperty("radio.apt_tle_path",radio->apt_tle_path);
+  sprintf(value,"%d",radio->apt_rotate);
+  setProperty("radio.apt_rotate",value);
   sprintf(value,"%d",radio->ft8_tx_offset);
   setProperty("radio.ft8_tx_offset",value);
   sprintf(value,"%d",radio->ft8_tx_even);

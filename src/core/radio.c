@@ -1303,7 +1303,9 @@ void radio_apt_settings_sync(RADIO *r) {
   // Georeferencing: load the element sets now rather than when the panel opens.
   // A pass is unrepeatable and the panel is often opened part-way through one;
   // a failure here is silent because a missing TLE file only means no map.
-  if(r->apt_map) {
+  // North-up needs the same orbit — it is a question about the satellite, not
+  // about the picture — so it loads them too.
+  if(r->apt_map || r->apt_rotate==2) {
     char *path = (r->apt_tle_path[0] != '\0') ? g_strdup(r->apt_tle_path)
                                               : apt_geo_default_tle_path();
     char *err = NULL;
@@ -1312,6 +1314,36 @@ void radio_apt_settings_sync(RADIO *r) {
     g_free(path);
   }
   apt_geo_set_time_offset(r->apt_time_trim);
+  radio_apt_geo_pump(r);
+}
+
+// Feed the georeferencing everything it needs, on the GTK thread, whether or not
+// the APT panel is open.  It lives here rather than in the panel because the two
+// things that depend on it — the north-up rotation and the unattended auto-save
+// — happen with no panel in sight: an operator who leaves the app decoding a
+// pass and comes back to the saved PNG still wants it the right way up.  Cheap
+// enough to call from a UI timer: the row stamps are a memcpy under the
+// decoder's image lock, and the orbit is answered from the propagated-frame
+// cache.
+void radio_apt_geo_pump(RADIO *r) {
+  if(r==NULL) return;
+
+  apt_status_t st;
+  apt_decoder_get_status(&st);
+  // Which satellite is a question the operator has already answered by tuning:
+  // the decoder publishes where it is listening.
+  if(apt_geo_satellite()==NULL && st.tuned_hz>0) apt_geo_select_freq(st.tuned_hz);
+
+  static double rt[2048];
+  int n = apt_decoder_get_row_times(rt, (int)G_N_ELEMENTS(rt));
+  if(n>=2) apt_geo_set_row_times(rt, n);
+
+  // Rotation.  Mode 2 (north-up) deliberately does NOT rotate when there is no
+  // orbit to ask — half of the passes would come out upside down on a guess, and
+  // the operator would have no way of telling which.
+  gboolean flip = (r->apt_rotate==1) ||
+                  (r->apt_rotate==2 && apt_geo_ready() && apt_geo_pass_ascending());
+  apt_decoder_set_flip(flip);
 }
 
 void radio_image_settings_sync(RADIO *r) {
@@ -1492,6 +1524,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->apt_time_trim=atof(value);
   value=getProperty("radio.apt_tle_path");
   if(value!=NULL) { strncpy(r->apt_tle_path,value,sizeof(r->apt_tle_path)-1); r->apt_tle_path[sizeof(r->apt_tle_path)-1]='\0'; }
+  value=getProperty("radio.apt_rotate");
+  if(value!=NULL) r->apt_rotate=atoi(value);
   value=getProperty("radio.ft8_tx_offset");
   if(value!=NULL) r->ft8_tx_offset=atoi(value);
   value=getProperty("radio.ft8_tx_even");
@@ -2005,6 +2039,10 @@ static gboolean rds_update_cb(gpointer data) {
     show_ft8 = TRUE;
 #ifdef SSTV
     apt_status_t ast; apt_decoder_get_status(&ast);
+    // The one periodic GTK-thread tick APT has whether or not the panel is open,
+    // which is where the georeferencing has to be fed from if the north-up
+    // rotation is to reach the unattended auto-save.
+    radio_apt_geo_pump(r);
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "APT");
     // Show where the decoder is actually listening — it follows the CTUN cursor,
     // and a decoder pointed elsewhere than the operator believes looks exactly
@@ -2705,6 +2743,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->apt_map = FALSE;          // the map needs element sets; off until asked for
   r->apt_time_trim = 0.0;
   r->apt_tle_path[0] = '\0';   // ~/.local/share/machpsdr/tle.txt
+  r->apt_rotate = 0;           // as received; north-up needs an orbit to know which way
   r->ft8_log_udp = FALSE;
   strcpy(r->ft8_log_udp_host, "127.0.0.1");
   r->ft8_log_udp_port = 2237;  // WSJT-X default UDP port

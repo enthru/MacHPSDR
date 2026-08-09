@@ -51,7 +51,7 @@ feature additions.
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, a scrollable/zoomable view, PNG save, **auto-save of every received picture**, and image-file transmit. |
 | **WEFAX** | Receive HF radiofax / weather charts (DWD, NMG/NHC, Northwood, …) in DIGU/DIGL: continuous scrolling image, **self-aligning** (automatic phasing + start-tone detection), LPM (60/90/120/240) & IOC (576/288) selectors, AFC, slant trim, exposure trim, a scrollable/zoomable view, PNG save and **auto-save of every page**. Verified off-air. |
-| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, a fresh picture started automatically when you move to the next satellite, and a **map over the picture** — coastline, graticule and ground track from the satellite's orbit, with the position under the pointer read out. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
+| **APT (weather satellites)** | Decode **NOAA APT** pictures from the 137 MHz polar satellites in NFM — both channels of the 2080-word line, automatic sync lock and automatic de-slanting, channel A/B view, exposure trim, **north-up rotation** for northbound passes, a scrollable/zoomable image, PNG save and **auto-save of each finished pass**, a fresh picture started automatically when you move to the next satellite, and a **map over the picture** — coastline, graticule and ground track from the satellite's orbit, with the position under the pointer read out and **one-click download of the current element sets**. It brings its own wideband-FM front-end and takes the raw I/Q, so it does not depend on the receive filter and is unbothered by Doppler *(**verified on a real pass**: a 9-minute 62.5 kHz I/Q recording of NOAA-18 from 15 Dec 2021 decodes to ~1095 lines — both channels, sync bars and telemetry wedges, and no slant over the whole pass, the de-slant servo tracking the satellite's own ±25 ppm of Doppler time-scaling)*. |
 | **CW decoder + sender + keyer** | Decode Morse to text in CWL/CWU (auto tone-lock, adaptive WPM, live WPM/tone readout), **send CW** from eight editable message memories or free text (`%C` callsign macro), **and a software iambic keyer** (Curtis A/B) driven from the `[` / `]` keys or a MIDI paddle — no external program *(sending/keyer built + unit/round-trip-tested, not yet verified on air)*. |
 | **HFDL** | Decode **aviation HF Data Link** (ARINC 635) in DIGU: ground-station squitters, aircraft logon/logoff with ICAO addresses, position / performance / frequency reports and **ACARS message text** — a full coherent M-PSK receiver (1800 baud BPSK/QPSK/8-PSK, LMS equalizer, Viterbi FEC) with no external decoder. Built by default; it needs `liquid-dsp`, and because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3 (comment out `HFDL_INCLUDE` in the Makefile to drop both) *(**verified on air**: decoded a real 11387 kHz recording of the Riverhead ground station — squitters, logons with ICAO addresses, position reports and ACARS text, matching a reference decoder frame for frame)*. |
 | **DX cluster** | Connect to a telnet DX cluster; incoming spots are overlaid on the RX panadapter (colour-keyed by DXCC entity) and a click tunes straight onto the spotted station. |
@@ -337,7 +337,14 @@ you've dialled in.
   write a PNG (and always writes the **whole line** at full resolution, whatever
   **View** is showing), **Clear** starts a new pass. **Contrast** and
   **Brightness** trim the automatic exposure — they re-map the whole picture, not
-  just the lines that arrive afterwards. **Auto-save pass** (on by default) writes
+  just the lines that arrive afterwards. **Rotate** decides which way up it comes
+  out: an APT picture is north-up only because the satellite happened to be
+  flying south, and a northbound pass writes the same scan upside down.
+  **North up** asks the orbit which way this one went and turns the picture if it
+  has to (it needs element sets, and does nothing rather than guess without
+  them); **180°** always turns it. The rotation follows the picture into **Save**
+  and into auto-save, and the map turns with it — though while a rotated pass is
+  still coming in, the newest lines arrive at the *top*. **Auto-save pass** (on by default) writes
   the picture to disk by itself whenever a pass ends — you retuned, the sync has
   been gone for 30 seconds, or you switched the decoder off — because the wipe
   that starts the next picture is automatic and a pass cannot be repeated;
@@ -363,10 +370,13 @@ you've dialled in.
   the pointer is read out in the corner. This is worked out rather than guessed
   — the satellite's orbit from a two-line element set, the time each line was
   received, and the AVHRR scan geometry, giving the ground point every pixel
-  saw. **TLE…** points at an element-set file (a celestrak `weather.txt` will
-  do; the default is `~/.local/share/machpsdr/tle.txt`), and the satellite is
-  picked from the frequency you are decoding, not typed in again. Element sets
-  go stale — the panel shows the age and says so past a week.
+  saw. **Update** downloads the current element sets for the three APT satellites
+  from celestrak.org and uses them straight away — no file to find, and nothing
+  to keep up to date by hand. **TLE…** points at a file instead, if you keep your
+  own (the default is `~/.local/share/machpsdr/tle.txt`). Either way the
+  satellite is picked from the frequency you are decoding, not typed in again.
+  Element sets go stale — the panel shows the age and says so past a week, which
+  is when **Update** is worth pressing.
 
   The one control that matters is **Time trim**. The orbit is good to about a
   kilometre; the clock is not, and a second of clock error is about seven

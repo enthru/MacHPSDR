@@ -136,10 +136,16 @@ static void geo_report(int lines) {
 
   if (lines > 2) {
     double step = gc_km(mid_lat[0], mid_lon[0], mid_lat[2], mid_lon[2]) / (rows[2] - rows[0]);
-    printf("  along-track %.2f km/row (%.1f km/s ground speed), pass runs %s\n",
+    // Two independent answers to the same question — the subpoint latitudes at
+    // the ends of the picture, and the velocity at the middle of it, which is
+    // what the north-up rotation actually uses.  They must agree.
+    gboolean asc_lat = mid_lat[2] > mid_lat[0];
+    gboolean asc_vel = apt_geo_pass_ascending();
+    printf("  along-track %.2f km/row (%.1f km/s ground speed), pass runs %s%s\n",
            step, step / APT_LINE_SECONDS,
-           mid_lat[2] < mid_lat[0] ? "north to south (descending — north-up image)"
-                                   : "south to north (ascending — image is upside down)");
+           asc_lat ? "south to north (ascending — image is upside down)"
+                   : "north to south (descending — north-up image)",
+           asc_lat == asc_vel ? "" : "   *** direction test DISAGREES with the orbit ***");
   }
 
   // Self-consistency of the two directions.  Not proof of the geometry, but it
@@ -167,20 +173,31 @@ static void geo_report(int lines) {
 // This deliberately goes through apt_map.c — the same cache and the same drawing
 // the panel uses, with the identity transform in place of the widget's scale and
 // pan — so what is checked here is the code that runs in the app.
+// The projection is cached in the picture's own (unrotated) coordinates, so a
+// rotated picture puts the map a half turn away from it — the same correction
+// the panel makes, and the reason it is worth making here: get it wrong in one
+// place and the overlay silently disagrees with the image.
+typedef struct { int w, h, flip; } XF;
+
 static gboolean identity_xform(double ix, double iy, double *ox, double *oy, gpointer u) {
+  const XF *t = u;
+  // `w - x` and not `(w-1) - x`: continuous coordinates mirror about the edge of
+  // the image, not about the centre of its last pixel (see apt_panel.c).
+  if (t != NULL && t->flip) { ix = t->w - ix; iy = t->h - iy; }
   *ox = ix; *oy = iy;
   return TRUE;
 }
 
 static void map_overlay(GdkPixbuf *pb, int lines) {
   int w = gdk_pixbuf_get_width(pb), h = gdk_pixbuf_get_height(pb);
+  XF xf = { w, h, apt_decoder_get_flip() };
   apt_map_update(lines, 0, w);
 
   // gdk-pixbuf is RGB and cairo wants ARGB32, so draw the map on a transparent
   // surface and composite it back by hand rather than converting the picture.
   cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
   cairo_t *cr = cairo_create(surf);
-  apt_map_draw(cr, w, h, identity_xform, NULL);
+  apt_map_draw(cr, w, h, identity_xform, &xf);
   cairo_destroy(cr);
   cairo_surface_flush(surf);
 
@@ -511,7 +528,8 @@ int main(int argc, char **argv) {
       "usage: %s <file.wav> [-o out.png]\n"
       "       %s <file.wav> --iq <centre_hz> <cursor_hz> [-o out.png]\n"
       "       %s <file.wav> ... --tle <file> [--utc <YYYY-MM-DDTHH:MM:SSZ>] [--trim <s>] [--coast]\n"
-      "       %s --selftest\n", argv[0], argv[0], argv[0], argv[0]);
+      "       %s <file.wav> ... [--rotate off|180|north]\n"
+      "       %s --selftest\n", argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
   if (!strcmp(argv[1], "--selftest")) return selftest();
@@ -524,6 +542,7 @@ int main(int argc, char **argv) {
   double geo_trim = 0.0;
   int sat_catnr = 0;
   int coast = 0;
+  int rotate = 0;                  // 0 = as received, 1 = 180°, 2 = north-up
   const char *rowtimes_path = NULL;
   int iq_mode = 0, conj = 0;
   long long centre = 0, cursor = 0;
@@ -533,6 +552,17 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[i], "--trim") && i + 1 < argc) { geo_trim = atof(argv[++i]); continue; }
     if (!strcmp(argv[i], "--sat")  && i + 1 < argc) { sat_catnr = atoi(argv[++i]); continue; }
     if (!strcmp(argv[i], "--coast")) { coast = 1; continue; }
+    // Orientation, the same three settings the panel offers.  "north" needs an
+    // orbit to ask, so it does nothing without --tle — which is the point: a
+    // rotation on a guess is worse than none.
+    if (!strcmp(argv[i], "--rotate") && i + 1 < argc) {
+      const char *v = argv[++i];
+      if (!strcmp(v, "off"))        rotate = 0;
+      else if (!strcmp(v, "180"))   rotate = 1;
+      else if (!strcmp(v, "north")) rotate = 2;
+      else { fprintf(stderr, "--rotate wants off, 180 or north\n"); return 2; }
+      continue;
+    }
     // The row -> UTC map the decoder built, one stamp per line.  A projection
     // that is off is nearly always the time base rather than the geometry, and
     // this is the only way to look at it.
@@ -668,6 +698,20 @@ int main(int argc, char **argv) {
     else if (utc0 > 0.0) apt_geo_set_time_base(utc0);
     geo_report(n);
     geo_lines = n;
+  }
+
+  // Orientation, decided exactly as radio.c decides it: 180° on request, and on
+  // an ascending pass when the operator asked for north-up and there is an orbit
+  // to ask.  Set before anything is handed out, so the PNG, the overlay and the
+  // auto-save all agree.
+  if (rotate == 1 || (rotate == 2 && apt_geo_ready() && apt_geo_pass_ascending())) {
+    apt_decoder_set_flip(TRUE);
+    printf("rotate: picture turned 180%s\n",
+           rotate == 2 ? "° (ascending pass — north up)" : "°");
+  } else if (rotate == 2) {
+    printf("rotate: north-up asked for, %s\n",
+           apt_geo_ready() ? "pass is descending — left as received"
+                           : "no orbit to ask — left as received");
   }
 
   save_png(out, coast, geo_lines);

@@ -140,4 +140,12 @@ gboolean apt_geo_latlon_to_pixel(double lat, double lon, double row_lo, double r
 // Sub-satellite point and altitude for a row (the ground track).
 gboolean apt_geo_subpoint(double row, double *lat, double *lon, double *alt_km);
 
+// TRUE while the pass runs south → north (ascending).  This is the one thing the
+// decoder cannot work out for itself and needs in order to hand out a north-up
+// picture: the AVHRR scan crosses the ground the same way round whichever way
+// the satellite is flying, so a northbound pass writes the image upside down and
+// wants a 180° rotation (apt_decoder_set_flip).  FALSE when descending, and also
+// when there is no orbit to ask — the caller must not rotate on a guess.
+gboolean apt_geo_pass_ascending(void);
+
 #endif
