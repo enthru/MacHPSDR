@@ -1798,18 +1798,26 @@ log_info("audio: state_cb: PA_CONTEXT_READY\n");
 // nothing to filter on macOS, and probing there would cost real time on
 // Bluetooth and pop the microphone-permission prompt during a device scan.
 #ifndef __APPLE__
-// NOTE — the USE_ALSA backend deliberately has NO equivalent of the SoundIo
-// probe below, and it must not grow one again.  Filtering the ALSA list by
-// opening each candidate was tried (2026-08-09) and REVERTED the same day: it
-// cost the reporter their working output, half a second of audio and then
-// silence.  Opening a PCM and closing it milliseconds before the real
-// audio_open_output() is not free — the card, or a sound server holding it, is
-// entitled to still be releasing it — so the probe can itself be what makes the
-// device unavailable, which is the exact opposite of the intent.  A device that
-// will not open is handled where it can be handled safely: at the point of use,
-// by audio_open_with_fallback() in receiver_dialog.c, which falls back to
-// System Default and says on screen why.  SoundIo's probe is a different case
-// (its own API, its own open path, and years of use here) and stays.
+// The USE_ALSA backend's equivalent of the SoundIo probe below.  With a sound
+// server running, every raw plughw:/dmix: entry is refused with EBUSY, so the
+// list was all decoration bar "System Default"; with no sound server they open
+// and are all listed, which is why they are still enumerated.
+//
+// History worth keeping: this was added, blamed for a "half a second of audio
+// then silence" report the same day and reverted, then restored once that
+// failure was actually measured and found to be on the SOUNDIO path — a sink
+// accepting ~20500 of 48000 frames/s — which this function cannot reach, since
+// it only ever runs for USE_ALSA.  If a similar report appears again, that is
+// the fact to check first: which backend, from the `create_audio:` line.
+static gboolean alsa_pcm_opens(const char *name,snd_pcm_stream_t stream) {
+  snd_pcm_t *t=NULL;
+  int e=snd_pcm_open(&t,name,stream,SND_PCM_NONBLOCK);
+  if(e>=0) { snd_pcm_close(t); return TRUE; }
+  log_info("audio: ALSA %s '%s' not usable: %s\n",
+           stream==SND_PCM_STREAM_PLAYBACK?"output":"input",name,snd_strerror(e));
+  return FALSE;
+}
+
 static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
   struct SoundIoOutStream *test=soundio_outstream_create(device);
   if(test==NULL) return FALSE;
@@ -2376,9 +2384,13 @@ log_info("audio: create_audio: USE_PULSEAUDIO\n");
             snd_pcm_info_set_device(pcminfo, dev);
             snd_pcm_info_set_subdevice(pcminfo, 0);
 
+            char pcm[32];
+            snprintf(pcm, sizeof(pcm), "plughw:%d,%d", card, dev);
+
             // input devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_CAPTURE);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
+                alsa_pcm_opens(pcm, SND_PCM_STREAM_CAPTURE)) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_input_devices<MAX_AUDIO_DEVICES) {
@@ -2395,7 +2407,8 @@ log_info("input_device: %s\n",device_id);
 
             // ouput devices
             snd_pcm_info_set_stream(pcminfo, SND_PCM_STREAM_PLAYBACK);
-            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0) {
+            if ((err = snd_ctl_pcm_info(handle, pcminfo)) == 0 &&
+                alsa_pcm_opens(pcm, SND_PCM_STREAM_PLAYBACK)) {
               device_id=g_new(char,128);
               snprintf(device_id, 128, "plughw:%d,%d %s", card, dev, snd_ctl_card_info_get_name(info));
               if(n_output_devices<MAX_AUDIO_DEVICES) {
@@ -2430,17 +2443,24 @@ log_info("output_device: %s\n",device_id);
           // snd_device_name_get_hint returns NULL for a hint the PCM does not
           // carry (DESC is routinely absent), so neither pointer may be walked
           // before it is checked.
-          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0) {
+          if(name!=NULL && descr!=NULL && strncmp("dmix:", name, 5)==0 &&
+             alsa_pcm_opens(name, SND_PCM_STREAM_PLAYBACK)) {
             if(n_output_devices<MAX_AUDIO_DEVICES) {
               output_devices[n_output_devices].name=g_new0(char,strlen(name)+1);
               strcpy(output_devices[n_output_devices].name,name);
-              output_devices[n_output_devices].description=g_new0(char,strlen(descr)+1);
-	      i=0;
-              while(i<strlen(descr) && descr[i]!='\n') {
-		output_devices[n_output_devices].description[i]=descr[i];
-	        i++;
-	      }
-          output_devices[n_output_devices].description[i]='\0';
+              // Lead with the PCM name, as the plughw: entries do.  ALSA's DESC
+              // hint alone ("VirtIO SoundCard, VirtIO PCM 0") names the card,
+              // not the device, so the row read as a duplicate of the plughw:
+              // one with no way to tell what it actually was.
+              char first[128];
+              i=0;
+              while(i<(int)sizeof(first)-1 && descr[i]!='\0' && descr[i]!='\n') {
+                first[i]=descr[i];
+                i++;
+              }
+              first[i]='\0';
+              output_devices[n_output_devices].description=
+                g_strdup_printf("%s %s",name,first);
               // was input_devices[n_output_devices]: this is an output entry,
               // and writing it into the input array clobbered an unrelated mic.
               output_devices[n_output_devices].index=0;  // not used
