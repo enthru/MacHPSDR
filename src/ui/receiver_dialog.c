@@ -22,6 +22,7 @@
 #include "waterfall_theme.h"
 #include <gtk/gtk.h>
 #include <string.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -678,7 +679,13 @@ static void mute_while_tx_cb(GtkWidget *widget, gpointer data) {
   rx->mute_while_transmitting = rx->mute_while_transmitting == TRUE?FALSE:TRUE;
 }
 
-static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data);
+static void audio_status_set(RECEIVER *rx,const char *text) {
+  if(rx->audio_choice_b==NULL) return;
+  GtkWidget *l=g_object_get_data(G_OBJECT(rx->audio_choice_b),"audio_status");
+  if(l==NULL) return;
+  gtk_label_set_text(GTK_LABEL(l),text==NULL?"":text);
+  gtk_widget_set_visible(l,text!=NULL && *text!='\0');
+}
 
 // Open rx->audio_name, and if that device will not open, fall back to "System
 // Default" instead of giving up on local audio altogether.
@@ -693,30 +700,47 @@ static void audio_choice_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data);
 // Linux/ALSA.)  Falling back keeps the receiver audible and leaves the
 // drop-down showing what is actually playing.
 static gboolean audio_open_with_fallback(RECEIVER *rx) {
-  if(audio_open_output(rx)>=0) return TRUE;
-  if(rx->audio_name!=NULL && strcmp(rx->audio_name,AUDIO_SYSTEM_DEFAULT_NAME)==0)
+  int rc=audio_open_output(rx);
+  if(rc>=0) { audio_status_set(rx,NULL); return TRUE; }
+  if(rx->audio_name!=NULL && strcmp(rx->audio_name,AUDIO_SYSTEM_DEFAULT_NAME)==0) {
+    audio_status_set(rx,"System Default would not open — no local audio.");
     return FALSE;                       // already the fallback — nothing left to try
+  }
 
-  log_info("audio: %s would not open, falling back to System Default\n",
-           rx->audio_name==NULL?"(none)":rx->audio_name);
+  char *asked=g_strdup(rx->audio_name==NULL?"(none)":rx->audio_name);
+  log_info("audio: %s would not open (%s), falling back to System Default\n",
+           asked, rc==-EBUSY?"busy":"error");
   if(rx->audio_name!=NULL) g_free(rx->audio_name);
   rx->audio_name=g_strdup(AUDIO_SYSTEM_DEFAULT_NAME);
   rx->output_index=-1;
-  if(audio_open_output(rx)<0) return FALSE;
+  if(audio_open_output(rx)<0) {
+    audio_status_set(rx,"No audio device would open.");
+    g_free(asked);
+    return FALSE;
+  }
 
-  // Point the drop-down at what is now really playing.  Blocked, or setting it
-  // would re-enter audio_choice_cb and close the stream we just opened.
-  if(rx->audio_choice_b!=NULL) {
+  // Say why the selection is not what was clicked.  EBUSY on a raw plughw:/
+  // dmix: entry is the normal answer on any desktop running PulseAudio or
+  // PipeWire — the sound server owns the card, and it keeps owning it for some
+  // seconds after the last stream closes — so this is a fact of the machine
+  // rather than a fault, and it needs saying rather than fixing.
+  char *msg = rc==-EBUSY
+    ? g_strdup_printf("%s is busy (owned by the sound server) — using System Default.",asked)
+    : g_strdup_printf("%s would not open — using System Default.",asked);
+  audio_status_set(rx,msg);
+  g_free(msg);
+  g_free(asked);
+
+  // Point the drop-down at what is really playing.  Blocked via the stored
+  // handler id, or setting it re-enters audio_choice_cb and closes the stream
+  // just opened.
+  if(rx->audio_choice_b!=NULL && rx->audio_choice_signal_id!=0) {
     for(int j=0;j<n_output_devices;j++) {
       if(output_devices[j].name!=NULL &&
          strcmp(output_devices[j].name,AUDIO_SYSTEM_DEFAULT_NAME)==0) {
-        g_signal_handlers_block_matched(rx->audio_choice_b,
-                                        G_SIGNAL_MATCH_FUNC|G_SIGNAL_MATCH_DATA,
-                                        0,0,NULL,(gpointer)audio_choice_cb,rx);
+        g_signal_handler_block(rx->audio_choice_b,rx->audio_choice_signal_id);
         gtk_drop_down_set_selected(GTK_DROP_DOWN(rx->audio_choice_b),j);
-        g_signal_handlers_unblock_matched(rx->audio_choice_b,
-                                          G_SIGNAL_MATCH_FUNC|G_SIGNAL_MATCH_DATA,
-                                          0,0,NULL,(gpointer)audio_choice_cb,rx);
+        g_signal_handler_unblock(rx->audio_choice_b,rx->audio_choice_signal_id);
         break;
       }
     }
@@ -1097,6 +1121,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(audio_grid),rx->audio_choice_b,0,2,2,1);
     rx->audio_choice_signal_id=g_signal_connect(rx->audio_choice_b,"notify::selected",G_CALLBACK(audio_choice_cb),rx);
 
+    // Why the device above is not the one that was picked.  A refused device is
+    // otherwise completely mute as an event: the selection snaps back and the
+    // only explanation is a line on a terminal the operator is not reading.
+    // Hung off the drop-down rather than added to RECEIVER, so that no shared
+    // header changes size (a stale incremental build of that is its own bug).
+    GtkWidget *audio_status=gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(audio_status),0.0);
+    gtk_label_set_wrap(GTK_LABEL(audio_status),TRUE);
+    gtk_widget_set_visible(audio_status,FALSE);
+    gtk_grid_attach(GTK_GRID(audio_grid),audio_status,0,3,2,1);
+    g_object_set_data(G_OBJECT(rx->audio_choice_b),"audio_status",audio_status);
+
     // Stereo, left, right audio
     const char *audio_ch_opts[]={"Stereo","Left","Right",NULL};
     GtkWidget *audio_channels_combo=gtk_drop_down_new_from_strings(audio_ch_opts);
@@ -1106,18 +1142,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
 
     GtkWidget *tx_mute_b = gtk_check_button_new_with_label("Mute while TX");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(tx_mute_b), rx->mute_while_transmitting);
-    gtk_grid_attach(GTK_GRID(audio_grid),tx_mute_b,0,3,1,1);
+    gtk_grid_attach(GTK_GRID(audio_grid),tx_mute_b,0,4,1,1);
     g_signal_connect(tx_mute_b,"toggled",G_CALLBACK(mute_while_tx_cb),rx);
 
     // Sub-RX audio balance: split (main L / sub R) .. mono (both in both ears).
     GtkWidget *subrx_mix_label=gtk_label_new("Sub-RX mix (split↔mono):");
     gtk_label_set_xalign(GTK_LABEL(subrx_mix_label),0.0);
-    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_label,0,4,1,1);
+    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_label,0,5,1,1);
     GtkWidget *subrx_mix_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,
         gtk_adjustment_new(rx->subrx_mix,0.0,100.0,1.0,10.0,0.0));
     gtk_widget_set_size_request(subrx_mix_scale,160,25);
     sui_scale_show_value(subrx_mix_scale,0);
-    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_scale,1,4,1,1);
+    gtk_grid_attach(GTK_GRID(audio_grid),subrx_mix_scale,1,5,1,1);
     g_signal_connect(G_OBJECT(subrx_mix_scale),"value_changed",G_CALLBACK(subrx_mix_changed_cb),rx);
   }
 
