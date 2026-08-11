@@ -31,6 +31,11 @@
 #ifndef _WIN32
 #include <sys/utsname.h>   // uname(); Windows reports its version differently
 #include <pwd.h>           // getpwuid(); Windows has no passwd database
+#else
+// timeBeginPeriod lives in mmsystem.h, which is exactly what WIN32_LEAN_AND_MEAN
+// drops — timeapi.h is the header that still declares it.
+#include <timeapi.h>
+#include <glib/gstdio.h>   // g_chdir
 #endif
 #include <wdsp.h>
 
@@ -797,11 +802,56 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 
 }
 
+#ifdef _WIN32
+// Windows-only startup fixes for two things the POSIX platforms give for free.
+static void win_startup(void) {
+  char exe[MAX_PATH];
+  DWORD n;
+  char *slash;
+
+  // 1. Timer resolution.  Windows' default scheduler tick is 15.6 ms, so every
+  //    usleep()/g_usleep() in the protocol and rigctl threads rounds up to it —
+  //    a 1 ms pace request becomes 15.6 ms, which is not a slow timer, it is the
+  //    protocol-1 output feed missing its deadline every single time.  Asking
+  //    for 1 ms costs a little system-wide power and is what every audio and
+  //    SDR application on Windows does.  Never released: it is wanted for the
+  //    whole life of the process.
+  timeBeginPeriod(1);
+
+  // 2. Working directory.  The assets/ lookups (cty.dat, coastline.bin, the
+  //    window icon) are relative to the working directory, which is the .exe's
+  //    folder for a plain double-click but is whatever the operator chose for a
+  //    shortcut or a shell.  So: only when assets/ is NOT already reachable,
+  //    fall back to the .exe's own directory.  Doing it conditionally is what
+  //    keeps a relative command-line path (--faker rec.wav) working in the
+  //    normal case of being launched from the install directory.
+  if (g_file_test("assets", G_FILE_TEST_IS_DIR)) return;
+
+  n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+  if (n == 0 || n >= sizeof(exe)) return;
+  slash = strrchr(exe, '\\');
+  if (slash == NULL) return;
+  *slash = '\0';
+
+  {
+    char probe[MAX_PATH + 8];
+    snprintf(probe, sizeof(probe), "%s\\assets", exe);
+    if (!g_file_test(probe, G_FILE_TEST_IS_DIR)) return;   // nothing there either
+  }
+  if (g_chdir(exe) == 0)
+    log_info("main: working directory set to %s (assets/ found there)\n", exe);
+}
+#endif
+
 int main(int argc, char **argv) {
   GtkApplication *hpsdr;
   char text[1024];
   int rc;
   const char *homedir;
+
+#ifdef _WIN32
+  win_startup();
+#endif
 
   // Winsock hands out no socket at all until the process has called WSAStartup,
   // so this must run before discovery, rigctl, TCI or the cluster client. No-op
