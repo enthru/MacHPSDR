@@ -1,0 +1,117 @@
+# Native Windows build under MSYS2/MinGW-w64.
+#
+# This is the only place the Windows build is compiled by the toolchain it is
+# actually meant for, and the only one that links liquid-dsp — MSYS2 does not
+# package it, so HFDL and ACARS cannot be linked anywhere else.
+# tools/win-crossbuild.sh covers the same tree from macOS/Linux for a fast local
+# check, but it has to switch HFDL off.
+#
+# Neither builds a binary that has been RUN. That still needs a real machine.
+
+name: Windows (MSYS2)
+
+on:
+  push:
+    branches: [master, windows-port]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  mingw64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The Makefile stamps the build from `git describe`, which needs tags.
+          fetch-depth: 0
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          # autoconf/automake/libtool are MSYS packages (they run the build),
+          # everything else is a MINGW64 package (it is linked into the binary).
+          install: >-
+            git
+            make
+            autoconf
+            automake-wrapper
+            libtool
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-fftw
+            mingw-w64-x86_64-libsoundio
+            mingw-w64-x86_64-soapysdr
+            mingw-w64-x86_64-zlib
+
+      # Pinned to a tag, not a moving master: an unannounced upstream change
+      # would otherwise turn into a mystery build failure of THIS tree.
+      - name: Cache liquid-dsp
+        id: liquid-cache
+        uses: actions/cache@v4
+        with:
+          path: liquid-install
+          key: liquid-dsp-v1.7.0-mingw64-1
+
+      - name: Build liquid-dsp
+        if: steps.liquid-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          git clone --depth 1 --branch v1.7.0 https://github.com/jgaeddert/liquid-dsp.git
+          cd liquid-dsp
+          ./bootstrap.sh
+          ./configure --prefix="$(cd .. && pwd)/liquid-install"
+          make -j"$(nproc)"
+          make install
+
+      - name: Install liquid-dsp into the prefix
+        run: |
+          set -e
+          cp -r liquid-install/include/* /mingw64/include/
+          cp -r liquid-install/lib/*      /mingw64/lib/
+
+      - name: Build
+        run: make -j"$(nproc)"
+
+      - name: Report
+        run: |
+          file machpsdr.exe
+          echo "--- imported DLLs:"
+          objdump -p machpsdr.exe | grep -i "DLL Name" | sort
+
+      # Packaged here and nowhere else: the gdk-pixbuf loader cache is built by
+      # dlopen()ing each module, so only a native Windows run can produce a valid
+      # one.  tools/win-package.sh deletes the cache rather than ship an empty
+      # one, which is why a package made anywhere else is not a package.
+      - name: Package
+        run: make win-package
+
+      - name: Check the package is complete
+        run: |
+          set -e
+          d=machpsdr-win64
+          for f in "$d/machpsdr.exe" "$d/libwdsp.dll" \
+                   "$d/share/glib-2.0/schemas/gschemas.compiled" \
+                   "$d/assets/cty.dat"; do
+            [ -e "$f" ] || { echo "missing: $f"; exit 1; }
+          done
+          # The loader cache is the one piece that silently degrades: without it
+          # the app starts and then cannot load its icon or save a decoded image.
+          cache=$(find "$d/lib/gdk-pixbuf-2.0" -name loaders.cache)
+          [ -n "$cache" ] || { echo "missing: loaders.cache"; exit 1; }
+          grep -q '^"' "$cache" || { echo "loaders.cache lists no loaders"; exit 1; }
+          echo "package OK: $(du -sh "$d" | cut -f1)"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: machpsdr-win64
+          path: machpsdr-win64/
+          if-no-files-found: error
