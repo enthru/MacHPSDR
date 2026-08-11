@@ -26,10 +26,12 @@
 #include <string.h>
 #include <signal.h>
 #include <semaphore.h>
-#include <sys/utsname.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <pwd.h>
+#ifndef _WIN32
+#include <sys/utsname.h>   // uname(); Windows reports its version differently
+#include <pwd.h>           // getpwuid(); Windows has no passwd database
+#endif
 #include <wdsp.h>
 
 #ifdef __APPLE__
@@ -614,18 +616,31 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
 }
 
 static void activate_hpsdr(GtkApplication *app, gpointer data) {
+#ifndef _WIN32
   struct utsname unameData;
+#endif
   char title[64];
   char png_path[256];
 
   log_info("Build: %s %s\n",build_date,version);
   log_info("GTK version %d.%d.%d\n", gtk_get_major_version(), gtk_get_minor_version(), gtk_get_micro_version());
+#ifdef _WIN32
+  // No uname() here.  This is the first thing in every log an operator sends
+  // back, so it has to say something: glib names the OS and the host.
+  {
+    gchar *osname = g_get_os_info(G_OS_INFO_KEY_PRETTY_NAME);
+    log_info("sysname: %s\n", osname ? osname : "Windows");
+    log_info("nodename: %s\n", g_get_host_name());
+    g_free(osname);
+  }
+#else
   uname(&unameData);
   log_info("sysname: %s\n",unameData.sysname);
   log_info("nodename: %s\n",unameData.nodename);
   log_info("release: %s\n",unameData.release);
   log_info("version: %s\n",unameData.version);
   log_info("machine: %s\n",unameData.machine);
+#endif
 
   load_css();
 
@@ -864,6 +879,26 @@ int main(int argc, char **argv) {
   ft8_qso_init();
 #endif
 
+#ifdef _WIN32
+  // Windows has neither $HOME nor a passwd database, so glib resolves the user
+  // profile directory (C:\Users\<name>) instead.
+  //
+  // The config tree deliberately keeps the .local/share layout rather than
+  // moving to %APPDATA%: every other path in the source builds itself from
+  // g_get_home_dir() plus that literal suffix (radio_state.c, soapy_discovery.c,
+  // recorder.c, image_save.c, the TLE and wisdom files), and Win32 accepts
+  // forward slashes throughout — so this stays one decision in one place
+  // instead of a rewrite spread over the tree.
+  //
+  // mkdir() takes no mode argument on Windows, and g_mkdir_with_parents()
+  // creates the whole chain, which is what the three staged mkdir() calls on
+  // the POSIX side add up to.
+  homedir = g_get_home_dir();
+  sprintf(text,"%s/.local/share/machpsdr",homedir);
+  g_mkdir_with_parents(text, 0777);
+  // No linhpsdr -> machpsdr migration here: neither has ever run on Windows,
+  // so there is nothing to migrate (and no `cp -R` to run it with).
+#else
   if((homedir=getenv("HOME"))==NULL) {
     homedir=getpwuid(getuid())->pw_dir;
   }
@@ -890,6 +925,7 @@ int main(int argc, char **argv) {
 
   sprintf(text,"%s/.local/share/machpsdr",homedir);
   rc=mkdir(text,0777);
+#endif
 
   sprintf(text,"org.g0orx.hpsdr.pid%d",getpid());
   hpsdr=gtk_application_new(text, G_APPLICATION_DEFAULT_FLAGS);
