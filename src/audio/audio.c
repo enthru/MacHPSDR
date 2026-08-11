@@ -1887,10 +1887,23 @@ static gboolean alsa_pcm_opens(const char *name,snd_pcm_stream_t stream) {
 }
 #endif
 
-// These two are pure libsoundio and so are wanted on Windows as well: a WASAPI
-// device that is listed but refuses to open is the same "makes the app look
-// broken" problem the probe exists to prevent.  Only macOS stubs them out.
-#ifndef __APPLE__
+// Linux only, and that is a REVERSAL of an earlier decision here worth
+// explaining.  These two probe a device by opening a real stream on it, which
+// is exactly the point — a device listed and then refused when picked makes the
+// app look broken.  They were enabled for Windows for that reason.
+//
+// But under WASAPI the open can BLOCK, and this runs once per output device
+// during create_audio, on the way to the first window.  Observed: startup
+// stalling indefinitely at "create_audio: USE_SOUNDIO backend=WASAPI" in one
+// run and taking 25 s in the next, with nothing after it.  A hang before the UI
+// appears is far worse than a device that turns out not to open.
+//
+// And the probe was never the only defence: audio_open_with_fallback() in
+// receiver_dialog.c already retries on System Default and puts the reason under
+// the drop-down.  macOS has run without these since the beginning for the same
+// reason.  Bounding them with a timeout is not an option — libsoundio's open is
+// synchronous and has none.
+#if !defined(__APPLE__) && !defined(_WIN32)
 static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
   struct SoundIoOutStream *test=soundio_outstream_create(device);
   if(test==NULL) return FALSE;
