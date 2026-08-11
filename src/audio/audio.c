@@ -44,7 +44,7 @@
 #define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
 #endif
 #endif
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 #include <pulse/pulseaudio.h>
 #include <pulse/glib-mainloop.h>
 #include <pulse/simple.h>
@@ -80,7 +80,7 @@ AUDIO_DEVICE output_devices[MAX_AUDIO_DEVICES];
 
 static int running=FALSE;
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 static snd_pcm_format_t record_audio_format;
 
 #define FORMATS 3
@@ -96,7 +96,7 @@ static void *mic_read_thread(void *arg);
 
 struct SoundIo *soundio;
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 //static pa_buffer_attr bufattr;
 static pa_glib_mainloop *main_loop;
 static pa_mainloop_api *main_loop_api;
@@ -663,7 +663,7 @@ log_info("read_callback: create microphone buffer: %p length=%d (%d bytes)\n",r-
 int audio_open_output(RECEIVER *rx) {
   int result=0;
   int err;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
   pa_sample_spec sample_spec;
 #endif
   // A different device deserves its own verdict, so re-arm the "sink is not
@@ -807,7 +807,7 @@ log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO: {
 log_info("audio_open_output: PULSEAUDIO: %s\n",rx->audio_name);
 
@@ -958,7 +958,7 @@ log_info("audio_open_output: ALSA: %s\n",rx->audio_name);
 int audio_open_input(RADIO *r) {
   int result=0;
   int err;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
   pa_sample_spec sample_spec;
 #endif
 
@@ -1079,7 +1079,7 @@ int audio_open_input(RADIO *r) {
       }
       break;
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO: {
       if(r->microphone_name==NULL) {
         return -1;
@@ -1256,7 +1256,7 @@ void audio_close_output(RECEIVER *rx) {
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO: {
       g_mutex_lock(&rx->local_audio_mutex);
       if(rx->playstream!=NULL) {
@@ -1314,7 +1314,7 @@ void audio_close_input(RADIO *r) {
       g_mutex_unlock(&r->local_microphone_mutex);
       break;
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO: {
       g_mutex_lock(&r->local_microphone_mutex);
       if(r->microphone_stream!=NULL) {
@@ -1377,7 +1377,7 @@ void audio_start_output(RECEIVER *rx) {
         }
       }
       break;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO:
       rx->output_started=TRUE;
       break;
@@ -1421,7 +1421,7 @@ int audio_write(RECEIVER *rx,float left_sample,float right_sample) {
       g_mutex_unlock(&rx->local_audio_mutex);
       break;
     }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO: {
       g_mutex_lock(&rx->local_audio_mutex);
       if(rx->local_audio_buffer==NULL) {
@@ -1657,7 +1657,7 @@ static void *mic_read_thread(gpointer arg) {
         }
       }
       break;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO:
       while(running) {
         g_mutex_lock(&r->local_microphone_mutex);
@@ -1750,7 +1750,7 @@ log_info("mic_read_thread: EXIT\n");
 void audio_get_cards(void) {
 }
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 static void source_list_cb(pa_context *context,const pa_source_info *s,int eol,void *data) {
   int i;
   if(eol>0) {
@@ -1858,7 +1858,14 @@ log_info("audio: state_cb: PA_CONTEXT_READY\n");
 // Linux only.  CoreAudio does not enumerate devices it cannot open, so there is
 // nothing to filter on macOS, and probing there would cost real time on
 // Bluetooth and pop the microphone-permission prompt during a device scan.
-#ifndef __APPLE__
+// NOTE ON THE GUARDS BELOW.  `#if !defined(__APPLE__) && !defined(_WIN32)`
+// means "has ALSA and PulseAudio", i.e. Linux.  It used to be spelled
+// `#ifndef __APPLE__`, which meant the same thing only by accident — with a
+// third platform in the tree that negation now has to be explicit, or Windows
+// silently inherits the Linux backends it does not have.  macOS runs SoundIO
+// over CoreAudio and Windows runs SoundIO over WASAPI, so they share a path.
+
+#if !defined(__APPLE__) && !defined(_WIN32)
 // The USE_ALSA backend's equivalent of the SoundIo probe below.  With a sound
 // server running, every raw plughw:/dmix: entry is refused with EBUSY, so the
 // list was all decoration bar "System Default"; with no sound server they open
@@ -1878,7 +1885,12 @@ static gboolean alsa_pcm_opens(const char *name,snd_pcm_stream_t stream) {
            stream==SND_PCM_STREAM_PLAYBACK?"output":"input",name,snd_strerror(e));
   return FALSE;
 }
+#endif
 
+// These two are pure libsoundio and so are wanted on Windows as well: a WASAPI
+// device that is listed but refuses to open is the same "makes the app look
+// broken" problem the probe exists to prevent.  Only macOS stubs them out.
+#ifndef __APPLE__
 static gboolean soundio_output_device_opens(struct SoundIoDevice *device,int rate) {
   struct SoundIoOutStream *test=soundio_outstream_create(device);
   if(test==NULL) return FALSE;
@@ -1924,7 +1936,7 @@ static gboolean soundio_device_is_listable(struct SoundIoDevice *device,
   return TRUE;
 }
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 // libasound prints its own diagnostics straight to stderr, so probing the dead
 // ALSA entries above would spray "unable to open slave" over the console every
 // time the audio page is opened.  Silence it for the duration of the scan.
@@ -1954,7 +1966,7 @@ static void soundio_build_device_lists(void) {
   // refresh soundio's cached device list from the backend
   soundio_flush_events(soundio);
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
   snd_lib_error_set_handler(alsa_quiet_handler);
 #endif
 
@@ -2035,7 +2047,7 @@ static void soundio_build_device_lists(void) {
     n_input_devices++;
   }
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
   snd_lib_error_set_handler(NULL);
 #endif
 
@@ -2389,7 +2401,7 @@ void create_audio(int backend_index,const char *backend) {
         default_output_monitor_id=g_timeout_add(2000, default_output_monitor_cb, NULL);
       break;
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO:
 log_info("audio: create_audio: USE_PULSEAUDIO\n");
       main_loop=pa_glib_mainloop_new(NULL);
@@ -2587,7 +2599,7 @@ int audio_get_backends(RADIO *r) {
     case USE_SOUNDIO:
       count=soundio_backend_count(soundio);
       break;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO:
       count=0;
       break;
