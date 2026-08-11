@@ -26,6 +26,7 @@
 
 #include <iphlpapi.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 int net_startup(void) {
@@ -47,6 +48,10 @@ int net_set_rcvtimeo(int fd, int ms) {
   DWORD timeout = (DWORD)ms;         /* Winsock: milliseconds, not a timeval */
   return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
                     &timeout, sizeof(timeout)) == 0 ? 0 : -1;
+}
+
+void net_perror(const char *msg) {
+  fprintf(stderr, "%s: winsock error %d\n", msg ? msg : "socket", WSAGetLastError());
 }
 
 int net_send_nowait(int fd, const void *buf, size_t len, int flags) {
@@ -176,6 +181,8 @@ void freeifaddrs(struct ifaddrs *ifa) {
 
 #else /* !_WIN32 */
 
+#include <stdio.h>
+
 int net_startup(void) { return 1; }
 void net_cleanup(void) { }
 
@@ -196,6 +203,10 @@ int net_set_rcvtimeo(int fd, int ms) {
 
 int net_send_nowait(int fd, const void *buf, size_t len, int flags) {
   return (int)send(fd, buf, len, flags | MSG_DONTWAIT);
+}
+
+void net_perror(const char *msg) {
+  perror(msg);
 }
 
 #endif /* _WIN32 */

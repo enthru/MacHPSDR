@@ -177,8 +177,13 @@ struct ifaddrs {
 int  getifaddrs(struct ifaddrs **ifap);
 void freeifaddrs(struct ifaddrs *ifa);
 
-/* Winsock keeps its error code out of errno. */
+/* Winsock keeps its error code out of errno — errno stays whatever some
+ * unrelated CRT call last left there.  Anything that TESTS a socket error must
+ * go through net_errno() and the NET_E* names below, or it is reading a value
+ * that has nothing to do with the socket. */
 #define net_errno() WSAGetLastError()
+#define NET_EHOSTUNREACH  WSAEHOSTUNREACH
+#define NET_EADDRNOTAVAIL WSAEADDRNOTAVAIL
 
 /* A non-blocking connect() that is merely under way reports WSAEWOULDBLOCK
  * here, not EINPROGRESS — and not through errno either. */
@@ -209,6 +214,8 @@ void freeifaddrs(struct ifaddrs *ifa);
 #define closesocket(fd) close(fd)
 #define net_errno()     errno
 #define net_connect_in_progress() (errno == EINPROGRESS)
+#define NET_EHOSTUNREACH  EHOSTUNREACH
+#define NET_EADDRNOTAVAIL EADDRNOTAVAIL
 
 #endif /* _WIN32 */
 
@@ -255,6 +262,13 @@ int  net_set_rcvtimeo(int fd, int ms);
  * sent".
  */
 int  net_send_nowait(int fd, const void *buf, size_t len, int flags);
+
+/*
+ * perror() for a socket failure.  On POSIX it IS perror().  On Windows perror()
+ * reports errno, which no Winsock call ever sets, so the one message an
+ * operator gets for a failed discovery broadcast reads ": Success" — observed.
+ */
+void net_perror(const char *msg);
 
 #ifdef __cplusplus
 }

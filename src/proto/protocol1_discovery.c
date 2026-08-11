@@ -109,10 +109,16 @@ static void discover(struct ifaddrs* iface) {
     }
 
     if(sendto(discovery_socket,buffer,63,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
-        perror("discover: sendto socket failed for discovery_socket\n");
-        if(errno!=EHOSTUNREACH && errno!=EADDRNOTAVAIL) {
+        // net_errno(), not errno: Winsock never touches errno, so on Windows
+        // this guard used to read whatever some unrelated CRT call had left
+        // there — and a broadcast that cannot go out of the LOOPBACK adapter is
+        // entirely normal, yet would take exit(-1) and kill the application at
+        // startup on the strength of a stale value.
+        net_perror("discover: sendto socket failed for discovery_socket");
+        { int e = net_errno();
+          if(e!=NET_EHOSTUNREACH && e!=NET_EADDRNOTAVAIL) {
             exit(-1);
-        }
+          } }
     }
 
     // wait for receive thread to complete

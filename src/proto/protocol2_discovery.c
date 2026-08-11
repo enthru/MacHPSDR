@@ -162,10 +162,12 @@ void protocol2_discover(struct ifaddrs* iface) {
     }
 
     if(sendto(discovery_socket,buffer,60,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
-        perror("protocol2_discover: sendto socket failed for discovery_socket\n");
-        if(errno!=EHOSTUNREACH) {
+        // See protocol1_discovery.c: errno says nothing about a Winsock call.
+        net_perror("protocol2_discover: sendto socket failed for discovery_socket");
+        { int e = net_errno();
+          if(e!=NET_EHOSTUNREACH && e!=NET_EADDRNOTAVAIL) {
             exit(-1);
-        }
+          } }
     }
 
     // wait for receive thread to complete
