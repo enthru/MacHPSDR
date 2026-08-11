@@ -608,6 +608,13 @@ ifeq ($(UNAME_S), Darwin)
 wdsp-local:
 	$(MAKE) -C $(WDSP_DIR)
 	install_name_tool -id @rpath/libwdsp.dylib $(WDSP_LIB)
+else ifneq ($(ISMINGW),)
+# Windows has no rpath: the loader looks next to the .exe and along PATH, so the
+# freshly built DLL is copied beside the binary. (The link itself resolves
+# through the import library wdsp/libwdsp.dll.a.)
+wdsp-local:
+	$(MAKE) -C $(WDSP_DIR)
+	cp -f $(WDSP_LIB) .
 else
 wdsp-local:
 	$(MAKE) -C $(WDSP_DIR)

@@ -4,7 +4,7 @@
 #include <specbleach_adenoiser.h>
 #include "comm.h"
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 #include "calculus.h"
 #endif
 

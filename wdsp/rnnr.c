@@ -3,7 +3,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 #include "calculus.h"
 #endif
 

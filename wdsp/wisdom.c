@@ -27,7 +27,7 @@ warren@wpratt.com
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 static char status[128];
 #endif
 
@@ -58,7 +58,7 @@ void WDSPwisdom (char* directory)
                 utf8 = (*env)->NewStringUTF(env,status);
                 (*env)->CallVoidMethod(env, obj, update, utf8);
 #endif
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
                 fprintf(stdout, "Optimizing FFT sizes through %d\n\n", maxsize);
                 fprintf(stdout, "Please do not close this window until wisdom plans are completed.\n\n");
                 sprintf(status, "Optimizing FFT sizes through %d", maxsize);
@@ -69,7 +69,7 @@ void WDSPwisdom (char* directory)
 		{
 			fprintf(stdout, "Planning COMPLEX FORWARD  FFT size %d\n", psize);
 			fflush(stdout);
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 			sprintf(status, "Planning COMPLEX FORWARD  FFT size %d\n", psize);
 #endif
 			tplan = fftw_plan_dft_1d(psize, (fftw_complex *)fftin, (fftw_complex *)fftout, FFTW_FORWARD, FFTW_PATIENT);
@@ -77,7 +77,7 @@ void WDSPwisdom (char* directory)
 			fftw_destroy_plan (tplan);
 			fprintf(stdout, "Planning COMPLEX BACKWARD FFT size %d\n", psize);
 			fflush(stdout);
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 			sprintf(status, "Planning COMPLEX BACKWARD  FFT size %d\n", psize);
 #endif
 			tplan = fftw_plan_dft_1d(psize, (fftw_complex *)fftin, (fftw_complex *)fftout, FFTW_BACKWARD, FFTW_PATIENT);
@@ -85,7 +85,7 @@ void WDSPwisdom (char* directory)
 			fftw_destroy_plan (tplan);
 			fprintf(stdout, "Planning COMPLEX BACKWARD FFT size %d\n", psize + 1);
 			fflush(stdout);
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 			sprintf(status, "Planning COMPLEX BACKWARD  FFT size %d\n", psize + 1);
 #endif
 			tplan = fftw_plan_dft_1d(psize + 1, (fftw_complex *)fftin, (fftw_complex *)fftout, FFTW_BACKWARD, FFTW_PATIENT);
@@ -100,7 +100,7 @@ void WDSPwisdom (char* directory)
 			{
 				fprintf(stdout, "Planning COMPLEX FORWARD  FFT size %d\n", psize);
 				fflush(stdout);
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 				sprintf(status, "Planning COMPLEX FORWARD  FFT size %d\n", psize);
 #endif
 				tplan = fftw_plan_dft_1d(psize, (fftw_complex *)fftin, (fftw_complex *)fftout, FFTW_FORWARD, FFTW_PATIENT);
@@ -109,7 +109,7 @@ void WDSPwisdom (char* directory)
 			}
 			fprintf(stdout, "Planning REAL    FORWARD  FFT size %d\n", psize);
 			fflush(stdout);
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 			sprintf(status, "Planning REAL    FORWARD  FFT size %d\n", psize);
 #endif
 			tplan = fftw_plan_dft_r2c_1d(psize, fftin, (fftw_complex *)fftout, FFTW_PATIENT);
@@ -128,7 +128,7 @@ void WDSPwisdom (char* directory)
 	}
 }
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 char *wisdom_get_status() {
 	return status;
 }

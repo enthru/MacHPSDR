@@ -30,7 +30,7 @@ struct _ch ch[MAX_CHANNELS];
 
 void start_thread (int channel)
 {
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 	HANDLE handle = (HANDLE) _beginthread(wdspmain, 0, (void *)channel);
 #else
 	HANDLE handle = (HANDLE) _beginthread(main, 0, (void *)channel);

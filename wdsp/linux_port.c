@@ -34,7 +34,7 @@ john.d.melton@googlemail.com
 *													*
 ********************************************************************************************************/
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 
 void QueueUserWorkItem(void *function,void *context,int flags) {
 	pthread_t t;

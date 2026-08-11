@@ -19,12 +19,28 @@ GTKLIBS=`pkg-config --libs gtk+-3.0`
 GTKOPTIONS=-D GTK
 endif
 
+ISMINGW := $(findstring MINGW,$(UNAME_S))
+
 ifeq ($(UNAME_S), Darwin)
 OPTIONS=-g -O3 -D _GNU_SOURCE   	# MacOS: do not need PIC
 LIBS=`pkg-config --libs fftw3 fftw3f`	# MacOS: FFTW double (WDSP) + float (libspecbleach/NR4)
 PROGRAM=libwdsp.dylib			# MacOS: shared libs end in .dylib
 JAVA_PROGRAM=libwdspj.dylib		# MacOS: shared libs end in .dylib
 NOEXECSTACK=				# MacOS: Compiler does not have -z option
+else ifneq ($(ISMINGW),)
+# Windows / MSYS2.  WDSP is built through its POSIX path (linux_port.h over
+# winpthreads), NOT through its own #else Windows branch: that branch is the
+# original MSVC one, and this fork's WDSP patches (WFM demod, NR3/NR4, the
+# analyzer changes) were written and tested against the POSIX side.  See the
+# guards extended to __MINGW32__ in comm.h and friends.
+OPTIONS=-g -O3 -D _GNU_SOURCE		# Windows: PIC is the default, -fPIC would warn
+LIBS=`pkg-config --libs fftw3 fftw3f` -lpthread
+PROGRAM=libwdsp.dll
+JAVA_PROGRAM=libwdspj.dll
+NOEXECSTACK=				# Windows: no -z noexecstack
+# The main link does -L wdsp -lwdsp, which on Windows resolves through an import
+# library rather than the DLL itself, so the DLL has to emit one.
+EXTRA_LDFLAGS=-Wl,--out-implib,libwdsp.dll.a
 else
 OPTIONS=-g -fPIC -O3 -D _GNU_SOURCE	# Linux: legacy compiler options for WDSP
 LIBS=-lfftw3 -lfftw3f -lpthread		# Linux: FFTW3 double (WDSP) + float (libspecbleach/NR4)
@@ -277,7 +293,7 @@ all: $(PROGRAM) $(HEADERS) $(SOURCES)
 java: $(JAVA_PROGRAM) $(JAVA_HEADERS) $(JAVA_SOURCES)
 
 $(PROGRAM): $(OBJS) $(NR_OBJS)
-	$(LINK) -shared $(NOEXECSTACK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(NR_OBJS) $(LIBS) $(GTKLIBS)
+	$(LINK) -shared $(NOEXECSTACK) $(LDFLAGS) $(EXTRA_LDFLAGS) -o $(PROGRAM) $(OBJS) $(NR_OBJS) $(LIBS) $(GTKLIBS)
 
 $(JAVA_PROGRAM): $(JAVA_OBJS)
 	$(LINK) -shared $(NOEXECSTACK) $(LDFLAGS) -o $(JAVA_PROGRAM) $(JAVA_OBJS) $(JAVA_LIBS)

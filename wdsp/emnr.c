@@ -26,7 +26,7 @@ warren@wpratt.com
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 #include "calculus.h"
 #endif
 	
@@ -278,7 +278,7 @@ void calc_emnr(EMNR a)
 	//
 	a->g.GG = (double *)malloc0(241 * 241 * sizeof(double));
 	a->g.GGS = (double *)malloc0(241 * 241 * sizeof(double));
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
         memcpy(a->g.GG, GG, 241 * 241 * sizeof(double));
         memcpy(a->g.GGS, GGS, 241 * 241 * sizeof(double));
 #else

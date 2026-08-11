@@ -24,7 +24,7 @@ warren@wpratt.com
 
 */
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 #include <stdlib.h>
 #include <pthread.h>
 #include <semaphore.h>

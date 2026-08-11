@@ -27,7 +27,7 @@ warren@wpratt.com
 #include "comm.h"
 //#include <avrt.h>
 
-#if defined(linux) || defined(__APPLE__)
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
 void wdspmain(void *pargs)
 #else
 void main (void *pargs)
