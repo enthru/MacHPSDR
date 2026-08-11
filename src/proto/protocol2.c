@@ -20,6 +20,7 @@
 
 //#define ECHO_MIC
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include "log.h"
 
@@ -29,15 +30,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <net/if_arp.h>
-#include <net/if.h>
-#include <ifaddrs.h>
 #include <semaphore.h>
 #include <math.h>
 
@@ -257,7 +249,9 @@ void protocol2_init(RADIO *r) {
 
     int optval = 1;
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+#ifdef SO_REUSEPORT   // no Winsock equivalent; SO_REUSEADDR above covers Windows
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+#endif
 
     // bind to the interface
     if(bind(data_socket,(struct sockaddr*)&r->discovered->info.network.interface_address,r->discovered->info.network.interface_length)<0) {
@@ -1106,7 +1100,7 @@ void protocol2_reconnect(void) {
         protocol2_thread_id=NULL;
     }
     if(data_socket>=0) {
-        close(data_socket);
+        closesocket(data_socket);
         data_socket=-1;
     }
     protocol2_thread_id = g_thread_new( "protocol2", protocol2_thread, NULL);
@@ -1144,15 +1138,14 @@ log_info("protocol2_thread\n");
 
     int optval = 1;
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+#ifdef SO_REUSEPORT   // no Winsock equivalent; SO_REUSEADDR above covers Windows
     setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+#endif
 
     // Receive timeout so recvfrom() returns periodically: lets the thread notice
     // running==FALSE (clean stop/reconnect) and lets the disconnect watchdog see
     // the data gap instead of the thread blocking forever on a dead radio.
-    struct timeval rcvtv;
-    rcvtv.tv_sec=1;
-    rcvtv.tv_usec=0;
-    setsockopt(data_socket, SOL_SOCKET, SO_RCVTIMEO, &rcvtv, sizeof(rcvtv));
+    net_set_rcvtimeo(data_socket, 1000);
 
     // bind to the interface
     if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
@@ -1288,7 +1281,7 @@ log_info("protocol2_thread: Unknown port %d free %p\n",sourceport,buffer);
         }
     }
 
-    close(data_socket);
+    closesocket(data_socket);
     return NULL;
 }
 

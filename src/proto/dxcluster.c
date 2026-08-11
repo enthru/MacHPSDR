@@ -27,9 +27,8 @@
  * actual widget touch happens on the GTK main thread.
  */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -38,8 +37,6 @@
 #include <time.h>
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 
 #include "receiver.h"
 #include "transmitter.h"
@@ -328,15 +325,14 @@ static int dxcluster_connect(const char *host, int port) {
     // dxcluster_stop() -> g_thread_join() and with it the GTK main thread. Here
     // each connect attempt is capped at DXCLUSTER_CONNECT_TIMEOUT_SEC and aborts
     // early the moment thread_running clears.
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    net_set_nonblocking(fd, 1);
 
     int rc = connect(fd, rp->ai_addr, rp->ai_addrlen);
     if (rc == 0) {
-      fcntl(fd, F_SETFL, flags);   // restore blocking for the recv loop
+      net_set_nonblocking(fd, 0);   // restore blocking for the recv loop
       break;
     }
-    if (rc < 0 && errno == EINPROGRESS) {
+    if (rc < 0 && net_connect_in_progress()) {
       gboolean ok = FALSE;
       for (int waited = 0; waited < DXCLUSTER_CONNECT_TIMEOUT_SEC * 10; waited++) {
         if (!g_atomic_int_get(&thread_running)) break;
@@ -352,11 +348,11 @@ static int dxcluster_connect(const char *host, int port) {
         if (pr < 0) break;
       }
       if (ok) {
-        fcntl(fd, F_SETFL, flags);   // restore blocking for the recv loop
+        net_set_nonblocking(fd, 0);   // restore blocking for the recv loop
         break;
       }
     }
-    close(fd);
+    closesocket(fd);
     fd = -1;
   }
   freeaddrinfo(res);
@@ -470,7 +466,7 @@ static gpointer dxcluster_thread_func(gpointer data) {
     }
 
     g_mutex_lock(&sock_mutex);
-    if (cluster_sock >= 0) { close(cluster_sock); cluster_sock = -1; }
+    if (cluster_sock >= 0) { closesocket(cluster_sock); cluster_sock = -1; }
     g_mutex_unlock(&sock_mutex);
     set_status("disconnected");
     log_info("dxcluster: disconnected\n");
@@ -555,7 +551,7 @@ void dxcluster_stop(void) {
   g_mutex_lock(&sock_mutex);
   if (cluster_sock >= 0) {
     shutdown(cluster_sock, SHUT_RDWR);   // unblock a pending recv()
-    close(cluster_sock);
+    closesocket(cluster_sock);
     cluster_sock = -1;
   }
   g_mutex_unlock(&sock_mutex);

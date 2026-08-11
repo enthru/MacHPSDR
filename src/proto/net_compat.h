@@ -128,6 +128,17 @@ static inline int net_recvfrom_(int s, void *buf, size_t len, int flags,
 #define sendto     net_sendto_
 #define recvfrom   net_recvfrom_
 
+/* shutdown() takes the same three actions under different spellings. */
+#ifndef SHUT_RD
+#define SHUT_RD   SD_RECEIVE
+#endif
+#ifndef SHUT_WR
+#define SHUT_WR   SD_SEND
+#endif
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH
+#endif
+
 /* Interface flags: POSIX gets these from <net/if.h>.  Only our own
  * getifaddrs() shim ever sets them, so the values just have to be distinct. */
 #ifndef IFF_UP
@@ -161,6 +172,10 @@ void freeifaddrs(struct ifaddrs *ifa);
 /* Winsock keeps its error code out of errno. */
 #define net_errno() WSAGetLastError()
 
+/* A non-blocking connect() that is merely under way reports WSAEWOULDBLOCK
+ * here, not EINPROGRESS — and not through errno either. */
+#define net_connect_in_progress() (WSAGetLastError() == WSAEWOULDBLOCK)
+
 #else /* !_WIN32 — the union of what the networking sources included before */
 
 #include <sys/types.h>
@@ -185,6 +200,7 @@ void freeifaddrs(struct ifaddrs *ifa);
 
 #define closesocket(fd) close(fd)
 #define net_errno()     errno
+#define net_connect_in_progress() (errno == EINPROGRESS)
 
 #endif /* _WIN32 */
 
@@ -206,6 +222,31 @@ void net_cleanup(void);
  * flag rather than returning it).  Returns 0 on success, -1 on failure.
  */
 int  net_set_nonblocking(int fd, int on);
+
+/*
+ * SO_RCVTIMEO takes a `struct timeval` on POSIX and a DWORD of MILLISECONDS on
+ * Winsock.  Handing Winsock a timeval is not a compile error and not even a
+ * runtime error: it reads the first four bytes — tv_sec — as a millisecond
+ * count, so the intended 1 s receive timeout silently becomes 1 ms and the
+ * protocol receive threads spin at a thousand wakeups a second instead of one.
+ * Everything that uses this wants "return periodically so the thread can notice
+ * it was asked to stop", so the argument is milliseconds and the conversion
+ * lives here.  Returns 0 on success, -1 on failure.
+ */
+int  net_set_rcvtimeo(int fd, int ms);
+
+/*
+ * A send that must never block the calling thread, whatever the peer is doing.
+ *
+ * POSIX gets this from MSG_DONTWAIT.  Winsock has no such flag, and defining it
+ * to 0 would turn the call into an ordinary blocking send — which would hand a
+ * stalled TCI client the power to stall the GTK or the RX audio thread, the
+ * exact thing the flag is there to prevent.  So on Windows the socket is polled
+ * for writability with a zero timeout first, and the frame is dropped if it is
+ * not ready.  Returns what send() would: bytes written, or <0 for "nothing was
+ * sent".
+ */
+int  net_send_nowait(int fd, const void *buf, size_t len, int flags);
 
 #ifdef __cplusplus
 }

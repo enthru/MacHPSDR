@@ -17,21 +17,13 @@
 *
 */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
 #include <sys/time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <net/if_arp.h>
-#include <net/if.h>
-#include <ifaddrs.h>
 #include <semaphore.h>
 #include <string.h>
 #include <errno.h>
@@ -230,7 +222,7 @@ void protocol1_reconnect(void) {
     receive_thread_id=NULL;
   }
   if(data_socket>=0) {
-    close(data_socket);
+    closesocket(data_socket);
     data_socket=-1;
   }
   protocol1_run();
@@ -354,16 +346,15 @@ static void start_protocol1_thread(void) {
       if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval))<0) {
         perror("data_socket: SO_REUSEADDR");
       }
+#ifdef SO_REUSEPORT   // no Winsock equivalent; SO_REUSEADDR above covers Windows
       if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval))<0) {
         perror("data_socket: SO_REUSEPORT");
       }
+#endif
       // Receive timeout so recvfrom() returns periodically instead of blocking
       // forever: lets the thread notice running==FALSE (clean stop/reconnect)
       // and lets the disconnect watchdog see the data gap.
-      struct timeval tv;
-      tv.tv_sec=1;
-      tv.tv_usec=0;
-      if(setsockopt(data_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))<0) {
+      if(net_set_rcvtimeo(data_socket, 1000)<0) {
         perror("data_socket: SO_RCVTIMEO");
       }
 #ifndef __APPLE__

@@ -19,6 +19,7 @@
  * With a kindly assist from Jae, K5JAE who has helped
  * greatly with hamlib integration!
  */
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include "log.h"
 #include <gdk/gdk.h>
@@ -30,9 +31,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
 #include <math.h>
 
 #include <wdsp.h>
@@ -150,14 +148,14 @@ void disable_rigctl(RECEIVER *rx) {
     perror("setsockopt(...,SO_LINGER,...) failed for client");
   }
   log_info("closing client socket: %d\n",rigctl->socket_fd);
-  close(rigctl->socket_fd);
+  closesocket(rigctl->socket_fd);
   rigctl->socket_fd=-1;
 
   if(rigctl->server_socket>=0) {
     if(setsockopt(rigctl->server_socket,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
       perror("setsockopt(...,SO_LINGER,...) failed for server");
     }
-    close(rigctl->server_socket);
+    closesocket(rigctl->server_socket);
     rigctl->server_socket=-1;
   }
 }
@@ -517,7 +515,9 @@ static gpointer rigctl_server(gpointer data) {
   }
 
   setsockopt(rigctl->server_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#ifdef SO_REUSEPORT   // no Winsock equivalent; SO_REUSEADDR above covers Windows
   setsockopt(rigctl->server_socket, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
+#endif
 
   // bind to listening port
   memset(&rigctl->server_address,0,sizeof(rigctl->server_address));
@@ -527,7 +527,7 @@ static gpointer rigctl_server(gpointer data) {
   rigctl->server_address.sin_port=htons(rigctl->listening_port);
   if(bind(rigctl->server_socket,(struct sockaddr*)&rigctl->server_address,sizeof(rigctl->server_address))<0) {
     perror("rigctl_server: listen socket bind failed");
-    close(rigctl->server_socket);
+    closesocket(rigctl->server_socket);
     return NULL;
   }
 
@@ -541,7 +541,7 @@ static gpointer rigctl_server(gpointer data) {
   while(rigctl->socket_listening) {
     if(listen(rigctl->server_socket,1)<0) {
       perror("rigctl_server: listen failed");
-      close(server_socket);
+      closesocket(server_socket);
       return NULL;
     }
 
@@ -570,10 +570,10 @@ log_info("%s: accept connection\n",__FUNCTION__);
     if(setsockopt(rigctl->socket_fd,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
       perror("setsockopt(...,SO_LINGER,...) failed for client");
     }
-    close(rigctl->socket_fd);
+    closesocket(rigctl->socket_fd);
   }
 
-  close(server_socket);
+  closesocket(server_socket);
   return NULL;
 }
 

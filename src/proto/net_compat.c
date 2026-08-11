@@ -43,6 +43,24 @@ int net_set_nonblocking(int fd, int on) {
   return ioctlsocket((SOCKET)fd, FIONBIO, &mode) == 0 ? 0 : -1;
 }
 
+int net_set_rcvtimeo(int fd, int ms) {
+  DWORD timeout = (DWORD)ms;         /* Winsock: milliseconds, not a timeval */
+  return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                    &timeout, sizeof(timeout)) == 0 ? 0 : -1;
+}
+
+int net_send_nowait(int fd, const void *buf, size_t len, int flags) {
+  struct timeval zero;
+  fd_set wr;
+  zero.tv_sec = 0;
+  zero.tv_usec = 0;
+  FD_ZERO(&wr);
+  FD_SET((SOCKET)fd, &wr);
+  /* select()'s first argument is ignored by Winsock. */
+  if (select(0, NULL, &wr, NULL, &zero) <= 0) return -1;   /* would block */
+  return send(fd, buf, len, flags);
+}
+
 /* ------------------------------------------------------------------ *
  *  getifaddrs() over GetAdaptersAddresses()
  * ------------------------------------------------------------------ */
@@ -167,6 +185,17 @@ int net_set_nonblocking(int fd, int on) {
   if (on) flags |=  O_NONBLOCK;
   else    flags &= ~O_NONBLOCK;
   return fcntl(fd, F_SETFL, flags) == -1 ? -1 : 0;
+}
+
+int net_set_rcvtimeo(int fd, int ms) {
+  struct timeval tv;
+  tv.tv_sec  = ms / 1000;
+  tv.tv_usec = (ms % 1000) * 1000;
+  return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+
+int net_send_nowait(int fd, const void *buf, size_t len, int flags) {
+  return (int)send(fd, buf, len, flags | MSG_DONTWAIT);
 }
 
 #endif /* _WIN32 */

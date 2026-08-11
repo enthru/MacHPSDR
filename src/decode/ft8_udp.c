@@ -22,9 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 
 #include "discovered.h"
@@ -100,7 +98,7 @@ void ft8_udp_log(const char *adif_record) {
       log_error("ft8-udp: sendto %s:%s failed\n",radio->ft8_log_udp_host,portstr);
     else
       log_info("ft8-udp: logged QSO to %s:%s\n",radio->ft8_log_udp_host,portstr);
-    close(fd);
+    closesocket(fd);
   }
   freeaddrinfo(res);
 }

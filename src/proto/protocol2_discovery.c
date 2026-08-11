@@ -182,15 +182,12 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
     socklen_t len;
     unsigned char buffer[2048];
     int bytes_read;
-    struct timeval tv;
     int i;
     int version;
 
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
     version=0;
 
-    setsockopt(discovery_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv,sizeof(struct timeval));
+    net_set_rcvtimeo(discovery_socket, 1000);
 
     len=sizeof(addr);
     while(1) {

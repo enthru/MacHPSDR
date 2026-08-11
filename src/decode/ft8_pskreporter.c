@@ -26,9 +26,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 
 #include "discovered.h"
@@ -228,7 +226,7 @@ void ft8_pskreporter_report(const FT8_DECODE *decodes, int n, time_t slot_time) 
       log_error("pskreporter: sendto %s:%s failed\n",PSKR_HOST,PSKR_PORT);
     else
       log_info("pskreporter: reported %d spot(s) to %s:%s\n",reported,PSKR_HOST,PSKR_PORT);
-    close(fd);
+    closesocket(fd);
   }
   freeaddrinfo(res);
 }

@@ -17,6 +17,7 @@
 *
 */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include <string.h>
 #include <stdio.h>
@@ -24,10 +25,6 @@
 #include <math.h>
 #include <errno.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
 
 #include "receiver.h"
 #include "transmitter.h"
@@ -269,7 +266,7 @@ static void client_send_framed_try(TCI_CLIENT *c, const guint8 *frame, size_t le
   if (!g_mutex_trylock(&c->send_mtx)) return;   // busy -> drop for this client
   int fd = c->fd;
   if (fd >= 0) {
-    ssize_t w = send(fd, frame, len, TCI_SEND_FLAGS | MSG_DONTWAIT);
+    ssize_t w = net_send_nowait(fd, frame, len, TCI_SEND_FLAGS);
     if (w > 0 && (size_t)w != len) {
       // Partial write mid-frame: the WebSocket stream is now unrecoverable for
       // this client — drop it (its own thread will clean up on the recv error).
@@ -985,7 +982,7 @@ static gpointer tci_client_thread(gpointer data) {
   if (!ws_handshake(fd)) {
     log_info("tci: websocket handshake failed for fd=%d\n", fd);
     clients_remove(c);
-    close(fd);
+    closesocket(fd);
     return NULL;
   }
   log_info("tci: client connected (fd=%d)\n", fd);
@@ -1011,7 +1008,7 @@ static gpointer tci_client_thread(gpointer data) {
 
   log_info("tci: client disconnected (fd=%d)\n", fd);
   clients_remove(c);
-  close(fd);
+  closesocket(fd);
   return NULL;
 }
 
@@ -1037,7 +1034,7 @@ static gpointer tci_server_thread(gpointer data) {
   addr.sin_port = htons(listening_port);
   if (bind(listen_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     log_error("tci: bind(:%d) failed: %s\n", listening_port, strerror(errno));
-    close(listen_socket);
+    closesocket(listen_socket);
     listen_socket = -1;
     g_atomic_int_set(&server_running, 0);
     g_snprintf(status_line, sizeof(status_line), "bind :%d failed", listening_port);
@@ -1045,7 +1042,7 @@ static gpointer tci_server_thread(gpointer data) {
   }
   if (listen(listen_socket, 4) < 0) {
     log_error("tci: listen() failed: %s\n", strerror(errno));
-    close(listen_socket);
+    closesocket(listen_socket);
     listen_socket = -1;
     g_atomic_int_set(&server_running, 0);
     return NULL;
@@ -1075,14 +1072,14 @@ static gpointer tci_server_thread(gpointer data) {
     g_mutex_unlock(&clients_mutex);
     if (slot == NULL) {
       log_info("tci: too many clients, rejecting fd=%d\n", fd);
-      close(fd);
+      closesocket(fd);
       continue;
     }
     GThread *t = g_thread_new("tci-client", tci_client_thread, slot);
     if (t) g_thread_unref(t);
   }
 
-  if (listen_socket >= 0) { close(listen_socket); listen_socket = -1; }
+  if (listen_socket >= 0) { closesocket(listen_socket); listen_socket = -1; }
   return NULL;
 }
 
@@ -1120,7 +1117,7 @@ void tci_stop(void) {
 
   if (listen_socket >= 0) {
     shutdown(listen_socket, SHUT_RDWR);
-    close(listen_socket);
+    closesocket(listen_socket);
     listen_socket = -1;
   }
   g_mutex_lock(&clients_mutex);
