@@ -17,15 +17,13 @@
 *
 */
 
+#include "net_compat.h"   // inet_ntoa(); before gtk.h on Windows
 #include <gtk/gtk.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
 #ifdef SOAPYSDR
 #include <SoapySDR/Device.h>

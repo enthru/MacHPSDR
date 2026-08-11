@@ -23,7 +23,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <termios.h>
 
 #include "discovered.h"
 #include "bpsk.h"

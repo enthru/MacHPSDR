@@ -28,8 +28,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <wdsp.h>
-#include <sys/socket.h>
-#include <arpa/inet.h> //inet_addr
 
 #include "agc.h"
 #include "bpsk.h"

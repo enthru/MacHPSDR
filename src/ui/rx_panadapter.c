@@ -47,8 +47,6 @@
 #include <string.h>
 #include <time.h>
 #include <wdsp.h>
-#include <sys/socket.h>
-#include <arpa/inet.h> //inet_addr
 
 #include "bpsk.h"
 #include "agc.h"

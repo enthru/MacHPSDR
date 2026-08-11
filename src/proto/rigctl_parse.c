@@ -12,14 +12,10 @@
 #include <errno.h>
 #include <fcntl.h> 
 #include <string.h>
-#include <termios.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
 #include <math.h>
 
 #include <wdsp.h>
