@@ -60,16 +60,12 @@ jobs:
           path: liquid-install
           key: liquid-dsp-v1.7.0-mingw64-1
 
+      # Same script the cross-build harness uses, so the workarounds it carries
+      # (MinGW has no -lc and no <sys/resource.h>; liquid's .so rule does not
+      # link on Windows) cannot drift between the two.
       - name: Build liquid-dsp
         if: steps.liquid-cache.outputs.cache-hit != 'true'
-        run: |
-          set -e
-          git clone --depth 1 --branch v1.7.0 https://github.com/jgaeddert/liquid-dsp.git
-          cd liquid-dsp
-          ./bootstrap.sh
-          ./configure --prefix="$(cd .. && pwd)/liquid-install"
-          make -j"$(nproc)"
-          make install
+        run: tools/build-liquid-dsp.sh "$(pwd)/liquid-install"
 
       - name: Install liquid-dsp into the prefix
         run: |

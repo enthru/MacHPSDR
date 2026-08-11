@@ -100,41 +100,11 @@ PY
 fi
 
 # --------------------------------------------------------------- liquid ---
-# Three things upstream's configure assumes that mingw does not have, none of
-# which the library itself needs:
-#   -lc            mingw's CRT is msvcrt/ucrt; an empty stub archive satisfies
-#                  the link test without the faked cache variable that would put
-#                  -lc into LIBS and break every check after it.
-#   sys/resource.h only liquid's bench/ sources use getrusage.
-#   libliquid.so   its shared-object rule emits a .so with an soname, which does
-#                  not link here — the STATIC libliquid.a is complete by then and
-#                  is what gets installed.  Hence -lfftw3f on the Windows link
-#                  line: an archive carries no dependencies of its own.
+# Not an MSYS2 package; built from source by the shared script (which the CI
+# workflow also uses).  Skipped without autotools — HFDL then goes off below.
 LIQUID_VER=v1.7.0
 if [ ! -f "$WORK/sysroot/mingw64/lib/libliquid.a" ] && command -v autoconf >/dev/null; then
-  echo "==> building liquid-dsp $LIQUID_VER"
-  mkdir -p "$WORK/stub/lib" "$WORK/stub/include/sys"
-  : > "$WORK/stub/empty.c"
-  "$HOST-gcc" -c "$WORK/stub/empty.c" -o "$WORK/stub/empty.o"
-  "$HOST-ar" rcs "$WORK/stub/lib/libc.a" "$WORK/stub/empty.o"
-  echo '#ifndef _STUB_SYS_RESOURCE_H' >  "$WORK/stub/include/sys/resource.h"
-  echo '#define _STUB_SYS_RESOURCE_H' >> "$WORK/stub/include/sys/resource.h"
-  echo '#endif'                       >> "$WORK/stub/include/sys/resource.h"
-
-  rm -rf "$WORK/liquid-dsp"
-  git clone --depth 1 --branch "$LIQUID_VER" -q \
-      https://github.com/jgaeddert/liquid-dsp.git "$WORK/liquid-dsp"
-  ( cd "$WORK/liquid-dsp"
-    ./bootstrap.sh >/dev/null 2>&1
-    ./configure --host="$HOST" --prefix="$WORK/sysroot/mingw64" \
-                LDFLAGS="-L$WORK/stub/lib" CPPFLAGS="-I$WORK/stub/include" >/dev/null
-    # The .so step fails; libliquid.a is finished before it, so ignore the status
-    # and check for the archive instead.
-    make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" libliquid.a >/dev/null 2>&1 || true
-    [ -f libliquid.a ] || { echo "    ! liquid-dsp build failed"; exit 1; }
-    mkdir -p "$WORK/sysroot/mingw64/include/liquid"
-    cp include/liquid.h "$WORK/sysroot/mingw64/include/liquid/liquid.h"
-    cp libliquid.a      "$WORK/sysroot/mingw64/lib/" )
+  "$REPO/tools/build-liquid-dsp.sh" "$WORK/sysroot/mingw64" "$HOST" "$LIQUID_VER"
 fi
 
 # ------------------------------------------------------------------ build ---
