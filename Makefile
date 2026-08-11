@@ -239,15 +239,11 @@ MIDI_SOURCES= alsa_midi.c midi2.c midi3.c midi_dialog.c
 MIDI_OBJS= alsa_midi.o midi2.o midi3.o midi_dialog.o
 MIDI_LIBS= -lasound
 endif
-# Windows has no MIDI backend yet (mac_midi.c is CoreMIDI, alsa_midi.c is ALSA;
-# a winmm port would mirror mac_midi.c).  MIDI_OPTIONS must be cleared too, not
-# just the sources: leaving -D MIDI set with no backend compiles the callers and
-# fails at link, which reads as a broken build rather than a missing feature.
+# Windows: winmm.  -lwinmm is already on the Windows link line for
+# timeBeginPeriod, so the backend adds no new library.
 ifneq ($(ISMINGW),)
-MIDI_OPTIONS=
-MIDI_SOURCES=
-MIDI_HEADERS=
-MIDI_OBJS=
+MIDI_SOURCES= win_midi.c midi2.c midi3.c midi_dialog.c
+MIDI_OBJS= win_midi.o midi2.o midi3.o midi_dialog.o
 MIDI_LIBS=
 endif
 endif

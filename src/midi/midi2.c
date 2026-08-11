@@ -295,7 +295,9 @@ int MIDIstartup(char *filename) {
       if (fgets(zeile, 255, fpin) == NULL) break;
 
       // ignore comments
-      cp=index(zeile,'#');
+      // strchr(), not index(): the BSD spelling reaches macOS only because its
+      // <string.h> pulls in <strings.h>, and mingw's does not.
+      cp=strchr(zeile,'#');
       if (cp == zeile) continue;   // comment line
       if (cp) *cp=0;               // ignore trailing comment
 
