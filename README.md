@@ -971,7 +971,15 @@ a cross-build and under Wine; treat first contact with a real radio as untested.
 MSVC is not a target (this tree and the vendored WDSP use GNU C), so the
 toolchain is gcc under MSYS2 either way.
 
-Install [MSYS2](https://www.msys2.org/), open the **MINGW64** shell:
+[MSYS2](https://www.msys2.org/) is a Unix-like environment for Windows: a bash
+shell, the MinGW-w64 toolchain, and a repository of prebuilt libraries managed
+with `pacman` (the package manager it borrowed from Arch Linux). It is what
+GTK-on-Windows is normally built with, and everything below is typed **on the
+Windows machine**.
+
+Install it, then open **MSYS2 MINGW64** from the Start menu — not the plain
+"MSYS2" or "UCRT64" shell, since the package names below are the MINGW64 ones —
+and run:
 
 ```bash
 pacman -S --needed git make autoconf automake-wrapper libtool \
