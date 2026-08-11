@@ -180,12 +180,20 @@ ifeq ($(UNAME_S), Linux)
 HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
 HFDL_LIBS=-lliquid -lz $(HFDL_ASN1_LIB)
 endif
-# MSYS2 keeps liquid-dsp and zlib on the default include/lib path, like Linux.
+# MSYS2 keeps zlib on the default include/lib path, like Linux; liquid-dsp is not
+# packaged there at all and has to be built from source (see the CI workflow).
 # Without this branch both stay EMPTY and the HFDL link fails with a wall of
 # undefined liquid symbols rather than anything naming the cause.
+#
+# -lfftw3f is here and NOT on the other platforms because a source-built
+# liquid-dsp on Windows lands as a static libliquid.a: liquid's own shared-object
+# rule is Linux-shaped (it emits a .so with an soname) and does not link there, so
+# the archive is what gets installed — and an archive carries no dependency of its
+# own, leaving liquid's FFT backend to resolve against OUR link line.  float FFTW
+# is already present for WDSP's NR4, so this costs nothing.
 ifneq ($(ISMINGW),)
 HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
-HFDL_LIBS=-lliquid -lz $(HFDL_ASN1_LIB)
+HFDL_LIBS=-lliquid -lfftw3f -lz $(HFDL_ASN1_LIB)
 endif
 HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_asn1.c hfdl_cpdlc.c hfdl_miam.c hfdl_ohma.c hfdl_util.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c hfdl_lib/vstring.c acars_demod.c acars_decoder.c acars_panel.c
 HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_asn1.h hfdl_cpdlc.h hfdl_miam.h hfdl_ohma.h hfdl_util.h hfdl_pdu.h hfdl_panel.h acars_demod.h acars_decoder.h acars_panel.h

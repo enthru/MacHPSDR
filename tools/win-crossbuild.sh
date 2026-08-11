@@ -19,10 +19,9 @@
 #
 #   Usage:  tools/win-crossbuild.sh [workdir]      (default: /tmp/machpsdr-win)
 #
-# HFDL is switched OFF: it needs liquid-dsp, which MSYS2 does not package.  The
-# HFDL and ACARS sources do compile — verified separately by dropping the
-# (platform-independent) liquid.h into the sysroot — but there is no library to
-# link against, so a source build of liquid-dsp is the missing piece.
+# HFDL needs liquid-dsp, which MSYS2 does not package.  If autoconf/automake are
+# present it is built from source into the sysroot and HFDL is included; if not,
+# HFDL is switched off and everything else still builds.
 
 set -euo pipefail
 
@@ -100,6 +99,44 @@ PY
   done
 fi
 
+# --------------------------------------------------------------- liquid ---
+# Three things upstream's configure assumes that mingw does not have, none of
+# which the library itself needs:
+#   -lc            mingw's CRT is msvcrt/ucrt; an empty stub archive satisfies
+#                  the link test without the faked cache variable that would put
+#                  -lc into LIBS and break every check after it.
+#   sys/resource.h only liquid's bench/ sources use getrusage.
+#   libliquid.so   its shared-object rule emits a .so with an soname, which does
+#                  not link here — the STATIC libliquid.a is complete by then and
+#                  is what gets installed.  Hence -lfftw3f on the Windows link
+#                  line: an archive carries no dependencies of its own.
+LIQUID_VER=v1.7.0
+if [ ! -f "$WORK/sysroot/mingw64/lib/libliquid.a" ] && command -v autoconf >/dev/null; then
+  echo "==> building liquid-dsp $LIQUID_VER"
+  mkdir -p "$WORK/stub/lib" "$WORK/stub/include/sys"
+  : > "$WORK/stub/empty.c"
+  "$HOST-gcc" -c "$WORK/stub/empty.c" -o "$WORK/stub/empty.o"
+  "$HOST-ar" rcs "$WORK/stub/lib/libc.a" "$WORK/stub/empty.o"
+  echo '#ifndef _STUB_SYS_RESOURCE_H' >  "$WORK/stub/include/sys/resource.h"
+  echo '#define _STUB_SYS_RESOURCE_H' >> "$WORK/stub/include/sys/resource.h"
+  echo '#endif'                       >> "$WORK/stub/include/sys/resource.h"
+
+  rm -rf "$WORK/liquid-dsp"
+  git clone --depth 1 --branch "$LIQUID_VER" -q \
+      https://github.com/jgaeddert/liquid-dsp.git "$WORK/liquid-dsp"
+  ( cd "$WORK/liquid-dsp"
+    ./bootstrap.sh >/dev/null 2>&1
+    ./configure --host="$HOST" --prefix="$WORK/sysroot/mingw64" \
+                LDFLAGS="-L$WORK/stub/lib" CPPFLAGS="-I$WORK/stub/include" >/dev/null
+    # The .so step fails; libliquid.a is finished before it, so ignore the status
+    # and check for the archive instead.
+    make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" libliquid.a >/dev/null 2>&1 || true
+    [ -f libliquid.a ] || { echo "    ! liquid-dsp build failed"; exit 1; }
+    mkdir -p "$WORK/sysroot/mingw64/include/liquid"
+    cp include/liquid.h "$WORK/sysroot/mingw64/include/liquid/liquid.h"
+    cp libliquid.a      "$WORK/sysroot/mingw64/lib/" )
+fi
+
 # ------------------------------------------------------------------ build ---
 # Built from a COPY of the tree: object files land in the repo root, so building
 # in place would overwrite the host build's .o files with PE ones and leave the
@@ -110,8 +147,14 @@ tar -c -C "$REPO" --exclude='*.o' --exclude='*.d' --exclude='.git' \
        --exclude='machpsdr' --exclude='*.dylib' --exclude='*.so' . \
   | tar -x -C "$WORK/build"
 
-sed -i.bak 's/^HFDL_INCLUDE=HFDL/#HFDL_INCLUDE=HFDL  # no liquid-dsp in MSYS2/' \
-    "$WORK/build/Makefile"
+if [ -f "$WORK/sysroot/mingw64/lib/libliquid.a" ]; then
+  # Point HFDL at the sysroot instead of the Makefile's `brew --prefix` lookup.
+  sed -i.bak "s|^HFDL_INCLUDES=-I\$(shell brew --prefix liquid-dsp)/include \$(HFDL_VENDOR_INCLUDES)|HFDL_INCLUDES=\$(HFDL_VENDOR_INCLUDES)|" \
+      "$WORK/build/Makefile"
+else
+  echo "==> no liquid-dsp (install autoconf/automake to build it) — HFDL off"
+  sed -i.bak 's/^HFDL_INCLUDE=HFDL/#HFDL_INCLUDE=HFDL/' "$WORK/build/Makefile"
+fi
 
 echo "==> building"
 export PKG_CONFIG_LIBDIR="$WORK/sysroot/mingw64/lib/pkgconfig"
