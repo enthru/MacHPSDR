@@ -552,7 +552,8 @@ log_info("%s: accept connection\n",__FUNCTION__);
       continue;
     }
 
-#ifdef __APPLE__
+// SOL_TCP is a Linux alias for IPPROTO_TCP; neither macOS nor Winsock has it.
+#if defined(__APPLE__) || defined(_WIN32)
     if(setsockopt(rigctl->socket_fd, IPPROTO_TCP, TCP_NODELAY, (void *)&on, sizeof(on))<0) {
 #else
     if(setsockopt(rigctl->socket_fd, SOL_TCP, TCP_NODELAY, (void *)&on, sizeof(on))<0) {

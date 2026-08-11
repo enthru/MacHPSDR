@@ -45,7 +45,10 @@ AUDIO_HEADERS=audio.h
 # <winsock.h>, which cannot coexist with the <winsock2.h> net_compat.h needs,
 # and GTK's headers include <windows.h> from all over.  Defined here rather than
 # per-file so no translation unit can lose the race by include order.
-WIN_OPTIONS=-DWIN32_LEAN_AND_MEAN
+# -include win_compat.h: the functions mingw's CRT lacks (stpcpy) are used by the
+# VENDORED ft8_lib, which is carried verbatim.  Force-including is how they are
+# supplied without editing upstream code.
+WIN_OPTIONS=-DWIN32_LEAN_AND_MEAN -include win_compat.h
 endif
 
 # uncomment the line below to include SoapySDR support

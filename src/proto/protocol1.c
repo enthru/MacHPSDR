@@ -357,7 +357,7 @@ static void start_protocol1_thread(void) {
       if(net_set_rcvtimeo(data_socket, 1000)<0) {
         perror("data_socket: SO_RCVTIMEO");
       }
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)   // SO_PRIORITY is Linux-only
       optval = 6;  
       if(setsockopt(data_socket, SOL_SOCKET, SO_PRIORITY, &optval, sizeof(optval))<0) {
         perror("data_socket: SO_PRIORITY");

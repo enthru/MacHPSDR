@@ -34,6 +34,25 @@ john.d.melton@googlemail.com
 #include <stdio.h>
 #include <unistd.h>
 
+#if defined(__MINGW32__)
+// This shim implements the Win32 calls WDSP was written against on top of
+// pthreads — which on Windows means it defines symbols that ALREADY EXIST in
+// kernel32 and the CRT, and the linker rejects the duplicate.  (It surfaces
+// only for the ones actually referenced: EnterCriticalSection and friends.)
+// Renaming keeps the shim's semantics — its CRITICAL_SECTION is a
+// pthread_mutex_t, so the genuine Win32 functions could not be used here even
+// if the collision were resolved the other way.
+#define QueueUserWorkItem                     wdsp_QueueUserWorkItem
+#define InitializeCriticalSectionAndSpinCount  wdsp_InitializeCriticalSectionAndSpinCount
+#define EnterCriticalSection                  wdsp_EnterCriticalSection
+#define LeaveCriticalSection                  wdsp_LeaveCriticalSection
+#define DeleteCriticalSection                 wdsp_DeleteCriticalSection
+#define CreateEvent                           wdsp_CreateEvent
+#define SetThreadPriority                     wdsp_SetThreadPriority
+#define CloseHandle                           wdsp_CloseHandle
+#define _endthread                            wdsp_endthread
+#endif
+
 #define CRITICAL_SECTION pthread_mutex_t
 #define byte unsigned char
 #define String char *

@@ -102,7 +102,7 @@ void OpenChannel (int channel, int in_size, int dsp_size, int input_samplerate, 
 		InterlockedBitTestAndReset (&ch[channel].iob.pc->exec_bypass, 0);
 		InterlockedBitTestAndSet (&ch[channel].exchange, 0);
 	}
-#if !defined(linux) && !defined(__APPLE__)
+#if !defined(linux) && !defined(__APPLE__) && !defined(__MINGW32__)
         _MM_SET_FLUSH_ZERO_MODE (_MM_FLUSH_ZERO_ON);
 #endif
 }

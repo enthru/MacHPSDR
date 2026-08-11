@@ -2743,7 +2743,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->local_microphone_buffer_size=256;
   r->local_microphone_buffer_offset=0;
   r->local_microphone_buffer=NULL;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)   // Linux: ALSA + PulseAudio
   r->record_handle=NULL;
 #endif
 

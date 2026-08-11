@@ -42,7 +42,7 @@ void *malloc0 (int size)
 	return p;
 }
 
-#if !defined(linux) && !defined(__APPLE__)
+#if !defined(linux) && !defined(__APPLE__) && !defined(__MINGW32__)
 // Exported calls
 
 PORT void
@@ -302,7 +302,7 @@ void print_anb_parms (const char* filename, ANB a)
 	fclose (file);
 }
 
-#if !defined(linux) && !defined(__APPLE__)
+#if !defined(linux) && !defined(__APPLE__) && !defined(__MINGW32__)
 
 // Audacity:  Import Raw Data, Signed 32-bit PCM, Little-endian, Mono/Stereo per mode selection, 48K rate
 

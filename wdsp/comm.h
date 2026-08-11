@@ -47,6 +47,16 @@ warren@wpratt.com
 #endif
 #include <math.h>
 #include <time.h>
+
+#if defined(__MINGW32__)
+// mingw's <stdio.h> carries `#define _iob (__iob_func())` for the legacy CRT
+// _iob[] array.  That turns iobuffs.h's `typedef struct _iob {...} iob, *IOB;`
+// into `struct (__iob_func())` — a syntax error whose cascade accounts for most
+// of a Windows build's output while naming nothing that explains it.  Nothing
+// in WDSP uses the CRT symbol.
+#undef _iob
+#endif
+
 #include "fftw3.h"
 
 #include "amd.h"

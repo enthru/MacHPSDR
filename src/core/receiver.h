@@ -22,7 +22,7 @@
 
 
 #include <soundio/soundio.h>
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)   // Linux: ALSA + PulseAudio
 #include <pulse/simple.h>
 #include <alsa/asoundlib.h>
 #endif
@@ -390,7 +390,7 @@ typedef struct _receiver {
   // headset locked to 44.1 kHz). 0 when the device runs natively at 48 kHz.
   gdouble audio_resample_phase;
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)   // Linux: ALSA + PulseAudio
   pa_simple* playstream;
   snd_pcm_t *playback_handle;
   snd_pcm_format_t local_audio_format;

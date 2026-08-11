@@ -263,7 +263,7 @@ typedef struct _radio {
   
   GMutex delete_rx_mutex;  
   
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)   // Linux: ALSA + PulseAudio
   pa_simple* microphone_stream;
   snd_pcm_t *record_handle;
 #endif

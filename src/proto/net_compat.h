@@ -128,6 +128,14 @@ static inline int net_recvfrom_(int s, void *buf, size_t len, int flags,
 #define sendto     net_sendto_
 #define recvfrom   net_recvfrom_
 
+/* Winsock has no AF_LOCAL.  protocol1_discovery.c accepts it alongside AF_INET
+ * when walking the interface list, and the getifaddrs() shim below reports IPv4
+ * only, so on Windows this is a value that can never match — which is exactly
+ * what is wanted, and keeps that condition unbranched. */
+#ifndef AF_LOCAL
+#define AF_LOCAL (-1)
+#endif
+
 /* shutdown() takes the same three actions under different spellings. */
 #ifndef SHUT_RD
 #define SHUT_RD   SD_RECEIVE
