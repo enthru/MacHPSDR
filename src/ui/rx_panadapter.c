@@ -127,19 +127,19 @@ static void n_line(GtkSnapshot *s,double x1,double y1,double x2,double y2,double
   gsk_path_unref(p);
 }
 
-// Build a fresh Noto Sans layout at an absolute pixel size (used only for the
+// Build a fresh UI-font layout at an absolute pixel size (used only for the
 // rare non-12px text — e.g. the 18px "no data" message). Caller unrefs.
 static PangoLayout *n_layout(GtkWidget *widget,double size,const char *txt) {
   PangoLayout *l=gtk_widget_create_pango_layout(widget,txt);
   PangoFontDescription *fd=pango_font_description_new();
-  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_family(fd,css_ui_font());
   pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
   pango_layout_set_font_description(l,fd);
   pango_font_description_free(fd);
   return l;
 }
 
-// Reused 12px Noto Sans label layout. Every per-frame panadapter label (dB /
+// Reused 12px UI-font label layout. Every per-frame panadapter label (dB /
 // frequency numbers, "TX", the IQ readout, AGC "-H"/"-G") is 12px ASCII, so one
 // cached layout + pango_layout_set_text() per label removes ~one PangoLayout
 // allocation per label per frame from the render thread. Main-thread-only, so a
@@ -149,7 +149,7 @@ static PangoLayout *label12(GtkWidget *widget,const char *txt) {
   if(g_label_layout==NULL) {
     g_label_layout=gtk_widget_create_pango_layout(widget,NULL);
     PangoFontDescription *fd=pango_font_description_new();
-    pango_font_description_set_family(fd,"Noto Sans");
+    pango_font_description_set_family(fd,css_ui_font());
     pango_font_description_set_absolute_size(fd,12*PANGO_SCALE);
     pango_layout_set_font_description(g_label_layout,fd);
     pango_font_description_free(fd);
@@ -543,7 +543,7 @@ void receiver_draw_cluster_spots(cairo_t *cr, RECEIVER *rx, int display_width) {
     vis[b+1].x=kx; vis[b+1].s=ks;
   }
 
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  cairo_select_font_face(cr, css_ui_font(), CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
   double fs=(double)radio->cluster_spots_font;
   if(fs<7.0) fs=7.0; if(fs>28.0) fs=28.0;       // clamp to a sane range
   cairo_set_font_size(cr, fs);

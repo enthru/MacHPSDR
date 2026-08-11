@@ -312,6 +312,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.att20_label",radio->att20_label);
   sprintf(value,"%d",radio->theme);
   setProperty("radio.theme",value);
+  setProperty("radio.ui_font",radio->ui_font);
+  setProperty("radio.ui_font_mono",radio->ui_font_mono);
 
   for(int i=0;i<radio->discovered->adcs;i++) {
     sprintf(name,"radio.adc[%d].filters",i);
@@ -635,6 +637,13 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att20_label,value,sizeof(radio->att20_label));
   value=getProperty("radio.theme");
   if(value!=NULL) radio->theme=atoi(value);
+  value=getProperty("radio.ui_font");
+  if(value!=NULL) g_strlcpy(radio->ui_font,value,sizeof(radio->ui_font));
+  value=getProperty("radio.ui_font_mono");
+  if(value!=NULL) g_strlcpy(radio->ui_font_mono,value,sizeof(radio->ui_font_mono));
+  // Fonts BEFORE the skin: css_set_fonts() re-applies the stylesheet itself, so
+  // doing it in this order costs one reload instead of two.
+  css_set_fonts(radio->ui_font,radio->ui_font_mono);
   css_set_theme(radio->theme);   // apply the saved skin to the (already-built) UI
   value=getProperty("radio.filter_board");
   if(value!=NULL) radio->filter_board=atoi(value);

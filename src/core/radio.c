@@ -2776,6 +2776,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   strcpy(r->att10_label,"Att10");
   strcpy(r->att20_label,"Att20");
   r->theme=0;   // Charcoal
+  // Empty = the platform default css.c picks. Stored empty rather than resolved
+  // so a config moved between a Mac and a Windows box gets each machine's own
+  // default instead of a family the other one does not have.
+  r->ui_font[0]='\0';
+  r->ui_font_mono[0]='\0';
 
 #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {

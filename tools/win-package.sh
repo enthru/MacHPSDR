@@ -125,6 +125,17 @@ else
   echo "      GTK will abort at startup."
 fi
 
+# ------------------------------------------------------------ fontconfig ---
+# Without etc/fonts, fontconfig has no idea where to look and every text style
+# resolves through its last-resort path — pango then reports "expect ugly
+# output" for each one, and the UI renders in whatever it fell back to.
+# Observed: the whole interface in a substitute face.
+if [ -d "$PREFIX/etc/fonts" ]; then
+  echo "==> fontconfig"
+  mkdir -p "$DEST/etc"
+  cp -r "$PREFIX/etc/fonts" "$DEST/etc/"
+fi
+
 # ----------------------------------------------------------------- icons ---
 # GTK4 draws its own widgets but still resolves named icons through the theme.
 echo "==> icon themes"

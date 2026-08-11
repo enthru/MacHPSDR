@@ -73,7 +73,7 @@ static void txn_line(GtkSnapshot *s,double x1,double y1,double x2,double y2,doub
 static PangoLayout *txn_layout(GtkWidget *w,double size,const char *txt) {
   PangoLayout *l=gtk_widget_create_pango_layout(w,txt);
   PangoFontDescription *fd=pango_font_description_new();
-  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_family(fd,css_ui_font());
   pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
   pango_layout_set_font_description(l,fd);
   pango_font_description_free(fd);

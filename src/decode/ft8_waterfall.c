@@ -23,6 +23,7 @@
 #include <gtk/gtk.h>
 
 #include "discovered.h"
+#include "css.h"
 #include "adc.h"
 #include "dac.h"
 #include "receiver.h"
@@ -131,7 +132,7 @@ static GdkPixbuf *on_source(gpointer data) {
 
 static void on_overlay(cairo_t *cr, int W, int H, gpointer data) {
   // Frequency grid + labels every 500 Hz across the displayed span.
-  cairo_select_font_face(cr, "Noto Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  cairo_select_font_face(cr, css_ui_font(), CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
   cairo_set_font_size(cr, 10);
   for (int f = 0; f <= (int)cur_span; f += 500) {
     double x = (double)f / cur_span * W;

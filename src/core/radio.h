@@ -340,6 +340,11 @@ typedef struct _radio {
   char att20_label[32];
 
   int theme;   // main-window skin index (see css.c); 0 = Charcoal (default)
+  // Font families for the whole UI, ONE name each (not a fallback list — see
+  // css.h). Empty means "use the platform default", which is what a fresh
+  // config and a cleared picker both give.
+  char ui_font[64];
+  char ui_font_mono[64];
 
   GtkWidget *dialog;
   

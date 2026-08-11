@@ -218,6 +218,51 @@ static const THEME themes[]={
 };
 static const int n_themes=(int)(sizeof(themes)/sizeof(themes[0]));
 
+// ---- Fonts ----
+//
+// One family name each, NOT a fallback list: GTK CSS would accept a list, but
+// pango_font_description_set_family() — which the panadapter and the meters use
+// — takes the whole string as a single family name, so "Noto Sans, Segoe UI"
+// resolves to nothing at all.  Observed as `couldn't load font "Noto Sans,
+// Segoe UI, sans-serif"`.  Hence a setting with a per-platform default.
+#if defined(_WIN32)
+  #define UI_FONT_DEFAULT   "Segoe UI"
+  #define MONO_FONT_DEFAULT "Consolas"
+#elif defined(__APPLE__)
+  #define UI_FONT_DEFAULT   "Noto Sans"
+  #define MONO_FONT_DEFAULT "Noto Mono"
+#else
+  #define UI_FONT_DEFAULT   "Noto Sans"
+  #define MONO_FONT_DEFAULT "Noto Mono"
+#endif
+
+static char ui_font[64]   = UI_FONT_DEFAULT;
+static char mono_font[64] = MONO_FONT_DEFAULT;
+
+const char *css_ui_font(void)   { return ui_font; }
+const char *css_mono_font(void) { return mono_font; }
+
+// Set both families and re-apply the stylesheet.  Empty or NULL restores the
+// platform default rather than leaving an unusable name in place: a font picker
+// that can leave the UI unreadable with no way back is worse than none.
+void css_set_fonts(const char *sans,const char *mono) {
+  g_strlcpy(ui_font,   (sans && *sans) ? sans : UI_FONT_DEFAULT,   sizeof(ui_font));
+  g_strlcpy(mono_font, (mono && *mono) ? mono : MONO_FONT_DEFAULT, sizeof(mono_font));
+  css_set_theme(css_get_theme());   // re-substitutes and reloads
+}
+
+const char *css_ui_font_default(void)   { return UI_FONT_DEFAULT; }
+const char *css_mono_font_default(void) { return MONO_FONT_DEFAULT; }
+
+// Replace every occurrence; g_strsplit/g_strjoinv rather than a hand-rolled
+// walk, since the token count is tiny and correctness matters more than speed.
+static char *str_replace_all(const char *in,const char *from,const char *to) {
+  char **parts=g_strsplit(in,from,-1);
+  char *out=g_strjoinv(to,parts);
+  g_strfreev(parts);
+  return out;
+}
+
 // ---- Rule body (palette-independent) ----
 
 static const char css_body[]=
@@ -227,25 +272,25 @@ static const char css_body[]=
 "    color: @OFF_WHITE;\n"
 "    }\n"
 "  #vfo-a-text {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    color: @ACCENT_A;\n"
 "    }\n"
 "  #frequency-a-text {\n"
-"    font-family: Noto Mono;\n"
+"    font-family: @MONOFONT@;\n"
 "    font-size: 32px;\n"
 "    color: @ACCENT_A;\n"
 "    }\n"
 "  #vfo-b-text {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    color: @ACCENT_B;\n"
 "    }\n"
 "  #frequency-b-text {\n"
-"    font-family: Noto Mono;\n"
+"    font-family: @MONOFONT@;\n"
 "    font-size: 21px;\n"
 "    color: @ACCENT_B;\n"
 "    }\n"
@@ -257,7 +302,7 @@ static const char css_body[]=
 "    padding-right: 10px;\n"
 "    padding-bottom: 4px;\n"
 "    padding-left: 10px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -276,7 +321,7 @@ static const char css_body[]=
 "    padding-right: 10px;\n"
 "    padding-bottom: 4px;\n"
 "    padding-left: 10px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -315,7 +360,7 @@ static const char css_body[]=
 "    padding: 2px 6px;\n"
 "    min-height: 20px;\n"
 "    color: @DARK_TEXT;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    }\n"
@@ -335,7 +380,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -354,7 +399,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -373,7 +418,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -392,7 +437,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -411,7 +456,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -430,7 +475,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -452,7 +497,7 @@ static const char css_body[]=
 "    margin-bottom: 0px;\n"
 "    }\n"
 "  #warning-label {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    color: @WARNING;\n"
@@ -471,7 +516,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 2px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin: 0px;\n"
@@ -499,7 +544,7 @@ static const char css_body[]=
 "    padding-right: 8px;\n"
 "    }\n"
 "  #afgain-text {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    background-image: none;\n"
@@ -520,7 +565,7 @@ static const char css_body[]=
 "    border-radius: 4px;\n"
 "    }\n"
 "  #squelch-text {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    background-image: none;\n"
@@ -541,7 +586,7 @@ static const char css_body[]=
 "    border-radius: 4px;\n"
 "    }\n"
 "  #agcgain-text {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    background-image: none;\n"
@@ -598,7 +643,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -618,7 +663,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -637,7 +682,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -657,7 +702,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -676,7 +721,7 @@ static const char css_body[]=
 "    padding-right: 6px;\n"
 "    padding-bottom: 3px;\n"
 "    padding-left: 6px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -695,7 +740,7 @@ static const char css_body[]=
 "    padding-right: 10px;\n"
 "    padding-bottom: 4px;\n"
 "    padding-left: 10px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -714,7 +759,7 @@ static const char css_body[]=
 "    padding-right: 10px;\n"
 "    padding-bottom: 4px;\n"
 "    padding-left: 10px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    margin-top: 0px;\n"
@@ -739,7 +784,7 @@ static const char css_body[]=
 "    margin-bottom: 4px;\n"
 "    margin-left: 4px;\n"
 "    min-height: 18px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    background-image: none;\n"
@@ -761,7 +806,7 @@ static const char css_body[]=
 "    padding-right: 10px;\n"
 "    padding-bottom: 4px;\n"
 "    padding-left: 10px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 13px;\n"
 "    font-weight: bold;\n"
 "    min-height: 22px;\n"
@@ -778,7 +823,7 @@ static const char css_body[]=
 "    padding-right: 16px;\n"
 "    }\n"
 "  #section-label {\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 10px;\n"
 "    font-weight: bold;\n"
 "    color: @DARK_TEXT;\n"
@@ -934,7 +979,7 @@ static const char css_body[]=
 "    color: @DARK_TEXT;\n"
 "    padding: 3px 14px;\n"
 "    border-radius: 4px;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    font-weight: bold;\n"
 "    }\n"
@@ -970,14 +1015,14 @@ static const char css_body[]=
 "    }\n"
 "  #config-dialog frame > label {\n"
 "    color: @ACCENT_A;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 11px;\n"
 "    font-weight: bold;\n"
 "    margin-bottom: 4px;\n"
 "    }\n"
 "  #config-dialog label {\n"
 "    color: @OFF_WHITE;\n"
-"    font-family: Noto Sans;\n"
+"    font-family: @UIFONT@;\n"
 "    font-size: 12px;\n"
 "    }\n"
 "  #config-dialog button {\n"
@@ -1166,7 +1211,17 @@ void css_set_theme(int idx) {
   g_object_set(gtk_settings_get_default(),
                "gtk-application-prefer-dark-theme",themes[idx].dark,NULL);
 
-  char *full=g_strconcat(themes[idx].palette,css_body,NULL);
+  // The two font families are substituted rather than written into css_body:
+  // they are an operator setting (see css_set_fonts) because no single family
+  // exists everywhere — Noto ships with most Linux desktops and is installed on
+  // this developer's Mac, but a stock Windows has neither Noto Sans nor Noto
+  // Mono and falls back to whatever fontconfig can find last.
+  char *body=g_strdup(css_body);
+  { char *t;
+    t=str_replace_all(body,"@UIFONT@",ui_font);     g_free(body); body=t;
+    t=str_replace_all(body,"@MONOFONT@",mono_font); g_free(body); body=t; }
+  char *full=g_strconcat(themes[idx].palette,body,NULL);
+  g_free(body);
   // GTK4: load_from_data(...,-1,NULL) → load_from_string (null-terminated).
   gtk_css_provider_load_from_string(css_provider,full);
   g_free(full);

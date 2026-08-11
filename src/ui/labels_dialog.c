@@ -69,6 +69,48 @@ static void rds_rbds_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   radio->rds_rbds=(sel>0)?1:0;   // 0 = RDS (Europe), 1 = RBDS (N. America)
 }
 
+// ---- Font pickers ----
+// GtkFontDialogButton at FAMILY level: the operator picks from what is actually
+// installed, which is the whole point — the previous hard-coded "Noto Sans" is
+// present on most Linux desktops and absent from a stock Windows, where every
+// label then fell back to whatever fontconfig found last.
+static void font_picked(GtkFontDialogButton *btn, GParamSpec *ps, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  gboolean is_mono=GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn),"mono"))!=0;
+  PangoFontDescription *fd=gtk_font_dialog_button_get_font_desc(btn);
+  const char *fam=fd?pango_font_description_get_family(fd):NULL;
+
+  if(is_mono) g_strlcpy(radio->ui_font_mono,fam?fam:"",sizeof(radio->ui_font_mono));
+  else        g_strlcpy(radio->ui_font,     fam?fam:"",sizeof(radio->ui_font));
+
+  css_set_fonts(radio->ui_font,radio->ui_font_mono);
+  radio_refresh_skin(radio);   // repaint the Cairo surfaces that draw their own text
+}
+
+static GtkWidget *font_button_new(RADIO *radio,gboolean mono) {
+  GtkFontDialog *dlg=gtk_font_dialog_new();
+  GtkWidget *btn=gtk_font_dialog_button_new(dlg);   // takes the ref
+  const char *cur = mono
+      ? (radio->ui_font_mono[0] ? radio->ui_font_mono : css_mono_font())
+      : (radio->ui_font[0]      ? radio->ui_font      : css_ui_font());
+  PangoFontDescription *fd=pango_font_description_from_string(cur);
+
+  gtk_font_dialog_button_set_level(GTK_FONT_DIALOG_BUTTON(btn),GTK_FONT_LEVEL_FAMILY);
+  gtk_font_dialog_button_set_font_desc(GTK_FONT_DIALOG_BUTTON(btn),fd);
+  pango_font_description_free(fd);
+  g_object_set_data(G_OBJECT(btn),"mono",GINT_TO_POINTER(mono?1:0));
+  g_signal_connect(btn,"notify::font-desc",G_CALLBACK(font_picked),radio);
+  return btn;
+}
+
+static void font_reset_cb(GtkButton *b, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  radio->ui_font[0]='\0';
+  radio->ui_font_mono[0]='\0';
+  css_set_fonts(NULL,NULL);    // back to the platform default
+  radio_refresh_skin(radio);
+}
+
 static void theme_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   int sel=(int)gtk_drop_down_get_selected(widget);
@@ -270,6 +312,30 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_drop_down_set_selected(GTK_DROP_DOWN(skin_combo),r->theme);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
   g_signal_connect(skin_combo,"notify::selected",G_CALLBACK(theme_cb),r);
+
+  GtkWidget *font_lbl=gtk_label_new("Interface font:");
+  gtk_widget_set_halign(font_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),font_lbl,0,2,1,1);
+  gtk_grid_attach(GTK_GRID(skin_grid),font_button_new(r,FALSE),1,2,1,1);
+
+  GtkWidget *mono_lbl=gtk_label_new("Readout font (monospaced):");
+  gtk_widget_set_halign(mono_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),mono_lbl,0,3,1,1);
+  gtk_grid_attach(GTK_GRID(skin_grid),font_button_new(r,TRUE),1,3,1,1);
+
+  GtkWidget *font_reset=gtk_button_new_with_label("Use platform default");
+  gtk_widget_set_halign(font_reset,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),font_reset,1,4,1,1);
+  g_signal_connect(font_reset,"clicked",G_CALLBACK(font_reset_cb),r);
+
+  { char note[192];
+    snprintf(note,sizeof(note),
+             "Frequency readouts and panadapter labels use the monospaced one.\n"
+             "This machine's defaults: %s / %s.",
+             css_ui_font_default(),css_mono_font_default());
+    GtkWidget *font_info=gtk_label_new(note);
+    gtk_widget_set_halign(font_info,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(skin_grid),font_info,0,5,2,1); }
 
   // ---- Frequency Calibration (PPM) ----
   GtkWidget *ppm_frame=gtk_frame_new("Frequency Calibration (PPM)");

@@ -87,7 +87,7 @@ void lm_text(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,double size
              const GdkRGBA *c,const char *txt,gboolean center) {
   PangoLayout *l=gtk_widget_create_pango_layout(widget,txt);
   PangoFontDescription *fd=pango_font_description_new();
-  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_family(fd,css_ui_font());
   pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
   pango_layout_set_font_description(l,fd);
   pango_font_description_free(fd);
@@ -102,11 +102,11 @@ void lm_text(GtkSnapshot *s,GtkWidget *widget,double x,double base_y,double size
   g_object_unref(l);
 }
 
-// Advance width of a Noto Sans label (to replace cairo_text_extents).
+// Advance width of a UI-font label (to replace cairo_text_extents).
 double lm_measure(GtkWidget *widget,double size,const char *txt) {
   PangoLayout *l=gtk_widget_create_pango_layout(widget,txt);
   PangoFontDescription *fd=pango_font_description_new();
-  pango_font_description_set_family(fd,"Noto Sans");
+  pango_font_description_set_family(fd,css_ui_font());
   pango_font_description_set_absolute_size(fd,size*PANGO_SCALE);
   pango_layout_set_font_description(l,fd);
   pango_font_description_free(fd);
