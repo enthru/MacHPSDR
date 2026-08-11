@@ -17,21 +17,12 @@
 *
 */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <net/if_arp.h>
-#include <net/if.h>
-#include <ifaddrs.h>
 #include <string.h>
-#include <errno.h>
 
 #include "discovered.h"
 #include "discovery.h"
@@ -127,7 +118,7 @@ static void discover(struct ifaddrs* iface) {
     // wait for receive thread to complete
     g_thread_join(discover_thread_id);
 
-    close(discovery_socket);
+    closesocket(discovery_socket);
 
     log_info("discover: exiting discover for %s\n",iface->ifa_name);
 

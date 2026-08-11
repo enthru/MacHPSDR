@@ -17,22 +17,12 @@
 *
 */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include "log.h"
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <net/if_arp.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <ifaddrs.h>
 #include <string.h>
-#include <errno.h>
 
 #include "discovered.h"
 #include "discovery.h"
@@ -112,7 +102,9 @@ void protocol2_discover(struct ifaddrs* iface) {
 
     int optval = 1;
     setsockopt(discovery_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+#ifdef SO_REUSEPORT
     setsockopt(discovery_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+#endif
 
     sa = (struct sockaddr_in *) iface->ifa_addr;
     mask = (struct sockaddr_in *) iface->ifa_netmask;
@@ -179,7 +171,7 @@ void protocol2_discover(struct ifaddrs* iface) {
     // wait for receive thread to complete
     g_thread_join(discover_thread_id);
 
-    close(discovery_socket);
+    closesocket(discovery_socket);
 
     log_info("protocol2_discover: exiting discover for %s\n",iface->ifa_name);
 }

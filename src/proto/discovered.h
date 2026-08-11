@@ -20,7 +20,9 @@
 #ifndef DISCOVERED_H
 #define DISCOVERED_H
 
-#include <netinet/in.h>
+// struct sockaddr_in — via the sockets seam, since on Windows that type comes
+// from winsock2.h and must be reached before anything pulls in <windows.h>.
+#include "net_compat.h"
 
 #ifdef SOAPYSDR
 #include <SoapySDR/Device.h>

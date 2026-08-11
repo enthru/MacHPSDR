@@ -17,6 +17,7 @@
 *
 */
 
+#include "net_compat.h"   // must precede gtk.h: winsock2 before windows.h
 #include <gtk/gtk.h>
 #include <math.h>
 #include <unistd.h>
@@ -29,8 +30,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pwd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <wdsp.h>
 
 #ifdef __APPLE__
@@ -789,11 +788,22 @@ int main(int argc, char **argv) {
   int rc;
   const char *homedir;
 
+  // Winsock hands out no socket at all until the process has called WSAStartup,
+  // so this must run before discovery, rigctl, TCI or the cluster client. No-op
+  // on Linux/macOS.
+  if (!net_startup()) {
+    log_error("main: network startup failed\n");
+    return 1;
+  }
+
+#ifdef SIGPIPE
   // Never take SIGPIPE from a write() to a peer that closed its end: the rigctl
   // CAT server and the DX-cluster client both write to sockets that can vanish,
   // and the default SIGPIPE disposition would kill the whole app. (TCI already
   // guards per-socket via SO_NOSIGPIPE/MSG_NOSIGNAL; this covers the rest.)
+  // Windows has no SIGPIPE — a dead socket is reported by the send() return.
   signal(SIGPIPE, SIG_IGN);
+#endif
 
   // Log verbosity: environment first (MACHPSDR_LOG=debug|info|error), then the
   // command line below can override it. Default stays INFO (see log.c).

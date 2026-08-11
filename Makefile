@@ -30,6 +30,23 @@ AUDIO_HEADERS=portaudio.h
 # Used by the `app` target to locate GTK resources for bundling.
 BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
 endif
+# Windows / MSYS2 (MinGW-w64).  `uname -s` there is MINGW64_NT-10.0-<build>, so
+# this has to be a substring test, not the equality the other two use.  MSVC is
+# not a target: WDSP's linux_port.h and this tree lean on GNU C (__sync_*
+# builtins, statement expressions), so the toolchain is gcc either way.
+# Audio is libsoundio's WASAPI backend — the same USE_SOUNDIO path macOS runs,
+# which is why no new audio backend is needed here.
+ISMINGW := $(findstring MINGW,$(UNAME_S))
+ifneq ($(ISMINGW),)
+AUDIO_LIBS=-lsoundio
+AUDIO_SOURCES=audio.c
+AUDIO_HEADERS=audio.h
+# WIN32_LEAN_AND_MEAN globally: <windows.h> otherwise drags in the Winsock 1.1
+# <winsock.h>, which cannot coexist with the <winsock2.h> net_compat.h needs,
+# and GTK's headers include <windows.h> from all over.  Defined here rather than
+# per-file so no translation unit can lose the race by include order.
+WIN_OPTIONS=-DWIN32_LEAN_AND_MEAN
+endif
 
 # uncomment the line below to include SoapySDR support
 #
@@ -203,6 +220,17 @@ MIDI_SOURCES= alsa_midi.c midi2.c midi3.c midi_dialog.c
 MIDI_OBJS= alsa_midi.o midi2.o midi3.o midi_dialog.o
 MIDI_LIBS= -lasound
 endif
+# Windows has no MIDI backend yet (mac_midi.c is CoreMIDI, alsa_midi.c is ALSA;
+# a winmm port would mirror mac_midi.c).  MIDI_OPTIONS must be cleared too, not
+# just the sources: leaving -D MIDI set with no backend compiles the callers and
+# fails at link, which reads as a broken build rather than a missing feature.
+ifneq ($(ISMINGW),)
+MIDI_OPTIONS=
+MIDI_SOURCES=
+MIDI_HEADERS=
+MIDI_OBJS=
+MIDI_LIBS=
+endif
 endif
 
 # -std=gnu23: the codebase now uses explicit `void f(void)` prototypes
@@ -235,6 +263,7 @@ CFLAGS= -g -O3 -std=gnu23 -Wall -Wextra \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
+          $(WIN_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
 
@@ -262,6 +291,18 @@ WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
 RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
+endif
+ifneq ($(ISMINGW),)
+# -lws2_32 is Winsock, -liphlpapi backs the getifaddrs() shim in net_compat.c,
+# -lwinmm is timeBeginPeriod (the default 15.6 ms timer tick is far too coarse
+# for the protocol-1 output pacing).
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) \
+     $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
+WDSP_INCLUDE=-I$(WDSP_DIR)
+WDSP_LIB=$(WDSP_DIR)/libwdsp.dll
+# Windows has no rpath: the loader looks next to the .exe, so libwdsp.dll is
+# copied there by the install/package step rather than found by a link flag.
+RPATH_FLAGS=
 endif
 
 # Source tree layout: the ~90 first-party .c/.h live under src/<subsystem>/ to
@@ -291,6 +332,11 @@ COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 	$(COMPILE) -MMD -MP -c -o $@ $<
 
 PROGRAM=machpsdr
+# mingw's gcc appends .exe to an extensionless -o, so a target named `machpsdr`
+# would never look up to date and every make would relink.
+ifneq ($(ISMINGW),)
+PROGRAM=machpsdr.exe
+endif
 
 SOURCES=\
 main.c\
@@ -298,6 +344,7 @@ log.c\
 css.c\
 audio.c\
 version.c\
+net_compat.c\
 discovered.c\
 discovery.c\
 protocol1_discovery.c\
@@ -370,6 +417,7 @@ log.h\
 css.h\
 audio.h\
 version.h\
+net_compat.h\
 discovered.h\
 discovery.h\
 protocol1_discovery.h\
@@ -439,6 +487,7 @@ css.o\
 settings_ui.o\
 audio.o\
 version.o\
+net_compat.o\
 discovered.o\
 discovery.o\
 protocol1_discovery.o\
