@@ -738,6 +738,16 @@ clean:
 	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM
 	-rm -rf $(APP_NAME).app
+	-rm -rf $(WIN_PKG_DIR)
+
+# Windows counterpart of the `app` target: a self-contained folder built around
+# the .exe.  Only useful from MSYS2 — the loader cache it has to generate is made
+# by dlopen()ing the modules, so it needs the native tool.  See tools/.
+WIN_PKG_DIR=machpsdr-win64
+
+.PHONY: win-package
+win-package: $(PROGRAM)
+	bash tools/win-package.sh $(WIN_PKG_DIR)
 
 APP_NAME=MacHPSDR
 APP_BUNDLE=$(APP_NAME).app
