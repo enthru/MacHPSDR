@@ -118,13 +118,13 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
   }
 
   size_t rx_channels=SoapySDRDevice_getNumChannels(sdr, SOAPY_SDR_RX);
-  log_info("Rx channels: %ld\n",rx_channels);
+  log_info("Rx channels: %ld\n",(long)rx_channels);
   for(int i=0;i<rx_channels;i++) {
     log_info("Rx channel full duplex: channel=%d fullduplex=%d\n",i,SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_RX, i));
   }
 
   size_t tx_channels=SoapySDRDevice_getNumChannels(sdr, SOAPY_SDR_TX);
-  log_info("Tx channels: %ld\n",tx_channels);
+  log_info("Tx channels: %ld\n",(long)tx_channels);
   for(int i=0;i<tx_channels;i++) {
     log_info("Tx channel full duplex: channel=%d fullduplex=%d\n",i,SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_TX, i));
   }
@@ -205,7 +205,7 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
   for (size_t i = 0; i < formats_length; i++) log_info("%s, ", formats[i]);
   log_info("\n");
 
-  log_info("float=%lu double=%lu\n",sizeof(float),sizeof(double));
+  log_info("float=%lu double=%lu\n",(unsigned long)sizeof(float),(unsigned long)sizeof(double));
 
   size_t sensors;
   char **sensor = SoapySDRDevice_listSensors(sdr, &sensors);
@@ -538,12 +538,12 @@ void soapy_discovery(void) {
   // SoapySDR/libiio resolve a name on every startup, and with nothing to resolve
   // the Avahi lookup blocks until it times out (~30 s), hanging discovery.
   SoapySDRKwargs *results = SoapySDRDevice_enumerate(&input_args, &length);
-  log_info("%s: length=%ld\n",__FUNCTION__,length);
+  log_info("%s: length=%ld\n",__FUNCTION__,(long)length);
   for (i = 0; i < length; i++) {
     const char *driver=NULL;
     const char *uri=NULL;
     gboolean dup=FALSE;
-    log_info("%s: i=%d size=%ld\n",__FUNCTION__,i,results[i].size);
+    log_info("%s: i=%d size=%ld\n",__FUNCTION__,i,(long)results[i].size);
     for (size_t j = 0; j < results[i].size; j++) {
       log_info("%s key=%s value=%s\n",__FUNCTION__,results[i].keys[j],results[i].vals[j]);
       if(strcmp(results[i].keys[j],"driver")==0) driver=results[i].vals[j];

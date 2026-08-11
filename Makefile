@@ -48,7 +48,16 @@ AUDIO_HEADERS=audio.h
 # -include win_compat.h: the functions mingw's CRT lacks (stpcpy) are used by the
 # VENDORED ft8_lib, which is carried verbatim.  Force-including is how they are
 # supplied without editing upstream code.
-WIN_OPTIONS=-DWIN32_LEAN_AND_MEAN -include win_compat.h
+#
+# __USE_MINGW_ANSI_STDIO makes printf mingw's own ISO-conformant one instead of
+# the CRT's.  This tree has 75 uses of %lld and one of %td, none of which the
+# Microsoft printf is obliged to understand — and the failure mode is not a
+# diagnostic, it is a log line full of garbage.
+#
+# NOMINMAX stops <windef.h> defining min/max as macros, which collide with the
+# ones main.h and WDSP's linux_port.h define.
+WIN_OPTIONS=-DWIN32_LEAN_AND_MEAN -DNOMINMAX -D__USE_MINGW_ANSI_STDIO=1 \
+            -include win_compat.h
 endif
 
 # uncomment the line below to include SoapySDR support

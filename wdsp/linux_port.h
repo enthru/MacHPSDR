@@ -75,6 +75,22 @@ john.d.melton@googlemail.com
 #define InterlockedExchange(target,value) __sync_lock_test_and_set(target,value)
 #define InterlockedAnd(base,mask) __sync_fetch_and_and(base,mask)
 #define _InterlockedAnd(base,mask) __sync_fetch_and_and(base,mask)
+#if defined(__MINGW32__)
+// gcc predefines these MSVC keywords on Windows, so the shim's definitions below
+// are a redefinition — warned about in EVERY translation unit that reaches this
+// header, which is hundreds of lines that would bury any real warning.
+//
+// They are undefined rather than skipped so the shim's empty versions still win:
+// that keeps PORT expanding to nothing, exactly as on Linux/macOS.  Letting
+// gcc's real __declspec stand would turn PORT into __declspec(dllexport), and
+// naming even one export explicitly switches OFF mingw's auto-export of
+// everything else — so the DLL the app links against would quietly lose symbols.
+#undef __declspec
+#undef __cdecl
+#undef __stdcall
+#undef __forceinline
+#endif
+
 #define __declspec(x)
 #define __cdecl
 #define __stdcall

@@ -1533,7 +1533,7 @@ void protocol2_audio_samples(RECEIVER *rx,short left_audio_sample,short right_au
 
     rc=sendto(data_socket,audiobuffer,sizeof(audiobuffer),0,(struct sockaddr*)&audio_addr,audio_addr_length);
     if(rc!=sizeof(audiobuffer)) {
-      log_error("sendto socket failed for %ld bytes of audio: %d\n",sizeof(audiobuffer),rc);
+      log_error("sendto socket failed for %ld bytes of audio: %d\n",(long)sizeof(audiobuffer),rc);
     }
     audiosequence++;
     audioindex=4;

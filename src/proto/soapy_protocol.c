@@ -171,7 +171,7 @@ log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate
   }
 
   size_t channel=rx->adc;
-log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,channel);
+log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)channel);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
   rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
   if(rc!=0) {
@@ -266,7 +266,7 @@ log_info("soapy_protocol_create_transmitter: setting samplerate=%f\n",(double)so
   }
 
   size_t channel=tx->dac;
-log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=%ld\n",channel);
+log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=%ld\n",(long)channel);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
   rc=SoapySDRDevice_setupStream(soapy_device,&tx_stream,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,NULL);
   if(rc!=0) {
