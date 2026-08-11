@@ -49,7 +49,7 @@ static void discover(struct ifaddrs* iface) {
     // send a broadcast to locate hpsdr boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(discovery_socket<0) {
-        perror("discover: create socket failed for discovery_socket\n");
+        net_perror("discover: create socket failed for discovery_socket");
         exit(-1);
     }
 
@@ -67,7 +67,7 @@ static void discover(struct ifaddrs* iface) {
     //interface_addr.sin_port = htons(DISCOVERY_PORT*2);
     interface_addr.sin_port = htons(0); // system assigned port
     if(bind(discovery_socket,(struct sockaddr*)&interface_addr,sizeof(interface_addr))<0) {
-        perror("discover: bind socket failed for discovery_socket\n");
+        net_perror("discover: bind socket failed for discovery_socket");
         exit(-1);
     }
 
@@ -109,16 +109,23 @@ static void discover(struct ifaddrs* iface) {
     }
 
     if(sendto(discovery_socket,buffer,63,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
-        // net_errno(), not errno: Winsock never touches errno, so on Windows
-        // this guard used to read whatever some unrelated CRT call had left
-        // there — and a broadcast that cannot go out of the LOOPBACK adapter is
-        // entirely normal, yet would take exit(-1) and kill the application at
-        // startup on the strength of a stale value.
         net_perror("discover: sendto socket failed for discovery_socket");
-        { int e = net_errno();
-          if(e!=NET_EHOSTUNREACH && e!=NET_EADDRNOTAVAIL) {
+#ifndef _WIN32
+        if(errno!=EHOSTUNREACH && errno!=EADDRNOTAVAIL) {
             exit(-1);
-          } }
+        }
+#endif
+        // On Windows a per-adapter broadcast failure is NOT fatal, whatever the
+        // code.  This runs once per adapter, and a typical machine has several
+        // that cannot carry a broadcast: loopback (observed: WSAEINVAL 10022,
+        // with the socket bound to 127.0.0.1), disconnected NICs, and the
+        // virtual adapters VPN and VM software leave behind.  Enumerating the
+        // tolerable codes is guesswork; the alternative was exit(-1) killing the
+        // application during startup because one adapter out of several said no.
+        //
+        // Deliberately NOT an early return: the receive thread was started
+        // above, so falling through to the join below is what reaps it — and it
+        // returns on its own within one SO_RCVTIMEO period.
     }
 
     // wait for receive thread to complete
@@ -150,7 +157,7 @@ log_info("discover_receive_thread\n");
         bytes_read=recvfrom(discovery_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&len);
         if(bytes_read<0) {
             log_info("discovery: bytes read %d\n", bytes_read);
-            perror("discovery: recvfrom socket failed for discover_receive_thread");
+            net_perror("discovery: recvfrom socket failed for discover_receive_thread");
             break;
         }
         log_info("discovered: received %d bytes\n",bytes_read);

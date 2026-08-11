@@ -96,7 +96,7 @@ void protocol2_discover(struct ifaddrs* iface) {
     // send a broadcast to locate metis boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(discovery_socket<0) {
-        perror("protocol2_discover: create socket failed for discovery_socket\n");
+        net_perror("protocol2_discover: create socket failed for discovery_socket");
         exit(-1);
     }
 
@@ -116,7 +116,7 @@ void protocol2_discover(struct ifaddrs* iface) {
     interface_addr.sin_addr.s_addr = sa->sin_addr.s_addr;
     interface_addr.sin_port = htons(0);
     if(bind(discovery_socket,(struct sockaddr*)&interface_addr,sizeof(interface_addr))<0) {
-        perror("protocol2_discover: bind socket failed for discovery_socket\n");
+        net_perror("protocol2_discover: bind socket failed for discovery_socket");
         exit(-1);
     }
 
@@ -162,12 +162,15 @@ void protocol2_discover(struct ifaddrs* iface) {
     }
 
     if(sendto(discovery_socket,buffer,60,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
-        // See protocol1_discovery.c: errno says nothing about a Winsock call.
         net_perror("protocol2_discover: sendto socket failed for discovery_socket");
-        { int e = net_errno();
-          if(e!=NET_EHOSTUNREACH && e!=NET_EADDRNOTAVAIL) {
+#ifndef _WIN32
+        if(errno!=EHOSTUNREACH) {
             exit(-1);
-          } }
+        }
+#endif
+        // See protocol1_discovery.c: on Windows, tolerate it and fall through to
+        // the join — never kill the app, and never leave the receive thread
+        // behind by returning early.
     }
 
     // wait for receive thread to complete
@@ -196,7 +199,7 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
         bytes_read=recvfrom(discovery_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&len);
         if(bytes_read<0) {
             log_info("protocol2_discover: bytes read %d\n", bytes_read);
-            perror("protocol2_discover: recvfrom socket failed for discover_receive_thread");
+            net_perror("protocol2_discover: recvfrom socket failed for discover_receive_thread");
             break;
         }
         log_info("protocol2_discover: received %d bytes\n",bytes_read);
