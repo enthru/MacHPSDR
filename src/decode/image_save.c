@@ -20,7 +20,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <time.h>
+#include "time_compat.h"   // <time.h> + gmtime_r() on Windows
 
 #include "image_save.h"
 #include "log.h"

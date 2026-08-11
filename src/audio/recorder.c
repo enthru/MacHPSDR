@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include "log.h"
 #include <string.h>
-#include <time.h>
+#include "time_compat.h"   // <time.h> + gmtime_r() on Windows
 #include <gtk/gtk.h>
 
 #include "recorder.h"

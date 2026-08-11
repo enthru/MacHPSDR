@@ -18,7 +18,7 @@
 */
 
 #include <gtk/gtk.h>
-#include <time.h>
+#include "time_compat.h"   // <time.h> + gmtime_r() on Windows
 #include <math.h>
 
 #include "discovered.h"

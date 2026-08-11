@@ -168,6 +168,13 @@ ifeq ($(UNAME_S), Linux)
 HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
 HFDL_LIBS=-lliquid -lz $(HFDL_ASN1_LIB)
 endif
+# MSYS2 keeps liquid-dsp and zlib on the default include/lib path, like Linux.
+# Without this branch both stay EMPTY and the HFDL link fails with a wall of
+# undefined liquid symbols rather than anything naming the cause.
+ifneq ($(ISMINGW),)
+HFDL_INCLUDES=$(HFDL_VENDOR_INCLUDES)
+HFDL_LIBS=-lliquid -lz $(HFDL_ASN1_LIB)
+endif
 HFDL_SOURCES= hfdl_decoder.c hfdl_demod.c hfdl_fec.c hfdl_frame.c hfdl_msg.c hfdl_arinc.c hfdl_asn1.c hfdl_cpdlc.c hfdl_miam.c hfdl_ohma.c hfdl_util.c hfdl_pdu.c hfdl_panel.c hfdl_lib/libfec/viterbi27_port.c hfdl_lib/hfdl_crc.c hfdl_lib/vstring.c acars_demod.c acars_decoder.c acars_panel.c
 HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfdl_arinc.h hfdl_asn1.h hfdl_cpdlc.h hfdl_miam.h hfdl_ohma.h hfdl_util.h hfdl_pdu.h hfdl_panel.h acars_demod.h acars_decoder.h acars_panel.h
 # VHF ACARS rides on the same flag: its whole application layer IS hfdl_msg.c
@@ -418,6 +425,8 @@ css.h\
 audio.h\
 version.h\
 net_compat.h\
+serial_compat.h\
+time_compat.h\
 discovered.h\
 discovery.h\
 protocol1_discovery.h\

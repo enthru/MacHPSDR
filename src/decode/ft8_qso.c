@@ -23,7 +23,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <strings.h>
-#include <time.h>
+#include "time_compat.h"   // <time.h> + gmtime_r() on Windows
 #include <gtk/gtk.h>
 
 #include "discovered.h"

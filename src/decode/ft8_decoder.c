@@ -20,7 +20,7 @@
 #include <math.h>
 #include "log.h"
 #include <string.h>
-#include <time.h>
+#include "time_compat.h"   // <time.h> + gmtime_r() on Windows
 #include <stdint.h>
 #include <stdbool.h>
 #include <glib.h>
