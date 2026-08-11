@@ -48,12 +48,21 @@ copy_deps() {
   while read -r dll; do
     [ -n "$dll" ] || continue
     [ -f "$DEST/$dll" ] && continue
+    # bin/ AND lib/: most DLLs live in bin/, but not all — MSYS2 ships
+    # libsoundio-2.dll in lib/, and missing it means the .exe does not start at
+    # all ("Library libsoundio-2.dll not found", status c0000135).  Found by
+    # running the package, not by reading it.
     src=""
-    [ -f "$PREFIX/bin/$dll" ] && src="$PREFIX/bin/$dll"
+    for dir in "$PREFIX/bin" "$PREFIX/lib"; do
+      [ -f "$dir/$dll" ] && { src="$dir/$dll"; break; }
+    done
     if [ -z "$src" ]; then
       # Case-insensitive retry: import tables spell names as the linker found
       # them, which does not always match the file on a case-sensitive host.
-      src="$(find "$PREFIX/bin" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+      for dir in "$PREFIX/bin" "$PREFIX/lib"; do
+        src="$(find "$dir" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
+        [ -n "$src" ] && break
+      done
     fi
     [ -n "$src" ] || continue
     cp "$src" "$DEST/"
