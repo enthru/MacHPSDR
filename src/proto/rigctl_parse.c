@@ -6,6 +6,7 @@
  * See rigctl.c for the server/client plumbing, globals, and the
  * original license header.
  */
+#include "net_compat.h"   // send() on the socket path; before gtk.h on Windows
 #include <gtk/gtk.h>
 #include "log.h"
 #include <gdk/gdk.h>
@@ -173,7 +174,16 @@ static void send_resp(COMMAND *cmd,char * msg) {
   int length=strlen(msg);
   int written=0;
   while(written<length) {
+#ifdef _WIN32
+    // The CRT's write() works on a file or serial descriptor but NOT on a
+    // socket, and cmd->fd is either one depending on which server took the
+    // command.  The serial fd is the one rigctl owns, so that is the test.
+    ssize_t n = (rigctl->serial_running && cmd->fd==rigctl->serial_fd)
+                ? write(cmd->fd,&msg[written],length-written)
+                : send(cmd->fd,&msg[written],length-written,0);
+#else
     ssize_t n=write(cmd->fd,&msg[written],length-written);
+#endif
     if(n<=0) {
       // A failed write() returns -1; the old `written+=n` then spun forever on a
       // dead/errored fd — and this runs on the GTK main thread, so it froze the

@@ -26,7 +26,7 @@
 #include <errno.h>
 #include <fcntl.h> 
 #include <string.h>
-#include <termios.h>
+#include "serial_compat.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -623,6 +623,116 @@ log_info("%s: running=%d numbytes=%d\n",__FUNCTION__,rigctl->socket_running,numb
 
 
 // Serial Port Launch
+#ifdef _WIN32
+/*
+ * Windows has no termios, but it does not need a second I/O path either: a COM
+ * handle wrapped with _open_osfhandle() is an ordinary CRT descriptor, so the
+ * read()/write()/close() calls in serial_server() and send_resp() keep working
+ * unchanged.  Only opening and configuring the port differ, which is all that
+ * lives in these three functions.
+ *
+ * UNVERIFIED: no Windows machine and no CAT-capable serial peer here.  The
+ * timeout mapping below is the part to distrust first if a port opens but never
+ * delivers a command.
+ */
+static HANDLE serial_handle(int fd) {
+  return (HANDLE)_get_osfhandle(fd);
+}
+
+int serial_open_port(const char *port) {
+  char path[80];
+  HANDLE h;
+  int fd;
+
+  // COM10 and up exist ONLY in the \\.\ device namespace — a bare "COM10"
+  // silently fails to open while "COM3" works, which is a maddening thing to
+  // debug.  COM1..9 accept the prefix too, so it is applied unconditionally.
+  if (strncmp(port, "\\\\.\\", 4) == 0)
+    snprintf(path, sizeof(path), "%s", port);
+  else
+    snprintf(path, sizeof(path), "\\\\.\\%s", port);
+
+  h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE,
+                  0,              // serial ports are never shared
+                  NULL, OPEN_EXISTING,
+                  0,              // synchronous I/O, matching the POSIX path
+                  NULL);
+  if (h == INVALID_HANDLE_VALUE) return -1;
+
+  fd = _open_osfhandle((intptr_t)h, _O_RDWR | _O_BINARY);
+  if (fd < 0) { CloseHandle(h); return -1; }
+  return fd;   // close(fd) closes the handle with it
+}
+
+int set_interface_attribs (int fd, int speed, int parity)
+{
+        HANDLE h = serial_handle(fd);
+        DCB dcb;
+        COMMTIMEOUTS to;
+
+        memset(&dcb, 0, sizeof(dcb));
+        dcb.DCBlength = sizeof(dcb);
+        if (!GetCommState(h, &dcb)) {
+                log_info("RIGCTL: GetCommState failed: %lu\n", GetLastError());
+                return -1;
+        }
+        // serial_compat.h defines B9600 as 9600, so `speed` is already the rate.
+        dcb.BaudRate = (DWORD)speed;
+        dcb.ByteSize = 8;
+        // The POSIX side ORs `parity` (a termios c_cflag bit) into the config;
+        // those bits have no Win32 counterpart and the sole caller passes 0, so
+        // this stays no-parity, matching what that call actually asks for.
+        (void)parity;
+        dcb.Parity   = NOPARITY;
+        dcb.StopBits = ONESTOPBIT;
+        dcb.fBinary  = TRUE;
+        dcb.fOutX    = TRUE;          // matches the POSIX IXON|IXOFF|IXANY
+        dcb.fInX     = TRUE;
+        dcb.fOutxCtsFlow = FALSE;     // matches ~CRTSCTS
+        dcb.fOutxDsrFlow = FALSE;
+        dcb.fDtrControl  = DTR_CONTROL_ENABLE;
+        dcb.fRtsControl  = RTS_CONTROL_ENABLE;
+        dcb.fAbortOnError = FALSE;
+        if (!SetCommState(h, &dcb)) {
+                log_info("RIGCTL: SetCommState failed: %lu\n", GetLastError());
+                return -1;
+        }
+
+        // The POSIX side sets VMIN=0, VTIME=5: return with whatever has arrived,
+        // waiting at most half a second.  MSDN spells that as an interval and a
+        // total constant of 500 ms.
+        memset(&to, 0, sizeof(to));
+        to.ReadIntervalTimeout        = 500;
+        to.ReadTotalTimeoutConstant   = 500;
+        to.ReadTotalTimeoutMultiplier = 0;
+        to.WriteTotalTimeoutConstant  = 500;
+        to.WriteTotalTimeoutMultiplier = 0;
+        SetCommTimeouts(h, &to);
+        return 0;
+}
+
+void set_blocking (int fd, int should_block)
+{
+        HANDLE h = serial_handle(fd);
+        COMMTIMEOUTS to;
+        memset(&to, 0, sizeof(to));
+        if (should_block) {
+                // VMIN=1, VTIME=5 on the POSIX side: block until the first byte,
+                // then let a half-second gap end the read.  An interval timeout
+                // with no total timeout is the Win32 spelling of exactly that.
+                to.ReadIntervalTimeout      = 500;
+                to.ReadTotalTimeoutConstant = 0;
+        } else {
+                to.ReadIntervalTimeout      = 500;
+                to.ReadTotalTimeoutConstant = 500;
+        }
+        to.ReadTotalTimeoutMultiplier  = 0;
+        to.WriteTotalTimeoutConstant   = 500;
+        to.WriteTotalTimeoutMultiplier = 0;
+        if (!SetCommTimeouts(h, &to))
+                log_info("RIGCTL: SetCommTimeouts failed: %lu\n", GetLastError());
+}
+#else
 int set_interface_attribs (int fd, int speed, int parity)
 {
         struct termios tty;
@@ -679,6 +789,7 @@ void set_blocking (int fd, int should_block)
         if (tcsetattr (fd, TCSANOW, &tty) != 0)
                 log_info("RIGCTL: error %d setting term attributes\n", errno);
 }
+#endif /* _WIN32 */
 
 static gpointer serial_server(gpointer data) {
      // We're going to Read the Serial port and
@@ -732,7 +843,14 @@ int launch_serial (RECEIVER *rx) {
 
   strcpy(rigctl->ser_port,rx->rigctl_serial_port);
   rigctl->serial_baudrate=rx->rigctl_serial_baudrate;
-  rigctl->serial_fd=open(rigctl->ser_port, O_RDWR | O_NOCTTY | O_SYNC);   
+#ifdef _WIN32
+  // A COM port is not reachable through open(): it needs CreateFile on the
+  // \\.\ device namespace, which serial_open_port() wraps back into a CRT
+  // descriptor so everything downstream is unchanged.
+  rigctl->serial_fd=serial_open_port(rigctl->ser_port);
+#else
+  rigctl->serial_fd=open(rigctl->ser_port, O_RDWR | O_NOCTTY | O_SYNC);
+#endif
   if(rigctl->serial_fd < 0) {
     rx->rigctl_serial_enable=FALSE;
     log_info("%s: Error %d opening %s: %s\n", __FUNCTION__,errno, rigctl->ser_port, strerror (errno));

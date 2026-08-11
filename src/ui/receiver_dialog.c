@@ -26,7 +26,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <termios.h>
+#include "serial_compat.h"
 #include <wdsp.h>
 
 #include "button_text.h"
