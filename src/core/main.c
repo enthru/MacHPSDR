@@ -803,13 +803,45 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 }
 
 #ifdef _WIN32
-// Windows-only startup fixes for two things the POSIX platforms give for free.
+// Windows-only startup fixes for three things the POSIX platforms give for free.
 static void win_startup(void) {
   char exe[MAX_PATH];
   DWORD n;
   char *slash;
 
-  // 1. Timer resolution.  Windows' default scheduler tick is 15.6 ms, so every
+  // 1. Standard output.  The .exe is linked for the GUI subsystem (-mwindows),
+  //    which is what stops a double-click opening a stray console window — but
+  //    a GUI-subsystem process starts with NO standard handles at all, so every
+  //    log_*() line would go nowhere even when it was started from a cmd or
+  //    PowerShell window.  Attaching to the console the parent already owns and
+  //    reopening the CRT streams onto it restores exactly the console-subsystem
+  //    behaviour for someone who launched it from a shell, and changes nothing
+  //    for someone who did not (AttachConsole fails, and the streams are left
+  //    alone rather than being pointed at a device that is not there).
+  //
+  //    Escape hatch for the double-click case, where there is no console to
+  //    attach to and therefore nowhere for a diagnostic to go: MACHPSDR_LOG_FILE
+  //    names a file to redirect the streams to.  Deliberately off unless the
+  //    variable is set, and deliberately a plain freopen — log.c already
+  //    serialises its writes and this is not the place to grow a log subsystem.
+  if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    if (freopen("CONOUT$", "w", stdout) == NULL) { /* keep the stream as it was */ }
+    if (freopen("CONOUT$", "w", stderr) == NULL) { /* keep the stream as it was */ }
+    // The log is written a line at a time from several threads; a fully
+    // buffered stderr would hold the last of it back until exit, which is
+    // precisely when it is least useful.
+    setvbuf(stderr, NULL, _IONBF, 0);
+  } else {
+    const char *logfile = getenv("MACHPSDR_LOG_FILE");
+    if (logfile != NULL && logfile[0] != '\0') {
+      if (freopen(logfile, "w", stderr) != NULL) {
+        setvbuf(stderr, NULL, _IONBF, 0);
+        if (freopen(logfile, "a", stdout) == NULL) { /* stderr is the one that matters */ }
+      }
+    }
+  }
+
+  // 2. Timer resolution.  Windows' default scheduler tick is 15.6 ms, so every
   //    usleep()/g_usleep() in the protocol and rigctl threads rounds up to it —
   //    a 1 ms pace request becomes 15.6 ms, which is not a slow timer, it is the
   //    protocol-1 output feed missing its deadline every single time.  Asking
@@ -818,7 +850,7 @@ static void win_startup(void) {
   //    whole life of the process.
   timeBeginPeriod(1);
 
-  // 2. Working directory.  The assets/ lookups (cty.dat, coastline.bin, the
+  // 3. Working directory.  The assets/ lookups (cty.dat, coastline.bin, the
   //    window icon) are relative to the working directory, which is the .exe's
   //    folder for a plain double-click but is whatever the operator chose for a
   //    shortcut or a shell.  So: only when assets/ is NOT already reachable,

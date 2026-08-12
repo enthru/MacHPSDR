@@ -326,6 +326,43 @@ WDSP_LIB=$(WDSP_DIR)/libwdsp.dll
 # Windows has no rpath: the loader looks next to the .exe, so libwdsp.dll is
 # copied there by the install/package step rather than found by a link flag.
 RPATH_FLAGS=
+
+# ---- subsystem -------------------------------------------------------------
+# GUI subsystem, so a double-click does not also open a stray console window.
+# The log output that a console-subsystem build gave for free is NOT lost:
+# win_startup() in main.c calls AttachConsole(ATTACH_PARENT_PROCESS) and reopens
+# stdout/stderr on it, so running the .exe from cmd or PowerShell still prints
+# everything, and only a launch with no console at all has nowhere to print to
+# (MACHPSDR_LOG_FILE covers that case).
+#
+#   make WIN_CONSOLE=1     build for the console subsystem instead
+#
+# Kept one variable away because that is the setting worth reaching for when the
+# app dies before main() — a crash in the loader or in GTK's own startup prints
+# to a console this attach has not happened yet to acquire.
+ifeq ($(WIN_CONSOLE),1)
+WIN_LDFLAGS=-mconsole
+else
+WIN_LDFLAGS=-mwindows
+endif
+
+# ---- resources -------------------------------------------------------------
+# The .exe icon and its VERSIONINFO block (src/core/machpsdr.rc).  windres is
+# derived from CC so the cross harness picks up its own
+# x86_64-w64-mingw32-windres and MSYS2 picks up the plain one; either can be
+# overridden on the command line.
+WINDRES ?= $(CC:gcc=windres)
+WIN_RES_OBJS=machpsdr_res.o
+# VERSIONINFO's FILEVERSION is four numbers, while GIT_VERSION is a tag ("4.0",
+# possibly "v4.0.1" or "unknown").  Strip a leading v and anything from the
+# first non-numeric onwards, then pad to four fields; an unparseable tag falls
+# back to all zeros rather than failing the build over a cosmetic field.
+WIN_VER_NUM := $(shell printf '%s' '$(GIT_VERSION)' \
+                 | sed -e 's/^[vV]//' -e 's/[^0-9.].*//' \
+                 | awk -F. 'BEGIN{OFS=","} {print $$1+0, $$2+0, $$3+0, 0}')
+ifeq ($(strip $(WIN_VER_NUM)),)
+WIN_VER_NUM=0,0,0,0
+endif
 endif
 
 # Source tree layout: the ~90 first-party .c/.h live under src/<subsystem>/ to
@@ -587,8 +624,21 @@ tci.o \
 tci_dialog.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(LIBS) $(RPATH_FLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
+	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
+
+# Windows resources.  Both WIN_RES_OBJS and WIN_LDFLAGS above are EMPTY off
+# Windows and this rule does not exist there, so the two lines above are the
+# same link they always were on macOS and Linux.
+# -I twice: the icon is found next to assets/, the .rc's own #includes next to
+# it in src/core/.  Neither is on VPATH — a resource is not a source file.
+ifneq ($(ISMINGW),)
+machpsdr_res.o: src/core/machpsdr.rc assets/machpsdr.ico
+	$(WINDRES) -I assets -I src/core -O coff \
+	  -D MACHPSDR_VERSION='$(GIT_VERSION)' \
+	  -D MACHPSDR_VERSION_NUM='$(WIN_VER_NUM)' \
+	  -o $@ $<
+endif
 
 # Header dependencies: the .c.o rule emits a .d per object (-MMD -MP). Pulling
 # them in here makes a plain `make` recompile every object that includes a

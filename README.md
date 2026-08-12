@@ -1017,6 +1017,17 @@ an icon theme. `make win-package` collects all of it into one flat folder.
 
 Run it from that folder, not from the repo.
 
+The `.exe` is a **GUI-subsystem** binary, so a double-click does not also open a
+console window — but the log is not lost with it: started from `cmd`,
+PowerShell or the MSYS2 shell it attaches to that console and prints there
+exactly as before. Only a launch with no console at all (double-click, a
+shortcut, the Startup folder) has nowhere to write, and for that
+`set MACHPSDR_LOG_FILE=C:\path\machpsdr.log` redirects the log to a file. If a
+problem happens *before* the app reaches its own startup — a missing DLL, a
+crash inside GTK — nothing has attached yet and neither helps; build
+`make WIN_CONSOLE=1` for a console-subsystem binary that prints from the first
+instruction.
+
 **Drivers for SoapySDR are separate packages** — add
 `mingw-w64-x86_64-soapyrtlsdr` or `-soapyhackrf` before packaging and they are
 picked up automatically. Without any of them the app links SoapySDR and finds no

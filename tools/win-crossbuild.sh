@@ -134,11 +134,21 @@ export PKG_CONFIG_SYSROOT_DIR="$WORK/sysroot"
 
 # UNAME_S is forced because the Makefile reads the HOST's uname; AR must be set
 # too, or the sub-Makefiles (sgp4sdp4, hfdl_lib/asn1) archive PE objects with the
-# host ar and produce an archive the cross linker cannot read.
+# host ar and produce an archive the cross linker cannot read.  WINDRES (the
+# .exe icon + VERSIONINFO) would be derived from CC anyway, but it is named here
+# so a toolchain whose gcc is not spelled `<host>-gcc` still finds it.
 make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
      UNAME_S=MINGW64_NT-10.0 \
-     CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar"
+     CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar" WINDRES="$HOST-windres"
 
 echo
 echo "==> $WORK/build/machpsdr.exe"
 file "$WORK/build/machpsdr.exe"
+# Subsystem 2 is GUI (no stray console on a double-click; the log still reaches
+# a console the .exe was started from, via AttachConsole in win_startup), 3 is
+# console — which is what `make WIN_CONSOLE=1` gives.  Printed because it is
+# invisible in `file` output and is exactly the thing a packaging change breaks.
+"$HOST-objdump" -p "$WORK/build/machpsdr.exe" | grep -i subsystem || true
+"$HOST-objdump" -h "$WORK/build/machpsdr.exe" | grep -q '\.rsrc' \
+  && echo "resources: .rsrc present (icon + VERSIONINFO)" \
+  || echo "resources: NO .rsrc — the .exe has the default icon"

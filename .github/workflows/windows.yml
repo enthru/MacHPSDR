@@ -85,6 +85,21 @@ jobs:
           echo "--- imported DLLs:"
           objdump -p machpsdr.exe | grep -i "DLL Name" | sort
 
+      # Two packaging properties that are invisible in `file` output and are
+      # exactly what a build-flag change silently undoes.  Subsystem 2 is GUI:
+      # a double-click must not open a stray console, while a launch from a
+      # shell still logs there (AttachConsole in win_startup).  `make
+      # WIN_CONSOLE=1` is the deliberate way back to 3.
+      - name: Check subsystem and resources
+        run: |
+          set -e
+          objdump -p machpsdr.exe | grep -i subsystem
+          objdump -p machpsdr.exe | grep -qi 'Subsystem.*00000002' \
+            || { echo "not a GUI-subsystem build"; exit 1; }
+          objdump -h machpsdr.exe | grep -q '\.rsrc' \
+            || { echo "no .rsrc — the icon/VERSIONINFO resource is missing"; exit 1; }
+          echo "subsystem GUI, resources present"
+
       # Packaged here and nowhere else: the gdk-pixbuf loader cache is built by
       # dlopen()ing each module, so only a native Windows run can produce a valid
       # one.  tools/win-package.sh deletes the cache rather than ship an empty
