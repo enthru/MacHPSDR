@@ -10,9 +10,11 @@
 #
 # It assembles a cross sysroot by unpacking MSYS2's own binary packages —
 # dependency-resolved from the repository database — and points a mingw-w64
-# cross-compiler at it.  What comes out is a genuine PE32+ machpsdr.exe, but it
-# has never been RUN: for that you still need Windows.  The real build is
-# `make` inside MSYS2, which is what the Makefile's MINGW branch is written for.
+# cross-compiler at it.  What comes out is a genuine PE32+ machpsdr.exe, but
+# nothing here RUNS it.  It has been started under Wine, which answers "does it
+# load and come up" and nothing about WASAPI, winmm, COM ports or real adapters
+# — Wine reimplements exactly those.  For that you still need Windows.  The real
+# build is `make` inside MSYS2, which the Makefile's MINGW branch is written for.
 #
 #   Prerequisites:  mingw-w64  (brew install mingw-w64 / apt install mingw-w64)
 #                   zstd, curl, python3

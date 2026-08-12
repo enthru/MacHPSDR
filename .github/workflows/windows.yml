@@ -6,7 +6,10 @@
 # tools/win-crossbuild.sh covers the same tree from macOS/Linux for a fast local
 # check, but it has to switch HFDL off.
 #
-# Neither builds a binary that has been RUN. That still needs a real machine.
+# Neither RUNS what it builds. The binary has been started under Wine — enough
+# to know it loads and comes up, nothing about WASAPI timing, winmm MIDI, COM
+# ports or real adapters, since Wine reimplements all of those. A real machine
+# is still the only thing that answers those.
 
 name: Windows (MSYS2)
 
