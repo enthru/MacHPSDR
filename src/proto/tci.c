@@ -36,6 +36,11 @@
 #include "mode.h"
 #include "ext.h"
 #include "vfo.h"
+#include "subrx.h"
+#include "protocol2.h"
+#ifdef SOAPYSDR
+  #include "soapy_protocol.h"
+#endif
 #include "log.h"
 #include "tci.h"
 #ifdef SSTV
@@ -68,6 +73,11 @@
 #define TCI_AUDIO_RATE       48000 // RX/TX audio streamed at the native AF rate
 #define TCI_TX_RING          48000 // TX-audio jitter ring: 1 s of mono float
 #define TCI_TX_ACTIVE_US     250000 // TX-audio idle timeout (µs) -> release mic
+
+// TCI carries audio levels in dB (ExpertSDR3's volume sliders are dB, with a
+// floor that means silence); this application stores a linear 0..1 gain per
+// receiver. -60 dB is the floor in both directions.
+#define TCI_VOL_MIN_DB       (-60)
 
 // One connected client. `send_mtx` serialises the byte stream to `fd` so control
 // replies (client thread), state notifications (GTK thread) and IQ frames (audio
@@ -426,19 +436,120 @@ static gboolean tci_argbool(const char *s) {
   return (!g_ascii_strcasecmp(s, "true") || !strcmp(s, "1"));
 }
 
+// TCI dB level -> this app's linear 0..1 audio gain, and back. The floor is
+// TCI_VOL_MIN_DB, which maps to a true zero (mute), not to 0.001.
+static gdouble tci_db_to_gain(gdouble db) {
+  if (db <= (gdouble)TCI_VOL_MIN_DB) return 0.0;
+  if (db >= 0.0) return 1.0;
+  return pow(10.0, db / 20.0);
+}
+
+// Reported as a whole dB: the reply is built with %d so it can never pick up a
+// comma decimal separator from the operator's locale (which would make the line
+// unparseable to the client — the same trap hfdl_msg.c hits with coordinates).
+static int tci_gain_to_db(gdouble gain) {
+  if (gain <= 0.0) return TCI_VOL_MIN_DB;
+  if (gain >= 1.0) return 0;
+  long db = lround(20.0 * log10(gain));
+  if (db < TCI_VOL_MIN_DB) db = TCI_VOL_MIN_DB;
+  if (db > 0) db = 0;
+  return (int)db;
+}
+
+// Parse a numeric argument locale-independently: the client always writes '.'
+// but atof()/strtod() follow LC_NUMERIC, so "0.5" reads as 0 under a
+// comma-decimal locale.
+static gdouble tci_argdouble(const char *s) {
+  return (s != NULL) ? g_ascii_strtod(s, NULL) : 0.0;
+}
+
 // Deferred RIT/XIT/split/IF state changes: mutated on the GTK main thread (like
 // ext.c's wrappers) since they touch RECEIVER/TRANSMITTER + WDSP + the VFO.
 typedef enum {
   TCI_OP_RIT_ENABLE, TCI_OP_RIT_OFFSET,
   TCI_OP_XIT_ENABLE, TCI_OP_XIT_OFFSET,
-  TCI_OP_SPLIT,      TCI_OP_IF
+  TCI_OP_SPLIT,      TCI_OP_IF,
+  TCI_OP_MUTE,       TCI_OP_VOLUME,       // per receiver (rx_mute / rx_volume)
+  TCI_OP_LOCK,       TCI_OP_SUBRX,        // lock / rx_channel_enable sub-rx
+  // Radio-wide: these act on RADIO/TRANSMITTER, not on one receiver.
+  TCI_OP_MUTE_ALL,   TCI_OP_VOLUME_ALL,
+  TCI_OP_TUNE,       TCI_OP_DRIVE,        TCI_OP_TUNE_DRIVE
 } TCI_OP;
 
-typedef struct { TCI_OP op; int rx_index; gboolean b; gint64 v; } TCI_STATE_CMD;
+typedef struct { TCI_OP op; int rx_index; gboolean b; gint64 v; gdouble d; } TCI_STATE_CMD;
+
+// TRUE for the operations that do NOT belong to one receiver. They must run
+// outside rx->mutex: set_tune() -> rxtx() walks every receiver's WDSP channel,
+// and the global mute/volume take each receiver's own lock in turn.
+static gboolean tci_op_is_global(TCI_OP op) {
+  return op == TCI_OP_MUTE_ALL || op == TCI_OP_VOLUME_ALL ||
+         op == TCI_OP_TUNE     || op == TCI_OP_DRIVE || op == TCI_OP_TUNE_DRIVE;
+}
+
+// Radio-wide part of the applier (GTK main thread, no rx->mutex held).
+static void tci_apply_global(RADIO *r, TCI_STATE_CMD *c) {
+  switch (c->op) {
+    case TCI_OP_MUTE_ALL:
+    case TCI_OP_VOLUME_ALL:
+      // There is no master AF stage in this radio — the only audio gain is per
+      // receiver — so a global TCI mute/volume is applied to every visible
+      // receiver, one rx->mutex at a time (never two held at once).
+      for (int i = 0; i < MAX_RECEIVERS; i++) {
+        RECEIVER *t = r->receiver[i];
+        if (t == NULL || !t->show_rx) continue;
+        g_mutex_lock(&t->mutex);
+        if (c->op == TCI_OP_MUTE_ALL) t->mute = c->b;
+        else                          t->volume = c->d;
+        receiver_set_volume(t);
+        update_vfo(t);
+        g_mutex_unlock(&t->mutex);
+      }
+      break;
+    case TCI_OP_TUNE:
+      // set_tune() drops MOX, drives the WDSP tone generator, switches every
+      // channel's RX/TX state and re-syncs the TUNE button, so it is exactly
+      // the GTK-thread call the UI's own toggle makes.
+      if (r->can_transmit && r->transmitter != NULL) set_tune(r, c->b);
+      break;
+    case TCI_OP_DRIVE:
+    case TCI_OP_TUNE_DRIVE:
+      if (r->transmitter == NULL) break;
+      {
+        gdouble v = c->d;
+        if (v <   0.0) v =   0.0;
+        if (v > 100.0) v = 100.0;
+        if (c->op == TCI_OP_TUNE_DRIVE) {
+          // Tune power is read live off the transmitter when tune is keyed
+          // (transmitter_dialog.c's slider does no more than this).
+          r->transmitter->tune_percent = v;
+        } else {
+          r->transmitter->drive = v;
+          // The same three steps drive_level.c and actions.c take: P2 pushes the
+          // level in its high-priority frame, SoapySDR maps drive onto the
+          // hardware TX gain, and the on-screen slider is redrawn.
+          if (r->discovered != NULL && r->discovered->protocol == PROTOCOL_2)
+            protocol2_high_priority();
+#ifdef SOAPYSDR
+          if (r->discovered != NULL && r->discovered->protocol == PROTOCOL_SOAPYSDR)
+            soapy_protocol_set_tx_drive(v);
+#endif
+          if (r->drive_level != NULL) gtk_widget_queue_draw(r->drive_level);
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
 
 static gboolean tci_apply_state_idle(gpointer data) {
   TCI_STATE_CMD *c = (TCI_STATE_CMD *)data;
   RADIO *r = g_radio;
+  if (r != NULL && tci_op_is_global(c->op)) {
+    tci_apply_global(r, c);
+    g_free(c);
+    return G_SOURCE_REMOVE;
+  }
   // Resolve the target receiver on the GTK thread (race-free — delete_receiver
   // also runs here); fall back to the active RX if the index is gone.
   RECEIVER *rx = (r != NULL) ? tci_rx_at(c->rx_index) : NULL;
@@ -472,6 +583,34 @@ static gboolean tci_apply_state_idle(gpointer data) {
         rx->ctun_frequency = rx->frequency_a + c->v;
         frequency_changed(rx);
         break;
+      case TCI_OP_MUTE:
+        rx->mute = c->b;
+        receiver_set_volume(rx);      // mute is the panel gain going to 0
+        break;
+      case TCI_OP_VOLUME:
+        rx->volume = c->d;
+        receiver_set_volume(rx);
+        break;
+      case TCI_OP_LOCK:
+        rx->locked = c->b;            // update_vfo below re-syncs the LOCK button
+        break;
+      case TCI_OP_SUBRX:
+        // rx_channel_enable:<rx>,1 — this radio's second demod channel per
+        // receiver (the SUBRX button). Creating/destroying it under rx->mutex is
+        // stricter than the UI's own path: the audio thread holds that same lock
+        // across fexchange0() and the sub-channel's processing, so the swap
+        // cannot land mid-block. Order matches vfo.c's subrx_b_cb.
+        if (c->b && !rx->subrx_enable) {
+          create_subrx(rx);
+          rx->subrx_enable = TRUE;
+        } else if (!c->b && rx->subrx_enable) {
+          rx->subrx_enable = FALSE;
+          destroy_subrx(rx);
+          rx->subrx = NULL;
+        }
+        break;
+      default:                        // radio-wide ops never reach here
+        break;
     }
     update_vfo(rx);
     g_mutex_unlock(&rx->mutex);
@@ -480,10 +619,10 @@ static gboolean tci_apply_state_idle(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-static void tci_dispatch_state(int rx_index, TCI_OP op, gboolean b, gint64 v) {
+static void tci_dispatch_state(int rx_index, TCI_OP op, gboolean b, gint64 v, gdouble d) {
   if (g_radio == NULL) return;
   TCI_STATE_CMD *c = g_new0(TCI_STATE_CMD, 1);
-  c->op = op; c->rx_index = rx_index; c->b = b; c->v = v;
+  c->op = op; c->rx_index = rx_index; c->b = b; c->v = v; c->d = d;
   g_idle_add(tci_apply_state_idle, c);
 }
 
@@ -516,6 +655,58 @@ static void tci_dispatch_cw_stop(void) {
 #ifdef SSTV
   g_idle_add(tci_cw_stop_idle, NULL);
 #endif
+}
+
+// Append one cw_msg field to the message being assembled, separating it from
+// what is already there with a single space (a CW word gap) unless the client
+// put whitespace at that boundary itself. Empty fields — which before/after
+// usually are — contribute nothing, so the common case is byte-identical to
+// sending <text> alone.
+static void tci_cw_append(GString *s, const char *part) {
+  if (part == NULL || *part == '\0') return;
+  if (s->len > 0 && !g_ascii_isspace(s->str[s->len - 1]) && !g_ascii_isspace(part[0]))
+    g_string_append_c(s, ' ');
+  g_string_append(s, part);
+}
+
+// Split "cw_msg:<rx>,<before>,<after>,<text>" positionally. Fields can be empty
+// and <text> may contain commas of its own, which is why this cannot go through
+// the strtok_r'd args[] (that both collapses empty fields and truncates at the
+// fourth comma). Returns FALSE unless all three separators are present.
+// *before/*after are g_malloc'd (caller frees); *text points into `token`.
+static gboolean tci_cw_msg_fields(const char *token, char **before, char **after,
+                                  const char **text) {
+  *before = NULL; *after = NULL; *text = NULL;
+  const char *p = strchr(token, ':');
+  if (p == NULL) return FALSE;
+  const char *c1 = NULL, *c2 = NULL, *c3 = NULL;
+  for (const char *q = p + 1; *q; q++) {
+    if (*q != ',') continue;
+    if      (c1 == NULL) c1 = q;
+    else if (c2 == NULL) c2 = q;
+    else                 { c3 = q; break; }
+  }
+  if (c3 == NULL) return FALSE;
+  *before = g_strndup(c1 + 1, (size_t)(c2 - c1) - 1);
+  *after  = g_strndup(c2 + 1, (size_t)(c3 - c2) - 1);
+  *text   = c3 + 1;
+  return TRUE;
+}
+
+// Assemble what cw_msg puts on the air (see the command handler for why the
+// parts are joined this way). Returns a g_malloc'd string, or NULL if every
+// field was empty. Pure — no RADIO/GTK — so it can be exercised off-tree.
+static char *tci_cw_msg_text(const char *token) {
+  char *before = NULL, *after = NULL;
+  const char *text = NULL;
+  if (!tci_cw_msg_fields(token, &before, &after, &text)) return NULL;
+  GString *msg = g_string_new(NULL);
+  tci_cw_append(msg, before);
+  tci_cw_append(msg, text);
+  tci_cw_append(msg, after);
+  g_free(before);
+  g_free(after);
+  return g_string_free(msg, msg->len == 0);   // NULL when nothing was assembled
 }
 
 // Set/clear this client's IQ subscription for one rx index (or all rx when
@@ -667,6 +858,16 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   tx_audio_last_us = g_get_monotonic_time();
 }
 
+// Answer a command whose value does not exist on this radio right now (no
+// transmitter, no receiver) the way the unwired commands are answered: echo it
+// back. A request/response client must never be left waiting, and an echo says
+// "heard, nothing to report" without inventing a number.
+static void tci_ack_echo(TCI_CLIENT *c, const char *token) {
+  char r[160];
+  g_snprintf(r, sizeof(r), "%s;", token);
+  client_send_text(c, r);
+}
+
 // Handle one ';'-stripped command token from client `c`.
 static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   char name[32];
@@ -779,7 +980,7 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     client_send_text(c, r);
   } else if (!strcmp(name, "rit_enable")) {
     if (nargs >= 2) {
-      tci_dispatch_state(rx_index, TCI_OP_RIT_ENABLE, tci_argbool(args[1]), 0);
+      tci_dispatch_state(rx_index, TCI_OP_RIT_ENABLE, tci_argbool(args[1]), 0, 0.0);
     } else if (trx != NULL) {
       char r[48];
       g_snprintf(r, sizeof(r), "rit_enable:%d,%s;", rx_index, trx->rit_enabled ? "true" : "false");
@@ -787,36 +988,42 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     }
   } else if (!strcmp(name, "rit_offset")) {
     if (nargs >= 2) {
-      tci_dispatch_state(rx_index, TCI_OP_RIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+      tci_dispatch_state(rx_index, TCI_OP_RIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10), 0.0);
     } else if (trx != NULL) {
       char r[48];
       g_snprintf(r, sizeof(r), "rit_offset:%d,%lld;", rx_index, (long long)trx->rit);
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "xit_enable")) {
-    // XIT lives on the single transmitter; the rx index is echoed as-is.
+    // XIT lives on the SINGLE transmitter, so there is only one value however
+    // many trx a client sees. A set therefore applies whichever trx addressed
+    // it, but the state is dispatched against tci_tx_index() so update_vfo()
+    // lands on the VFO row that actually shows the XIT button, and every reply
+    // names that same index — telling a multi-RX client "xit_enable:0" while
+    // the transmitter sits on receiver 1 is a lie it cannot detect.
     if (nargs >= 2) {
-      tci_dispatch_state(rx_index, TCI_OP_XIT_ENABLE, tci_argbool(args[1]), 0);
+      tci_dispatch_state(tci_tx_index(), TCI_OP_XIT_ENABLE, tci_argbool(args[1]), 0, 0.0);
     } else {
       gboolean en = (g_radio != NULL && g_radio->transmitter != NULL)
                     ? g_radio->transmitter->xit_enabled : FALSE;
       char r[48];
-      g_snprintf(r, sizeof(r), "xit_enable:%d,%s;", rx_index, en ? "true" : "false");
+      g_snprintf(r, sizeof(r), "xit_enable:%d,%s;", tci_tx_index(), en ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "xit_offset")) {
     if (nargs >= 2) {
-      tci_dispatch_state(rx_index, TCI_OP_XIT_OFFSET, FALSE, g_ascii_strtoll(args[1], NULL, 10));
+      tci_dispatch_state(tci_tx_index(), TCI_OP_XIT_OFFSET, FALSE,
+                         g_ascii_strtoll(args[1], NULL, 10), 0.0);
     } else {
       long long v = (g_radio != NULL && g_radio->transmitter != NULL)
                     ? (long long)g_radio->transmitter->xit : 0;
       char r[48];
-      g_snprintf(r, sizeof(r), "xit_offset:%d,%lld;", rx_index, v);
+      g_snprintf(r, sizeof(r), "xit_offset:%d,%lld;", tci_tx_index(), v);
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "split_enable")) {
     if (nargs >= 2) {
-      tci_dispatch_state(rx_index, TCI_OP_SPLIT, tci_argbool(args[1]), 0);
+      tci_dispatch_state(rx_index, TCI_OP_SPLIT, tci_argbool(args[1]), 0, 0.0);
     } else if (trx != NULL) {
       char r[48];
       g_snprintf(r, sizeof(r), "split_enable:%d,%s;", rx_index, (trx->split != SPLIT_OFF) ? "true" : "false");
@@ -832,7 +1039,7 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       if (off >  lim) off =  lim;
       if (off < -lim) off = -lim;
       if (chan == 0) {
-        tci_dispatch_state(rx_index, TCI_OP_IF, FALSE, off);
+        tci_dispatch_state(rx_index, TCI_OP_IF, FALSE, off, 0.0);
       } else {
         char r[64];
         g_snprintf(r, sizeof(r), "if:%d,%d,%lld;", rx_index, chan, (long long)off);
@@ -847,19 +1054,35 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "cw_msg")) {
-    // cw_msg:<rx>,<before>,<after>,<text> — transmit <text> via the CW encoder.
-    // Fields can be empty (before/after usually are) and <text> may itself
-    // contain commas, so parse positionally from the raw token rather than the
-    // comma-collapsed args[]. before/after (callsign-substitution markers) are
-    // not implemented — the literal text is sent (use the %C macro for own call).
-    const char *p = strchr(token, ':');
-    if (p != NULL) {
-      int commas = 0;
-      const char *text = NULL;
-      for (const char *q = p + 1; *q; q++) {
-        if (*q == ',') { if (++commas == 3) { text = q + 1; break; } }
+    // cw_msg:<rx>,<before>,<after>,<text> — transmit through the CW encoder.
+    // Fields can be empty and <text> may itself contain commas, so parse
+    // positionally from the raw token rather than the comma-collapsed args[].
+    //
+    // <before>/<after> are the callsign-substitution markers: a TCI client puts
+    // the text that surrounds the worked callsign in them while <text> carries
+    // the fixed part of the macro. The protocol document does not say whether
+    // they are sent or only used for on-screen highlighting, so this takes the
+    // reading that agrees with the %C macro this app already has — what goes on
+    // the air is  <before> <text> <after>, with %C expanding to
+    // radio->station_call in ALL THREE (cw_encoder.c:cw_expand_macros runs over
+    // the joined string). Non-empty parts are joined with ONE space, a CW word
+    // gap, unless the client already supplied whitespace at that boundary: the
+    // fields are words, not glue. ASSUMPTION, stated so it can be corrected
+    // against a real client rather than rediscovered.
+    //
+    // Keying is refused for any trx other than the transmitting one, exactly as
+    // `trx` does above: this starts a transmission, and one transmitter means a
+    // request aimed elsewhere has no honest target.
+    gboolean is_tx = (addr != NULL) && (req_index == tci_tx_index());
+    if (is_tx) {
+      char *msg = tci_cw_msg_text(token);
+      if (msg != NULL) {
+        tci_dispatch_cw_send(msg);
+        g_free(msg);
       }
-      if (text != NULL && *text) tci_dispatch_cw_send(text);
+    } else {
+      log_info("tci: cw_msg for rx=%d ignored (the transmitter is on rx=%d)\n",
+               req_index, tci_tx_index());
     }
   } else if (!strcmp(name, "cw_macros_stop") || !strcmp(name, "cw_stop")) {
     tci_dispatch_cw_stop();
@@ -872,13 +1095,207 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       g_snprintf(r, sizeof(r), "cw_macros_speed:%d;", g_radio->cw_keyer_speed);
       client_send_text(c, r);
     }
-  } else {
-    // Everything else (rx_enable, mute, drive, audio_*, start, stop, …): echo as
-    // an ack so a request/response client doesn't hang. Those fields aren't
-    // wired to radio state here, so this is intentionally a stub.
-    char r[160];
-    g_snprintf(r, sizeof(r), "%s;", token);
+  } else if (!strcmp(name, "mute")) {
+    // Global (device) mute. This radio has no master AF stage — the only audio
+    // gain is the per-receiver WDSP panel gain — so a global mute is applied to
+    // every visible receiver and reported from the active one (after a global
+    // set they all agree). Per-receiver addressing is rx_mute. Muting is
+    // lossless here: rx->mute is a separate flag from rx->volume, so unmuting
+    // restores each receiver's own level.
+    if (nargs >= 1 && args[0] != NULL) {
+      tci_dispatch_state(0, TCI_OP_MUTE_ALL, tci_argbool(args[0]), 0, 0.0);
+    } else {
+      RECEIVER *a = (g_radio != NULL) ? g_radio->active_receiver : NULL;
+      char r[32];
+      g_snprintf(r, sizeof(r), "mute:%s;", (a != NULL && a->mute) ? "true" : "false");
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "volume")) {
+    // Global (device) volume in dB, same all-receivers rule as `mute`. Unlike
+    // mute this IS lossy — it overwrites each receiver's own level, because a
+    // master gain the setting could live in does not exist here.
+    if (nargs >= 1 && args[0] != NULL) {
+      tci_dispatch_state(0, TCI_OP_VOLUME_ALL, FALSE, 0, tci_db_to_gain(tci_argdouble(args[0])));
+    } else {
+      RECEIVER *a = (g_radio != NULL) ? g_radio->active_receiver : NULL;
+      char r[32];
+      g_snprintf(r, sizeof(r), "volume:%d;", tci_gain_to_db(a != NULL ? a->volume : 0.0));
+      client_send_text(c, r);
+    }
+  } else if (!strcmp(name, "rx_mute")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(rx_index, TCI_OP_MUTE, tci_argbool(args[1]), 0, 0.0);
+    } else if (trx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "rx_mute:%d,%s;", rx_index, trx->mute ? "true" : "false");
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "rx_volume")) {
+    // rx_volume:<rx>,<sub_rx>,<dB>. A SET must carry all three fields: the
+    // two-field form is a get for that sub-rx, because reading `rx_volume:0,0;`
+    // as a set would take the sub-rx number for a level and command 0 dB — full
+    // volume — on what the client meant as a question.
+    //
+    // Only the main channel has a level of its own: the sub-receiver shares the
+    // receiver's audio panel (subrx_mix is a balance, not a gain), so a sub_rx
+    // request is answered with the receiver's value instead of being silently
+    // retargeted.
+    int chan = (nargs >= 2 && args[1] != NULL) ? atoi(args[1]) : 0;
+    if (nargs >= 3 && chan == 0) {
+      tci_dispatch_state(rx_index, TCI_OP_VOLUME, FALSE, 0, tci_db_to_gain(tci_argdouble(args[2])));
+    } else if (trx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "rx_volume:%d,%d,%d;", rx_index, chan, tci_gain_to_db(trx->volume));
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "drive")) {
+    if (nargs >= 1 && args[0] != NULL) {
+      tci_dispatch_state(0, TCI_OP_DRIVE, FALSE, 0, tci_argdouble(args[0]));
+    } else if (g_radio != NULL && g_radio->transmitter != NULL) {
+      char r[32];
+      g_snprintf(r, sizeof(r), "drive:%d;", (int)lround(g_radio->transmitter->drive));
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);   // receive-only radio: no drive to report
+    }
+  } else if (!strcmp(name, "tune_drive")) {
+    if (nargs >= 1 && args[0] != NULL) {
+      tci_dispatch_state(0, TCI_OP_TUNE_DRIVE, FALSE, 0, tci_argdouble(args[0]));
+    } else if (g_radio != NULL && g_radio->transmitter != NULL) {
+      char r[32];
+      g_snprintf(r, sizeof(r), "tune_drive:%d;", (int)lround(g_radio->transmitter->tune_percent));
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);   // receive-only radio: no tune drive to report
+    }
+  } else if (!strcmp(name, "tune")) {
+    // Same rule as `trx`: tune keys the one transmitter, so a request aimed at
+    // any other trx is a no-op rather than a transmission nobody asked for.
+    gboolean is_tx = (addr != NULL) && (req_index == tci_tx_index());
+    if (nargs >= 2) {
+      if (is_tx) tci_dispatch_state(0, TCI_OP_TUNE, tci_argbool(args[1]), 0, 0.0);
+    } else if (g_radio != NULL) {
+      char r[32];
+      g_snprintf(r, sizeof(r), "tune:%d,%s;", req_index,
+                 (is_tx && g_radio->tune) ? "true" : "false");
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "lock")) {
+    if (nargs >= 2) {
+      tci_dispatch_state(rx_index, TCI_OP_LOCK, tci_argbool(args[1]), 0, 0.0);
+    } else if (trx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "lock:%d,%s;", rx_index, trx->locked ? "true" : "false");
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "rx_enable")) {
+    // A receiver here is created and destroyed from the UI (Add Receiver, gated
+    // on panels_idle()); there is no enable flag to set, and building or tearing
+    // down a receiver behind the operator's back is not something a network
+    // client gets to do. So the SET is refused — but the reply carries the REAL
+    // state either way, which is the honest answer to both a get and a refused
+    // set: a client that sets then reads is told what actually happened instead
+    // of getting its own request echoed back at it.
+    char r[48];
+    g_snprintf(r, sizeof(r), "rx_enable:%d,%s;", req_index,
+               (addr != NULL) ? "true" : "false");
     client_send_text(c, r);
+  } else if (!strcmp(name, "rx_channel_enable")) {
+    // rx_channel_enable:<rx>,<sub_rx>[,<bool>]. Channel 0 is the receiver's main
+    // demod and is always on; channel 1 is this app's sub-receiver (the SUBRX
+    // button), which is a genuine second WDSP demod channel on the same off-air
+    // I/Q. Channels above that do not exist and answer false.
+    int chan = (nargs >= 2 && args[1] != NULL) ? atoi(args[1]) : 0;
+    if (nargs >= 3 && chan == 1 && addr != NULL) {
+      tci_dispatch_state(rx_index, TCI_OP_SUBRX, tci_argbool(args[2]), 0, 0.0);
+    } else if (trx != NULL) {
+      gboolean on = (chan == 0) ? TRUE : (chan == 1 ? trx->subrx_enable : FALSE);
+      char r[64];
+      g_snprintf(r, sizeof(r), "rx_channel_enable:%d,%d,%s;", rx_index, chan,
+                 on ? "true" : "false");
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "rx_smeter")) {
+    // Read-only. rx->meter_db is the calibrated S-meter reading in dBm, written
+    // by the display timer on the GTK thread and read here unlocked — a benign
+    // scalar race, the same one every getter in this file takes.
+    int chan = (nargs >= 2 && args[1] != NULL) ? atoi(args[1]) : 0;
+    if (trx != NULL) {
+      char r[64];
+      g_snprintf(r, sizeof(r), "rx_smeter:%d,%d,%d;", rx_index, chan,
+                 (int)lround(trx->meter_db));
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "sql_enable")) {
+    // Read-only, deliberately. squelch_enable is DERIVED here — set_squelch()
+    // recomputes it as (squelch > 0.0) — so it is not a flag that can be set:
+    // "off" would have to throw the operator's threshold away and "on" would
+    // have to invent one. The level itself (sql_level) is not wired for the
+    // matching reason: TCI carries dB, while this radio's squelch is one 0..1
+    // bar whose meaning is mode-dependent (FMSQ noise squelch vs an AMSQ whose
+    // dB endpoints are operator-calibrated), so there is no honest conversion.
+    if (trx != NULL) {
+      char r[48];
+      g_snprintf(r, sizeof(r), "sql_enable:%d,%s;", rx_index,
+                 trx->squelch_enable ? "true" : "false");
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);
+    }
+  } else if (!strcmp(name, "trx_count")) {
+    char r[32];
+    g_snprintf(r, sizeof(r), "trx_count:%d;", tci_trx_count());
+    client_send_text(c, r);
+  } else if (!strcmp(name, "channels_count")) {
+    client_send_text(c, "channels_count:2;");         // main + sub per receiver
+  } else if (!strcmp(name, "device")) {
+    client_send_text(c, "device:MacHPSDR;");
+  } else if (!strcmp(name, "protocol")) {
+    client_send_text(c, "protocol:ExpertSDR3,1.9;");
+  } else if (!strcmp(name, "receive_only")) {
+    client_send_text(c, (g_radio != NULL && g_radio->can_transmit)
+                        ? "receive_only:false;" : "receive_only:true;");
+  } else if (!strcmp(name, "vfo_limits")) {
+    client_send_text(c, "vfo_limits:0,6000000000;");
+  } else if (!strcmp(name, "if_limits")) {
+    int half = (trx != NULL && trx->sample_rate > 0) ? trx->sample_rate / 2 : 24000;
+    char r[48];
+    g_snprintf(r, sizeof(r), "if_limits:%d,%d;", -half, half);
+    client_send_text(c, r);
+  } else if (!strcmp(name, "modulations_list")) {
+    client_send_text(c, "modulations_list:" TCI_MODLIST ";");
+  } else {
+    // Everything left over — start, stop, spot, spot_delete, sql_level,
+    // rx_balance, rx_filter_band, cw_macros_delay, … — is echoed as an ack so a
+    // request/response client cannot hang waiting on it.
+    //
+    // These are NOT stubs waiting to be filled in; each one is a command with no
+    // honest counterpart in this application, and inventing state to answer with
+    // would be worse than saying nothing:
+    //   start/stop   — TCI's device start/stop is ExpertSDR's "power"; the radio
+    //                  here is opened and closed by the startup/exit path, and a
+    //                  socket client does not get to tear the DSP chain down.
+    //   spot/…       — dxcluster.c's store is fed by the cluster thread with
+    //                  age-out and dup-merge; it has no injection API and its
+    //                  entries mean "someone spotted this", not "a client drew
+    //                  this".
+    //   sql_level    — see sql_enable above: dB vs a mode-dependent 0..1 bar.
+    //   rx_balance   — no per-receiver pan; audio_channels is L/R routing and
+    //                  subrx_mix is the main/sub crossfeed, neither is a balance.
+    //   cw_macros_delay, rx_filter_band, … — no field behind them at all.
+    tci_ack_echo(c, token);
   }
 }
 
@@ -1180,6 +1597,14 @@ void tci_notify_trx(gboolean mox) {
 
 // RIT / split (RECEIVER) + XIT (TRANSMITTER) changed locally — push the full
 // small state set so a following logger stays synced. Called from actions.c.
+//
+// RIT and split are per receiver and are announced against the receiver that
+// changed. XIT is not: there is ONE transmitter, so there is one XIT, and the
+// index in the message has to name the trx that transmits — `idx` here is
+// merely whichever receiver's VFO row the operator happened to act on (the XIT
+// button appears on every row and writes the same transmitter field). Sending
+// xit_enable:0 while the transmitter sits on receiver 1 is a lie a client
+// cannot detect, and it is the multi-RX gap this pair of lines used to have.
 void tci_notify_state(RECEIVER *rx) {
   if (!g_atomic_int_get(&server_running) || rx == NULL) return;
   int idx = tci_rx_index(rx);
@@ -1192,9 +1617,10 @@ void tci_notify_state(RECEIVER *rx) {
   g_snprintf(line, sizeof(line), "split_enable:%d,%s;", idx, (rx->split != SPLIT_OFF) ? "true" : "false");
   tci_broadcast_text(line);
   if (g_radio != NULL && g_radio->transmitter != NULL) {
-    g_snprintf(line, sizeof(line), "xit_enable:%d,%s;", idx, g_radio->transmitter->xit_enabled ? "true" : "false");
+    int txi = tci_tx_index();
+    g_snprintf(line, sizeof(line), "xit_enable:%d,%s;", txi, g_radio->transmitter->xit_enabled ? "true" : "false");
     tci_broadcast_text(line);
-    g_snprintf(line, sizeof(line), "xit_offset:%d,%lld;", idx, (long long)g_radio->transmitter->xit);
+    g_snprintf(line, sizeof(line), "xit_offset:%d,%lld;", txi, (long long)g_radio->transmitter->xit);
     tci_broadcast_text(line);
   }
 }

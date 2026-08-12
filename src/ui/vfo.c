@@ -2289,4 +2289,13 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_block_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),rx->subrx!=NULL);
   g_signal_handlers_unblock_by_func(v->subrx_b,G_CALLBACK(subrx_b_cb),rx);
+
+  // Mute button + icon. Synced here (blocked, so the sync cannot re-enter the
+  // handler) because rx->mute is now settable from outside the UI - the TCI
+  // mute/rx_mute commands - and a mute the button does not show reads as a dead
+  // receiver.
+  g_signal_handlers_block_by_func(v->mute_b,G_CALLBACK(mute_b_cb),rx);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->mute_b),rx->mute);
+  vfo_set_mute_icon(v->mute_b,rx->mute);
+  g_signal_handlers_unblock_by_func(v->mute_b,G_CALLBACK(mute_b_cb),rx);
 }

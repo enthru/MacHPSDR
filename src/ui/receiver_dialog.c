@@ -47,6 +47,7 @@
 #include "audio.h"
 #include "main.h"
 #include "rigctl.h"
+#include "tci.h"
 
 #define BAND_COLUMNS 5
 #define MODE_COLUMNS 4
@@ -318,6 +319,11 @@ static void tx_cb(GtkWidget *widget, gpointer data) {
   update_vfo(temp);
   update_vfo(rx);
   transmitter_set_mode(radio->transmitter,rx->mode_a);
+  // TCI addresses PTT per trx, and the trx that transmits is this receiver's
+  // index - which just changed. Re-announce it so a connected client stops
+  // attributing PTT to the receiver the transmitter used to be on. GTK thread;
+  // the notify is a best-effort broadcast that early-returns when TCI is off.
+  tci_notify_trx(radio->mox);
 }
 
 static void meter_smoothing_value_changed_cb(GtkWidget *widget, gpointer data) {

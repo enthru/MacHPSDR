@@ -22,9 +22,14 @@
  * WebSocket transport, so standard TCI loggers/clients (Log4OM, N1MM+,
  * SkookumLogger, …) can drive and follow the radio. Control commands: VFO /
  * modulation / trx (PTT) plus rit_enable/rit_offset, xit_enable/xit_offset,
- * split_enable and if (CTUN demod offset) — all set-and-get, and pushed back via
+ * split_enable, if (CTUN demod offset), lock, mute/volume and rx_mute/rx_volume,
+ * drive/tune_drive/tune, rx_channel_enable (the sub-receiver) and the read-only
+ * rx_enable/rx_smeter/sql_enable — all set-and-get, and pushed back via
  * tci_notify_*() when changed locally. Binary streaming: iq_start (off-air I/Q),
- * audio_start (48 kHz demod audio) and inbound TX audio. See tci.c.
+ * audio_start (48 kHz demod audio) and inbound TX audio. Commands with no
+ * honest counterpart in this application (start/stop, spot, sql_level,
+ * rx_balance, …) are answered with an echo ack and are listed, with the reason
+ * each one is not wired, at the end of tci_handle_command(). See tci.c.
  *
  * Threading: a background accept thread + one thread per client do all socket
  * I/O and never touch GTK. Inbound commands are dispatched to the GTK main
