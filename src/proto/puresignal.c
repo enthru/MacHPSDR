@@ -247,7 +247,11 @@ PSIGNAL *create_puresignal(void) {
     ps->info_timer_id = g_timeout_add(500, info_timer_cb,(gpointer)ps);
   }
 
-  // TODO this value is only valid for the HL2
+  // Feedback-ADC full-scale reference handed to SetPSHWPeak, per hardware
+  // family: 0.4067 for a Protocol-1 Hermes/Angelia/ANAN, and the two exceptions
+  // below. These are the piHPSDR figures; none has been checked against a real
+  // radio here (no TX hardware), so they are the first thing to doubt if the
+  // correction loop will not converge.
   double set_peak = 0.4067;
 
   if (radio->discovered->device == DEVICE_HERMES_LITE2) {

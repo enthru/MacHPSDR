@@ -1001,7 +1001,9 @@ void ozy_send_buffer(void) {
       }
     }
 
-// TODO - add Alex Attenuation and Alex Antenna
+    // C3 — ADC front end: Alex attenuator (bits 1-0), LT2208 preamp/dither/
+    // random (bits 4-2) and the Alex RX antenna select (bits 7-5). All of it is
+    // filled in below; the att10/att20 pair is this fork's own addition.
     output_buffer[C3]=0x00;
     // Hermes Lite 2 FPGA PSU clock toggle
     if(radio->hl2 != NULL) {
@@ -1050,7 +1052,11 @@ void ozy_send_buffer(void) {
     }
 
 
-// TODO - add Alex TX relay, duplex, receivers Mercury board frequency
+    // C4 — Alex TX relay (bits 1-0), duplex (bit 2), receiver count - 1
+    // (bits 5-3) and common Mercury frequency (bit 7), all set below. Bit 7
+    // means "every Mercury board tunes to the RX1 frequency", which is exactly
+    // the condition two coherent ADC streams need, so diversity drives it.
+    // Bit 6 (1PPS time stamp in the mic-data LSB) is deliberately unused.
     output_buffer[C4]=0x04;  // duplex
     
     if (radio->diversity_mixers > 0) output_buffer[C4] |= 0x80;
