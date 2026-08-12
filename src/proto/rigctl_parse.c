@@ -1038,8 +1038,11 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
               send_resp(cmd,reply) ;
             } else {
               int ps=atoi(&command[4]);
-              // TODO enable PS via CAT
-              //radio->transmitter->puresignal_enabled=ps;
+              // Not a plain assignment: switching PureSignal on or off adds or
+              // deletes the hidden feedback receivers, which builds and destroys
+              // widgets — it cannot run on this socket thread. ext_tx_set_ps
+              // carries the free-slot precondition too.
+              g_idle_add(ext_tx_set_ps,GINT_TO_POINTER(ps!=0));
             }
             update_vfo(rx);
           } else {

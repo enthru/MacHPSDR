@@ -36,6 +36,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "ext.h"
 #include "settings_ui.h"
 #include "css.h"
 #include "main.h"
@@ -185,20 +186,19 @@ static gboolean info_timeout(gpointer arg) {
 
 static void enable_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) {
-    // PureSignal needs free receiver slots for the TX/RX feedback channels.
-    if(radio->receivers <= (radio->discovered->ps_tx_fdbk_chan - 1)) {
-      transmitter_set_ps(tx,1);
-      tx->puresignal_enabled=TRUE;
-    } else {
-      // Too many open receivers — undo the toggle without re-entering this cb.
-      g_signal_handlers_block_by_func(widget,G_CALLBACK(enable_cb),tx);
-      gtk_check_button_set_active(GTK_CHECK_BUTTON(widget),FALSE);
-      g_signal_handlers_unblock_by_func(widget,G_CALLBACK(enable_cb),tx);
-    }
-  } else {
-    transmitter_set_ps(tx,0);
-    tx->puresignal_enabled=FALSE;
+  gboolean want=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  // Already on the GTK thread, so call the shared applier straight rather than
+  // through g_idle_add. It carries the free-slot precondition and the
+  // puresignal_enabled bookkeeping, so this handler and the CAT/MIDI paths
+  // cannot drift apart.
+  ext_tx_set_ps(GINT_TO_POINTER(want));
+
+  // Enabling can fail (too many open receivers) — reflect the real outcome
+  // without re-entering this callback.
+  if(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget)) != tx->puresignal_enabled) {
+    g_signal_handlers_block_by_func(widget,G_CALLBACK(enable_cb),tx);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(widget),tx->puresignal_enabled);
+    g_signal_handlers_unblock_by_func(widget,G_CALLBACK(enable_cb),tx);
   }
 }
 

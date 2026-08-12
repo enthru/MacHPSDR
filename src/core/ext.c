@@ -150,8 +150,33 @@ int ext_set_mode(void *data) {
 }
 
 
+// PureSignal on/off from a thread that is not the GTK one (CAT ZZLI, MIDI).
+// transmitter_set_ps() adds and deletes the hidden feedback receivers, i.e. it
+// builds and destroys widgets, so it must land on the GTK thread and can never
+// be called from the rigctl or MIDI thread directly.
+//
+// The free-slot precondition and the puresignal_enabled bookkeeping live here
+// rather than in each caller: they were previously only in the dialog's
+// enable_cb, so every non-UI path (there was one, MIDI) switched PureSignal on
+// without recording that it was on and without checking there was room for the
+// feedback receivers. Returns with puresignal_enabled telling the caller what
+// actually happened.
 int ext_tx_set_ps(void *data) {
-  if(radio->transmitter) transmitter_set_ps(radio->transmitter,(uintptr_t)data);
+#ifdef PURESIGNAL
+  TRANSMITTER *tx = (radio!=NULL) ? radio->transmitter : NULL;
+  if(tx==NULL || radio->discovered==NULL) return 0;
+  if((uintptr_t)data) {
+    // PureSignal needs free receiver slots for the TX/RX feedback channels.
+    // ps_tx_fdbk_chan is -1 on a radio that has none, which fails this too.
+    if(radio->receivers <= (radio->discovered->ps_tx_fdbk_chan - 1)) {
+      transmitter_set_ps(tx,1);
+      tx->puresignal_enabled=TRUE;
+    }
+  } else {
+    transmitter_set_ps(tx,0);
+    tx->puresignal_enabled=FALSE;
+  }
+#endif
   return 0;
 }
 
