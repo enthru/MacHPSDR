@@ -364,6 +364,17 @@ static int tci_rx_index(RECEIVER *rx) {
   return -1;
 }
 
+// TCI index of the receiver the (single) transmitter is attached to. This app
+// has one transmitter, but it is not necessarily bound to receiver 0, and TCI
+// addresses PTT per trx — so "which trx transmits" is a real question and the
+// answer used to be hard-coded to 0. Falls back to 0 when the transmitter's
+// receiver is hidden or absent, which keeps a plain single-RX client working.
+static int tci_tx_index(void) {
+  if (g_radio == NULL || g_radio->transmitter == NULL) return 0;
+  int idx = tci_rx_index(g_radio->transmitter->rx);
+  return idx >= 0 ? idx : 0;
+}
+
 // The visible receiver at TCI index `idx`, or NULL.
 static RECEIVER *tci_rx_at(int idx) {
   if (g_radio == NULL || idx < 0) return NULL;
@@ -716,13 +727,24 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "trx")) {
-    // PTT is radio-global (one transmitter); the rx index is echoed back as-is.
+    // There is one transmitter and it belongs to one trx, so PTT addressed to
+    // any other trx is a no-op — the rule iq_start/audio_start already follow
+    // for an absent rx. The alternative is that `trx:1,true` transmits on rx 0
+    // without saying so.
+    //
+    // Matched on the RAW req_index, not the shared rx_index: that one falls
+    // back to 0 for a receiver that does not exist, which would make every
+    // bogus index look like the transmitting one and key the radio anyway.
+    // (Caught by exactly this case in the faker probe.) A single-RX client is
+    // unaffected: it addresses trx 0, which is the transmitting one.
+    gboolean is_tx = (addr != NULL) && (req_index == tci_tx_index());
     if (nargs >= 2) {
       gboolean on = (!g_ascii_strcasecmp(args[1], "true") || !strcmp(args[1], "1"));
-      dispatch_set_mox(on);
+      if (is_tx) dispatch_set_mox(on);
     } else if (g_radio != NULL) {
       char r[32];
-      g_snprintf(r, sizeof(r), "trx:%d,%s;", rx_index, g_radio->mox ? "true" : "false");
+      g_snprintf(r, sizeof(r), "trx:%d,%s;", req_index,
+                 (is_tx && g_radio->mox) ? "true" : "false");
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "iq_start")) {
@@ -921,10 +943,17 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     client_send_text(c, r);
   }
   if (g_radio != NULL && g_radio->transmitter != NULL) {
+    // Transmitter state is announced against the trx the transmitter is on, not
+    // a hard-coded 0 — an unsolicited "xit_enable:0" tells a multi-RX client the
+    // wrong thing when the transmitter is not on receiver 0.
+    int txi = tci_tx_index();
     char r[48];
-    g_snprintf(r, sizeof(r), "xit_enable:0,%s;", g_radio->transmitter->xit_enabled ? "true" : "false");
+    g_snprintf(r, sizeof(r), "xit_enable:%d,%s;", txi, g_radio->transmitter->xit_enabled ? "true" : "false");
     client_send_text(c, r);
-    g_snprintf(r, sizeof(r), "xit_offset:0,%lld;", (long long)g_radio->transmitter->xit);
+    g_snprintf(r, sizeof(r), "xit_offset:%d,%lld;", txi, (long long)g_radio->transmitter->xit);
+    client_send_text(c, r);
+    // Initial PTT state, which the handshake never sent at all.
+    g_snprintf(r, sizeof(r), "trx:%d,%s;", txi, g_radio->mox ? "true" : "false");
     client_send_text(c, r);
   }
   client_send_text(c, "ready;");
@@ -1148,7 +1177,7 @@ void tci_notify_mode(RECEIVER *rx) {
 void tci_notify_trx(gboolean mox) {
   if (!g_atomic_int_get(&server_running)) return;
   char line[32];
-  g_snprintf(line, sizeof(line), "trx:0,%s;", mox ? "true" : "false");
+  g_snprintf(line, sizeof(line), "trx:%d,%s;", tci_tx_index(), mox ? "true" : "false");
   tci_broadcast_text(line);
 }
 
