@@ -86,6 +86,23 @@ GtkWidget *create_wideband_waterfall(WIDEBAND *w) {
   //gtk_widget_set_size_request (waterfall, w->width, w->height/3);
   g_signal_connect(waterfall,"resize",G_CALLBACK (waterfall_resize_cb),(gpointer)w);
 
+  // GTK4: pointer input via event controllers, shared with the panadapter
+  // (wideband.c decides what a gesture means from the widget it arrived on).
+  GtkGesture *click=gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),0);
+  g_signal_connect(click,"pressed",G_CALLBACK(wideband_pressed_cb),w);
+  g_signal_connect(click,"released",G_CALLBACK(wideband_released_cb),w);
+  gtk_widget_add_controller(waterfall,GTK_EVENT_CONTROLLER(click));
+
+  GtkEventController *motion=gtk_event_controller_motion_new();
+  g_signal_connect(motion,"motion",G_CALLBACK(wideband_motion_cb),w);
+  g_signal_connect(motion,"leave",G_CALLBACK(wideband_leave_cb),w);
+  gtk_widget_add_controller(waterfall,motion);
+
+  GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+  g_signal_connect(scroll,"scroll",G_CALLBACK(wideband_scroll_cb),w);
+  gtk_widget_add_controller(waterfall,scroll);
+
   return waterfall;
 }
 

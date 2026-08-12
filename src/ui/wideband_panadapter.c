@@ -134,6 +134,7 @@ GtkWidget *create_wideband_panadapter(WIDEBAND *w) {
 
   GtkEventController *motion=gtk_event_controller_motion_new();
   g_signal_connect(motion,"motion",G_CALLBACK(wideband_motion_cb),w);
+  g_signal_connect(motion,"leave",G_CALLBACK(wideband_leave_cb),w);
   gtk_widget_add_controller(panadapter,motion);
 
   GtkEventController *scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
@@ -160,7 +161,7 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
   if(display_height<=1 || cwidth<=0) return;
   if(w->pixels<=0 || w->pixel_samples==NULL) return;
 
-  double hz_per_pixel=(double)61440000/(double)w->pixels;
+  double hz_per_pixel=(double)WIDEBAND_SPAN_HZ/(double)w->pixels;
   float *samples=w->pixel_samples;
 
   // background: opaque dark base + the translucent grey->dark gradient wash.
@@ -201,7 +202,7 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
     GskPathBuilder *b=gsk_path_builder_new();
     gboolean any=FALSE;
     char v[32];
-    for(i=5000000;i<61440000;i+=5000000) {
+    for(i=5000000;i<WIDEBAND_SPAN_HZ;i+=5000000) {
       x=(double)i/hz_per_pixel;
       gsk_path_builder_move_to(b,(float)x,10.0f);
       gsk_path_builder_line_to(b,(float)x,(float)display_height);
@@ -249,4 +250,42 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
   GskStroke *st=gsk_stroke_new(1.0f);
   gtk_snapshot_append_stroke(snapshot,p,st,&white);
   gsk_stroke_free(st); gsk_path_unref(p);
+
+  // Pointer readout: on a 0-61.44 MHz sweep one pixel is tens of kHz, so where
+  // the pointer actually is has to be said in numbers.  Drawn last, on top of
+  // the trace.  Crosshair lines are append_color rects (never a GskPath) per the
+  // renderer rule; the cursor position is stashed by wideband_motion_cb().
+  if(w->cursor_valid && w->cursor_x>=0 && w->cursor_x<cwidth) {
+    double cx=(double)w->cursor_x;
+    GdkRGBA hair=(GdkRGBA){0.9f,0.9f,0.3f,0.6f};
+    wbn_rect(snapshot,cx,0.0,1.0,(double)display_height,&hair);
+    if(w->cursor_y>=0 && w->cursor_y<display_height) {
+      wbn_rect(snapshot,0.0,(double)w->cursor_y,(double)cwidth,1.0,&hair);
+    }
+
+    char txt[64];
+    double f_mhz=cx*hz_per_pixel/1000000.0;
+    // The trace level in this column is the number the sweep exists to give;
+    // fall back to the frequency alone if the pixel is outside the analyzer's
+    // current buffer (mid-resize, before resize_timeout re-inits it).
+    if(w->cursor_x < w->pixels) {
+      snprintf(txt,sizeof(txt),"%.3f MHz  %.0f dBm",f_mhz,(double)samples[w->cursor_x+w->pixels]);
+    } else {
+      snprintf(txt,sizeof(txt),"%.3f MHz",f_mhz);
+    }
+
+    PangoLayout *rl=wbn_layout(widget,txt);
+    int rw=0,rh=0; pango_layout_get_pixel_size(rl,&rw,&rh); g_object_unref(rl);
+    double tx=cx+6.0;
+    if(tx+(double)rw+4.0>(double)cwidth) tx=cx-6.0-(double)rw;   // flip at the right edge
+    if(tx<0.0) tx=0.0;
+    // Below the frequency-marker labels, but never off the bottom of a short pane.
+    double base_y=(double)(rh+22);
+    if(base_y>(double)display_height-2.0) base_y=(double)display_height-2.0;
+    if(base_y<(double)rh) base_y=(double)rh;
+    GdkRGBA backing=(GdkRGBA){0.0f,0.0f,0.0f,0.6f};
+    wbn_rect(snapshot,tx-2.0,base_y-(double)rh,(double)rw+4.0,(double)rh+3.0,&backing);
+    GdkRGBA fg=(GdkRGBA){1.0f,1.0f,0.6f,1.0f};
+    wbn_text(snapshot,widget,tx,base_y,&fg,txt,NULL);
+  }
 }

@@ -51,6 +51,27 @@
 #endif
 #include "property.h"
 
+/* Display-level limits.  The two ranges match the Configure -> Wideband sliders,
+   and the minimum span exists because (high-low) is a divisor in both the
+   panadapter draw and the waterfall colour mapping. */
+#define WB_DB_MIN         (-200)
+#define WB_DB_MAX         20
+#define WB_DB_MIN_SPAN    10
+
+#define WB_PANADAPTER_HIGH_DEFAULT 0
+#define WB_PANADAPTER_LOW_DEFAULT  (-140)
+#define WB_WATERFALL_HIGH_DEFAULT  0
+#define WB_WATERFALL_LOW_DEFAULT   (-140)
+
+/* Keep a (low,high) pair inside the range and never let the span collapse — a
+   hand-edited or truncated props file must not produce a division by zero. */
+static void wb_clamp_pair(gint *low, gint *high) {
+  if(*high > WB_DB_MAX) *high = WB_DB_MAX;
+  if(*high < WB_DB_MIN + WB_DB_MIN_SPAN) *high = WB_DB_MIN + WB_DB_MIN_SPAN;
+  if(*low  < WB_DB_MIN) *low = WB_DB_MIN;
+  if(*low  > *high - WB_DB_MIN_SPAN) *low = *high - WB_DB_MIN_SPAN;
+}
+
 void wideband_save_state(WIDEBAND *w) {
   char name[80];
   char value[80];
@@ -58,6 +79,8 @@ void wideband_save_state(WIDEBAND *w) {
   gint y;
   gint width;
   gint height;
+
+  if(w==NULL) return;
 
   sprintf(name,"wideband.channel");
   sprintf(value,"%d",w->channel);
@@ -75,6 +98,24 @@ void wideband_save_state(WIDEBAND *w) {
   sprintf(value,"%d",w->fps);
   setProperty(name,value);
 
+  // Display levels: operator-visible settings the pointer gestures below change,
+  // so they have to survive a restart the way the RX panadapter's do.
+  sprintf(name,"wideband.panadapter_low");
+  sprintf(value,"%d",w->panadapter_low);
+  setProperty(name,value);
+  sprintf(name,"wideband.panadapter_high");
+  sprintf(value,"%d",w->panadapter_high);
+  setProperty(name,value);
+  sprintf(name,"wideband.waterfall_low");
+  sprintf(value,"%d",w->waterfall_low);
+  setProperty(name,value);
+  sprintf(name,"wideband.waterfall_high");
+  sprintf(value,"%d",w->waterfall_high);
+  setProperty(name,value);
+  sprintf(name,"wideband.waterfall_automatic");
+  sprintf(value,"%d",w->waterfall_automatic);
+  setProperty(name,value);
+
   // GTK4: no client-side window position; persist -1 (ignored on restore).
   x=-1; y=-1;
   sprintf(name,"wideband.x");
@@ -84,15 +125,20 @@ void wideband_save_state(WIDEBAND *w) {
   sprintf(value,"%d",y);
   setProperty(name,value);
 
-  width=gtk_widget_get_width(w->window);
-  height=gtk_widget_get_height(w->window);
-  sprintf(name,"wideband.width");
-  sprintf(value,"%d",width);
-  setProperty(name,value);
-  sprintf(name,"wideband.height");
-  sprintf(value,"%d",height);
-  setProperty(name,value);
-  
+  // The window is gone once the operator closes the wideband display; the sizes
+  // it would report are then 0, which would come back as a zero-sized window.
+  if(w->window!=NULL) {
+    width=gtk_widget_get_width(w->window);
+    height=gtk_widget_get_height(w->window);
+    if(width>0 && height>0) {
+      sprintf(name,"wideband.width");
+      sprintf(value,"%d",width);
+      setProperty(name,value);
+      sprintf(name,"wideband.height");
+      sprintf(value,"%d",height);
+      setProperty(name,value);
+    }
+  }
 }
 
 void wideband_restore_state(WIDEBAND *w) {
@@ -106,6 +152,25 @@ void wideband_restore_state(WIDEBAND *w) {
   value=getProperty(name);
   if(value) w->adc=atoi(value);
 
+  sprintf(name,"wideband.panadapter_low");
+  value=getProperty(name);
+  if(value) w->panadapter_low=atoi(value);
+  sprintf(name,"wideband.panadapter_high");
+  value=getProperty(name);
+  if(value) w->panadapter_high=atoi(value);
+  wb_clamp_pair(&w->panadapter_low,&w->panadapter_high);
+
+  sprintf(name,"wideband.waterfall_low");
+  value=getProperty(name);
+  if(value) w->waterfall_low=atoi(value);
+  sprintf(name,"wideband.waterfall_high");
+  value=getProperty(name);
+  if(value) w->waterfall_high=atoi(value);
+  wb_clamp_pair(&w->waterfall_low,&w->waterfall_high);
+
+  sprintf(name,"wideband.waterfall_automatic");
+  value=getProperty(name);
+  if(value) w->waterfall_automatic=atoi(value)?TRUE:FALSE;
 }
 
 // GTK4: window "close-request" replaces "delete-event".
@@ -116,18 +181,202 @@ static gboolean window_delete(GtkWindow *window, gpointer data) {
   return FALSE;
 }
 
-// GTK4 controller-signal stubs (the wideband panadapter currently does nothing
-// with pointer input, but the controllers are wired in wideband_panadapter.c).
+/* ---------------------------------------------------------------------------
+   Pointer input.
+
+   The wideband display is a fixed full-ADC-span sweep: there is no tuning
+   cursor to drag and no receiver to retune, so everything the RX panadapter
+   does with the pointer that is about *frequency* has no counterpart here.
+   What is left — and what these handlers implement — is the dB scale:
+
+     scroll over the left dB strip  : high (top half) / low (bottom half), as
+                                      receiver_scroll_cb() does, 5 dB a notch
+     scroll elsewhere on the pana   : slide the whole dB window, span kept
+     scroll over the waterfall      : waterfall high/low, same halves rule
+     vertical drag                  : pan the dB window under the pointer, so
+                                      the trace follows the pointer 1:1
+     double-click                   : back to the default scale
+     motion                         : crosshair + frequency/level readout
+
+   Scroll always goes through scroll_notches() (receiver.c): a macOS trackpad
+   delivers GDK_SCROLL_UNIT_SURFACE streams and without it one swipe would fire
+   dozens of steps.
+   --------------------------------------------------------------------------- */
+
+#define WB_DB_STEP        5      /* dB per scroll notch (as receiver_scroll_cb) */
+#define WB_DB_STRIP_LEFT  4      /* the dBm-label strip, as on the RX panadapter */
+#define WB_DB_STRIP_RIGHT 35
+
+/* Slide the window, keeping its span: the shift is clipped against the rails
+   first, so hitting the end of the range stops the pan instead of squashing
+   the span (which clamping the two ends independently would do). */
+static void wb_shift_window(gint *low, gint *high, int delta) {
+  if(delta > 0) {
+    int room = WB_DB_MAX - *high;
+    if(delta > room) delta = room;
+  } else {
+    int room = WB_DB_MIN - *low;          /* negative */
+    if(delta < room) delta = room;
+  }
+  if(delta == 0) return;
+  *low += delta;
+  *high += delta;
+}
+
+static void wb_queue_draw(WIDEBAND *w) {
+  if(w->panadapter != NULL) gtk_widget_queue_draw(w->panadapter);
+  if(w->waterfall != NULL) gtk_widget_queue_draw(w->waterfall);
+}
+
 void wideband_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  if(w==NULL) return;
+  if(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture))!=1) return;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+
+  if(n_press>=2) {
+    /* Double-click resets the scale of the surface it happened on, the way the
+       RX raster views refit on a double-click.  The waterfall's automatic flag
+       is deliberately left alone — it is an explicit Configure choice, not part
+       of "the scale". */
+    if(widget!=NULL && widget==w->waterfall) {
+      w->waterfall_high=WB_WATERFALL_HIGH_DEFAULT;
+      w->waterfall_low=WB_WATERFALL_LOW_DEFAULT;
+    } else {
+      w->panadapter_high=WB_PANADAPTER_HIGH_DEFAULT;
+      w->panadapter_low=WB_PANADAPTER_LOW_DEFAULT;
+    }
+    w->pointer_pressed=FALSE;
+    w->has_moved=FALSE;
+    wb_queue_draw(w);
+    return;
+  }
+
+  w->last_x=(gint)x;
+  w->last_y=(gint)y;
+  w->has_moved=FALSE;
+  w->pointer_pressed=TRUE;
 }
 
 void wideband_released_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  if(w==NULL) return;
+  if(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture))!=1) return;
+  w->last_x=(gint)x;
+  w->last_y=(gint)y;
+  w->pointer_pressed=FALSE;
+  w->has_moved=FALSE;
 }
 
-void wideband_motion_cb(GtkEventControllerMotion *controller, double x, double y, gpointer data) {
+void wideband_motion_cb(GtkEventControllerMotion *controller, double ex, double ey, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  if(w==NULL) return;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+  GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
+  gint x=(gint)ex;
+  gint y=(gint)ey;
+  gboolean on_panadapter=(widget!=NULL && widget==w->panadapter);
+  gboolean moved_pointer=(x!=w->cursor_x || y!=w->cursor_y || on_panadapter!=w->cursor_valid);
+
+  w->cursor_x=x;
+  w->cursor_y=y;
+  w->cursor_valid=on_panadapter;
+
+  /* A drag is button 1 down in a press we received ourselves; a motion with no
+     button down clears a press whose release never arrived (grab broken,
+     released off-window). */
+  gboolean button1=(state & GDK_BUTTON1_MASK)==GDK_BUTTON1_MASK;
+  if(!button1) w->pointer_pressed=FALSE;
+
+  if(button1 && w->pointer_pressed) {
+    gint *low=NULL;
+    gint *high=NULL;
+    int height=0;
+    if(widget!=NULL && widget==w->waterfall) {
+      /* Inert while the waterfall tracks the noise floor itself — the next
+         frame would recompute both ends anyway. */
+      if(!w->waterfall_automatic) {
+        low=&w->waterfall_low; high=&w->waterfall_high; height=w->waterfall_height;
+      }
+    } else {
+      low=&w->panadapter_low; high=&w->panadapter_high; height=w->panadapter_height;
+    }
+    if(low!=NULL && height>0) {
+      int span=*high-*low;
+      /* Drag the window so the trace follows the pointer: a sample drawn at
+         screen y sits at y=(high-s)*H/span, so shifting both ends by delta
+         moves it by delta*H/span pixels. */
+      int delta=(int)lround((double)(y-w->last_y)*(double)span/(double)height);
+      if(delta!=0) {
+        wb_shift_window(low,high,delta);
+        w->last_y=y;                 /* only on a real step, so a slow drag accumulates */
+        w->has_moved=TRUE;
+        wb_queue_draw(w);
+      }
+    }
+    w->last_x=x;
+    return;
+  }
+
+  if(widget!=NULL) {
+    gtk_widget_set_cursor_from_name(widget,
+        (on_panadapter && x>WB_DB_STRIP_LEFT && x<WB_DB_STRIP_RIGHT) ? "ns-resize" : "crosshair");
+  }
+  /* The readout follows the pointer; the fps timer only redraws when the WDSP
+     analyzer has fresh pixels, so it cannot be relied on here. */
+  if(moved_pointer && w->panadapter!=NULL) gtk_widget_queue_draw(w->panadapter);
+}
+
+void wideband_leave_cb(GtkEventControllerMotion *controller, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  if(w==NULL) return;
+  if(!w->cursor_valid) return;
+  w->cursor_valid=FALSE;
+  if(w->panadapter!=NULL) gtk_widget_queue_draw(w->panadapter);
 }
 
 gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data) {
+  WIDEBAND *w=(WIDEBAND *)data;
+  if(w==NULL) return TRUE;
+  /* Trackpad desensitising: mandatory, see scroll_notches() in receiver.c. */
+  int n=scroll_notches(controller,dy);
+  if(n==0) return TRUE;             /* trackpad delta below the notch threshold */
+  gboolean up=n<0;
+  int mag=n<0?-n:n;                 /* notches this event (>1 on a fast flick) */
+  int step=WB_DB_STEP*mag;
+  GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+  gint x=w->cursor_x;
+  gint y=w->cursor_y;
+
+  if(widget!=NULL && widget==w->waterfall) {
+    /* Same reason the RX dB strip is inert under Panadapter Automatic: with the
+       waterfall tracking the average, the next frame overwrites both ends. */
+    if(w->waterfall_automatic) return TRUE;
+    if(w->waterfall_height<=0) return TRUE;
+    if(y < w->waterfall_height/2) {
+      w->waterfall_high += up ? -step : step;
+    } else {
+      w->waterfall_low += up ? -step : step;
+    }
+    wb_clamp_pair(&w->waterfall_low,&w->waterfall_high);
+  } else {
+    if(w->panadapter_height<=0) return TRUE;
+    if(x>WB_DB_STRIP_LEFT && x<WB_DB_STRIP_RIGHT) {
+      /* Over the dBm labels: stretch/compress the scale, exactly as
+         receiver_scroll_cb() does over the RX panadapter's strip. */
+      if(y < w->panadapter_height/2) {
+        w->panadapter_high += up ? -step : step;
+      } else {
+        w->panadapter_low += up ? -step : step;
+      }
+      wb_clamp_pair(&w->panadapter_low,&w->panadapter_high);
+    } else {
+      /* Anywhere else the RX panadapter would tune, and there is nothing here
+         to tune: slide the whole window instead, keeping its span. */
+      wb_shift_window(&w->panadapter_low,&w->panadapter_high,up ? -step : step);
+    }
+  }
+  wb_queue_draw(w);
   return TRUE;
 }
 
@@ -226,6 +475,8 @@ void wideband_init_analyzer(WIDEBAND *w) {
     g_free(w->pixel_samples);
     w->pixel_samples=NULL;
   }
+  // The one place w->pixels changes, so the one place the axis scale is derived.
+  w->hz_per_pixel = (w->pixels>0) ? (double)WIDEBAND_SPAN_HZ/(double)w->pixels : 0.0;
   if(w->pixels>0) {
     w->pixel_samples=g_new0(float,w->pixels*2);
     int max_w = fft_size + (int) min(keep_time * (double) w->fps, keep_time * (double) fft_size * (double) w->fps);
@@ -286,12 +537,17 @@ log_info("create_wideband: channel=%d\n",channel);
   w->window_width=512;
   w->window_height=180;
   w->window=NULL;
-  w->panadapter_high=0;
-  w->panadapter_low=-140;
+  w->panadapter_high=WB_PANADAPTER_HIGH_DEFAULT;
+  w->panadapter_low=WB_PANADAPTER_LOW_DEFAULT;
 
-  w->waterfall_high=0;
-  w->waterfall_low=-140;
+  w->waterfall_high=WB_WATERFALL_HIGH_DEFAULT;
+  w->waterfall_low=WB_WATERFALL_LOW_DEFAULT;
   w->waterfall_automatic=TRUE;
+
+  w->cursor_x=-1;
+  w->cursor_y=-1;
+  w->cursor_valid=FALSE;
+  w->pointer_pressed=FALSE;
 
   wideband_restore_state(w);
 

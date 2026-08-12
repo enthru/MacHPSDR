@@ -426,6 +426,11 @@ log_info("radio_save_state: %s\n",filename);
     transmitter_save_state(radio->transmitter);
   }
 
+  // wideband_save_state() existed but was never called, so the wideband display
+  // levels (which the pointer gestures now change) could not survive a restart.
+  // NULL-safe: the wideband window is optional and usually not open.
+  wideband_save_state(radio->wideband);
+
 #ifdef MIDI
   setProperty("radio.midi_filename",radio->midi_filename);
   sprintf(value,"%d",radio->midi_enabled);

@@ -20,6 +20,11 @@
 #ifndef WIDEBAND_H
 #define WIDEBAND_H
 
+/* The wideband display is a fixed sweep of the whole ADC span — there is no
+   tuning cursor and no receiver to retune, so the span is a constant rather
+   than a per-receiver sample rate. */
+#define WIDEBAND_SPAN_HZ 61440000
+
 typedef struct _wideband {
   gint channel; // WDSP channel
   gint adc;
@@ -74,6 +79,19 @@ typedef struct _wideband {
 
   gboolean has_moved;
   gint last_x;
+  gint last_y;
+  /* Pointer position stashed by the motion handler: the scroll signal carries
+     no coordinates (same reason RECEIVER keeps cursor_x/cursor_y).  cursor_valid
+     is TRUE only while the pointer is over the panadapter, which is where the
+     readout is drawn — the waterfall's motion handler updates the position for
+     its own scroll handling but does not claim the readout. */
+  gint cursor_x;
+  gint cursor_y;
+  gboolean cursor_valid;
+  /* TRUE only between a press WE received and its release: a button held down
+     by another process must not read as a drag on the spectrum (see
+     RECEIVER.pointer_pressed). */
+  gboolean pointer_pressed;
 
   GtkWidget *dialog;
 
@@ -86,6 +104,7 @@ extern void add_wideband_sample(WIDEBAND *w,double sample);
 extern void wideband_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
 extern void wideband_released_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
 extern void wideband_motion_cb(GtkEventControllerMotion *controller, double x, double y, gpointer data);
+extern void wideband_leave_cb(GtkEventControllerMotion *controller, gpointer data);
 extern gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
 extern void wideband_save_state(WIDEBAND *w);
 extern void reset_wideband_buffer_index(WIDEBAND *w);
