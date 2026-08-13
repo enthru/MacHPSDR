@@ -704,7 +704,13 @@ static void process_ozy_byte(int b) {
       state++;
       break;
     case LEFT_SAMPLE_HI:
-      left_sample=(int)((signed char)b<<16);
+      // (signed char)b * 65536, NOT << 16: shifting a NEGATIVE value left is
+      // undefined behaviour, and half of every I/Q sample is negative.  The
+      // multiplication is exactly the same arithmetic (no overflow -- the widest
+      // case is -128 * 65536) and is defined.  Found by `make SANITIZE=1`
+      // running against tools/metis_emu.c; every real compiler emitted the
+      // shift anyway, which is why it survived.
+      left_sample=(int)(signed char)b*65536;
       state++;
       break;
     case LEFT_SAMPLE_MID:
@@ -717,7 +723,7 @@ static void process_ozy_byte(int b) {
       state++;
       break;
     case RIGHT_SAMPLE_HI:
-      right_sample=(int)((signed char)b<<16);
+      right_sample=(int)(signed char)b*65536;   // see LEFT_SAMPLE_HI
       state++;
       break;
     case RIGHT_SAMPLE_MID:

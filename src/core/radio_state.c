@@ -88,18 +88,23 @@ void radio_save_state(RADIO *radio) {
   int i;
   gint x,y;
   gint width,height;
-  char filename[128];
+  // 512 and snprintf, not 128 and sprintf: the home directory is unbounded
+  // (a sandbox, a CI runner or a scratch HOME is routinely over 80 characters)
+  // and on the SoapySDR branch the device NAME is interpolated too. This
+  // overflowed the stack frame -- caught by `make SANITIZE=1` the first time it
+  // ran, on the very first startup path.
+  char filename[512];
   switch(radio->discovered->protocol) {
 
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      sprintf(filename,"%s/.local/share/machpsdr/%s.props",
+      snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/%s.props",
                         g_get_home_dir(),
                         radio->discovered->name);
       break;
 #endif
     default:
-      sprintf(filename,"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
+      snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
                         g_get_home_dir(),
                         radio->discovered->info.network.mac_address[0],
                         radio->discovered->info.network.mac_address[1],
@@ -479,17 +484,22 @@ log_info("radio_save_state: %s\n",filename);
 void radio_restore_state(RADIO *radio) {
   char name[80];
   char *value;
-  char filename[128];
+  // 512 and snprintf, not 128 and sprintf: the home directory is unbounded
+  // (a sandbox, a CI runner or a scratch HOME is routinely over 80 characters)
+  // and on the SoapySDR branch the device NAME is interpolated too. This
+  // overflowed the stack frame -- caught by `make SANITIZE=1` the first time it
+  // ran, on the very first startup path.
+  char filename[512];
   switch(radio->discovered->protocol) {
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      sprintf(filename,"%s/.local/share/machpsdr/%s.props",
+      snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/%s.props",
                         g_get_home_dir(),
                         radio->discovered->name);
       break;
 #endif
     default:
-      sprintf(filename,"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
+      snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/%02X-%02X-%02X-%02X-%02X-%02X.props",
                         g_get_home_dir(),
                         radio->discovered->info.network.mac_address[0],
                         radio->discovered->info.network.mac_address[1],

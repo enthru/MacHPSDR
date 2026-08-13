@@ -10,6 +10,12 @@
 #include "waterfall_theme.h"
 #include <math.h>
 
+static unsigned char theme_u8(float v) {
+    if(v <= 0.0f)   return 0;
+    if(v >= 255.0f) return 255;
+    return (unsigned char)v;
+}
+
 typedef struct {
     unsigned char r, g, b;
 } RGB;
@@ -162,28 +168,34 @@ void init_waterfall_themes(void) {
         }
     }
 
+    // The three polynomial maps below are curve FITS to the matplotlib
+    // colormaps, not the colormaps themselves, so they overshoot: inferno's red
+    // reaches 256.6 at the top of the scale.  A float outside 0..255 cast to
+    // unsigned char is undefined behaviour -- in practice it wraps, so the
+    // brightest end of the map came out BLACK.  Caught by
+    // `make SANITIZE=1`; clamp instead of trusting the fit.
     // Viridis
     for(i=0; i<256; i++) {
         float t = i / 255.0f;
-        viridis_theme[i].r = (unsigned char)(255 * (0.267 + 0.005 * t + 0.322 * t*t));
-        viridis_theme[i].g = (unsigned char)(255 * (0.005 + 0.978 * t - 0.327 * t*t));
-        viridis_theme[i].b = (unsigned char)(255 * (0.330 + 1.073 * t - 1.420 * t*t + 0.674 * t*t*t));
+        viridis_theme[i].r = theme_u8(255 * (0.267 + 0.005 * t + 0.322 * t*t));
+        viridis_theme[i].g = theme_u8(255 * (0.005 + 0.978 * t - 0.327 * t*t));
+        viridis_theme[i].b = theme_u8(255 * (0.330 + 1.073 * t - 1.420 * t*t + 0.674 * t*t*t));
     }
 
     // Plasma
     for(i=0; i<256; i++) {
         float t = i / 255.0f;
-        plasma_theme[i].r = (unsigned char)(255 * (0.050 + 2.035 * t - 1.915 * t*t + 0.830 * t*t*t));
-        plasma_theme[i].g = (unsigned char)(255 * (0.020 + 0.982 * t - 1.040 * t*t + 0.040 * t*t*t));
-        plasma_theme[i].b = (unsigned char)(255 * (0.530 - 0.093 * t + 1.185 * t*t - 0.622 * t*t*t));
+        plasma_theme[i].r = theme_u8(255 * (0.050 + 2.035 * t - 1.915 * t*t + 0.830 * t*t*t));
+        plasma_theme[i].g = theme_u8(255 * (0.020 + 0.982 * t - 1.040 * t*t + 0.040 * t*t*t));
+        plasma_theme[i].b = theme_u8(255 * (0.530 - 0.093 * t + 1.185 * t*t - 0.622 * t*t*t));
     }
 
     // Inferno
     for(i=0; i<256; i++) {
         float t = i / 255.0f;
-        inferno_theme[i].r = (unsigned char)(255 * (0.001 + 1.422 * t - 0.200 * t*t));
-        inferno_theme[i].g = (unsigned char)(255 * (0.000 + 1.571 * t*t - 0.571 * t*t*t));
-        inferno_theme[i].b = (unsigned char)(255 * (0.145 + 1.480 * t - 2.553 * t*t + 1.928 * t*t*t));
+        inferno_theme[i].r = theme_u8(255 * (0.001 + 1.422 * t - 0.200 * t*t));
+        inferno_theme[i].g = theme_u8(255 * (0.000 + 1.571 * t*t - 0.571 * t*t*t));
+        inferno_theme[i].b = theme_u8(255 * (0.145 + 1.480 * t - 2.553 * t*t + 1.928 * t*t*t));
     }
 
     // Turbo

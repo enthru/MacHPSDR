@@ -111,8 +111,10 @@ static GtkColumnViewColumn *bm_col(const char *title, int colid) {
 static char *split_char[] = {"OFF","SPLIT","SAT","RSAT"};
 
 static void save_bookmarks(void) {
-  char filename[128];
-  sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
+  // See the note in radio_state.c: an unbounded home directory overflowed the
+  // 128-byte frame these used to use.
+  char filename[512];
+  snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
   initProperties();
 
@@ -155,8 +157,10 @@ static void save_bookmarks(void) {
 }
 
 static void restore_bookmarks(void) {
-  char filename[128];
-  sprintf(filename,"%s/.local/share/machpsdr/bookmarks",
+  // See the note in radio_state.c: an unbounded home directory overflowed the
+  // 128-byte frame these used to use.
+  char filename[512];
+  snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
   int i=0;
   char name[80];

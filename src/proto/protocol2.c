@@ -1324,10 +1324,15 @@ static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
   b=16;
   int i;
   for(i=0;i<samplesperframe;i++) {
-    leftsample   = (int)((signed char) buffer[b++])<<16;
+    // *65536 rather than <<16 throughout this file: a left shift of a NEGATIVE
+    // value is undefined behaviour and half of every I/Q sample is negative.
+    // Identical arithmetic, defined. The protocol-1 twin of this was caught by
+    // UBSan against tools/metis_emu.c; these are the same expression and are
+    // corrected with it, unverified only for want of a Protocol-2 board.
+    leftsample   = (int)(signed char)buffer[b++]*65536;
     leftsample  |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
     leftsample  |= (int)((unsigned char)buffer[b++]&0xFF);
-    rightsample  = (int)((signed char)buffer[b++]) << 16;
+    rightsample  = (int)(signed char)buffer[b++]*65536;
     rightsample |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
     rightsample |= (int)((unsigned char)buffer[b++]&0xFF);
 
@@ -1364,10 +1369,10 @@ static void process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer) {
   int b=16;
 
   for(int i=0;i<samplesperframe;i++) {
-    int isample  = (int)((signed char) buffer[b++])<<16;
+    int isample  = (int)(signed char)buffer[b++]*65536;
     isample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
     isample     |= (int)((unsigned char)buffer[b++]&0xFF);
-    int qsample  = (int)((signed char) buffer[b++])<<16;
+    int qsample  = (int)(signed char)buffer[b++]*65536;
     qsample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
     qsample     |= (int)((unsigned char)buffer[b++]&0xFF);
 
@@ -1409,7 +1414,7 @@ static void process_wideband_data(WIDEBAND *w,unsigned char *buffer) {
   //sequence=((buffer[0]&0xFF)<<24)+((buffer[1]&0xFF)<<16)+((buffer[2]&0xFF)<<8)+(buffer[3]&0xFF); // UNUSED
   b=4;
   while(b<1028) {
-    sample   = (int)((signed char) buffer[b++])<<8;
+    sample   = (int)(signed char)buffer[b++]*256;
     sample  |= (int)((unsigned char)buffer[b++]&0xFF);
     sampledouble=(double)sample/32767.0; // for 16 bits
     add_wideband_sample(w, sampledouble);

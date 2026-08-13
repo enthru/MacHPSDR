@@ -437,7 +437,7 @@ static int check_wisdom(void *data) {
   GtkWidget *dialog;
   char label[128];
 
-  sprintf(wisdom_directory,"%s/.local/share/machpsdr/",g_get_home_dir());
+  snprintf(wisdom_directory,sizeof(wisdom_directory),"%s/.local/share/machpsdr/",g_get_home_dir());
   snprintf(wisdom_file, sizeof(wisdom_file), "%swdspWisdom", wisdom_directory);
   if(access(wisdom_file,F_OK)<0) {
 #ifdef __APPLE__

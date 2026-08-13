@@ -2999,7 +2999,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->rec_af = TRUE;
 
   r->midi_enabled = FALSE;
-  sprintf(r->midi_filename,"%s/.local/share/machpsdr/midi.props", g_get_home_dir());
+  snprintf(r->midi_filename,sizeof(r->midi_filename),"%s/.local/share/machpsdr/midi.props", g_get_home_dir());
 
   r->dialog=NULL;
 

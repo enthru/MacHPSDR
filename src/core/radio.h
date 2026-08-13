@@ -384,7 +384,7 @@ typedef struct _radio {
   gint which_audio_backend;
 
   gboolean midi_enabled;
-  char midi_filename[128];
+  char midi_filename[512];   // path under an unbounded home dir; see radio_state.c
   
   gboolean qos_flag;
 
