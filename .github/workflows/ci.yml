@@ -81,8 +81,9 @@ jobs:
             libliquid-dev \
             zlib1g-dev
 
-      # dylibbundler is deliberately absent: it is only needed by `make app`,
-      # and this job does not package.  gnome-icon-theme is an alias for
+      # dylibbundler is here for `make app` at the end of the job — it is the
+      # one tool that target refuses to run without.  gnome-icon-theme is an
+      # alias for
       # adwaita-icon-theme and is a runtime resource rather than a build
       # dependency, but it is kept so this list stays the one CLAUDE.md
       # documents — a CI environment that has quietly drifted from the
@@ -95,7 +96,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp
+          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
 
       # `getconf`, not `nproc`: macOS has no nproc.  This also builds the
       # vendored trees (wdsp/, ft8_lib/, sgp4sdp4/, hfdl_lib/asn1/) through
@@ -119,3 +120,48 @@ jobs:
       # This is the whole test surface: no GUI binary is started.
       - name: Self-tests
         run: make check
+
+      # The decoded pictures behind the SSTV numbers.  `make check` asserts an
+      # MAE/PSNR per mode, which says PASS or FAIL and nothing about *how* a
+      # picture is wrong — a slant, a colour swap and a chroma error all move
+      # the same number.  These are the same eight decodes the self-test just
+      # made, written out, so a threshold that starts drifting can be looked at
+      # instead of argued about.  Seconds to produce, a few hundred kB.
+      - name: Decoded self-test images
+        run: |
+          mkdir -p selftest-images
+          ./sstv_offline --selftest -o selftest-images/sstv
+
+      - name: Upload decoded images
+        uses: actions/upload-artifact@v7
+        with:
+          name: selftest-images-${{ matrix.os }}
+          path: selftest-images/
+          if-no-files-found: error
+
+      # The .app, for the platform this fork exists for.  windows.yml uploads a
+      # package because nobody here can build one; this one is uploaded for the
+      # opposite reason — it is buildable locally, but a per-commit bundle is
+      # what lets a second Mac run the change without a toolchain on it.
+      #
+      # ditto, not upload-artifact directly: a .app is a directory of symlinks
+      # and executable bits, and the zip actions/upload-artifact makes keeps
+      # neither.  Zipping it here means what you download is the bundle.
+      #
+      # It is UNSIGNED and NOT NOTARIZED, so Gatekeeper refuses it on any other
+      # machine until it is opened once from the context menu (or the quarantine
+      # attribute is stripped).  It is also arm64 only, because macos-latest is:
+      # this is not a release artifact and must not be described as one.
+      - name: Bundle the .app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          make app
+          ditto -c -k --keepParent MacHPSDR.app MacHPSDR-arm64.zip
+
+      - name: Upload the .app (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: MacHPSDR-app-arm64
+          path: MacHPSDR-arm64.zip
+          if-no-files-found: error
