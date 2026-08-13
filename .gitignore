@@ -5,6 +5,10 @@
 *.so
 *.a
 machpsdr
+# The MinGW build names the same binaries with a .exe suffix (see $(EXE) in the
+# Makefile), so the extensionless entries here and below do not cover a Windows
+# tree at all.
+*.exe
 MacHPSDR.app/
 MacHPSDR.zip
 

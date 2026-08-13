@@ -457,8 +457,23 @@ COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 PROGRAM=machpsdr
 # mingw's gcc appends .exe to an extensionless -o, so a target named `machpsdr`
 # would never look up to date and every make would relink.
+#
+# $(EXE) is the same fact for the offline harnesses, and it stopped being
+# cosmetic the moment `make check` began running on Windows.  Their recipes write
+# `-o $@`, so on MinGW the file make is waiting for is never created and the rule
+# is never satisfied: every harness relinks on every invocation, `check` included.
+# Worse, `make clean` removed the extensionless names and left the .exe files
+# behind — a binary built under a different set of feature flags surviving a
+# clean is precisely the trap the clean comment below exists to warn about.
+# Empty on macOS/Linux, where every one of these names is unchanged.
+#
+# metis_emu is deliberately NOT given the suffix: it is raw POSIX sockets
+# (<sys/socket.h>, <arpa/inet.h>, <unistd.h>) and does not build for Windows at
+# all, so there is no .exe of it to name.
+EXE=
 ifneq ($(ISMINGW),)
 PROGRAM=machpsdr.exe
+EXE=.exe
 endif
 
 SOURCES=\
@@ -724,8 +739,8 @@ ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJ
 .PHONY: hfdl-asn1
 ifeq ($(HFDL_INCLUDE),HFDL)
 $(PROGRAM): | hfdl-asn1
-hfdl_offline: | hfdl-asn1
-acars_offline: | hfdl-asn1
+hfdl_offline$(EXE): | hfdl-asn1
+acars_offline$(EXE): | hfdl-asn1
 hfdl-asn1:
 	$(MAKE) -C hfdl_lib/asn1
 endif
@@ -735,7 +750,7 @@ endif
 .PHONY: sgp4-local
 ifeq ($(SSTV_INCLUDE),SSTV)
 $(PROGRAM): | sgp4-local
-apt_offline: | sgp4-local
+apt_offline$(EXE): | sgp4-local
 sgp4-local:
 	$(MAKE) -C sgp4sdp4
 endif
@@ -770,10 +785,10 @@ all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCE
 # the saved settings on exit).
 #   make hfdl-offline && ./hfdl_offline rec.wav <centre_hz> <cursor_hz>
 .PHONY: hfdl-offline
-hfdl-offline: hfdl_offline
+hfdl-offline: hfdl_offline$(EXE)
 # Links only what the decode chain needs (no GTK, no WDSP, no audio): the panel
 # objects are what pull the UI in, so they are filtered out.
-hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
+hfdl_offline$(EXE): tools/hfdl_offline.c $(HFDL_OBJS) log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/hfdl_offline.c \
 	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
@@ -786,10 +801,10 @@ hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 #   ./acars_offline rec_iq.wav 131550000 131550000
 #   ./acars_offline --audio acars_audio.wav
 .PHONY: acars-offline
-acars-offline: acars_offline
+acars-offline: acars_offline$(EXE)
 # Links the ACARS chain plus the HFDL application layer it decodes messages
 # with; the two panel objects are what pull GTK in, so they are filtered out.
-acars_offline: tools/acars_offline.c $(HFDL_OBJS) log.o
+acars_offline$(EXE): tools/acars_offline.c $(HFDL_OBJS) log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/acars_offline.c \
 	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
@@ -803,10 +818,10 @@ acars_offline: tools/acars_offline.c $(HFDL_OBJS) log.o
 #   ./apt_offline noaa.wav -o pass.png
 #   ./apt_offline rec_iq.wav --iq 137100000 137100000 -o pass.png
 .PHONY: apt-offline
-apt-offline: apt_offline
+apt-offline: apt_offline$(EXE)
 # Links only the decoder (no GTK, no WDSP, no audio): apt_decoder.c needs
 # gdk-pixbuf for the image it hands back, and nothing else.
-apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o
+apt_offline$(EXE): tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0 cairo) -o $@ tools/apt_offline.c \
 	  apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o $(SGP4_LIB) \
@@ -820,10 +835,10 @@ apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o i
 # Decodes in Auto (VIS): a forced mode anchors on the VIS break (see CLAUDE.md).
 #   make sstv-offline && ./sstv_offline --selftest
 .PHONY: sstv-offline
-sstv-offline: sstv_offline
+sstv-offline: sstv_offline$(EXE)
 # GTK cflags are needed (both modules include <gtk/gtk.h>), but no GTK symbol is
 # referenced — glib + gdk-pixbuf is the whole link, as with apt_offline.
-sstv_offline: tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_save.o log.o
+sstv_offline$(EXE): tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_save.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/sstv_offline.c \
 	  sstv_encoder.o sstv_decoder.o image_save.o log.o \
@@ -836,10 +851,10 @@ sstv_offline: tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_save.o lo
 # and that the two Morse timing conventions still agree.
 #   make cw-offline && ./cw_offline --selftest
 .PHONY: cw-offline
-cw-offline: cw_offline
+cw-offline: cw_offline$(EXE)
 # gtk4 is in the link only because cw_encoder.c/cw_keyer.c reach <gtk/gtk.h>
 # through radio.h; the application surface they need is stubbed in the harness.
-cw_offline: tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
+cw_offline$(EXE): tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o $(GTKLIBS) -lm
 
@@ -852,10 +867,10 @@ cw_offline: tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
 # does not prove.
 #   make wefax-offline && ./wefax_offline --selftest
 .PHONY: wefax-offline
-wefax-offline: wefax_offline
+wefax-offline: wefax_offline$(EXE)
 # glib + gdk-pixbuf is the whole link, as with sstv_offline; the GTK cflags are
 # needed only because wefax_decoder.c reaches <gtk/gtk.h>.
-wefax_offline: tools/wefax_offline.c wefax_decoder.o image_save.o log.o
+wefax_offline$(EXE): tools/wefax_offline.c wefax_decoder.o image_save.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/wefax_offline.c \
 	  wefax_decoder.o image_save.o log.o \
@@ -867,8 +882,8 @@ wefax_offline: tools/wefax_offline.c wefax_decoder.o image_save.o log.o
 # tci_cw.o alone -- the parser is pure glib, which is why it was split out.
 #   make tci-offline && ./tci_offline --selftest
 .PHONY: tci-offline
-tci-offline: tci_offline
-tci_offline: tools/tci_offline.c tci_cw.o
+tci-offline: tci_offline$(EXE)
+tci_offline$(EXE): tools/tci_offline.c tci_cw.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o \
 	  $(shell pkg-config --libs glib-2.0)
@@ -925,20 +940,30 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), the other three want --selftest,
 # which is their mode that needs no recording.  All four already exit non-zero on
 # a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline tci_offline
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE)
 ifeq ($(HFDL_INCLUDE),HFDL)
-CHECK_BINS+=hfdl_offline acars_offline
+CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
 ifeq ($(SSTV_INCLUDE),SSTV)
-CHECK_BINS+=apt_offline sstv_offline cw_offline wefax_offline
+CHECK_BINS+=apt_offline$(EXE) sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE)
 endif
+
+# Build every harness `check` would run, and run none of them.  This is what the
+# cross-build harness (tools/win-crossbuild.sh) asks for: off Windows the
+# binaries cannot be executed, but "do the harnesses still COMPILE and LINK for
+# the other platform" is half the question and is answerable here.  It has to be
+# the flag-derived $(CHECK_BINS) rather than a hardcoded list, for the same
+# reason `check` does — a tree with HFDL_INCLUDE commented out must build what it
+# has, not fail on a harness it cannot link.
+.PHONY: check-build
+check-build: $(CHECK_BINS)
 
 .PHONY: check
 check: $(CHECK_BINS)
 	@fail=0; \
 	for h in $(CHECK_BINS); do \
 	  case $$h in \
-	    qo100_offline) args="" ;; \
+	    qo100_offline$(EXE)) args="" ;; \
 	    *)             args="--selftest" ;; \
 	  esac; \
 	  echo ""; \
@@ -983,10 +1008,11 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline sstv_offline cw_offline \
-	       wefax_offline tci_offline metis_emu
+	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM metis_emu.dSYM
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM metis_emu.dSYM \
+	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
 

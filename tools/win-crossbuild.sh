@@ -10,9 +10,10 @@
 #
 # It assembles a cross sysroot by unpacking MSYS2's own binary packages —
 # dependency-resolved from the repository database — and points a mingw-w64
-# cross-compiler at it.  What comes out is a genuine PE32+ machpsdr.exe, but
-# nothing here RUNS it.  It has been started under Wine, which answers "does it
-# load and come up" and nothing about WASAPI, winmm, COM ports or real adapters
+# cross-compiler at it.  What comes out is a genuine PE32+ machpsdr.exe and the
+# offline harnesses `make check` runs, but nothing here RUNS any of them.  The
+# .exe has been started under Wine, which answers "does it load and come up"
+# and nothing about WASAPI, winmm, COM ports or real adapters
 # — Wine reimplements exactly those.  For that you still need Windows.  The real
 # build is `make` inside MSYS2, which the Makefile's MINGW branch is written for.
 #
@@ -141,6 +142,20 @@ make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
      UNAME_S=MINGW64_NT-10.0 \
      CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar" WINDRES="$HOST-windres"
 
+# The offline harnesses, built but NOT run — nothing here can execute a PE.  They
+# are worth cross-building for two reasons.  They link a different set of objects
+# than the .exe does (no GTK symbols, no WDSP, no audio) with their own hand-
+# written command lines, so a Windows link error can hide in a rule the app never
+# reaches; and the MSYS2 CI workflow now RUNS them, which makes this the local
+# gate on whether that step can even get as far as starting.  `check-build` is
+# the flag-derived $(CHECK_BINS) list without the run, so a tree with HFDL off
+# (which is what happens here when liquid-dsp could not be built) asks for
+# exactly the harnesses it can link.
+make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
+     UNAME_S=MINGW64_NT-10.0 \
+     CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar" WINDRES="$HOST-windres" \
+     check-build
+
 echo
 echo "==> $WORK/build/machpsdr.exe"
 file "$WORK/build/machpsdr.exe"
@@ -152,3 +167,13 @@ file "$WORK/build/machpsdr.exe"
 "$HOST-objdump" -h "$WORK/build/machpsdr.exe" | grep -q '\.rsrc' \
   && echo "resources: .rsrc present (icon + VERSIONINFO)" \
   || echo "resources: NO .rsrc — the .exe has the default icon"
+
+# Named individually rather than counted: "8 harnesses" tells nobody WHICH one a
+# feature flag has quietly dropped.  Every one of these is a PE that has not been
+# executed — the MSYS2 workflow is the only place they run.
+echo
+echo "==> harnesses (built, never run):"
+for h in "$WORK"/build/*_offline.exe; do
+  [ -e "$h" ] || { echo "    none — check-build produced nothing"; break; }
+  echo "    $(basename "$h")"
+done

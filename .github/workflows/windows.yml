@@ -6,10 +6,15 @@
 # tools/win-crossbuild.sh covers the same tree from macOS/Linux for a fast local
 # check, but it has to switch HFDL off.
 #
-# Neither RUNS what it builds. The binary has been started under Wine — enough
-# to know it loads and comes up, nothing about WASAPI timing, winmm MIDI, COM
-# ports or real adapters, since Wine reimplements all of those. A real machine
-# is still the only thing that answers those.
+# The APP is still never run here — a runner has no display, no sound card and
+# no radio, and the .exe has only ever been started under Wine, which is enough
+# to know it loads and comes up and nothing about WASAPI timing, winmm MIDI, COM
+# ports or real adapters, since Wine reimplements all of those.
+#
+# The offline self-tests ARE run (`make check`, below), and that step is the only
+# place any of this tree's code executes on real Windows at all. It covers the
+# decoder/DSP layers and the C-runtime seams under them; see the comment on the
+# step for what that does and does not settle.
 
 name: Windows (MSYS2)
 
@@ -78,6 +83,36 @@ jobs:
 
       - name: Build
         run: make -j"$(nproc)"
+
+      # THE FIRST EXECUTION OF ANY OF THIS TREE'S CODE ON REAL WINDOWS.
+      #
+      # The offline harnesses are console programs with no GUI, no audio and no
+      # hardware, so they are the one part of the tree a CI runner can actually
+      # RUN — and running them exercises a great deal that compiling does not:
+      # every decoder's arithmetic (HFDL/ACARS through Viterbi and the ASN.1
+      # tree, APT georeferencing over SGP4, SSTV/WEFAX image scoring, the CW
+      # round trip and keyer state machine, the QO-100 beacon loop's sign), the
+      # LLP64 printf rules on a CRT that is not glibc, the time_compat.h and
+      # win_compat.h seams, and glib's own behaviour on Windows.  A wrong
+      # `%ld` over a size_t, a gmtime_r that is really gmtime_s with its
+      # arguments the other way round or a decoder that quietly depends on
+      # 64-bit long produce a WRONG ANSWER, not a compile error, and nothing
+      # before this step could see one.
+      #
+      # What it does NOT touch, and must not be written up as touching: WASAPI
+      # audio, winmm MIDI, serial CAT over a COM port, GetAdaptersAddresses
+      # against real adapters, GTK4's renderer, any dialog or gesture, and radio
+      # hardware of any kind.  A runner has no sound card, no display and no
+      # radio.  The self-tests also agree with their own modulators rather than
+      # with the air — a green run here says the code computes the same answers
+      # on Windows that it computes on macOS and Linux, and nothing more.
+      #
+      # Placed before Package deliberately: packaging is slow and only ships a
+      # binary, so there is no reason to build a folder around code whose
+      # arithmetic has just been shown wrong.  It runs after Build because it
+      # links against the objects Build produced.
+      - name: Run the offline self-tests
+        run: make check
 
       - name: Report
         run: |
