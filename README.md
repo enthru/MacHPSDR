@@ -1099,9 +1099,19 @@ Start it from the build directory:
 ```bash
 ./machpsdr                 # normal start (device discovery)
 ./machpsdr --usb-only      # skip network discovery (USB devices only)
+./machpsdr --open Hermes   # open a discovered radio straight away, no dialog
 ./machpsdr --faker ft8.wav # no hardware: loop an I/Q WAV through the RX chain
 ./machpsdr --debug         # verbose diagnostic logging
 ```
+
+**`--open <name|index>`** skips the device-selection window and opens a real
+discovered device, the way `--faker` does for the synthetic one. The argument is
+matched against the device *name*, case-insensitively, first match wins — so
+`--open Hermes` is stable across runs; a bare number is taken as an index into
+the discovered list instead, for when two radios share a name. If it matches
+nothing the selection window opens as usual and the reason is logged. Useful if
+you always work with the same radio, and needed for headless testing: a device
+that is discovered but never opened runs none of its protocol code.
 
 ### Logging
 
