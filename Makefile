@@ -931,17 +931,28 @@ app: $(PROGRAM)
 		-s $(WDSP_DIR) \
 		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
 
-	@# Remove duplicate LC_RPATH entries.
+	@# Collapse LC_RPATH to exactly one entry.
 	@# The binary is linked with two rpaths (@loader_path/wdsp and
 	@# @executable_path/../Frameworks); dylibbundler rewrites BOTH to its
-	@# -p prefix, collapsing them into two identical LC_RPATH entries.
-	@# Modern dyld refuses to load a binary with duplicate LC_RPATH, so the
-	@# bundled app crashes on launch. Delete the extra copies and re-sign.
-	@echo "De-duplicating LC_RPATH entries..."
+	@# -p prefix, leaving two identical LC_RPATH entries.  Modern dyld refuses to
+	@# load a binary with a duplicate LC_RPATH — the app dies at launch with
+	@# "Library not loaded ... (duplicate LC_RPATH '@executable_path/../
+	@# Frameworks/')" before main() runs.
+	@#
+	@# DELETE ALL, THEN ADD ONE.  The earlier version looped while an otool
+	@# line count was > 1 and stopped on the first failed delete, so anything
+	@# that made either step behave differently — a tool version that words the
+	@# line differently, a delete refused on a signed binary — left the
+	@# duplicates in place and the bundle crashed at launch.  It did that on the
+	@# CI runner while working on the developer's machine, which is exactly the
+	@# failure a build must not have.  Deleting until the tool says there is
+	@# nothing left to delete, then adding a single entry back, has no such
+	@# dependency: the end state is what the code asks for, not what the parse
+	@# happened to find.  Verified by the check at the end of this target.
+	@echo "Collapsing LC_RPATH to a single entry..."
 	@BIN=$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin; \
-		while [ $$(otool -l "$$BIN" | grep -c "path @executable_path/../Frameworks/ (offset") -gt 1 ]; do \
-			install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null || break; \
-		done; \
+		while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null; do :; done; \
+		install_name_tool -add_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null || true; \
 		codesign --force --sign - "$$BIN" 2>/dev/null || true
 
 	@# Copy and fix gdk-pixbuf loaders
@@ -951,9 +962,8 @@ app: $(PROGRAM)
 		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 \( -name "*.dylib" -o -name "*.so" \) | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
 				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
-			while [ $$(otool -l "$$lib" | grep -c "path @executable_path/../Frameworks/ (offset") -gt 1 ]; do \
-				install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null || break; \
-			done; \
+			while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null; do :; done; \
+			install_name_tool -add_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null || true; \
 			codesign --force --sign - "$$lib" 2>/dev/null || true; \
 		done; \
 		if [ -f "$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]; then \
@@ -1189,6 +1199,37 @@ app: $(PROGRAM)
 		&& echo "  bundle signature verifies" \
 		|| echo "  WARNING: bundle is unsigned - Gatekeeper will block it on another Mac"
 
+	@# ---- checks, and they FAIL the build ------------------------------------
+	@# The bundle that crashed at launch was built, uploaded and installed by a
+	@# green CI run: every step "succeeded" because nothing ever looked at what
+	@# came out.  These are the equivalent of win-package.sh's loaders.cache
+	@# assertions — cheap, and they turn a silently broken .app into a build
+	@# failure at the machine that built it.
+	@echo "Checking the bundle..."
+	@fail=0; \
+	BIN=$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin; \
+	for f in "$$BIN" $$(find $(APP_BUNDLE)/Contents/Frameworks $(APP_BUNDLE)/Contents/Resources/lib \
+	                      \( -name '*.dylib' -o -name '*.so' \) 2>/dev/null); do \
+		dup=$$(otool -l "$$f" 2>/dev/null | awk '$$1=="path" && $$3=="(offset" {print $$2}' | sort | uniq -d); \
+		if [ -n "$$dup" ]; then \
+			echo "  FAIL: duplicate LC_RPATH in $${f#$(APP_BUNDLE)/}: $$dup"; \
+			echo "        dyld refuses to load this - the app would die at launch."; \
+			fail=1; \
+		fi; \
+	done; \
+	miss=$$(otool -L "$$BIN" | tail -n +2 | awk '{print $$1}' | grep -v '^@' | grep -v '^/usr/lib/' | grep -v '^/System/'); \
+	if [ -n "$$miss" ]; then \
+		echo "  FAIL: the executable still loads libraries from outside the bundle:"; \
+		echo "$$miss" | sed 's/^/        /'; \
+		fail=1; \
+	fi; \
+	[ -f $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/schemas/gschemas.compiled ] || \
+		{ echo "  FAIL: no compiled GSettings schemas - GTK aborts at startup"; fail=1; }; \
+	[ -f $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache ] || \
+		{ echo "  FAIL: no gdk-pixbuf loaders.cache - no icon or image loads"; fail=1; }; \
+	[ $$fail -eq 0 ] || { echo "Bundle is broken; deleting it so it cannot be zipped, copied or installed by accident. Re-run 'make app' to reproduce."; rm -rf $(APP_BUNDLE); exit 1; }; \
+	echo "  rpaths single, dependencies self-contained, schemas and loaders present"
+
 	@# Summary
 	@echo ""
 	@echo "=========================================="
@@ -1203,5 +1244,7 @@ app: $(PROGRAM)
 	@echo "  - GLib schemas: $$(ls $(APP_BUNDLE)/Contents/Resources/share/glib-2.0/schemas/*.compiled 2>/dev/null | wc -l | xargs)"
 	@echo ""
 	@echo "Test with: open $(APP_BUNDLE)"
-	@echo "Install with: make install"
+	@# There is no `install` target in this Makefile (`make install` answers "No
+	@# rule to make target"), so do not send anyone to one.
+	@echo "Install by dragging $(APP_BUNDLE) to /Applications"
 	@echo "=========================================="
