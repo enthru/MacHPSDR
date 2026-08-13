@@ -1758,6 +1758,72 @@ static gboolean add_receiver_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
+// ---------------------------------------------------------------------------
+// MACHPSDR_RX_CHURN=<n> -- add and close a receiver n times, then quit.
+//
+// The add/close cycle is the one lifecycle in this program with no headless
+// test at all: it is reachable only by clicking Add Receiver and the panel's
+// close button, so nothing about delete_receiver -- which now FREES the
+// receiver, its WDSP channel and its analyzer -- could be exercised under a
+// sanitiser.  This hook drives it from a timer with the faker feeding real I/Q
+// through the whole chain, which is the only way to catch a teardown that races
+// the protocol thread rather than one that merely looks right:
+//
+//   HOME=$(mktemp -d) MACHPSDR_RX_CHURN=8 ./machpsdr --faker iq.wav
+//
+// built with SANITIZE=1.  It needs a device with a spare receiver slot (the
+// faker advertises two) and a display; a HOME of its own keeps it from
+// rewriting the operator's saved settings.  Zero cost when the variable is
+// unset -- one getenv at start-up.
+// ---------------------------------------------------------------------------
+static int churn_left;
+static int churn_done;
+
+static gboolean rx_churn_tick(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  if(churn_left<=0) {
+    log_info("rx-churn: %d add/close cycles completed, quitting\n",churn_done);
+    g_application_quit(g_application_get_default());
+    return FALSE;
+  }
+  // Find a receiver that is not channel 0: that is the one the close button
+  // exists on, and the only one receiver_close will let go of.
+  RECEIVER *victim=NULL;
+  for(int i=1;i<r->discovered->supported_receivers;i++) {
+    if(r->receiver[i]!=NULL) { victim=r->receiver[i]; break; }
+  }
+  if(victim==NULL) {
+    // add_receiver returns the slot it used, or supported_receivers when there
+    // was none free -- so the failure test is the index, not a truth value.
+    if(add_receiver(r,TRUE)>=r->discovered->supported_receivers) {
+      log_error("rx-churn: no spare receiver slot; nothing to churn\n");
+      churn_left=0;
+    }
+  } else {
+    receiver_close(victim);
+    churn_left--;
+    churn_done++;
+    log_info("rx-churn: cycle %d done, %d to go\n",churn_done,churn_left);
+  }
+  return TRUE;
+}
+
+static void rx_churn_init(RADIO *r) {
+  const char *e=g_getenv("MACHPSDR_RX_CHURN");
+  if(e==NULL || *e=='\0') return;
+  churn_left=atoi(e);
+  if(churn_left<=0) return;
+  if(r->discovered->supported_receivers<2) {
+    log_error("rx-churn: this device has one receiver; nothing to churn\n");
+    return;
+  }
+  log_info("rx-churn: %d add/close cycles requested\n",churn_left);
+  // 1500 ms: long enough that each receiver has streamed real blocks through
+  // its WDSP channel and its display timer has fired before it is torn down.
+  // A tighter cycle tests the teardown of a receiver that never ran.
+  g_timeout_add(1500,rx_churn_tick,(gpointer)r);
+}
+
 static gboolean add_wideband_cb(GtkWidget *widget,gpointer data) {
   RADIO *r=(RADIO *)data;
   add_wideband(r);
@@ -3128,6 +3194,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   // TCI control server (Phase A): remember the RADIO and auto-start if enabled.
   tci_init(r);
+
+  rx_churn_init(r);
 
   return r;
 }

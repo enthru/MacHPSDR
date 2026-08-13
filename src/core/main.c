@@ -217,6 +217,11 @@ static void dev_selection_changed(GObject *sel, GParamSpec *ps, gpointer data) {
 
 gboolean start_cb(GtkWidget *widget,gpointer data);  /* defined below; called for --faker */
 
+/* --open <name-substring|index>: NULL unless the operator asked to skip the
+ * device-selection window and open a real discovered device. See the CLI
+ * parsing and the discover() tail for what it does. */
+static const char *open_match=NULL;
+
 // Build (or rebuild) the selection list from discovered[].  Split out of
 // discover() because adding a network device by hand appends to discovered[]
 // without re-running discovery - the device has to show up straight away, and
@@ -359,6 +364,37 @@ static int discover(void *data) {
     }
     gtk_widget_realize(main_window);
     start_cb(NULL,NULL);
+  } else if(open_match!=NULL && devices>0) {
+    // --open: the same skip-the-dialog path for a REAL device. An all-digit
+    // argument is an index into the discovered list; anything else is matched
+    // against the device name, case-insensitively, first match wins.
+    int sel=-1;
+    char *end=NULL;
+    long idx=strtol(open_match,&end,10);
+    if(end!=NULL && *end=='\0' && idx>=0 && idx<devices) {
+      sel=(int)idx;
+    } else {
+      // g_ascii_strdown + strstr, not strcasestr: the latter is a GNU/BSD
+      // extension that MinGW does not have at all and that Linux hides behind
+      // _GNU_SOURCE, and a name match is not worth a platform seam.
+      char *needle=g_ascii_strdown(open_match,-1);
+      for(i=0;i<devices;i++) {
+        char *hay=g_ascii_strdown(discovered[i].name,-1);
+        gboolean hit=(strstr(hay,needle)!=NULL);
+        g_free(hay);
+        if(hit) { sel=i; break; }
+      }
+      g_free(needle);
+    }
+    if(sel<0) {
+      log_error("--open '%s' matched none of the %d discovered devices; "
+                "showing the selection window\n",open_match,devices);
+    } else {
+      log_info("--open '%s' -> device %d (%s)\n",open_match,sel,discovered[sel].name);
+      gtk_single_selection_set_selected(dev_selection, sel);
+      gtk_widget_realize(main_window);
+      start_cb(NULL,NULL);
+    }
   }
 
   gtk_widget_set_visible(main_window, TRUE);
@@ -930,6 +966,16 @@ int main(int argc, char **argv) {
         log_set_level(LOG_LEVEL_DEBUG);
       } else if(strcmp(argv[i],"--quiet")==0 || strcmp(argv[i],"-q")==0) {
         log_set_level(LOG_LEVEL_ERROR);
+      } else if(strcmp(argv[i],"--open")==0 && i+1<argc) {
+        // --open <name-substring|index>: skip the device-selection dialog and
+        // open a REAL discovered device, the way --faker does for the synthetic
+        // one.  Needed because a device that is discovered but never opened
+        // exercises none of its protocol code, so a headless protocol run (see
+        // tools/metis_emu.c) had no way to get past the dialog; it is equally
+        // the switch an operator with one radio wants.  Matching is on the
+        // discovered NAME so `--open Hermes` is stable across runs, with a bare
+        // number accepted as an index for the ambiguous case.
+        open_match=argv[++i];
       } else if(strcmp(argv[i],"--faker")==0) {
         enable_fake=1;
         // Optional following argument: the I/Q WAV to loop (e.g. --faker ft8.wav).

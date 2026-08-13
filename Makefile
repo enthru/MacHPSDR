@@ -308,9 +308,50 @@ CFLAGS= -g -O3 $(STD_FLAG) -Wall -Wextra \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
           $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
-          $(WIN_OPTIONS) \
+          $(WIN_OPTIONS) $(SAN_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
+
+# ---------------------------------------------------------------------------
+# AddressSanitizer / UndefinedBehaviorSanitizer:  `make SANITIZE=1 check`
+#
+#   make SANITIZE=1 check     every self-test, instrumented
+#   make SANITIZE=1           the app itself, instrumented (see the caveats)
+#
+# Switching SANITIZE on or off REBUILDS THE TREE, and does so by itself: the
+# marker below rides in OPTIONS, which is what .build-flags compares, so a
+# sanitised object can never be linked into an ordinary build or the other way
+# round.  That trap is not hypothetical here -- objects land in the repo root
+# under fixed names, so the two builds share every filename.
+#
+# -O1 rather than -O3: at -O3 the optimiser folds enough of the offending access
+# away that a report names a line nowhere near the bug, which is the single most
+# common reason a sanitiser run gets dismissed as noise.
+# -fno-sanitize-recover=undefined makes UBSan EXIT non-zero, so `make check`
+# fails on undefined behaviour instead of printing a warning into a log nobody
+# reads and passing.
+#
+# Two things it does NOT cover, both worth knowing before trusting a clean run:
+#
+#   * LEAKS ARE NOT DETECTED ON macOS.  LeakSanitizer has no Darwin support, so
+#     ASAN_OPTIONS=detect_leaks=1 is ignored here; this catches use-after-free,
+#     overflows and undefined behaviour, and says nothing about a leak.  Run it
+#     on Linux (or in CI) for the leak half.
+#   * The VENDORED trees build through their own Makefiles (wdsp/, hfdl_lib/asn1,
+#     sgp4sdp4/) and are NOT instrumented.  ASan still intercepts the allocator
+#     process-wide, so a use-after-free or heap overflow in memory those trees
+#     allocate is still caught -- what is missed is a stack or global overflow
+#     inside their own code.  No harness links libwdsp, so `make SANITIZE=1
+#     check` is fully instrumented over everything it actually exercises.
+# ---------------------------------------------------------------------------
+ifneq ($(SANITIZE),)
+SAN_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer \
+          -fno-sanitize-recover=undefined
+SAN_OPTIONS=-D MACHPSDR_SANITIZE
+CFLAGS+= $(SAN_FLAGS)
+CFLAGS:=$(patsubst -O3,-O1,$(CFLAGS))
+LDFLAGS+= $(SAN_FLAGS)
+endif
 
 # WDSP: use the in-tree copy (./wdsp) rather than the system-installed library.
 WDSP_DIR=wdsp
@@ -643,11 +684,12 @@ waterfall_theme.o \
 dxcluster.o \
 cluster_dialog.o \
 tci.o \
+tci_cw.o \
 tci_dialog.o
 
 
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
-	$(LINK) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
+	$(LINK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
 
 # Windows resources.  Both WIN_RES_OBJS and WIN_LDFLAGS above are EMPTY off
 # Windows and this rule does not exist there, so the two lines above are the
@@ -801,6 +843,51 @@ cw_offline: tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o $(GTKLIBS) -lm
 
+# Headless WEFAX harness: a synthesised radiofax transmission -- start tone,
+# then the picture -- straight into wefax_decoder.c, scored numerically against
+# what was sent.  WEFAX had no self-test of any kind; unlike SSTV there is no
+# encoder to pair with it (the app only receives fax), so this harness carries
+# its own modulator built from the published format numbers rather than from the
+# decoder's own timing table.  See the header comment for what that does and
+# does not prove.
+#   make wefax-offline && ./wefax_offline --selftest
+.PHONY: wefax-offline
+wefax-offline: wefax_offline
+# glib + gdk-pixbuf is the whole link, as with sstv_offline; the GTK cflags are
+# needed only because wefax_decoder.c reaches <gtk/gtk.h>.
+wefax_offline: tools/wefax_offline.c wefax_decoder.o image_save.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/wefax_offline.c \
+	  wefax_decoder.o image_save.o log.o \
+	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
+
+# Headless TCI harness.  tci.c as a whole needs a live client to mean anything,
+# but its cw_msg field split is both an INTERPRETATION of an ambiguous part of
+# the spec and a command that puts Morse on the air, so it gets a test.  Links
+# tci_cw.o alone -- the parser is pure glib, which is why it was split out.
+#   make tci-offline && ./tci_offline --selftest
+.PHONY: tci-offline
+tci-offline: tci_offline
+tci_offline: tools/tci_offline.c tci_cw.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o \
+	  $(shell pkg-config --libs glib-2.0)
+
+# A software HPSDR (Protocol-1) board: tools/metis_emu.c.  Not part of `make
+# check` -- it is a SERVER, not a self-test, and the thing it exists to drive is
+# the app itself.  "No hardware" is not "no protocol": this speaks enough of
+# Metis over UDP to be discovered and to stream EP6, which is the only way to
+# run protocol1.c's receive and output threads (and the delete_rx_mutex
+# discipline in them) without a radio -- the faker is PROTOCOL_FAKE and never
+# touches that code.  Pair it with MACHPSDR_RX_CHURN; see the header comment.
+#   make metis-emu && ./metis_emu &
+#   HOME=$(mktemp -d) MACHPSDR_RX_CHURN=20 ./machpsdr
+# Plain POSIX sockets, no glib, no GTK: it links against nothing in the tree.
+.PHONY: metis-emu
+metis-emu: metis_emu
+metis_emu: tools/metis_emu.c
+	$(CC) $(CFLAGS) -o $@ tools/metis_emu.c -lm
+
 qo100-offline: qo100_offline
 # The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
 # to be provable off air. Links qo100.o alone; the handful of application
@@ -824,12 +911,12 @@ qo100_offline: tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), the other three want --selftest,
 # which is their mode that needs no recording.  All four already exit non-zero on
 # a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline
+CHECK_BINS=qo100_offline tci_offline
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline acars_offline
 endif
 ifeq ($(SSTV_INCLUDE),SSTV)
-CHECK_BINS+=apt_offline sstv_offline cw_offline
+CHECK_BINS+=apt_offline sstv_offline cw_offline wefax_offline
 endif
 
 .PHONY: check
@@ -882,9 +969,10 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline sstv_offline cw_offline
+	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline sstv_offline cw_offline \
+	       wefax_offline tci_offline metis_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM metis_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
 
