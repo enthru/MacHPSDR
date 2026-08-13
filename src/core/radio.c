@@ -107,11 +107,11 @@ static GtkWidget *add_receiver_b;
 static GtkWidget *add_wideband_b;
 
 // Single source of truth for the "Add Receiver" button's sensitivity: another
-// receiver may be added only when no embedded panel (FT8/SSTV/WEFAX/CW) owns the
-// second-receiver slot and the device has a spare receiver. Every panel
-// create/destroy path re-evaluates this; keeping it in one place stops a new
-// panel type (or a missed site) from silently leaving the button clickable while
-// a panel occupies the slot.
+// receiver may be added only when no embedded panel owns the second-receiver
+// slot and the device has a spare receiver. Every panel create/destroy path
+// re-evaluates this; keeping it in one place stops a new panel type (or a
+// missed site) from silently leaving the button clickable while a panel
+// occupies the slot.
 static gboolean panels_idle(RADIO *r) {
   return r->ft8_panel==NULL && r->sstv_panel==NULL &&
          r->wefax_panel==NULL && r->cw_panel==NULL && r->apt_panel==NULL &&
@@ -299,13 +299,18 @@ void frequency_changed(RECEIVER *rx) {
     }
 
     if (radio->hl2 != NULL) {
+      // frequency_changed() is reached from create_receiver, i.e. before
+      // create_radio has built the button — hence the NULL test every other
+      // call site already carries.
       if (rx->lo_a != 0) {
         radio->hl2->xvtr = TRUE;
-        gtk_widget_set_sensitive(add_receiver_b, FALSE);
+        if(add_receiver_b!=NULL) gtk_widget_set_sensitive(add_receiver_b, FALSE);
         HL2clock2Status(radio->hl2, TRUE, &rx->lo_a);
       }
       else {
-        gtk_widget_set_sensitive(add_receiver_b, radio->ft8_panel==NULL && radio->sstv_panel==NULL && radio->wefax_panel==NULL);
+        // Leaving xvtr mode only lifts the HL2's own veto; whether a receiver
+        // may be added at all is still the one rule in panels_idle().
+        if(add_receiver_b!=NULL) gtk_widget_set_sensitive(add_receiver_b, panels_idle(radio));
         radio->hl2->xvtr = FALSE;
         HL2clock2Status(radio->hl2, FALSE, &rx->lo_a);
       }
@@ -493,7 +498,9 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
     }
   }
 
-  gtk_widget_set_sensitive(add_receiver_b,radio->ft8_panel==NULL && radio->sstv_panel==NULL && radio->wefax_panel==NULL && radio->receivers<radio->discovered->supported_receivers);
+  // radio->receivers has already been decremented above, so the spare-receiver
+  // half of the rule reads the post-delete count, as every other site does.
+  if(add_receiver_b!=NULL) gtk_widget_set_sensitive(add_receiver_b,panels_idle(radio));
   // Only tear the Configure dialog down when a *visible* receiver is deleted: its
   // per-RX page goes stale. A hidden receiver (diversity hidden RX, PureSignal
   // feedback RX) has no page, so deleting it — e.g. unticking "Enable diversity"
