@@ -134,9 +134,21 @@ static unsigned char high_priority_buffer_to_radio[1444];
 static unsigned char transmit_specific_buffer[60];
 static unsigned char receive_specific_buffer[1444];
 
+// Layout of the receive-specific ("DDC specific") register block, port 1025.
+// There are eight DDC I/Q ports (RX_IQ_TO_HOST_PORT_0..7), so eight DDCs, and
+// the per-DDC configuration blocks start at byte 17 with a stride of 6.
+#define MAX_DDC_CHANNELS 8
+// DDC synchronisation map: one byte per DDC starting here, bit k meaning "this
+// DDC is synchronised to DDC k", i.e. started on the same sample.  Written for
+// the PureSignal feedback pair and for the diversity pair; the offset itself is
+// UNVERIFIED against real gateware (no Protocol-2 board here) and is the first
+// thing to suspect if either pair arrives out of lock-step.
+#define DDC_SYNC_BASE    1363
+
 static gpointer protocol2_thread(gpointer data);
 static gpointer protocol2_timer_thread(gpointer data);
 static void  process_iq_data(RECEIVER *rx,unsigned char *buffer);
+static void  process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer);
 static void  process_wideband_data(WIDEBAND *w,unsigned char *buffer);
 #ifdef PURESIGNAL_P2
 static void  process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer);
@@ -983,6 +995,18 @@ static void protocol2_transmit_specific(void) {
 void protocol2_receive_specific(void) {
   int i;
 
+  // receive_specific_buffer is ONE static block that is memset, filled and then
+  // sent -- and this function is called from the 100 ms timer thread, from the
+  // GTK thread (protocol2_start_receiver, add_diversity_mixer) and from
+  // protocol2_start.  Without this lock two threads interleave a memset with
+  // another's fill and a HALF-BUILT register block goes on the wire.  Observed,
+  // not theorised: tools/p2_emu.c logs the DDC enable/sync map on change, and
+  // during start-up it saw the diversity sync map appear, vanish and reappear
+  // several times -- i.e. the radio was alternately told "DDC1 follows DDC0"
+  // and "DDC1 is a free-running receiver".  Static so it needs no init.
+  static GMutex rxspec_mutex;
+  g_mutex_lock(&rxspec_mutex);
+
   memset(receive_specific_buffer, 0, sizeof(receive_specific_buffer));
 
   receive_specific_buffer[0]=rx_specific_sequence>>24;
@@ -1005,6 +1029,70 @@ void protocol2_receive_specific(void) {
         receive_specific_buffer[19+(radio->receiver[i]->channel*6)]=(radio->receiver[i]->sample_rate/1000)&0xFF;
         receive_specific_buffer[22+(radio->receiver[i]->channel*6)]=24;
       }
+    }
+
+    // --- Diversity: sync DDC1 to DDC0 ------------------------------------
+    // Diversity combines two COHERENT streams, which Protocol 1 gets for free
+    // (its receivers' samples arrive interleaved in one frame off one clock).
+    // Protocol 2 normally gives each DDC its own UDP stream on its own port,
+    // which is NOT coherent -- so a synchronised pair is asked for explicitly,
+    // and the radio then answers in a different shape entirely:
+    //
+    //   openHPSDR Ethernet Protocol v3.5, bytes 1363..1442: "Sets the DDC that
+    //   DDC (n) is synchronised or multiplexed with... All DDC's frequencies
+    //   will be set to the frequency of the base DDC.  NOTE: For the time
+    //   being, due to FPGA size limitations and timing closure issues only DDC0
+    //   and DDC1 may be synchronised, WITH SYNCHRONISED DATA PRESENTED FROM
+    //   DDC0's OUTPUT."
+    //
+    // Three consequences, all of them load-bearing:
+    //
+    //  * The pair is DDC0 + DDC1 and nothing else.  Hence the guard in
+    //    diversity_dialog.c that refuses to enable diversity unless the visual
+    //    receiver is channel 0 and the hidden one channel 1.
+    //  * DDC1's ENABLE BIT IS LEFT CLEAR.  It is configured (ADC, rate, bits)
+    //    but not enabled: it does not stream on its own port, it rides DDC0's.
+    //    Setting the bit would ask for a stream nothing reads.
+    //  * DDC0's packets then carry BOTH streams, sample-interleaved, at twice
+    //    the sample count -- which is what process_div_iq_data() below unpacks.
+    //
+    // The sync byte is indexed by the BASE DDC and its bits name the FOLLOWERS
+    // ("if bit set then DDC (n) is synched to DDC 0"), so DDC1-follows-DDC0 is
+    // buffer[1363] |= 0x02, not buffer[1364] = 0x01.  pihpsdr and linhpsdr both
+    // write the literal `receive_specific_buffer[1363] = 0x02`.
+    //
+    // ADC assignment: visual DDC on ADC 0, hidden on ADC 1 -- two ADCs, i.e.
+    // two antennas, is the entire point.  create_receiver() already gives any
+    // channel!=0 an ADC of 1 on a two-ADC board, so this mostly restates it;
+    // stating it from the mixer means it cannot come apart.
+    //
+    // UNVERIFIED, and this is the half no emulator can settle: that real
+    // gateware honours this register as the document describes, and that the
+    // two ADCs of a given board are in fact phase-locked.  tools/p2_emu.c does
+    // read the sync map and does interleave accordingly, so the app's half is
+    // exercised end to end -- but the emulator was written from the same
+    // document, so it can only catch this code drifting from that reading, not
+    // a shared misreading of it.
+    for(i=0;i<MAX_DIVERSITY_MIXERS;i++) {
+      DIVMIXER *dmix=radio->divmixer[i];
+      if(dmix==NULL) continue;
+      RECEIVER *rxv=dmix->rx_visual;
+      RECEIVER *rxh=dmix->rx_hidden;
+      if(rxv==NULL || rxh==NULL) continue;
+      int cv=rxv->channel;
+      int ch=rxh->channel;
+      // Only the DDC0/DDC1 pair may be synchronised (see above).  Anything
+      // else is refused here rather than half-configured: the alternative is a
+      // radio streaming two unsynchronised DDCs into a mixer that assumes they
+      // are coherent, which looks like working diversity and is not.
+      if(cv!=0 || ch!=1) continue;
+      receive_specific_buffer[17+(cv*6)]=0;               // DDC0 -> ADC 0
+      receive_specific_buffer[17+(ch*6)]=1;               // DDC1 -> ADC 1
+      receive_specific_buffer[18+(ch*6)]=receive_specific_buffer[18+(cv*6)];
+      receive_specific_buffer[19+(ch*6)]=receive_specific_buffer[19+(cv*6)];
+      receive_specific_buffer[22+(ch*6)]=24;
+      receive_specific_buffer[DDC_SYNC_BASE+cv]|=(1<<ch); // DDC1 follows DDC0
+      receive_specific_buffer[7]&=~(1<<ch);               // ... and does not stream alone
     }
   }
 
@@ -1049,9 +1137,25 @@ void protocol2_receive_specific(void) {
         receive_specific_buffer[19+(ct*6)]=(ps_rate/1000)&0xFF;
         receive_specific_buffer[22+(ct*6)]=24;
 
-        // sync the post-PA DDC to the DUC DDC (byte 1363 is the DDC0 sync map
-        // in the P2 spec; one sync byte per DDC follows it).
-        receive_specific_buffer[1363+cr]=(1<<ct);
+        // Sync the post-PA DDC to the DUC DDC.  The sync byte is indexed by the
+        // BASE DDC and its bits name the FOLLOWERS, so this is [base] |= 1<<
+        // follower; it was written the other way round ([cr] = 1<<ct), i.e. the
+        // wrong byte AND the wrong bit, which for a DDC0/DDC1 pair says
+        // "DDC0 follows DDC1" instead of the reverse.  See DDC_SYNC_BASE.
+        //
+        // TWO THINGS HERE ARE STILL WRONG and are NOT fixed by this change,
+        // because PureSignal-over-P2 needs TX hardware to test and there is
+        // none (see CLAUDE.md, Verification status).  Recorded so the next
+        // person does not have to rediscover them:
+        //   1. The spec allows ONLY DDC0/DDC1 to be synchronised, but
+        //      ps_tx_fdbk_chan is 4 on Orion2 (protocol2_discovery.c), so this
+        //      asks to sync DDC3 to DDC4.  pihpsdr pins the feedback pair to
+        //      DDC0/DDC1 for exactly this reason.
+        //   2. A synchronised pair is presented INTERLEAVED ON THE BASE DDC's
+        //      port, so process_ps_iq_data()'s two-separate-streams model is
+        //      the wrong shape -- the diversity path below now does it the
+        //      other way, and PureSignal should follow it.
+        receive_specific_buffer[DDC_SYNC_BASE+ct]|=(1<<cr);
 
         receive_specific_buffer[7]|=(1<<ct)|(1<<cr); // enable both feedback DDCs
       }
@@ -1063,6 +1167,7 @@ void protocol2_receive_specific(void) {
       log_error("sendto socket failed for receive_specific: sequence=%ld\n",rx_specific_sequence);
     }
     rx_specific_sequence++;
+    g_mutex_unlock(&rxspec_mutex);
 }
 
 static void protocol2_start(void) {
@@ -1258,7 +1363,18 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
                 g_mutex_lock(&radio->delete_rx_mutex);
                 RECEIVER *rx=radio->receiver[ddc];
                 if(rx!=NULL) {
-                  process_iq_data(rx,buffer);
+                  // A synchronised DDC pair is presented on the BASE DDC's
+                  // port with both streams interleaved (see the diversity
+                  // block in protocol2_receive_specific), so this receiver's
+                  // packets carry its hidden partner's samples too.
+                  // rx->dmix_id's "none" value is a permanently-NULL sentinel
+                  // slot, so this needs no bounds test.
+                  DIVMIXER *dmix=radio->divmixer[rx->dmix_id];
+                  if(dmix!=NULL && dmix->rx_visual==rx && dmix->rx_hidden!=NULL) {
+                    process_div_iq_data(dmix,buffer);
+                  } else {
+                    process_iq_data(rx,buffer);
+                  }
                 }
                 g_mutex_unlock(&radio->delete_rx_mutex);
               }
@@ -1291,6 +1407,69 @@ log_info("protocol2_thread: Unknown port %d free %p\n",sourceport,buffer);
 
     closesocket(data_socket);
     return NULL;
+}
+
+// One 24-bit two's-complement sample, MSB first, normalised to +-1.
+// *65536 rather than <<16: a left shift of a NEGATIVE value is undefined
+// behaviour and half of every I/Q sample is negative (see process_iq_data).
+static inline double p2_sample24(const unsigned char *p) {
+  int s  = (int)(signed char)p[0]*65536;
+  s     |= (int)(((unsigned int)p[1]<<8)&0xFF00);
+  s     |= (int)((unsigned int)p[2]&0xFF);
+  return (double)s/8388607.0;   // 2^23-1, see the note in process_iq_data
+}
+
+// A SYNCHRONISED DDC PAIR ARRIVES AS ONE STREAM.
+//
+// Protocol 2 normally gives every DDC its own UDP port, and that is what
+// process_iq_data() above handles.  A pair synchronised through the sync map
+// is different in shape, not just in timing: the spec says the data is
+// "presented from DDC0's output", i.e. one packet on the base DDC's port
+// carrying both streams SAMPLE-INTERLEAVED -- base, follower, base, follower --
+// with the frame's sample count covering both, so the loop steps by two.
+// pihpsdr's process_div_iq_data() is the same function and was the reference.
+//
+// This is the whole reason the diversity register block enables only DDC0: a
+// second port would deliver nothing, and reading the pair off two ports would
+// be reading two free-running DDCs and calling them coherent.
+//
+// The visual receiver is fed FIRST and the hidden one second, and that order
+// matters: add_iq_samples() runs the mixer when the higher-numbered channel's
+// buffer completes, so the visual buffer must already be copied into the
+// mixer's stream 0 (diversity_add_buffer) when the hidden one triggers
+// diversity_mix_full_buffers().  Feeding them the other way round would mix
+// this block of hidden against the PREVIOUS block of visual -- one buffer of
+// skew, which is not a crash and not visible on a panadapter, it just quietly
+// destroys the coherence the whole feature rests on.
+//
+// Called with radio->delete_rx_mutex held (the caller in protocol2_thread
+// takes it), so both receivers are alive for the duration.
+static void process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer) {
+  if(buffer==NULL) return;
+  RECEIVER *rxv=dmix->rx_visual;
+  RECEIVER *rxh=dmix->rx_hidden;
+
+  long sequence=((buffer[0]&0xFF)<<24)+((buffer[1]&0xFF)<<16)+((buffer[2]&0xFF)<<8)+(buffer[3]&0xFF);
+  if(rxv->iq_sequence!=sequence) {
+    rxv->iq_sequence=sequence;
+  }
+  rxv->iq_sequence++;
+
+  int samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
+  // 6 bytes an I/Q sample after the 16-byte header; never walk past the packet
+  // even if a radio (or an emulator) lies about the count.
+  int maxpairs=(NET_BUFFER_SIZE-16)/6;
+  if(samplesperframe>maxpairs) samplesperframe=maxpairs;
+
+  int b=16;
+  for(int i=0;i+1<samplesperframe;i+=2) {
+    double lv=p2_sample24(&buffer[b]); b+=3;
+    double rv=p2_sample24(&buffer[b]); b+=3;
+    double lh=p2_sample24(&buffer[b]); b+=3;
+    double rh=p2_sample24(&buffer[b]); b+=3;
+    add_iq_samples(rxv,lv,rv);
+    add_iq_samples(rxh,lh,rh);
+  }
 }
 
 static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
@@ -1344,10 +1523,33 @@ static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
     rightsample |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
     rightsample |= (int)((unsigned char)buffer[b++]&0xFF);
 
-    //leftsampledouble=(double)leftsample/8388607.0; // for 24 bits
-    //rightsampledouble=(double)rightsample/8388607.0; // for 24 bits
-    leftsampledouble=(double)leftsample/16777215.0; // for 24 bits
-    rightsampledouble=(double)rightsample/16777215.0; // for 24 bits
+    // Full scale for a 24-bit two's-complement sample is 2^23-1, NOT 2^24-1.
+    // This divided by 16777215.0 (with the correct line sitting commented out
+    // right above it, which is how it arrived from LinHPSDR and how it still
+    // reads upstream today), so every Protocol-2 DDC sample entered the DSP at
+    // HALF amplitude -- 6 dB below Protocol 1 for the identical wire code, and
+    // 6 dB below this same file's own PureSignal feedback unpacking a hundred
+    // lines down, which always used 8388607.0.
+    //
+    // Measured against tools/p2_emu.c: a tone sent at 0.4 of 24-bit full scale
+    // came back as |z| = 0.199999.  Cross-checked against every independent
+    // implementation reachable -- dl1ycf/pihpsdr uses 1/2^23 in BOTH protocols
+    // (spelled 1.1920928955078125E-7, with a comment saying so), g0orx/pihpsdr
+    // divides by 8388608.0, and this tree's own protocol1.c uses 8388607.0.
+    // Nothing uses 2^24, and the openHPSDR Ethernet Protocol v3.5 document
+    // mandates no scale at all: it defines only "signed 2's complement, 24
+    // bits per sample" and leaves normalisation to the client, so there is no
+    // spec-level headroom convention this could have been implementing.
+    //
+    // FOR THE OPERATOR: this moves Protocol-2 S-meter and panadapter readings
+    // up by 6 dB.  They were the ones that were wrong -- P2 and P1 now agree,
+    // as do the RX and PureSignal paths within this file -- but a P2 operator
+    // with a remembered noise floor or a calibration offset will need to
+    // re-set it once.  Still UNVERIFIED against real P2 hardware (there is
+    // none here); the evidence is the emulator, the arithmetic and four
+    // independent implementations.
+    leftsampledouble=(double)leftsample/8388607.0; // for 24 bits, 2^23-1
+    rightsampledouble=(double)rightsample/8388607.0; // for 24 bits, 2^23-1
 
     add_iq_samples(rx, leftsampledouble,rightsampledouble);
   }

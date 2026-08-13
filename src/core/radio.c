@@ -457,9 +457,28 @@ void delete_wideband(WIDEBAND *w) {
 // diversity enabled would hang the whole UI on itself.  The public entry points
 // take the lock; the _locked bodies below do the work and call each other.
 static void delete_receiver_locked(RECEIVER *rx);
-static void delete_diversity_mixer_locked(DIVMIXER *dmix);
+// `except` is the receiver the caller is ALREADY deleting, if any: the mixer
+// owns its hidden RX and deletes it, but when the hidden RX is itself what is
+// being deleted, deleting it again from in here re-enters delete_receiver_locked
+// on a receiver whose slot has not been cleared yet -- it runs the whole
+// teardown, frees the struct, and returns into an outer frame still holding the
+// pointer.  A use-after-free, not a hang.  Not reachable by clicking (a hidden
+// RX has no close button) but reachable from MACHPSDR_RX_CHURN, and from any
+// future caller that closes a receiver it did not pick by eye.
+static void delete_diversity_mixer_locked(DIVMIXER *dmix, RECEIVER *except);
 
 void delete_receiver(RECEIVER *rx) {
+#ifdef SOAPYSDR
+  // SoapySDR keeps a receive thread and an RX stream PER RECEIVER; nothing else
+  // tears them down, so without this every close leaks both and the orphaned
+  // thread keeps calling readStream() for the life of the process.  It happens
+  // BEFORE the lock is taken and not inside delete_receiver_locked(): that
+  // thread takes delete_rx_mutex around every block it delivers, so joining it
+  // while holding the lock is a self-deadlock.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    soapy_protocol_stop_receiver(rx);
+  }
+#endif
   g_mutex_lock(&radio->delete_rx_mutex);
   delete_receiver_locked(rx);
   g_mutex_unlock(&radio->delete_rx_mutex);
@@ -482,7 +501,7 @@ static void delete_receiver_locked(RECEIVER *rx) {
   // this removes the mixer and hidden rx for that mixer
   if (radio->divmixer[rx->dmix_id] != NULL) {
     log_info("Not null, delete the hidden rx\n");
-    delete_diversity_mixer_locked(radio->divmixer[rx->dmix_id]);
+    delete_diversity_mixer_locked(radio->divmixer[rx->dmix_id], rx);
   }
 
   int reopen_rx = 0;
@@ -558,11 +577,11 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
 
 void delete_diversity_mixer(DIVMIXER *dmix) {
   g_mutex_lock(&radio->delete_rx_mutex);
-  delete_diversity_mixer_locked(dmix);
+  delete_diversity_mixer_locked(dmix, NULL);
   g_mutex_unlock(&radio->delete_rx_mutex);
 }
 
-static void delete_diversity_mixer_locked(DIVMIXER *dmix) {
+static void delete_diversity_mixer_locked(DIVMIXER *dmix, RECEIVER *except) {
   int hidden_channel = -1;
 
   for (int i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
@@ -582,8 +601,10 @@ log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
       break;
     }
   }
-  // Delete the hidden receiver
-  if (hidden_channel >= 0 && radio->receiver[hidden_channel] != NULL) {
+  // Delete the hidden receiver -- unless it is the receiver our caller is
+  // already deleting (see the forward declaration).
+  if (hidden_channel >= 0 && radio->receiver[hidden_channel] != NULL &&
+      radio->receiver[hidden_channel] != except) {
     log_info("delete_diversity_mixer: delete the hidden rx\n");
     delete_receiver_locked(radio->receiver[hidden_channel]);
   }
@@ -873,6 +894,15 @@ log_info("add_diversity_mixer: using diversity mixer %d\n",i);
     rx_visual->dmix_id = i;
     rx_hidden->dmix_id = i;
     radio->diversity_mixers++;
+    // Protocol 2 states the ADC pairing and the DDC sync map in the
+    // receive-specific register block, which is built from radio->divmixer[]
+    // -- so it has to go out AFTER the mixer exists.  The hidden receiver's own
+    // protocol2_start_receiver() ran a moment ago, while there was still no
+    // mixer to read, and the 100 ms timer would eventually resend it anyway;
+    // this is so the pair is not unsynced for those 100 ms.
+    if(r->discovered!=NULL && r->discovered->protocol==PROTOCOL_2) {
+      protocol2_receive_specific();
+    }
   } else {
 log_info("add_diversity_mixer: no diversity mixers available\n");
     i = -1;
@@ -1833,11 +1863,15 @@ static gboolean rx_churn_tick(gpointer data) {
     g_application_quit(g_application_get_default());
     return FALSE;
   }
-  // Find a receiver that is not channel 0: that is the one the close button
-  // exists on, and the only one receiver_close will let go of.
+  // Find a VISIBLE receiver that is not channel 0: that is the one the close
+  // button exists on, and the only one receiver_close will let go of.  The
+  // show_rx test is not cosmetic -- with diversity on, receiver 1 is the
+  // hidden RX, which has no close button and which an operator therefore
+  // cannot reach.  Churning it would be testing something the program does not
+  // do.
   RECEIVER *victim=NULL;
   for(int i=1;i<r->discovered->supported_receivers;i++) {
-    if(r->receiver[i]!=NULL) { victim=r->receiver[i]; break; }
+    if(r->receiver[i]!=NULL && r->receiver[i]->show_rx) { victim=r->receiver[i]; break; }
   }
   if(victim==NULL) {
     // add_receiver returns the slot it used, or supported_receivers when there
@@ -1853,6 +1887,87 @@ static gboolean rx_churn_tick(gpointer data) {
     log_info("rx-churn: cycle %d done, %d to go\n",churn_done,churn_left);
   }
   return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// MACHPSDR_DIVERSITY=1 -- switch diversity on at start-up, on receiver 0.
+//
+// Diversity is reachable only by ticking a checkbox on a Configure page, so
+// without this NOTHING about it can be exercised headlessly: not the mixer,
+// not the protocol-2 DDC pairing, and not the teardown of a receiver that
+// carries a mixer -- which is the path that once hung the whole UI by
+// re-locking a non-recursive GMutex.  Same shape and same reason as
+// MACHPSDR_RX_CHURN, and it composes with it:
+//
+//   ./p2_emu --diversity --div-phase 45 --pace 8 &
+//   HOME=$(mktemp -d) MACHPSDR_DIVERSITY=6 MACHPSDR_RX_CHURN=10 \
+//     ./machpsdr --open Angelia
+//
+// =1 just switches it on; a larger number also switches it off and on again
+// that many times, which is the teardown path (see diversity_test_init).
+//
+// Zero cost when unset -- one getenv at start-up.  It does exactly what
+// enable_cb() in diversity_dialog.c does, so it cannot drift into testing a
+// different thing than the operator gets.
+// ---------------------------------------------------------------------------
+static gboolean diversity_test_on(RADIO *r) {
+  RECEIVER *rx=r->receiver[0];
+  if(rx==NULL || rx->diversity) return FALSE;
+  if(r->discovered->protocol==PROTOCOL_2 && r->receiver[1]!=NULL) {
+    log_error("diversity-test: receiver 1 is in use; Protocol 2 needs the DDC0/DDC1 pair\n");
+    return FALSE;
+  }
+  int hidden=add_receiver(r,FALSE);
+  if(hidden<=0) {
+    log_error("diversity-test: no spare receiver slot for the hidden RX\n");
+    return FALSE;
+  }
+  if(add_diversity_mixer(r,rx,r->receiver[hidden])<0) {
+    log_error("diversity-test: no diversity mixer available\n");
+    return FALSE;
+  }
+  rx->diversity=TRUE;
+  log_info("diversity-test: enabled on rx 0, hidden rx is channel %d\n",hidden);
+  return TRUE;
+}
+
+static void diversity_test_off(RADIO *r) {
+  RECEIVER *rx=r->receiver[0];
+  if(rx==NULL || !rx->diversity) return;
+  if(radio->divmixer[rx->dmix_id]!=NULL) {
+    delete_diversity_mixer(radio->divmixer[rx->dmix_id]);
+  }
+  rx->diversity=FALSE;
+  log_info("diversity-test: disabled on rx 0\n");
+}
+
+static int div_toggles_left;
+
+static gboolean diversity_test_tick(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  if(div_toggles_left<=0) return FALSE;
+  if(r->receiver[0]!=NULL && r->receiver[0]->diversity) {
+    diversity_test_off(r);
+    div_toggles_left--;
+  } else {
+    diversity_test_on(r);
+  }
+  return TRUE;
+}
+
+static void diversity_test_init(RADIO *r) {
+  const char *e=g_getenv("MACHPSDR_DIVERSITY");
+  if(e==NULL || *e=='\0' || *e=='0') return;
+  if(!diversity_test_on(r)) return;
+  // A count above 1 also switches it off and on again that many times.  That
+  // is the teardown half: unticking the box runs delete_diversity_mixer(),
+  // which deletes the mixer AND its hidden receiver -- the mutually recursive
+  // pair that once hung the UI by re-locking a non-recursive GMutex, and now
+  // the only operator-reachable way to delete a receiver carrying a mixer
+  // (Protocol 2 pins diversity to receiver 0, which has no close button).
+  // 1300 ms, like the churn timer, so each mixer streams real blocks first.
+  div_toggles_left=atoi(e);
+  if(div_toggles_left>1) g_timeout_add(1300,diversity_test_tick,(gpointer)r);
 }
 
 static void rx_churn_init(RADIO *r) {
@@ -3241,6 +3356,10 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   // TCI control server (Phase A): remember the RADIO and auto-start if enabled.
   tci_init(r);
+
+  // Diversity must be on BEFORE the churn timer starts, so a cycle can close a
+  // receiver while a mixer is live.
+  diversity_test_init(r);
 
   rx_churn_init(r);
 

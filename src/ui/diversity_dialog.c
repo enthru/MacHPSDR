@@ -18,6 +18,7 @@
 */
 
 #include <gtk/gtk.h>
+#include "log.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -61,12 +62,26 @@ typedef struct _divpage {
 } DIVPAGE;
 
 // Does this device support diversity at all? It combines two coherent ADC
-// streams, so it needs Protocol 1 (the only path wired for it) — the fake
-// device is allowed too so the UI can be exercised — and at least two receivers.
+// streams, so it needs a protocol whose receive path is wired to deliver them:
+// Protocol 1, Protocol 2, or the fake device (allowed so the UI can be
+// exercised) — and at least two receivers.
+//
+// Protocol 2 additionally needs the radio to HAVE two ADCs. Protocol 1's gate
+// has never asked, and is deliberately left alone rather than tightened by a
+// change that is about P2: diversity there is long-standing behaviour and
+// narrowing it is not this change's business.
 static gboolean diversity_supported(RADIO *r) {
-  return r != NULL && r->discovered != NULL &&
-         (r->discovered->protocol == PROTOCOL_1 || r->discovered->protocol == PROTOCOL_FAKE) &&
-         r->discovered->supported_receivers >= 2;
+  if(r == NULL || r->discovered == NULL) return FALSE;
+  if(r->discovered->supported_receivers < 2) return FALSE;
+  switch(r->discovered->protocol) {
+    case PROTOCOL_1:
+    case PROTOCOL_FAKE:
+      return TRUE;
+    case PROTOCOL_2:
+      return r->discovered->adcs >= 2;
+    default:
+      return FALSE;
+  }
 }
 
 // The mixer for the active receiver, or NULL when diversity is off.
@@ -165,10 +180,27 @@ static void enable_cb(GtkWidget *widget, gpointer data) {
   gboolean want = gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 
   if(want && !rx->diversity) {
-    int hidden = add_receiver(r, FALSE);
-    if(hidden > 0) {
-      int m = add_diversity_mixer(r, rx, r->receiver[hidden]);
-      if(m > -1) rx->diversity = TRUE;
+    // Protocol 2 can only synchronise the DDC0/DDC1 pair (openHPSDR Ethernet
+    // Protocol v3.5: "only DDC0 and DDC1 may be synchronised"), and the hidden
+    // receiver takes the first free slot — so diversity is only offerable on
+    // receiver 0 with receiver 1 free. Refused rather than half-configured:
+    // going ahead would run the mixer over two UNSYNCHRONISED DDCs, which
+    // looks exactly like working diversity and is not.
+    gboolean ok = TRUE;
+    if(r->discovered->protocol == PROTOCOL_2 &&
+       (rx->channel != 0 || r->receiver[1] != NULL)) {
+      log_info("diversity: Protocol 2 needs the DDC0/DDC1 pair — enable it on "
+               "receiver 0 with receiver 1 free (this rx is channel %d, "
+               "receiver[1] is %s)\n",
+               rx->channel, r->receiver[1] ? "in use" : "free");
+      ok = FALSE;
+    }
+    if(ok) {
+      int hidden = add_receiver(r, FALSE);
+      if(hidden > 0) {
+        int m = add_diversity_mixer(r, rx, r->receiver[hidden]);
+        if(m > -1) rx->diversity = TRUE;
+      }
     }
   } else if(!want && rx->diversity) {
     if(rx->dmix_id >= 0 && rx->dmix_id < MAX_DIVERSITY_MIXERS &&
@@ -292,12 +324,15 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   if(diversity_supported(radio)) {
     gtk_label_set_markup(GTK_LABEL(note),
       "<small><i>Note: diversity reception combines two coherent ADC streams to null "
-      "interference / fight fading. Like PureSignal it is Protocol 1 only and has NOT\n"
-      "been verified on hardware in this fork. Requires testing on real hardware; use at your own risk.</i></small>");
+      "interference / fight fading. It has NOT been verified against a radio with two\n"
+      "coherent ADCs in this fork — only against software emulators, which prove the "
+      "plumbing and nothing about the hardware. Use at your own risk.\n"
+      "On Protocol 2 only the DDC0/DDC1 pair can be synchronised, so enable it on "
+      "receiver 0 with receiver 1 free.</i></small>");
   } else {
     gtk_label_set_markup(GTK_LABEL(note),
       "<small><i>This device does not support diversity reception (it needs Protocol 1 "
-      "and two receivers/ADCs), so it cannot be enabled here.</i></small>");
+      "or Protocol 2, two receivers and two ADCs), so it cannot be enabled here.</i></small>");
   }
   gtk_label_set_wrap(GTK_LABEL(note), TRUE);
   gtk_label_set_justify(GTK_LABEL(note), GTK_JUSTIFY_LEFT);
