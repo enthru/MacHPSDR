@@ -147,6 +147,23 @@ static void put24(unsigned char *p, double v) {
 
 // A steady complex tone at opt_tone_hz, phase carried across frames so the
 // panadapter shows one clean line rather than a smear of block-edge splatter.
+//
+// THE SIGN, and why it is not the obvious one.  The I/Q pair on the wire is
+// (left, right): process_ozy_byte() reads left first and hands the pair to
+// add_iq_samples(rx, left, right), which stores left at iq_input_buffer[2n] and
+// right at [2n+1] -- and WDSP reads that buffer as (Q, I), NOT (I, Q) (see
+// wdsp/analyzer.c Spectrum0 and the CLAUDE.md section of that name).  So the
+// complex signal the panadapter, the demodulator and every decoder see is
+// right + j*left, and a tone that must appear ABOVE the dial needs
+//
+//     right = cos(phase),  left = sin(phase)
+//
+// i.e. the cosine goes in the SECOND field of the pair.  This was written the
+// other way round for as long as the tool existed, so --tone 10000 put its line
+// 10 kHz BELOW the dial; measured through the TCI IQ stream (which carries true
+// (I, Q), tci_iq_feed() un-swaps it) as -9999.9 Hz before and +9999.9 Hz after.
+// Get this backwards anywhere and the tone lands on the wrong side of centre,
+// which is at least visible -- a tone at the centre would hide it.
 static double tone_phase = 0.0;
 
 static void build_usb_frame(unsigned char *f) {
@@ -162,11 +179,12 @@ static void build_usb_frame(unsigned char *f) {
   for (int s = 0; s < n; s++) {
     tone_phase += dphi;
     if (tone_phase > 2.0 * M_PI) tone_phase -= 2.0 * M_PI;
-    double i = 0.4 * cos(tone_phase);
-    double q = 0.4 * sin(tone_phase);
+    // Named for where they go on the wire, not I/Q: see the sign note above.
+    double left  = 0.4 * sin(tone_phase);
+    double right = 0.4 * cos(tone_phase);
     for (int r = 0; r < rx_count; r++) {
-      put24(&f[off], i); off += 3;
-      put24(&f[off], q); off += 3;
+      put24(&f[off], left);  off += 3;
+      put24(&f[off], right); off += 3;
     }
     off += 2;                       // mic sample: silence
   }
@@ -177,7 +195,8 @@ static void usage(const char *me) {
   fprintf(stderr,
     "usage: %s [--board N] [--version N] [--tone HZ] [--mac aa:bb:...] [--quiet]\n"
     "  --board    0 Metis, 1 Hermes (default), 4 Angelia, 5 Orion, 6 Hermes Lite\n"
-    "  --tone     baseband tone offset in Hz (default 10000)\n"
+    "  --tone     baseband tone offset in Hz, ABOVE the dial (default 10000);\n"
+    "             negative puts it below\n"
     "  --pace     stream at 1/N of real time (default 1 = real time);\n"
     "             use e.g. 8 to feed a SANITIZE=1 build it can keep up with\n", me);
 }
