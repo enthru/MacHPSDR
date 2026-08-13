@@ -1037,14 +1037,19 @@ app: $(PROGRAM)
 		cp $(BREW_PREFIX)/etc/gtk-4.0/settings.ini $(APP_BUNDLE)/Contents/Resources/etc/gtk-4.0/ 2>/dev/null || true; \
 	fi
 
-	@# Copy application PNG resources
+	@# Copy application PNG resources.
+	@# Resources/ and Resources/share/machpsdr/ ONLY — never Contents/MacOS/.
+	@# Both lookup paths (main.c and about_dialog.c) build
+	@# <exe dir>/../Resources/machpsdr.png explicitly, and the launcher cds to
+	@# Resources, so a copy beside the executable is never read — but codesign
+	@# treats everything in Contents/MacOS as code and refuses to seal the bundle
+	@# over a PNG it cannot sign ("In subcomponent: .../MacOS/machpsdr_icon.png").
 	@echo "Copying application resources..."
 	@mkdir -p $(APP_BUNDLE)/Contents/Resources/share/machpsdr
 	@for png in machpsdr.png machpsdr_icon.png machpsdr_small.png; do \
 		if [ -f "assets/$$png" ]; then \
 			cp "assets/$$png" $(APP_BUNDLE)/Contents/Resources/; \
 			cp "assets/$$png" $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
-			cp "assets/$$png" $(APP_BUNDLE)/Contents/MacOS/; \
 		fi; \
 	done
 	@# Bundle the FT8 DXCC country file (loaded from ../Resources/cty.dat).
@@ -1072,7 +1077,7 @@ app: $(PROGRAM)
 		sips -z 256 256 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256.png >/dev/null 2>&1; \
 		sips -z 512 512 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_256x256@2x.png >/dev/null 2>&1; \
 		sips -z 512 512 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512.png >/dev/null 2>&1; \
-		sips -z 1024 1024 machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
+		sips -z 1024 1024 assets/machpsdr_icon.png --out $(APP_NAME).iconset/icon_512x512@2x.png >/dev/null 2>&1; \
 		iconutil -c icns $(APP_NAME).iconset -o $(APP_BUNDLE)/Contents/Resources/$(APP_NAME).icns 2>/dev/null || true; \
 		rm -rf $(APP_NAME).iconset; \
 	fi
@@ -1166,6 +1171,23 @@ app: $(PROGRAM)
 	@# libusb handling in the SoapySDR-module bundling step.
 	@echo "Re-signing binary (plain ad-hoc)..."
 	@codesign --force --sign - $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin 2>/dev/null || true
+
+	@# ...and the BUNDLE, which is a separate object from the binary inside it.
+	@# Signing only the executable leaves the .app itself "not signed at all"
+	@# (no Contents/_CodeSignature), which is invisible when the bundle is built
+	@# and launched on the same machine — nothing evaluates it — and is what
+	@# Gatekeeper looks at the moment the .app is COPIED anywhere: a download, an
+	@# artifact, an AirDrop, a USB stick, all of which set the quarantine bit.
+	@# Ad-hoc still is not notarized, so a first launch elsewhere needs
+	@# System Settings -> Privacy & Security -> "Open Anyway" (or
+	@# `xattr -dr com.apple.quarantine`), but an unsigned bundle cannot even get
+	@# that far reliably. Same plain ad-hoc identity, and the entitlement warning
+	@# above applies here too.
+	@echo "Signing the bundle (plain ad-hoc)..."
+	@codesign --force --sign - $(APP_BUNDLE) 2>/dev/null \
+		&& codesign --verify --strict $(APP_BUNDLE) 2>/dev/null \
+		&& echo "  bundle signature verifies" \
+		|| echo "  WARNING: bundle is unsigned - Gatekeeper will block it on another Mac"
 
 	@# Summary
 	@echo ""
