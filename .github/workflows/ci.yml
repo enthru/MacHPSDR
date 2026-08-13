@@ -1,0 +1,110 @@
+# Build + offline self-tests on the two platforms this fork is actually run on.
+#
+# windows.yml compiles the one target that has never been run on real hardware
+# and runs nothing.  This is the other half: it builds the tree on Linux and
+# macOS and then runs `make check`, which is every offline self-test in the tree
+# (qo100_offline, and hfdl_offline/acars_offline/apt_offline --selftest,
+# whichever the feature flags left linkable).  The most recent reason for this
+# file existing is commit 661d476 — the HFDL harness had not linked since VHF
+# ACARS landed and nobody noticed, because nothing ever built it.
+#
+# What this proves: the tree compiles and links on both platforms, the four
+# harnesses still LINK (half the value — that is the failure that went unseen),
+# and the DSP/decoder layers they cover still produce the expected answers.
+#
+# What it does NOT prove, and must never be written up as proving:
+#   - anything about radio hardware.  No HPSDR, no SoapySDR device, no TX.  The
+#     self-tests synthesise their own signal; a passing run says the decoder
+#     agrees with the test's own modulator, not with the air.
+#   - anything about the audio backends.  A runner has no sound card; CoreAudio,
+#     ALSA, PulseAudio and JACK are linked here and never opened.
+#   - anything about the GUI.  The binary is built and deliberately NEVER
+#     STARTED — starting it raises a window and rewrites saved settings, which
+#     is why CLAUDE.md forbids it as a test even locally, and there is no
+#     display on a runner anyway.
+#   - anything about Windows.  That is windows.yml, and it does not run either.
+
+name: Build + self-tests (macOS, Linux)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Not fail-fast: "broken on both" and "broken on one" are different bugs,
+      # and cancelling the sibling job throws away exactly that distinction.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The Makefile stamps the build from `git describe`, which needs tags.
+          fetch-depth: 0
+
+      # CLAUDE.md's own dependency list, verbatim.  Every package here is in
+      # noble's universe, which the runner image enables by default.
+      #
+      # zlib1g-dev is the one addition: HFDL's Linux branch links -lz (OHMA and
+      # MIAM inflate their payloads) and CLAUDE.md's apt line predates that.
+      # It is preinstalled on the runner; naming it means this file still works
+      # on an image that stops preinstalling it.
+      #
+      # No liquid-dsp source build here, unlike windows.yml — that exists only
+      # because MSYS2 does not package it.  Ubuntu does (universe), so there is
+      # nothing expensive to cache: apt and brew are both a fast download of
+      # prebuilt packages.  Note the versions differ across the three jobs
+      # (noble 1.6.0, Homebrew 1.8.x, windows.yml pinned to v1.7.0); that is
+      # tolerated rather than papered over because hfdl_frame.c already
+      # branches on liquid_libversion_number() for the msequence_create
+      # argument convention that changed at 1.6.0, and running both sides of
+      # that branch in CI is worth more than making the versions match.
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfftw3-dev \
+            libpulse-dev \
+            libsoundio-dev \
+            libasound2-dev \
+            libgtk-4-dev \
+            libsoapysdr-dev \
+            libliquid-dev \
+            zlib1g-dev
+
+      # dylibbundler is deliberately absent: it is only needed by `make app`,
+      # and this job does not package.  gnome-icon-theme is an alias for
+      # adwaita-icon-theme and is a runtime resource rather than a build
+      # dependency, but it is kept so this list stays the one CLAUDE.md
+      # documents — a CI environment that has quietly drifted from the
+      # documented one is worse than a slightly over-broad install.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        env:
+          # Every formula here is long-established, so the several minutes an
+          # index refresh costs buys nothing.
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp
+
+      # `getconf`, not `nproc`: macOS has no nproc.  This also builds the
+      # vendored trees (wdsp/, ft8_lib/, sgp4sdp4/, hfdl_lib/asn1/) through
+      # their own makefiles, so a break in any of them shows up here.
+      - name: Build
+        run: make -j"$(getconf _NPROCESSORS_ONLN)"
+
+      # Builds and runs the harnesses.  Each already exits non-zero on a failed
+      # assertion and `check` stops at the first, so a failure names itself.
+      # This is the whole test surface: no GUI binary is started.
+      - name: Self-tests
+        run: make check
