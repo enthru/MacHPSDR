@@ -1,0 +1,67 @@
+# LeakSanitizer suppressions for the ASan/UBSan/LSan CI job
+# (.github/workflows/ci.yml, job `sanitize`).  Wired in with
+# LSAN_OPTIONS=suppressions=tools/lsan-suppressions.txt.
+#
+# LeakSanitizer runs only on Linux -- it has no macOS support, which is why
+# `make SANITIZE=1 check` locally on a Mac says nothing about leaks and this
+# file only ever matters in CI.
+#
+# THE RULE THIS FILE LIVES OR DIES BY: a suppression must be narrow enough that
+# it cannot hide a leak of OURS.  The whole point of the job is to name our own
+# leaks with a stack; an entry broad enough to swallow one (`leak:libglib`,
+# `leak:g_malloc`, `leak:libgtk`) would leave the job green and useless, which
+# is strictly worse than not having the job at all.  So:
+#
+#   * suppress by the UPSTREAM FUNCTION that allocates and forgets, and never by
+#     an allocator (`malloc`, `g_malloc`, `calloc`) -- those match everything.
+#     A whole library is a last resort, allowed only when the library is
+#     stripped so there is no symbol to name AND nothing in this tree can call
+#     into it except through one well-understood upstream path; the fontconfig
+#     entry below is the only one that qualifies, and says so.
+#   * `leak:<name>` matches when <name> appears ANYWHERE in the allocation
+#     stack, so a name that our code also calls, directly or transitively,
+#     suppresses our frames too.  Every entry below names a function this tree
+#     never calls and cannot reach except through the one upstream path
+#     described in its comment.
+#   * every entry says what it covers and why it is not our bug.  An
+#     uncommented suppression is indistinguishable from a bug swept under the
+#     rug six months later.
+#
+# Adding one is the LAST resort.  A leak whose stack has any of our own frames
+# doing the forgetting is a bug to fix, not an entry to write here: the 20 MB
+# `g_new` in tools/apt_offline.c's noise case was found by this job and fixed
+# rather than suppressed.
+
+# --- fontconfig -------------------------------------------------------------
+# By far the biggest entry, and the one that made this job possible: ~256 kB in
+# ~8800 allocations across ~1900 records for a single churn run, which is 95 %
+# of everything LeakSanitizer reports and would have buried our own leaks
+# completely.
+#
+# fontconfig caches every pattern, charset and language set it builds for the
+# process lifetime and provides no teardown except FcFini(), which GTK never
+# calls (and could not safely call while pango still holds font maps).  Nothing
+# in this tree calls into fontconfig directly at all -- it is reached only
+# through pango/cairo font lookup underneath gtk_widget_create_pango_layout()
+# and friends, so no allocation of ours can pass through it and be hidden here.
+#
+# Suppressed by MODULE and not by symbol only because the distro libfontconfig
+# is stripped: 1588 of the 1887 records have no function name for any
+# fontconfig frame at all, so `leak:FcValueSave` (the one symbol that does
+# resolve) would catch a sixth of them and leave the rest as noise.
+leak:libfontconfig
+
+# --- liquid-dsp -------------------------------------------------------------
+# 72 bytes per half-band stage, leaked while DESIGNING a resampler's filter.
+# msresamp_crcf_create -> msresamp2_crcf_create -> resamp2_crcf_create ->
+# liquid_firdespm_halfband_ft -> qs1dsearch_create, and liquid never calls the
+# matching qs1dsearch_destroy.  It is the filter-design search object, entirely
+# internal to liquid: nothing in this tree has ever named qs1dsearch, and this
+# tree's own handle IS released -- hfdl_demod_destroy() calls
+# msresamp_crcf_destroy() on the resampler in every path.  Measured at 216
+# bytes in 3 objects for `hfdl_offline --selftest` (liquid 1.6.0, Ubuntu
+# noble), i.e. once per resampler ever built, not once per block -- an upstream
+# construction-time leak, not something that grows.
+# HFDL and VHF ACARS both build one of these per channel, so it is reached from
+# hfdl_demod_create_at() and nowhere else.
+leak:qs1dsearch_create

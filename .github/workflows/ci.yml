@@ -18,10 +18,13 @@
 #     agrees with the test's own modulator, not with the air.
 #   - anything about the audio backends.  A runner has no sound card; CoreAudio,
 #     ALSA, PulseAudio and JACK are linked here and never opened.
-#   - anything about the GUI.  The binary is built and deliberately NEVER
-#     STARTED — starting it raises a window and rewrites saved settings, which
-#     is why CLAUDE.md forbids it as a test even locally, and there is no
-#     display on a runner anyway.
+#   - anything about the GUI.  In the `build` job the binary is built and
+#     deliberately NEVER STARTED — starting it raises a window and rewrites
+#     saved settings, which is why CLAUDE.md forbids it as a test even locally.
+#     The `sanitize` job below is the one exception and buys its way out of
+#     both objections: Xvfb rather than the operator's display, and a
+#     throw-away HOME rather than the operator's settings.  It still walks only
+#     the few paths its churn hook drives, not "the GUI".
 #   - anything about Windows.  That is windows.yml, and it does not run either.
 
 name: Build + self-tests (macOS, Linux)
@@ -165,3 +168,232 @@ jobs:
           name: MacHPSDR-app-arm64
           path: MacHPSDR-arm64.zip
           if-no-files-found: error
+
+  # ===========================================================================
+  # ASan + UBSan + LeakSanitizer, Linux only.
+  #
+  # LINUX ONLY IS THE WHOLE POINT.  `make SANITIZE=1 check` already runs on a
+  # Mac and catches use-after-free, overflows and undefined behaviour there, so
+  # a macOS copy of this job would add nothing — but LeakSanitizer has no
+  # Darwin support at all, so ASAN_OPTIONS=detect_leaks=1 is silently ignored
+  # and half of what the sanitisers are for is unreachable on the machine this
+  # fork is developed on.  This job is that half.
+  #
+  # It does two things the `build` job cannot:
+  #
+  #   1. runs the whole offline self-test set instrumented, with leak detection
+  #      ON.  Its first run found a 20 MB buffer that apt_offline's noise case
+  #      never freed, and an upstream liquid-dsp one — neither visible to any
+  #      number of macOS runs.
+  #   2. STARTS THE GUI, under Xvfb, with MACHPSDR_RX_CHURN driving the
+  #      add/close cycle that is otherwise reachable only by clicking.  That
+  #      cycle ends in delete_receiver, which frees the receiver, its WDSP
+  #      channel and its analyzer; before it existed a close leaked ~1.2 GB.
+  #      Whether anything is STILL leaked per cycle was an open question in
+  #      CLAUDE.md that no macOS run could answer, and answering it needs the
+  #      program actually run, not a harness linked against parts of it.
+  #
+  # WHAT A GREEN RUN HERE PROVES, AND NOTHING MORE:
+  #   - the self-tests are clean under ASan/UBSan/LSan on Linux;
+  #   - the paths the churn hook actually walks are free of ASan errors and of
+  #     unreachable leaks: start-up, discovery, create_receiver/create_visual,
+  #     add_receiver, receiver_close/delete_receiver, and the DSP + panadapter
+  #     + waterfall + VFO code that runs while a receiver is streaming.
+  #
+  # WHAT IT SAYS NOTHING ABOUT, and must never be written up as covering:
+  #   - PROTOCOL 2 and SoapySDR.  The faker is PROTOCOL_FAKE and metis_emu is
+  #     Protocol 1; neither goes near protocol2.c or soapy_protocol.c, so their
+  #     receive threads and their teardown remain reasoned-and-compiled only.
+  #   - the audio backends.  A runner has no sound card: soundio falls back to
+  #     its Dummy backend, so ALSA, PulseAudio, JACK and CoreAudio are linked
+  #     and never opened.
+  #   - THE GUI, in any general sense.  Nothing here clicks a dialog, opens a
+  #     Configure page, drags the panadapter or selects a decoder.  Two windows
+  #     and one timer-driven button path is the entire surface.
+  #   - TX anything.  MOX is never keyed.
+  #   - LEAKS THAT ARE STILL REACHABLE.  LeakSanitizer reports blocks nothing
+  #     points at any more.  A list that only ever grows, or a cache that is
+  #     never evicted, is reachable from a global and is INVISIBLE here — so
+  #     "no leaks" means "nothing unreachable was left behind", which is not
+  #     the same claim as "memory does not grow".
+  #   - anything about radio hardware.  metis_emu is a program in this tree
+  #     answering the protocol-1 packet layout this tree also parses; it agrees
+  #     with our own reading of the protocol, not with a board.
+  sanitize:
+    name: ubuntu-latest (ASan + UBSan + LeakSanitizer)
+    runs-on: ubuntu-latest
+
+    # A SEPARATE JOB, not another matrix leg of `build`, and it has to be:
+    # SANITIZE=1 rides in OPTIONS, .build-flags compares OPTIONS, and objects
+    # land in the repo root under fixed names — so a sanitised and an ordinary
+    # build of this tree cannot share a checkout without silently rebuilding
+    # each other from scratch, or worse, linking a mixture.
+    env:
+      # detect_leaks is on by default for ASan on Linux; named anyway so that
+      # reading this job tells you what it is doing.
+      ASAN_OPTIONS: detect_leaks=1
+      # Deliberately NOT fast_unwind_on_malloc=0.  It gives prettier stacks and
+      # costs an unwind on every allocation, which under FFTW's wisdom planning
+      # (tens of millions of allocations on a cold HOME) turned a 4-minute
+      # start-up into one that had not finished in fifteen.  The tree is built
+      # -fno-omit-frame-pointer, so the fast unwinder's stacks are good enough
+      # to name a leak; every stack quoted in the fixes this job produced came
+      # out of it.
+      # print_suppressions=1 on purpose: it prints a per-template count and byte
+      # total at exit even on a green run, which is the only way anyone notices
+      # a suppression quietly growing to cover something it should not.  Three
+      # lines of log for the one number that keeps this file honest.
+      LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan-suppressions.txt:print_suppressions=1
+      UBSAN_OPTIONS: print_stacktrace=1
+      # GTK4 on a headless runner: Xvfb is a plain X server with no GL, so name
+      # the X11 backend rather than letting GDK look for Wayland first, and put
+      # GSK on its software renderer.  ngl/vulkan both fail here and GSK's
+      # fallback chain is noisy about it; cairo just works.
+      GDK_BACKEND: x11
+      GSK_RENDERER: cairo
+      LIBGL_ALWAYS_SOFTWARE: 1
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The `build` job's Linux list, plus xvfb/xauth for the two churn steps.
+      # xauth is not optional: xvfb-run writes an auth file and X refuses the
+      # connection without it.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfftw3-dev \
+            libpulse-dev \
+            libsoundio-dev \
+            libasound2-dev \
+            libgtk-4-dev \
+            libsoapysdr-dev \
+            libliquid-dev \
+            zlib1g-dev \
+            xvfb xauth
+
+      # Both the app and metis_emu, so the second churn step has its radio.
+      # The serial retry is the `build` job's, for the same reason: an
+      # instrumented build is no more readable in parallel than an ordinary one.
+      - name: Build (SANITIZE=1)
+        run: |
+          make SANITIZE=1 -j"$(getconf _NPROCESSORS_ONLN)" metis-emu && exit 0
+          echo "::group::parallel build failed - rebuilding serially for a readable error"
+          make SANITIZE=1 -j1 metis-emu
+
+      # The same harnesses the `build` job runs, instrumented and with leak
+      # detection on.  UBSan is built -fno-sanitize-recover=undefined, so
+      # undefined behaviour exits non-zero here rather than printing a warning
+      # into a log nobody reads.
+      - name: Self-tests under ASan + UBSan + LSan
+        run: make SANITIZE=1 check
+
+      # --- the churn runs ---------------------------------------------------
+      #
+      # HOME is a directory of this job's own, for the reason CLAUDE.md gives:
+      # the app rewrites its saved settings on exit, and a shared HOME would
+      # also mean the second step inherits the first's props.  It is shared
+      # BETWEEN the two churn steps on purpose, though — WDSP plans its FFT
+      # wisdom into $HOME on first run and that takes minutes under ASan, so
+      # the second step reuses what the first one planned.
+      - name: Prepare a throw-away HOME
+        run: |
+          echo "MACHPSDR_HOME=$(mktemp -d)" >> "$GITHUB_ENV"
+
+      # PROTOCOL_FAKE.  --faker with no file synthesises noise + tones and
+      # skips the device-selection window, and the fake device advertises two
+      # receivers, which is what gives rx_churn_tick a spare slot to work with.
+      #
+      # The `cycles completed` check is the load-bearing part of this step.
+      # A run that died during start-up leaks almost nothing and exits 0, so
+      # without it the step would go green precisely when it had tested
+      # nothing — the failure mode a CI job like this is most likely to rot
+      # into.
+      - name: Leak check - receiver add/close, fake device
+        run: |
+          set -u
+          export HOME="$MACHPSDR_HOME"
+          export MACHPSDR_RX_CHURN=6
+          rc=0
+          timeout -k 30 2400 xvfb-run -a -s "-screen 0 1280x900x24" \
+            ./machpsdr --faker > churn-faker.log 2>&1 || rc=$?
+          echo "machpsdr exited $rc"
+          grep -E "rx-churn" churn-faker.log || true
+          if ! grep -q "add/close cycles completed" churn-faker.log; then
+            echo "::error::the churn never ran to completion - this step proved nothing"
+            tail -80 churn-faker.log
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::sanitiser report"
+            sed -n '/ERROR: \(Address\|Leak\|Undefined\)/,$p' churn-faker.log
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      # PROTOCOL 1, through tools/metis_emu.c — a software HPSDR board, a
+      # separate process speaking real UDP.  This is the only thing in the tree
+      # that runs protocol1.c's receive thread, its EP2 command stream and the
+      # output path reached from inside add_iq_samples, all of which take
+      # delete_rx_mutex around radio->receiver[] and none of which the faker
+      # goes near.  It is also the run that found protocol 1's output-path
+      # self-deadlock in the first place.
+      #
+      # --pace 8 is not a nicety: an instrumented build is about an order of
+      # magnitude slower than wall clock, so a real-time 192 kHz feed buries it
+      # and the app freezes on its last frame with the churn timer never
+      # firing.  That is the harness outrunning the app, not a bug in either.
+      #
+      # metis_emu is killed in an `always()` step rather than at the end of
+      # this one, so a timeout here cannot leave it running.
+      - name: Leak check - receiver add/close, Protocol 1 (metis_emu)
+        run: |
+          set -u
+          export HOME="$MACHPSDR_HOME"
+          export MACHPSDR_RX_CHURN=4
+          ./metis_emu --pace 8 --quiet > metis-emu.log 2>&1 &
+          sleep 2
+          rc=0
+          timeout -k 30 2400 xvfb-run -a -s "-screen 0 1280x900x24" \
+            ./machpsdr --open Hermes > churn-p1.log 2>&1 || rc=$?
+          echo "machpsdr exited $rc"
+          grep -E "rx-churn|--open" churn-p1.log || true
+          if ! grep -q "add/close cycles completed" churn-p1.log; then
+            echo "::error::the churn never ran to completion - this step proved nothing"
+            echo "::group::metis_emu"; tail -30 metis-emu.log; echo "::endgroup::"
+            tail -80 churn-p1.log
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::sanitiser report"
+            sed -n '/ERROR: \(Address\|Leak\|Undefined\)/,$p' churn-p1.log
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      # pkill on the name, not a PID carried through GITHUB_ENV: this step runs
+      # even when an earlier one failed and never started the emulator, and
+      # `kill "${PID:-0}"` with the variable unset is `kill 0`, which signals
+      # the whole process group — i.e. the runner's own step shell.  The
+      # bracket in '[m]etis_emu' keeps the pattern from matching pkill itself.
+      - name: Stop metis_emu
+        if: always()
+        run: pkill -f '[m]etis_emu' || true
+
+      # The logs are the product of this job when it fails: a sanitiser report
+      # is a hundred lines of stack that the step summary truncates.  Uploaded
+      # only on failure — a green run's logs are 40 MB of DSP chatter nobody
+      # will ever open.
+      - name: Upload churn logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitize-logs
+          path: |
+            churn-faker.log
+            churn-p1.log
+            metis-emu.log
+          if-no-files-found: warn
