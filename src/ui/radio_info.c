@@ -106,7 +106,12 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
   gtk_box_append(GTK_BOX(row_bot),info->midi_b);
 #endif
 
-  g_object_set_data ((GObject *)info->radio_info,"info_data",info);
+  // _full with g_free: RADIO_INFO is a plain g_new block that nothing else
+  // owns, so a bare g_object_set_data() leaks it every time the receiver's
+  // widget tree goes away.  Same bug, same shape, as create_vfo()'s VFO_DATA;
+  // LeakSanitizer measured 64 bytes per add/close cycle under
+  // MACHPSDR_RX_CHURN.
+  g_object_set_data_full((GObject *)info->radio_info,"info_data",info,g_free);
 
   return info->radio_info;
 }

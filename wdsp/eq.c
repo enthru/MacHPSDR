@@ -191,6 +191,13 @@ EQP create_eqp (int run, int size, int nc, int mp, double *in, double *out, int 
 void destroy_eqp (EQP a)
 {
 	destroy_fircore (a->p);
+	// a->F and a->G are malloc0'd in create_eqp and were never released here:
+	// 88 bytes each, leaked on every OpenChannel/CloseChannel cycle (both the
+	// RXA and the TXA equalizer).  Found by LeakSanitizer in CI, driving the
+	// add/close cycle with MACHPSDR_RX_CHURN.  Freed before `a`, which holds
+	// the only pointers to them.
+	_aligned_free (a->G);
+	_aligned_free (a->F);
 	_aligned_free (a);
 }
 

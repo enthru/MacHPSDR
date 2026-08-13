@@ -189,11 +189,20 @@ static void dev_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
   const char *s = (it && it->col[c]) ? it->col[c] : "";
   gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), s);
 }
-static GtkColumnViewColumn *dev_col(const char *title, int colid) {
+// Build a column and hand it to the view.  Appending and unref-ing in one place
+// because gtk_column_view_append_column() takes its OWN reference: the caller's
+// has to be dropped or every column object lives for ever, which is what
+// LeakSanitizer found here -- and build_device_list() runs again on every
+// rescan and on soapy_netdev_add(), so it is not a one-off.
+// (gtk_column_view_column_new() is transfer-full for the factory, so that one
+// needs no unref.)
+static void dev_col(GtkWidget *view, const char *title, int colid) {
   GtkListItemFactory *f = gtk_signal_list_item_factory_new();
   g_signal_connect(f,"setup",G_CALLBACK(dev_setup),NULL);
   g_signal_connect(f,"bind",G_CALLBACK(dev_bind),GINT_TO_POINTER(colid));
-  return gtk_column_view_column_new(title, f);
+  GtkColumnViewColumn *c = gtk_column_view_column_new(title, f);
+  gtk_column_view_append_column(GTK_COLUMN_VIEW(view), c);
+  g_object_unref(c);
 }
 
 static GtkSingleSelection *dev_selection;   // owns the model; kept for teardown
@@ -240,13 +249,13 @@ static void build_device_list(void) {
     gtk_single_selection_set_autoselect(dev_selection, FALSE);
     gtk_single_selection_set_can_unselect(dev_selection, TRUE);
     view=gtk_column_view_new(GTK_SELECTION_MODEL(dev_selection));  // takes the selection ref
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Device",   NAME_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Protocol", PROTOCOL_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Version",  VERSION_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("IP",       IP_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("MAC",      MAC_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("IFACE",    INTERFACE_COLUMN));
-    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), dev_col("Status",   STATUS_COLUMN));
+    dev_col(view, "Device",   NAME_COLUMN);
+    dev_col(view, "Protocol", PROTOCOL_COLUMN);
+    dev_col(view, "Version",  VERSION_COLUMN);
+    dev_col(view, "IP",       IP_COLUMN);
+    dev_col(view, "MAC",      MAC_COLUMN);
+    dev_col(view, "IFACE",    INTERFACE_COLUMN);
+    dev_col(view, "Status",   STATUS_COLUMN);
 
 
     for(i=0;i<devices;i++) {
@@ -473,6 +482,22 @@ static int check_wisdom(void *data) {
         usleep(100000); // 100ms
       }
       gtk_window_destroy(GTK_WINDOW(dialog));
+
+      // The semaphore was posted from the END of wisdom_thread, so the thread
+      // is finished: join it (which also drops g_thread_new's reference -- the
+      // GThread struct is otherwise leaked, as LeakSanitizer reported) and
+      // release the semaphore.  Once per cold start, but "once" is still the
+      // difference between a clean leak report and one nobody reads.
+      g_thread_join(wisdom_thread_id);
+      wisdom_thread_id=NULL;
+#ifdef __APPLE__
+      sem_close(wisdom_sem);
+      sem_unlink("wisdomsem");
+#else
+      sem_destroy(wisdom_sem);
+      free(wisdom_sem);
+#endif
+      wisdom_sem=NULL;
   }
   g_idle_add(discover,NULL);
   return 0;

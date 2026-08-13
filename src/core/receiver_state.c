@@ -709,8 +709,12 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].audio_name",rx->channel);
   value=getProperty(name);
   if(value) {
-    rx->audio_name=g_new0(gchar,strlen(value)+1);
-    strcpy(rx->audio_name,value);
+    // create_receiver() already put a g_strdup(AUDIO_SYSTEM_DEFAULT_NAME) here,
+    // so overwriting the pointer without freeing leaks that string on every
+    // receiver restored from a config that carries an audio_name -- i.e. every
+    // one after the first save.  LeakSanitizer named it in CI.
+    g_free(rx->audio_name);
+    rx->audio_name=g_strdup(value);
   }
   sprintf(name,"receiver[%d].output_index",rx->channel);
   value=getProperty(name);

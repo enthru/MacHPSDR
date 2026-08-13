@@ -202,6 +202,10 @@ double* cfir_impulse (int N, int DD, int R, int Pairs, double runrate, double ci
 			A[i] = A[u_samps - j];
 	impulse = fir_fsamp (N, A, rtype, 1.0, wintype);
 	// print_impulse ("cfirImpulse.txt", N, impulse, 1, 0);
+	// xistion is a local scratch array like A and was never released --
+	// (x_samps + 1) doubles per create_cfir, i.e. once per TX channel.
+	// LeakSanitizer found it in CI.
+	_aligned_free (xistion);
 	_aligned_free (A);
 	return impulse;
 }

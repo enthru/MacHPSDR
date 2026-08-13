@@ -883,6 +883,7 @@ static int selftest(void) {
       printf("  noise: FAIL (locked onto noise)\n");
       fails++;
     }
+    g_free(iq);
   }
 
   // --- retune to another satellite: the second pass must be a NEW picture, not

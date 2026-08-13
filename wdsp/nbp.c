@@ -53,6 +53,11 @@ void destroy_notchdb (NOTCHDB b)
 	_aligned_free (b->nlow);
 	_aligned_free (b->fwidth);
 	_aligned_free (b->fcenter);
+	// The notchdb struct itself was never freed -- 80 bytes per
+	// OpenChannel/CloseChannel cycle, found by LeakSanitizer in CI.  Safe
+	// here: destroy_rxa() destroys bpsnba and nbp0, the only two blocks that
+	// hold a NOTCHDB pointer, BEFORE calling this.
+	_aligned_free (b);
 }
 
 /********************************************************************************************************

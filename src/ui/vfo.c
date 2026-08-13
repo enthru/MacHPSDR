@@ -2054,7 +2054,13 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   gtk_widget_set_visible(v->vfo, TRUE);
 
-  g_object_set_data ((GObject *)v->vfo,"vfo_data",v);
+  // _full, with g_free as the destroy notify: VFO_DATA is a plain g_new block
+  // and nothing else owns it, so a bare g_object_set_data() leaks the whole
+  // struct every time the receiver's widget tree is destroyed --
+  // delete_receiver frees rx->table, which takes v->vfo with it and drops the
+  // only pointer to v.  Found by LeakSanitizer under MACHPSDR_RX_CHURN: 288
+  // bytes, exactly once per add/close cycle.
+  g_object_set_data_full((GObject *)v->vfo,"vfo_data",v,g_free);
   return v->vfo;
 }
 
@@ -2084,6 +2090,11 @@ static char *freq_markup(const char *s, const char *bright, const char *dim) {
 
 void update_vfo(RECEIVER *rx) {
   char temp[32];
+  // Every g_markup_printf_escaped()/freq_markup() result below is freed after
+  // the label has taken it: gtk_label_set_markup() COPIES the string, it does
+  // not take ownership, so dropping the pointer leaks it on every call -- and
+  // this runs on every frequency change, mode change and TX transition.
+  // LeakSanitizer named all three.
   char *markup;
   char accent_a[8],accent_b[8],dim_col[8],tx_col[8];
   skin_hex("ACCENT_A",accent_a,"#A3CCD1");
@@ -2109,6 +2120,7 @@ void update_vfo(RECEIVER *rx) {
     markup=freq_markup(temp,accent_a,dim_col);
   }
   gtk_label_set_markup(GTK_LABEL(v->frequency_a_text),markup);
+  g_free(markup);
 
   // VFO B
   if(radio!=NULL && radio->transmitter!=NULL && rx==radio->transmitter->rx && radio->transmitter->rx->split!=SPLIT_OFF && isTransmitting(radio)) {
@@ -2117,6 +2129,7 @@ void update_vfo(RECEIVER *rx) {
     markup=g_markup_printf_escaped("<span foreground=\"#ED9D80\">%s</span>","VFO B");
   }
   gtk_label_set_markup(GTK_LABEL(v->vfo_b_text),markup);
+  g_free(markup);
 
   long long bf=rx->frequency_b;
   sprintf(temp,"%05lld.%03lld.%03lld",bf/(long long)1000000,(bf%(long long)1000000)/(long long)1000,bf%(long long)1000);
@@ -2126,6 +2139,7 @@ void update_vfo(RECEIVER *rx) {
     markup=freq_markup(temp,accent_b,dim_col);
   }
   gtk_label_set_markup(GTK_LABEL(v->frequency_b_text),markup);
+  g_free(markup);
 
   // ASSIGNED TX
   if(radio!=NULL && radio->transmitter!=NULL) {
