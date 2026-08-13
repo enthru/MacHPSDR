@@ -24,7 +24,6 @@ AUDIO_HEADERS=audio.h
 endif
 ifeq ($(UNAME_S), Darwin)
 AUDIO_LIBS=-lsoundio -framework CoreAudio
-AUDIO_SOURCES=portaudio.c
 AUDIO_HEADERS=portaudio.h
 # Homebrew prefix: /opt/homebrew on Apple Silicon, /usr/local on Intel.
 # Used by the `app` target to locate GTK resources for bundling.
@@ -752,6 +751,37 @@ apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o i
 	  apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o $(SGP4_LIB) \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo) -lm
 
+# Headless SSTV harness: the encoder's own waveform back through the decoder,
+# which is the only way this pair is guarded at all — both are self-contained DSP
+# with no WDSP and no radio, so a refactor can break the shared timing tables
+# silently.  Compares the decoded picture against the source numerically, with a
+# flat-green and a wrong-clock control to prove the thresholds discriminate.
+# Decodes in Auto (VIS): a forced mode anchors on the VIS break (see CLAUDE.md).
+#   make sstv-offline && ./sstv_offline --selftest
+.PHONY: sstv-offline
+sstv-offline: sstv_offline
+# GTK cflags are needed (both modules include <gtk/gtk.h>), but no GTK symbol is
+# referenced — glib + gdk-pixbuf is the whole link, as with apt_offline.
+sstv_offline: tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_save.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/sstv_offline.c \
+	  sstv_encoder.o sstv_decoder.o image_save.o log.o \
+	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
+
+# Headless CW harness: the encoder's audio straight back into the decoder, plus
+# the keyer driven on a mock clock through its own test hook.  It is the only
+# thing guarding three properties that cannot be checked by inspection — that the
+# decoder stays SILENT on band noise, that the keyer never strands the TX keyed,
+# and that the two Morse timing conventions still agree.
+#   make cw-offline && ./cw_offline --selftest
+.PHONY: cw-offline
+cw-offline: cw_offline
+# gtk4 is in the link only because cw_encoder.c/cw_keyer.c reach <gtk/gtk.h>
+# through radio.h; the application surface they need is stubbed in the harness.
+cw_offline: tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	  -o $@ tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o $(GTKLIBS) -lm
+
 qo100-offline: qo100_offline
 # The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
 # to be provable off air. Links qo100.o alone; the handful of application
@@ -759,6 +789,46 @@ qo100-offline: qo100_offline
 qo100_offline: tools/qo100_offline.c qo100.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
 	  -o $@ tools/qo100_offline.c qo100.o log.o $(GTKLIBS) -lm
+
+# `make check` — every offline self-test in one command, so a regression is
+# caught without starting the GUI (which would raise a window over whatever the
+# operator is doing and rewrite the saved settings on exit) and without anyone
+# having to remember four different invocations.
+#
+# The list is assembled from the feature flags rather than hardcoded: with
+# HFDL_INCLUDE or SSTV_INCLUDE commented out those harnesses cannot even be
+# linked, and a `check` that fails to BUILD teaches nobody anything — it must
+# run whatever this tree actually has. qo100_offline has no feature flag (qo100.o
+# is unconditionally in OBJS), so it is always in.
+#
+# qo100_offline is the odd one out at the command line: it takes no argument at
+# all (the binary is nothing but the self-test), the other three want --selftest,
+# which is their mode that needs no recording.  All four already exit non-zero on
+# a failed assertion, so the loop below stops at the first one.
+CHECK_BINS=qo100_offline
+ifeq ($(HFDL_INCLUDE),HFDL)
+CHECK_BINS+=hfdl_offline acars_offline
+endif
+ifeq ($(SSTV_INCLUDE),SSTV)
+CHECK_BINS+=apt_offline sstv_offline cw_offline
+endif
+
+.PHONY: check
+check: $(CHECK_BINS)
+	@fail=0; \
+	for h in $(CHECK_BINS); do \
+	  case $$h in \
+	    qo100_offline) args="" ;; \
+	    *)             args="--selftest" ;; \
+	  esac; \
+	  echo ""; \
+	  echo "=== $$h $$args ============================================"; \
+	  ./$$h $$args || { echo "*** FAILED: $$h $$args"; fail=1; break; }; \
+	  echo "--- $$h: OK"; \
+	done; \
+	echo ""; \
+	if [ $$fail -ne 0 ]; then echo "make check: FAILED"; exit 1; fi; \
+	echo "make check: all self-tests passed"
 
 prebuild:
 	rm -f version.o
@@ -793,8 +863,9 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline
-	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM
+	-rm -f $(PROGRAM) hfdl_offline acars_offline apt_offline qo100_offline sstv_offline cw_offline
+	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
 

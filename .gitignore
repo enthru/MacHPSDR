@@ -50,6 +50,10 @@ apt_offline
 apt_offline.dSYM/
 qo100_offline
 qo100_offline.dSYM/
+sstv_offline
+sstv_offline.dSYM/
+cw_offline
+cw_offline.dSYM/
 
 # apt_offline default output (a decoded pass, regenerated on demand)
 apt.png
