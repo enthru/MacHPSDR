@@ -219,6 +219,17 @@ void subrx_change_sample_rate(RECEIVER *rx) {
 void destroy_subrx(RECEIVER *rx) {
 log_info("%s\n",__FUNCTION__);
   SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL) return;
+  // The sub-channel is a full WDSP channel of its own (create_subrx opens one at
+  // rx->channel + SUBRX_BASE_CHANNEL, with its own noise blankers).  Freeing the
+  // SUBRX block without closing it leaked the whole DSP chain on every SUBRX
+  // off/on -- and the next create_subrx re-opened the same channel number over
+  // the top of it.
+  destroy_anbEXT(subrx->channel);
+  destroy_nobEXT(subrx->channel);
+  CloseChannel(subrx->channel);
+  g_mutex_clear(&subrx->mutex);
   g_free(subrx->audio_output_buffer);
   g_free(subrx);
+  rx->subrx=NULL;      // every caller did this itself; do it once, here
 }

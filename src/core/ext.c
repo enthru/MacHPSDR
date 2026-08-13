@@ -94,11 +94,18 @@ int ext_set_mox(void *data) {
   return 0;
 }
 
+// Every ext_* entry point below is queued from a thread that is not the GTK one
+// (rigctl, TCI, MIDI) and runs a main-loop iteration or more later. The receiver
+// it names can be closed in that gap -- and delete_receiver frees it -- so each
+// re-validates the pointer with receiver_is_live() before the first dereference.
+// Dropping the request is the right answer: whatever it was going to change no
+// longer exists.
 int ext_set_frequency_a(void *data) {
   RX_FREQUENCY *f=(RX_FREQUENCY *)data;
-  
-  g_mutex_lock(&f->rx->mutex);  
-  
+
+  if(!receiver_is_live(f->rx)) { g_free(f); return 0; }
+  g_mutex_lock(&f->rx->mutex);
+
   if(f->rx!=NULL) {
     f->rx->frequency_a=f->frequency;
     f->rx->band_a=get_band_from_frequency(f->frequency);
@@ -120,6 +127,7 @@ int ext_set_frequency_a(void *data) {
 int ext_set_frequency_b(void *data) {
   RX_FREQUENCY *f=(RX_FREQUENCY *)data;
 
+  if(!receiver_is_live(f->rx)) { g_free(f); return 0; }
   g_mutex_lock(&f->rx->mutex);
   if(f->rx!=NULL && !f->rx->locked) {
     long long fmax=receiver_max_frequency(f->rx);
@@ -140,6 +148,7 @@ int ext_set_frequency_b(void *data) {
 
 int ext_set_mode(void *data) {
   MODE *m=(MODE *)data;
+  if(!receiver_is_live(m->rx)) { g_free(m); return 0; }
   if (m->rx != NULL) {
     m->rx->mode_a = m->mode_a;
   }
@@ -189,6 +198,7 @@ int ext_ps_twotone(void *data) {
 
 int ext_vfo_update(void *data) {
   RECEIVER *rx=(RECEIVER *)data;
+  if(!receiver_is_live(rx)) return 0;
   update_vfo(rx);
   return 0;
 }
@@ -196,6 +206,7 @@ int ext_vfo_update(void *data) {
 int ext_vfo_step(void *data) {
   RX_STEP *s=(RX_STEP *)data;
   RECEIVER *rx=s->rx;
+  if(!receiver_is_live(rx)) { g_free(s); return 0; }
   if(rx!=NULL) {
     rx->frequency_a=rx->frequency_a+(rx->step*s->step);
     rx->band_a=get_band_from_frequency(rx->frequency_a);
@@ -208,6 +219,7 @@ int ext_vfo_step(void *data) {
 int ext_set_afgain(void *data) {
   RX_GAIN *s=(RX_GAIN *)data;
   RECEIVER *rx=s->rx;
+  if(!receiver_is_live(rx)) { g_free(s); return 0; }
   if(rx!=NULL) {
     rx->volume=s->gain;
   }

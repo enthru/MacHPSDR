@@ -105,6 +105,11 @@ int MIDIstartup(char *filename);
 
 static GtkWidget *add_receiver_b;
 static GtkWidget *add_wideband_b;
+// The bottom-bar Record button. Held here because a recording can also be
+// stopped from outside its own callback (delete_receiver closes the receiver it
+// was started on), and a button still reading "Stop" over an idle recorder is
+// how an operator comes to believe a lost recording is still running.
+static GtkWidget *record_b;
 
 // Single source of truth for the "Add Receiver" button's sensitivity: another
 // receiver may be added only when no embedded panel owns the second-receiver
@@ -444,21 +449,46 @@ void delete_wideband(WIDEBAND *w) {
   protocol1_run();
 }
 
-void delete_receiver(RECEIVER *rx) {
+// delete_receiver() and delete_diversity_mixer() call each other -- deleting a
+// receiver that carries a mixer deletes the mixer, and deleting a mixer deletes
+// its hidden receiver -- so exactly one of the pair may take
+// radio->delete_rx_mutex.  Taking it in both would re-lock a GMutex the same
+// thread already holds, which is not recursive: closing a receiver with
+// diversity enabled would hang the whole UI on itself.  The public entry points
+// take the lock; the _locked bodies below do the work and call each other.
+static void delete_receiver_locked(RECEIVER *rx);
+static void delete_diversity_mixer_locked(DIVMIXER *dmix);
 
+void delete_receiver(RECEIVER *rx) {
   g_mutex_lock(&radio->delete_rx_mutex);
+  delete_receiver_locked(rx);
+  g_mutex_unlock(&radio->delete_rx_mutex);
+}
+
+static void delete_receiver_locked(RECEIVER *rx) {
+
+  // A recording is keyed on the RECEIVER this one may be: close its files while
+  // the receiver is still alive, or their headers keep the placeholder sizes
+  // written at open and the capture is unreadable rather than merely short.
+  if(recorder_stop_for_receiver(rx) && record_b!=NULL) {
+    gtk_button_set_label(GTK_BUTTON(record_b),"Record");
+  }
+
+  // Read once: receiver_destroy() frees rx at the end of this function, and the
+  // Configure-dialog rule below still needs to know whether it was visible.
+  gboolean was_visible = rx->show_rx;
 
   // Receiver may have a diveristy mixer connected,
   // this removes the mixer and hidden rx for that mixer
   if (radio->divmixer[rx->dmix_id] != NULL) {
     log_info("Not null, delete the hidden rx\n");
-    delete_diversity_mixer(radio->divmixer[rx->dmix_id]);
+    delete_diversity_mixer_locked(radio->divmixer[rx->dmix_id]);
   }
 
   int reopen_rx = 0;
 #ifdef PURESIGNAL
   if (radio->transmitter->puresignal != NULL) {
-    if (rx->show_rx == TRUE) reopen_rx = 1;
+    if (was_visible == TRUE) reopen_rx = 1;
   }
 #endif
 
@@ -506,28 +536,42 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
   // feedback RX) has no page, so deleting it — e.g. unticking "Enable diversity"
   // on the Diversity page — must leave the settings window open, mirroring the
   // add_receiver path.
-  if(rx->show_rx && radio->dialog) {
+  if(was_visible && radio->dialog) {
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
+
+  // The slot is clear and every module that cached the pointer has been told,
+  // so nothing can reach this receiver any more: release it.  Holding
+  // delete_rx_mutex is what makes this safe against the protocol threads --
+  // they take the same lock around the add_iq_samples() call that walks its
+  // buffers and its WDSP channel.  rx is invalid from here on.
+  receiver_destroy(rx);
+  rx=NULL;
+
   // For PureSignal, need to reopen the receiver just deleted
   // as a hidden rx
   if (reopen_rx == 1) add_receiver(radio, 0);
 
   g_idle_add(radio_restart,(void *)radio);
-
-
-  g_mutex_unlock(&radio->delete_rx_mutex);
 }
 
 void delete_diversity_mixer(DIVMIXER *dmix) {
+  g_mutex_lock(&radio->delete_rx_mutex);
+  delete_diversity_mixer_locked(dmix);
+  g_mutex_unlock(&radio->delete_rx_mutex);
+}
+
+static void delete_diversity_mixer_locked(DIVMIXER *dmix) {
   int hidden_channel = -1;
 
   for (int i = 0; i < MAX_DIVERSITY_MIXERS; i++) {
     if(radio->divmixer[i] == dmix) {
       log_info("delete div mixer %d\n", i);
-      radio->divmixer[i]->rx_visual->dmix_id = MAX_DIVERSITY_MIXERS+1;
-      radio->divmixer[i]->rx_hidden->dmix_id = MAX_DIVERSITY_MIXERS+1;
+      // Back to the permanently-NULL sentinel slot, not one past the end of the
+      // array -- see the dmix_id comment in create_receiver.
+      radio->divmixer[i]->rx_visual->dmix_id = MAX_DIVERSITY_MIXERS;
+      radio->divmixer[i]->rx_hidden->dmix_id = MAX_DIVERSITY_MIXERS;
       // Store the hidden channel before we delete the
       // mixer
       hidden_channel = radio->divmixer[i]->rx_hidden->channel;
@@ -541,7 +585,7 @@ log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
   // Delete the hidden receiver
   if (hidden_channel >= 0 && radio->receiver[hidden_channel] != NULL) {
     log_info("delete_diversity_mixer: delete the hidden rx\n");
-    delete_receiver(radio->receiver[hidden_channel]);
+    delete_receiver_locked(radio->receiver[hidden_channel]);
   }
 }
 
@@ -896,7 +940,10 @@ static gboolean rx_stack_balance(gpointer data) {
 
 // GTK4: there is no generic gtk_container_remove — detach a child from whatever
 // container currently parents it (Box / Paned handled; else low-level unparent).
-static void child_remove_from_parent(GtkWidget *child) {
+// Detach a child from whatever kind of container holds it, dropping that
+// container's reference. Shared with receiver_destroy(), which uses it to
+// destroy a closed receiver's whole panel.
+void child_remove_from_parent(GtkWidget *child) {
   GtkWidget *parent=gtk_widget_get_parent(child);
   if(parent==NULL) return;
   if(GTK_IS_PANED(parent)) {
@@ -2618,10 +2665,10 @@ static void create_visual(RADIO *r) {
   g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(tool_col),configure);
 
-  GtkWidget *record=gtk_button_new_with_label(recorder_active()?"Stop":"Record");
-  gtk_widget_set_name(record,"toolbar-button");
-  g_signal_connect(record,"clicked",G_CALLBACK(record_cb),(gpointer)r);
-  gtk_box_append(GTK_BOX(tool_col),record);
+  record_b=gtk_button_new_with_label(recorder_active()?"Stop":"Record");
+  gtk_widget_set_name(record_b,"toolbar-button");
+  g_signal_connect(record_b,"clicked",G_CALLBACK(record_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(tool_col),record_b);
 
   if(r->discovered->supported_receivers>1) {
     add_receiver_b=gtk_button_new_with_label("Add Receiver");

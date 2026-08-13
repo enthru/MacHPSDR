@@ -81,4 +81,9 @@ void ppm_cal_measure_poll(gboolean *done, char *status, int status_sz,
 // n_frames complex samples.
 void ppm_cal_iq_feed(RECEIVER *rx, const double *iq, int n_frames);
 
+// Drop every cached reference to rx and abandon a run that was using it. Called
+// from receiver_destroy() before the receiver is freed; a no-op for any other
+// receiver. GTK thread only.
+void ppm_cal_forget_receiver(RECEIVER *rx);
+
 #endif

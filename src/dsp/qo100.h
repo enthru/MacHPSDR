@@ -121,6 +121,11 @@ extern void     qo100_beacon_status(char *buf, int size);
    is a real measurement of the converter, not session state. */
 extern void qo100_beacon_reset(void);
 
+/* Drop the tracked-receiver pointer if it is this one, and stop the lock.
+   Called from receiver_destroy() before the receiver is freed; a no-op for any
+   other receiver. */
+extern void qo100_beacon_forget_receiver(RECEIVER *rx);
+
 /* Which beacon radio->qo100_beacon_sel selects, as an absolute downlink Hz. */
 extern long long qo100_beacon_frequency(int sel);
 

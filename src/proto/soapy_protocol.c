@@ -404,6 +404,18 @@ log_info("%s: running\n",__FUNCTION__);
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,max_samples,&flags,&timeNs,timeoutUs);
     if(elements<0) continue;
     if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
+    // This thread was handed its RECEIVER at start-up and holds it for its whole
+    // life, so unlike the protocol1/2 paths there is no slot to re-read -- the
+    // check is whether that receiver is still one of the radio's.  Everything
+    // that touches it (rx->buffer, the resampler, add_iq_samples) is inside the
+    // lock, because delete_receiver frees all three.  The lock is held for the
+    // whole block rather than per sample; protocol1 takes and drops it once per
+    // sample, so this is the cheaper end of what the codebase already does.
+    g_mutex_lock(&radio->delete_rx_mutex);
+    if(!receiver_is_live(rx)) {
+      g_mutex_unlock(&radio->delete_rx_mutex);
+      continue;
+    }
     for(i=0;i<elements;i++) {
       rx->buffer[i*2]=(double)buffer[i*2];
       rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
@@ -431,6 +443,7 @@ log_info("%s: running\n",__FUNCTION__);
         }
       }
     }
+    g_mutex_unlock(&radio->delete_rx_mutex);
   }
 log_info("%s: receive_thread: SoapySDRDevice_deactivateStream\n",__FUNCTION__);
   SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);

@@ -258,6 +258,7 @@ typedef struct _receiver {
   gint paned_position;
   double paned_percent;
   gint paned_restore_tries;   // bounded retries in restore_paned_position_cb
+  guint paned_restore_timer;  // its g_timeout id, so receiver_destroy can cancel it
   gboolean show_panadapter;   // FALSE = spectroscope hidden, waterfall full-height
 
   GtkWidget *panadapter;
@@ -469,6 +470,28 @@ enum {
 
 extern RECEIVER *create_receiver(int channel,int sample_rate, gboolean show_rx);
 extern void receiver_close(RECEIVER *rx);
+
+/* The mirror of create_receiver: releases everything the receiver owns — its
+ * WDSP channel and analyzer, the noise-blanker instances, the local audio
+ * stream, the sub-receiver, the rigctl listeners, its timers, its widget tree
+ * and every buffer — and then the RECEIVER itself. Only delete_receiver() calls
+ * it, holding radio->delete_rx_mutex, with the slot already cleared from
+ * radio->receiver[]: the lock is what guarantees no protocol thread is inside
+ * add_iq_samples() for this receiver, and the cleared slot is what makes
+ * receiver_is_live() answer FALSE for anything still holding the pointer. */
+extern void receiver_destroy(RECEIVER *rx);
+
+/* TRUE while rx is still one of the radio's receivers.
+ *
+ * delete_receiver() frees the receiver, so a pointer handed to a queued idle
+ * callback (the ext_* dispatch used by rigctl/TCI/MIDI) can outlive what it
+ * points at — the callback is queued from one main-loop iteration and runs in
+ * a later one, and the operator may close the receiver in between. Every ext_*
+ * entry point that carries a RECEIVER* asks this first.
+ *
+ * Meaningful on the GTK thread only: that is the one thread that adds to or
+ * removes from radio->receiver[]. At most MAX_RECEIVERS pointer compares. */
+extern gboolean receiver_is_live(RECEIVER *rx);
 extern void receiver_update_title(RECEIVER *rx);
 extern void receiver_init_analyzer(RECEIVER *rx);
 extern void receiver_apply_panadapter_visibility(RECEIVER *rx);

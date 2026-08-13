@@ -2043,6 +2043,16 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
 int parse_cmd(void *data) {
   COMMAND *cmd=(COMMAND *)data;
   RECEIVER *rx=cmd->rx;
+  // The command was queued from a CAT thread and runs one main-loop iteration
+  // later; the operator may have closed that receiver in between, and
+  // delete_receiver frees it. Drop the command rather than parse against a
+  // freed receiver -- there is nothing to reply on either, the socket went with
+  // it.
+  if(!receiver_is_live(rx)) {
+    g_free(cmd->command);
+    g_free(cmd);
+    return 0;
+  }
   RIGCTL *rigctl=rx->rigctl;
   char *command=cmd->command;
   char reply[256];

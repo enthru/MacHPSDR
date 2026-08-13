@@ -754,13 +754,20 @@ static void process_ozy_byte(int b) {
           add_ps_iq_samples(radio->transmitter, left_sample_double, right_sample_double, fbk_left_sample_double, fbk_right_sample_double);
         }                                                            
       }
-      else if(radio->receiver[j]!=NULL) {
+      else if(j<radio->discovered->supported_receivers) {
 #else
-      if(radio->receiver[j]!=NULL) {
+      if(j<radio->discovered->supported_receivers) {
 #endif
-        g_mutex_lock(&radio->delete_rx_mutex); 
-        add_iq_samples(radio->receiver[j], left_sample_double,right_sample_double);
-        g_mutex_unlock(&radio->delete_rx_mutex); 
+        // Take the lock BEFORE reading the slot, and use what the slot holds
+        // then -- not what the search above found.  delete_receiver now frees
+        // the receiver, so a pointer sampled outside the lock can be freed
+        // before it is dereferenced.  (The loop above can also fall off its end
+        // without finding an nreceiver'th live receiver, which is why j is
+        // range-checked rather than the pointer it left behind.)
+        g_mutex_lock(&radio->delete_rx_mutex);
+        RECEIVER *r=radio->receiver[j];
+        if(r!=NULL) add_iq_samples(r, left_sample_double,right_sample_double);
+        g_mutex_unlock(&radio->delete_rx_mutex);
       }
       nreceiver++;
       if(nreceiver==radio->receivers) {
@@ -1142,9 +1149,24 @@ void ozy_send_buffer(void) {
                 if(count==current_rx) break;
               }
             }
-            RECEIVER *rx=radio->receiver[j];
-            
+            // NO delete_rx_mutex here, deliberately, and this is a trap worth
+            // knowing: ozy_send_buffer() is NOT a separate output thread.  It
+            // is reached from protocol1_audio_samples(), i.e. from inside
+            // process_rx_buffer() <- full_rx_buffer() <- add_iq_samples(), and
+            // the receive thread is ALREADY holding delete_rx_mutex across that
+            // call.  Taking it again re-locks a non-recursive GMutex on the
+            // same thread: the receive thread stops for ever still holding
+            // rx->mutex, the GTK timer blocks on that, and the whole app hangs
+            // with no error and no log line.  (Measured exactly that, with a
+            // stack sample, against tools/metis_emu.c.)
+            //
+            // Nor is the lock needed.  Every caller of ozy_send_buffer() is
+            // either that receive-thread path, which holds it already, or
+            // metis_restart() on the GTK thread -- and the GTK thread is the
+            // only one that deletes a receiver, so it cannot race itself.  The
+            // bounds check on j stays: the search above can fall off its end.
             long long rx_frequency=0;
+            RECEIVER *rx=(j<radio->discovered->supported_receivers)?radio->receiver[j]:NULL;
             if(rx!=NULL) {
               rx_frequency=rx->frequency_a-rx->lo_a+rx->error_a+radio_ppm_correction(rx->frequency_a-rx->lo_a);
               if(rx->rit_enabled) {
@@ -1156,7 +1178,7 @@ void ozy_send_buffer(void) {
                 rx_frequency+=(long long)radio->cw_keyer_sidetone_frequency;
               }
             }
-            
+
             output_buffer[C1]=rx_frequency>>24;
             output_buffer[C2]=rx_frequency>>16;
             output_buffer[C3]=rx_frequency>>8;

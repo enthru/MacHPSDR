@@ -263,6 +263,23 @@ void ppm_cal_measure_cancel(void) {
   ppm_cal_restore_rx();
 }
 
+// The receiver being measured is going away (delete_receiver). Stop the run and
+// drop both cached pointers WITHOUT the usual restore: putting the operator's
+// VFO/mode/filter back would mean writing through the very receiver that is
+// being freed. The measurement is abandoned, which is the only honest outcome —
+// its whole reference is the carrier that receiver was parked on.
+void ppm_cal_forget_receiver(RECEIVER *rx) {
+  if(rx==NULL) return;
+  g_atomic_int_set(&ppm_measuring,0);
+  g_mutex_lock(&ppm_mtx);
+  if(meas_rx==rx) {
+    meas_rx=NULL;
+    g_strlcpy(status,"Cancelled (receiver closed)",sizeof(status));
+  }
+  g_mutex_unlock(&ppm_mtx);
+  if(saved_rx==rx) { saved_rx=NULL; saved_valid=FALSE; }
+}
+
 gboolean ppm_cal_measure_start(RADIO *r) {
   if(g_atomic_int_get(&ppm_measuring)) return FALSE;
   RECEIVER *rx=r->active_receiver;

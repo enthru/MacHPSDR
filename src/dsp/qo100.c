@@ -459,6 +459,23 @@ void qo100_beacon_reset(void) {
   g_mutex_unlock(&bmtx);
 }
 
+// The tracked receiver is being freed (delete_receiver). Same shape as
+// qo100_beacon_reset(), but only when it is THIS receiver: the lock follows the
+// receiver it was measuring on, and the correction already written into the
+// band's errorLO stays, being a measurement of the converter rather than
+// session state.
+void qo100_beacon_forget_receiver(RECEIVER *rx) {
+  if(rx==NULL) return;
+  g_mutex_lock(&bmtx);
+  if(track_rx==rx) {
+    beacon_reset_locked();
+    b_residual=0.0;
+    track_rx=NULL;
+    g_strlcpy(b_status,"Off (receiver closed)",sizeof(b_status));
+  }
+  g_mutex_unlock(&bmtx);
+}
+
 // Display-only: a benign read of a scalar the audio thread writes. Worst case a
 // readout is one frame (~170 ms) stale, which no caller cares about.
 gboolean qo100_beacon_locked(void) {

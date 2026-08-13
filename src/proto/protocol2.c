@@ -1250,9 +1250,17 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
               if(ddc>=radio->discovered->supported_receivers)  {
                 log_info("unexpected iq data from ddc %d\n",ddc);
               } else {
-                if(radio->receiver[ddc]!=NULL) {
-                  process_iq_data(radio->receiver[ddc],buffer);
+                // delete_receiver frees the receiver, so the slot is read and
+                // used under delete_rx_mutex -- the lock protocol1 has always
+                // taken around its own add_iq_samples() and this path never
+                // did.  process_iq_data() ends in add_iq_samples(), i.e. it
+                // walks the receiver's buffers and its WDSP channel.
+                g_mutex_lock(&radio->delete_rx_mutex);
+                RECEIVER *rx=radio->receiver[ddc];
+                if(rx!=NULL) {
+                  process_iq_data(rx,buffer);
                 }
+                g_mutex_unlock(&radio->delete_rx_mutex);
               }
               free(buffer);
               break;

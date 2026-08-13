@@ -20,6 +20,8 @@
 extern GtkWidget *create_vfo(RECEIVER *rx);
 extern void update_vfo(RECEIVER *r);
 extern gboolean vfo_type_digit(guint keyval);
+/* Drop the digit-hover target if it names this receiver (receiver_destroy). */
+extern void vfo_forget_receiver(RECEIVER *rx);
 
 
 

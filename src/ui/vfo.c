@@ -1582,6 +1582,17 @@ static void frequency_leave_cb(GtkEventControllerMotion *ctrl,gpointer data) {
   freq_hover_digit=-1;
 }
 
+// Same, for a receiver that is being freed rather than merely left: the pointer
+// can still be sitting over a digit of the panel the operator just closed, and
+// the next digit key press would type into freed memory. Called from
+// receiver_destroy(); the "leave" event does not necessarily arrive first.
+void vfo_forget_receiver(RECEIVER *rx) {
+  if(freq_hover_rx==rx) {
+    freq_hover_rx=NULL;
+    freq_hover_digit=-1;
+  }
+}
+
 static gboolean frequency_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
   if(button==GDK_BUTTON_PRIMARY && !rx->locked) {

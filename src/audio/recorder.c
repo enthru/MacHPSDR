@@ -115,14 +115,37 @@ gboolean recorder_active(void) {
   return rec_rx != NULL;
 }
 
+/* Close both streams and go idle. Called under rec_mutex. */
+static void stop_locked(const char *why) {
+  close_wav(rec_iq, iq_bytes);
+  close_wav(rec_af, af_bytes);
+  rec_iq=NULL; rec_af=NULL; rec_rx=NULL;
+  log_info("recorder: stopped%s%s\n", why?" ":"", why?why:"");
+}
+
+/* Stop a recording that belongs to rx, no-op otherwise; TRUE if one was
+ * stopped. The taps are keyed on the RECEIVER pointer, so a receiver closed
+ * mid-recording used to leave rec_rx pointing at it with the in-flight files
+ * never closed -- their headers still carrying the placeholder sizes written at
+ * open, which is a lost recording rather than a truncated one. delete_receiver
+ * calls this; the lock order there is delete_rx_mutex -> rec_mutex, the same
+ * order the RX audio thread takes them in, so the two cannot deadlock. */
+gboolean recorder_stop_for_receiver(RECEIVER *rx) {
+  gboolean stopped=FALSE;
+  g_mutex_lock(&rec_mutex);
+  if(rec_rx!=NULL && rec_rx==rx) {
+    stop_locked("(receiver closed)");
+    stopped=TRUE;
+  }
+  g_mutex_unlock(&rec_mutex);
+  return stopped;
+}
+
 gboolean recorder_toggle(RECEIVER *rx) {
   g_mutex_lock(&rec_mutex);
   if(rec_rx) {
     /* stop */
-    close_wav(rec_iq, iq_bytes);
-    close_wav(rec_af, af_bytes);
-    rec_iq=NULL; rec_af=NULL; rec_rx=NULL;
-    log_info("recorder: stopped\n");
+    stop_locked(NULL);
     g_mutex_unlock(&rec_mutex);
     return FALSE;
   }

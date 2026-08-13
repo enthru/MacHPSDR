@@ -338,18 +338,153 @@ int receiver_notch_at(RECEIVER *rx, gdouble f_hz) {
   return -1;
 }
 
+gboolean receiver_is_live(RECEIVER *rx) {
+  if(rx==NULL || radio==NULL || radio->discovered==NULL) return FALSE;
+  for(int i=0;i<radio->discovered->supported_receivers;i++) {
+    if(radio->receiver[i]==rx) return TRUE;
+  }
+  return FALSE;
+}
+
+// Cancel a g_timeout/g_idle id if it is set, and clear it.  Written out here
+// because every one of these has to be cancelled BEFORE the widgets and buffers
+// the callback reads are gone, and a missed one is a timer firing on freed
+// memory -- which is exactly the class of bug the hidden-RX invariant in
+// create_receiver already exists to prevent.
+//
+// Both spellings of "no timer" are accepted.  The two resize timers use -1
+// (0xFFFFFFFF in the guint they are declared as) throughout rx_panadapter.c and
+// waterfall.c; everything else uses glib's own 0.  Removing 0xFFFFFFFF is not a
+// no-op, it is a GLib-CRITICAL "Source ID 4294967295 was not found".
+static void drop_source(guint *id) {
+  if(*id!=0 && *id!=(guint)-1) g_source_remove(*id);
+  *id=0;
+}
+
+void receiver_destroy(RECEIVER *rx) {
+  if(rx==NULL) return;
+
+  // 1. Stop everything that can still reach this receiver.  Timers and threads
+  //    first: from here on nothing new runs against it.
+  if(rx->update_timer_id!=0) { g_source_remove((guint)rx->update_timer_id); rx->update_timer_id=0; }
+  drop_source(&rx->panadapter_resize_timer);
+  drop_source(&rx->waterfall_resize_timer);
+  drop_source(&rx->paned_restore_timer);
+  // The CAT listeners parse against this receiver from their own threads.
+  // rigctl_close(), not disable_rigctl(): the latter closes the sockets and
+  // returns, leaving the server thread to notice in its own time.
+  rigctl_close(rx);
+
+  // 2. Forget the pointer everywhere it is cached outside radio->receiver[].
+  //    Each of these is a file-static in another module that would otherwise
+  //    dangle; the recorder is stopped by delete_receiver before we get here,
+  //    because it has files to close while the receiver is still whole.
+  ppm_cal_forget_receiver(rx);
+  qo100_beacon_forget_receiver(rx);
+  vfo_forget_receiver(rx);
+  if(radio->active_receiver==rx) {
+    radio->active_receiver=NULL;
+    for(int i=0;i<radio->discovered->supported_receivers;i++) {
+      if(radio->receiver[i]!=NULL) { radio->active_receiver=radio->receiver[i]; break; }
+    }
+  }
+  if(radio->transmitter!=NULL) {
+    if(radio->transmitter->rx==rx) radio->transmitter->rx=NULL;
+#ifdef PURESIGNAL
+    if(radio->transmitter->rx_puresignal_txfbk==rx) radio->transmitter->rx_puresignal_txfbk=NULL;
+    if(radio->transmitter->rx_puresignal_rxfbk==rx) radio->transmitter->rx_puresignal_rxfbk=NULL;
+#endif
+  }
+
+  // 3. Sub-receiver and BPSK own WDSP state of their own, keyed off this
+  //    receiver's channel, so they go before the channel does.
+  if(rx->subrx!=NULL) {
+    rx->subrx_enable=FALSE;
+    destroy_subrx(rx);
+  }
+  if(rx->bpsk!=NULL) {
+    destroy_bpsk(rx->bpsk);
+    rx->bpsk=NULL;
+  }
+
+  // 4. The local audio stream: soundio's write callback runs on its own thread
+  //    with rx as its userdata, and audio_close_output() is what waits for it.
+  if(rx->local_audio || rx->output_stream!=NULL) {
+    audio_close_output(rx);
+    rx->local_audio=FALSE;
+  }
+
+  // 5. WDSP.  All of this is keyed by the integer channel, not by rx, so it is
+  //    reclaimed even though the channel number will be reused by the next
+  //    receiver opened in this slot -- which is precisely why it has to be
+  //    released here: OpenChannel/XCreateAnalyzer on a channel that was never
+  //    closed leaks the whole DSP chain and analyzer every time a receiver is
+  //    closed and re-added.  DestroyAnalyzer joins the analyzer's dispatcher
+  //    thread; CloseChannel stops and tears down the RXA chain.
+  DestroyAnalyzer(rx->channel);
+  destroy_anbEXT(rx->channel);
+  destroy_nobEXT(rx->channel);
+  CloseChannel(rx->channel);
+
+  // 6. The widget tree.  Everything visual hangs off rx->table (see
+  //    create_visual), including the waterfall's GpuImage and its pixbuf, so
+  //    unparenting and dropping the last reference destroys the lot.  Any
+  //    dialog that carries this receiver has to go with it.
+  if(rx->bookmark_dialog!=NULL) {
+    gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
+    rx->bookmark_dialog=NULL;
+  }
+  if(rx->window!=NULL) {
+    gtk_window_destroy(GTK_WINDOW(rx->window));
+    rx->window=NULL;
+  }
+  if(rx->table!=NULL) {
+    GtkWidget *t=rx->table;
+    rx->table=NULL;
+    GtkWidget *parent=gtk_widget_get_parent(t);
+    if(parent!=NULL) child_remove_from_parent(t);
+    else g_object_unref(g_object_ref_sink(t));
+  }
+  rx->panadapter=NULL; rx->waterfall=NULL; rx->vpaned=NULL; rx->vfo=NULL;
+  rx->meter=NULL; rx->radio_info=NULL; rx->ft8_waterfall=NULL;
+  rx->wf_hpaned=NULL; rx->iq_seek=NULL;
+  g_clear_object(&rx->waterfall_pixbuf);
+  if(rx->panadapter_histogram_surface!=NULL) {
+    cairo_surface_destroy(rx->panadapter_histogram_surface);
+    rx->panadapter_histogram_surface=NULL;
+  }
+
+  // 7. Buffers.  g_clear_pointer so a double call cannot double-free.
+  g_clear_pointer(&rx->iq_input_buffer,g_free);
+  g_clear_pointer(&rx->diviq_input_buffer,g_free);
+  g_clear_pointer(&rx->audio_output_buffer,g_free);
+  g_clear_pointer(&rx->audio_buffer,g_free);
+  g_clear_pointer(&rx->pixel_samples,g_free);
+  g_clear_pointer(&rx->panadapter_peaks,g_free);
+  g_clear_pointer(&rx->panadapter_histogram_bins,g_free);
+  g_clear_pointer(&rx->scope_iq,g_free);
+  g_clear_pointer(&rx->scope_fir_taps,g_free);
+  g_clear_pointer(&rx->scope_fir_hist,g_free);
+  g_clear_pointer(&rx->scope_tuned_ext,g_free);
+  g_clear_pointer(&rx->scope_tuned_out,g_free);
+  g_clear_pointer(&rx->resampled_buffer,g_free);
+  g_clear_pointer(&rx->audio_name,g_free);
+
+  g_mutex_clear(&rx->mutex);
+  g_mutex_clear(&rx->scope_mutex);
+  g_mutex_clear(&rx->local_audio_mutex);
+
+  log_info("receiver_destroy: channel=%d released\n",rx->channel);
+  g_free(rx);
+}
+
 void receiver_close(RECEIVER *rx) {
   // Keep at least one receiver — never leave the radio headless
   if(radio->receivers<=1) return;
 
-  g_source_remove(rx->update_timer_id);
   if(radio->dialog!=NULL) {
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
-  }
-  if(rx->bookmark_dialog!=NULL) {
-    gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
-    rx->bookmark_dialog=NULL;
   }
   // Persist this receiver's current settings so they survive the close, then
   // mark the slot inactive: the settings are kept but the receiver is not
@@ -360,17 +495,12 @@ void receiver_close(RECEIVER *rx) {
     sprintf(name,"receiver[%d].active",rx->channel);
     setProperty(name,"0");
   }
+  // delete_receiver frees rx (via receiver_destroy), including its update timer,
+  // its bookmark dialog and its whole widget tree -- all of which used to be torn
+  // down piecemeal here.  It also hands active_receiver on to a survivor, so
+  // nothing below may touch rx again.
   delete_receiver(rx);
-  // delete_receiver has set radio->receiver[i]=NULL for this rx; if it was the
-  // active receiver, hand focus to the first remaining live receiver.
-  if(radio->active_receiver==rx) {
-    int i;
-    for(i=0;i<radio->discovered->supported_receivers;i++) {
-      if(radio->receiver[i]!=NULL) { radio->active_receiver=radio->receiver[i]; break; }
-    }
-  }
-  // Rebuild the stack: re-lays out the surviving panels (with GtkPaned dividers)
-  // and destroys the just-closed panel, now orphaned in the old layout tree.
+  // Rebuild the stack: re-lays out the surviving panels (with GtkPaned dividers).
   radio_rebuild_rx_stack(radio);
 }
 
@@ -2522,12 +2652,13 @@ void receiver_refit_vpaned(RECEIVER *rx) {
   // 150 ms so this lands AFTER the outer rx_stack_balance (100 ms) has set the
   // RX area height; restore_paned_position_cb then retries until the vpaned is
   // allocated at its final size.
-  g_timeout_add(150, restore_paned_position_cb, (gpointer)rx);
+  if(rx->paned_restore_timer!=0) g_source_remove(rx->paned_restore_timer);
+  rx->paned_restore_timer=g_timeout_add(150, restore_paned_position_cb, (gpointer)rx);
 }
 
 static gboolean restore_paned_position_cb(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  if(rx->vpaned==NULL) return FALSE;
+  if(rx->vpaned==NULL) { rx->paned_restore_timer=0; return FALSE; }
   gint paned_height=gtk_widget_get_height(rx->vpaned);
   // Keep waiting until the pane is allocated a usable height. A tiny but >1
   // height (mid-allocation) would otherwise compute a sliver position and stop
@@ -2551,6 +2682,7 @@ static gboolean restore_paned_position_cb(gpointer data) {
     if(position > paned_height - MIN_WATERFALL_HEIGHT) position=paned_height - MIN_WATERFALL_HEIGHT;
   }
   gtk_paned_set_position(GTK_PANED(rx->vpaned),position);
+  rx->paned_restore_timer=0;
   return FALSE;  // done, stop the timeout
 }
 
@@ -2931,7 +3063,16 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   rx->diversity = FALSE;
   rx->diversity_hidden_rx = -1;
-  rx->dmix_id = MAX_DIVERSITY_MIXERS+1;
+  // "no diversity mixer" is the SENTINEL slot, radio->divmixer[MAX_DIVERSITY_MIXERS]
+  // -- the reason that array is declared one longer than the number of mixers:
+  // it is permanently NULL, so the ten or so `if(radio->divmixer[rx->dmix_id])`
+  // tests (including one on the per-frame panadapter draw) need no bounds check.
+  // MAX_DIVERSITY_MIXERS+1 indexed one PAST the end, and what lies there is
+  // radio->alex_rx_antenna/alex_tx_antenna: with both antennas 0 the read
+  // happens to give NULL and the guard accidentally works, but selecting any
+  // non-zero ALEX antenna turns those two ints into a garbage DIVMIXER* that
+  // the very next line dereferences.
+  rx->dmix_id = MAX_DIVERSITY_MIXERS;
 
   rx->show_rx = show_rx;
 
@@ -3079,7 +3220,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
     // even 0.5 fallback when that is missing/degenerate. Gating this on a
     // positive saved percent (as before) left a 0 / never-saved split at GTK4's
     // default, which collapsed the panadapter (spectroscope invisible).
-    g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
+    rx->paned_restore_timer=g_timeout_add(100,restore_paned_position_cb,(gpointer)rx);
   }
   // Honour a saved "spectroscope off": hide the panadapter so the waterfall
   // takes the whole pane (the restore above no-ops while hidden).

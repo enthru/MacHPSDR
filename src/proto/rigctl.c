@@ -837,8 +837,14 @@ int launch_serial (RECEIVER *rx) {
 
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
   if(rigctl==NULL) {
-    rigctl=g_new(RIGCTL,1);
+    // g_new0, not g_new: rigctl_close() and disable_rigctl() both close
+    // socket_fd/server_socket, which a serial-only receiver never assigns -- so
+    // an uninitialised block would have them closing a garbage descriptor.
+    rigctl=g_new0(RIGCTL,1);
     g_mutex_init(&rigctl->mutex);
+    rigctl->socket_fd=-1;
+    rigctl->server_socket=-1;
+    rigctl->serial_fd=-1;
     rx->rigctl=(void *)rigctl;
   }
 
@@ -878,6 +884,41 @@ void disable_serial (RECEIVER *rx) {
   rigctl->serial_running=FALSE;
 }
 
+// See rigctl.h. Called from receiver_destroy(), on the GTK thread.
+void rigctl_close(RECEIVER *rx) {
+  RIGCTL *rigctl=(rx==NULL)?NULL:(RIGCTL *)rx->rigctl;
+  if(rigctl==NULL) return;
+
+  // Network CAT. shutdown() before close() is what actually wakes a thread
+  // parked in accept()/recv() -- closing the descriptor alone is not guaranteed
+  // to, which is the same reason tci_stop() does it this way. Only then is the
+  // join bounded.
+  rigctl->socket_listening=FALSE;
+  rigctl->socket_running=FALSE;
+  if(rigctl->socket_fd>=0) {
+    shutdown(rigctl->socket_fd,SHUT_RDWR);
+    closesocket(rigctl->socket_fd);
+    rigctl->socket_fd=-1;
+  }
+  if(rigctl->server_socket>=0) {
+    shutdown(rigctl->server_socket,SHUT_RDWR);
+    closesocket(rigctl->server_socket);
+    rigctl->server_socket=-1;
+  }
+  if(rigctl->server_thread_id!=NULL) {
+    g_thread_join(rigctl->server_thread_id);
+    rigctl->server_thread_id=NULL;
+  }
+
+  // Serial CAT. Not joined -- see the header for why. Clearing the flag and
+  // closing the port is all that can be done from here; the reader exits at the
+  // next byte, or never, without touching the receiver either way.
+  if(rigctl->serial_running) {
+    rigctl->serial_running=FALSE;
+    log_info("%s: serial reader left to exit on its own (blocking read)\n",__FUNCTION__);
+  }
+}
+
 //
 // each receiver has it's own thread and allows one connection
 //
@@ -888,8 +929,11 @@ void launch_rigctl (RECEIVER *rx) {
 
   RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
   if(rigctl==NULL) {
-    rigctl=g_new(RIGCTL,1);
+    rigctl=g_new0(RIGCTL,1);          // see launch_serial for why not g_new
     g_mutex_init(&rigctl->mutex);
+    rigctl->socket_fd=-1;
+    rigctl->server_socket=-1;
+    rigctl->serial_fd=-1;
     rx->rigctl=rigctl;
     rigctl->debug=rx->rigctl_debug;
   }

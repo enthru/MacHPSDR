@@ -22,6 +22,12 @@ gboolean recorder_toggle(RECEIVER *rx);
 /* TRUE while a recording is in progress. */
 gboolean recorder_active(void);
 
+/* Stop a recording that was started on rx, closing both files with a correctly
+ * patched header; no-op if rx is not the receiver being recorded. Returns TRUE
+ * if a recording was stopped (the caller repaints the Record button).
+ * delete_receiver must call this: the taps key on the RECEIVER pointer. */
+gboolean recorder_stop_for_receiver(RECEIVER *rx);
+
 /* Capture taps. nsamples = number of complex I/Q samples (interleaved I,Q);
  * nstereo = number of stereo audio frames (interleaved L,R). No-op unless rx is
  * the recording receiver. */
