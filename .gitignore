@@ -60,6 +60,12 @@ tci_offline
 tci_offline.dSYM/
 metis_emu
 metis_emu.dSYM/
+p2_emu
+p2_emu.dSYM/
 
 # apt_offline default output (a decoded pass, regenerated on demand)
 apt.png
+
+# Opt-in SoapySDR null-driver module (tools/build-soapy-null.sh); never built by
+# `make`, never installed, loaded only via SOAPY_SDR_PLUGIN_PATH.
+build/

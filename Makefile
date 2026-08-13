@@ -888,11 +888,25 @@ metis-emu: metis_emu
 metis_emu: tools/metis_emu.c
 	$(CC) $(CFLAGS) -o $@ tools/metis_emu.c -lm
 
-qo100-offline: qo100_offline
+# The Protocol-2 twin: tools/p2_emu.c.  Same shape, same rules, same reason --
+# and it covers the half metis_emu cannot, since protocol2.c is a different
+# packet layout on a different set of ports.  Everything in it (process_iq_data,
+# the delete_rx_mutex discipline around radio->receiver[], the discovery /
+# start / receive-specific / high-priority register path and the 24-bit I/Q
+# unpacking) had been reviewed and compiled and never run.  Not part of `make
+# check` for the same reason as metis-emu: it is a SERVER.
+#   make p2-emu && ./p2_emu --pace 8 &
+#   HOME=$(mktemp -d) MACHPSDR_RX_CHURN=10 ./machpsdr --open Angelia
+.PHONY: p2-emu
+p2-emu: p2_emu
+p2_emu: tools/p2_emu.c
+	$(CC) $(CFLAGS) -o $@ tools/p2_emu.c -lm
+
+qo100-offline: qo100_offline$(EXE)
 # The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
 # to be provable off air. Links qo100.o alone; the handful of application
 # functions it calls are stubbed inside the harness (see tools/qo100_offline.c).
-qo100_offline: tools/qo100_offline.c qo100.o log.o
+qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/qo100_offline.c qo100.o log.o $(GTKLIBS) -lm
 
