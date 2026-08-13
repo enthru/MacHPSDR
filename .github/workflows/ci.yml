@@ -100,8 +100,19 @@ jobs:
       # `getconf`, not `nproc`: macOS has no nproc.  This also builds the
       # vendored trees (wdsp/, ft8_lib/, sgp4sdp4/, hfdl_lib/asn1/) through
       # their own makefiles, so a break in any of them shows up here.
+      #
+      # On failure it rebuilds serially before giving up.  A parallel make
+      # interleaves the output of every job, and the vendored asn1 tree alone is
+      # 240 files, so the compiler's message ends up hundreds of lines away from
+      # the command that produced it — the first failure of this workflow put a
+      # `fatal error:` in the middle of an unrelated `ar` line.  The serial pass
+      # costs a few minutes only when something is already broken, and it puts
+      # the real error at the END of the log, where anyone reading it looks.
       - name: Build
-        run: make -j"$(getconf _NPROCESSORS_ONLN)"
+        run: |
+          make -j"$(getconf _NPROCESSORS_ONLN)" && exit 0
+          echo "::group::parallel build failed - rebuilding serially for a readable error"
+          make -j1
 
       # Builds and runs the harnesses.  Each already exits non-zero on a failed
       # assertion and `check` stops at the first, so a failure names itself.

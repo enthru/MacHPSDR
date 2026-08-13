@@ -28,6 +28,16 @@ AUDIO_HEADERS=portaudio.h
 # Homebrew prefix: /opt/homebrew on Apple Silicon, /usr/local on Intel.
 # Used by the `app` target to locate GTK resources for bundling.
 BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
+# ...and to COMPILE. SoapySDR and libsoundio are reached as <SoapySDR/Device.h>
+# and -lsoundio, with no pkg-config and no -I/-L of their own, and neither Apple
+# clang nor the linker searches the Homebrew prefix by default. This built for
+# years only because a developer shell that has run `brew shellenv` exports
+# CPATH=$(BREW_PREFIX)/include and LIBRARY_PATH=$(BREW_PREFIX)/lib; on a clean
+# machine — a fresh checkout, a CI runner, a plain `make` from Finder — the very
+# first file that includes discovered.h fails instead. Reproduce with
+# `env -u CPATH -u LIBRARY_PATH make`.
+BREW_INCLUDES=-I$(BREW_PREFIX)/include
+BREW_LIBS=-L$(BREW_PREFIX)/lib
 endif
 # Windows / MSYS2 (MinGW-w64).  `uname -s` there is MINGW64_NT-10.0-<build>, so
 # this has to be a substring test, not the equality the other two use.  MSVC is
@@ -312,7 +322,7 @@ RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)'
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
@@ -378,7 +388,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -713,7 +723,7 @@ hfdl-offline: hfdl_offline
 # Links only what the decode chain needs (no GTK, no WDSP, no audio): the panel
 # objects are what pull the UI in, so they are filtered out.
 hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/hfdl_offline.c \
 	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
@@ -729,7 +739,7 @@ acars-offline: acars_offline
 # Links the ACARS chain plus the HFDL application layer it decodes messages
 # with; the two panel objects are what pull GTK in, so they are filtered out.
 acars_offline: tools/acars_offline.c $(HFDL_OBJS) log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/acars_offline.c \
 	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
@@ -746,7 +756,7 @@ apt-offline: apt_offline
 # Links only the decoder (no GTK, no WDSP, no audio): apt_decoder.c needs
 # gdk-pixbuf for the image it hands back, and nothing else.
 apt_offline: tools/apt_offline.c apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(SGP4_INCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0 cairo) -o $@ tools/apt_offline.c \
 	  apt_decoder.o apt_geo.o apt_coast.o apt_map.o image_save.o log.o $(SGP4_LIB) \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo) -lm
@@ -763,7 +773,7 @@ sstv-offline: sstv_offline
 # GTK cflags are needed (both modules include <gtk/gtk.h>), but no GTK symbol is
 # referenced — glib + gdk-pixbuf is the whole link, as with apt_offline.
 sstv_offline: tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_save.o log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0) -o $@ tools/sstv_offline.c \
 	  sstv_encoder.o sstv_decoder.o image_save.o log.o \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
@@ -779,7 +789,7 @@ cw-offline: cw_offline
 # gtk4 is in the link only because cw_encoder.c/cw_keyer.c reach <gtk/gtk.h>
 # through radio.h; the application surface they need is stubbed in the harness.
 cw_offline: tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o $(GTKLIBS) -lm
 
 qo100-offline: qo100_offline
@@ -787,7 +797,7 @@ qo100-offline: qo100_offline
 # to be provable off air. Links qo100.o alone; the handful of application
 # functions it calls are stubbed inside the harness (see tools/qo100_offline.c).
 qo100_offline: tools/qo100_offline.c qo100.o log.o
-	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) \
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/qo100_offline.c qo100.o log.o $(GTKLIBS) -lm
 
 # `make check` — every offline self-test in one command, so a regression is
