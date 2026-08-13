@@ -28,7 +28,7 @@ jobs:
         shell: msys2 {0}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The Makefile stamps the build from `git describe`, which needs tags.
           fetch-depth: 0
@@ -58,7 +58,7 @@ jobs:
       # would otherwise turn into a mystery build failure of THIS tree.
       - name: Cache liquid-dsp
         id: liquid-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: liquid-install
           key: liquid-dsp-v1.7.0-mingw64-1
@@ -124,7 +124,7 @@ jobs:
           echo "package OK: $(du -sh "$d" | cut -f1)"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: machpsdr-win64
           path: machpsdr-win64/

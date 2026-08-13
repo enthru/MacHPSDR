@@ -3,12 +3,12 @@
 # windows.yml compiles the one target that has never been run on real hardware
 # and runs nothing.  This is the other half: it builds the tree on Linux and
 # macOS and then runs `make check`, which is every offline self-test in the tree
-# (qo100_offline, and hfdl_offline/acars_offline/apt_offline --selftest,
-# whichever the feature flags left linkable).  The most recent reason for this
+# (qo100_offline, and hfdl_offline/acars_offline/apt_offline/sstv_offline/
+# cw_offline --selftest, whichever the feature flags left linkable).  The most recent reason for this
 # file existing is commit 661d476 — the HFDL harness had not linked since VHF
 # ACARS landed and nobody noticed, because nothing ever built it.
 #
-# What this proves: the tree compiles and links on both platforms, the four
+# What this proves: the tree compiles and links on both platforms, the six
 # harnesses still LINK (half the value — that is the failure that went unseen),
 # and the DSP/decoder layers they cover still produce the expected answers.
 #
@@ -45,7 +45,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The Makefile stamps the build from `git describe`, which needs tags.
           fetch-depth: 0
