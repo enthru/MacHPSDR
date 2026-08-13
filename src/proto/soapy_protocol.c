@@ -62,11 +62,21 @@ static int max_samples;
 
 static int samples=0;
 
-static GThread *receive_thread_id;
+// One receive thread and one RX stream PER RECEIVER, indexed by rx->adc (which
+// create_receiver hands out as 0 for receiver 0 and 1 for the second one on
+// PROTOCOL_SOAPYSDR).  These used to be single globals, so adding a second
+// receiver overwrote the thread handle and closing one stopped nothing: the
+// thread ran for the rest of the process, its stream was never closed and the
+// buffer it read into was never freed.  Ten add/close cycles under the null
+// driver leaked ten of each, all still calling readStream().
+static GThread *receive_thread_id[MAX_CHANNELS];
+static gboolean rx_thread_running[MAX_CHANNELS];
 static gpointer receive_thread(gpointer data);
 
 static int actual_rate;
 
+// TRUE while any receive thread is alive; what soapy_protocol_is_running()
+// answers, and what the receiver/radio update timers gate their display on.
 static gboolean running;
 
 static int mic_sample_divisor=1;
@@ -171,6 +181,20 @@ log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate
   }
 
   size_t channel=rx->adc;
+  if(channel>=MAX_CHANNELS) {
+    log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)channel,MAX_CHANNELS);
+    return;
+  }
+  // Defensive: never set a second stream up over a live one.  The normal paths
+  // (delete_receiver -> soapy_protocol_stop_receiver, and reconnect) have
+  // already closed it and NULLed the slot; this is the belt for anything that
+  // has not.  Overwriting the pointer instead leaked the old stream AND left
+  // the old thread reading the new one.
+  if(soapy_device!=NULL && rx_stream[channel]!=NULL && receive_thread_id[channel]==NULL) {
+    SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
+    SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
+    rx_stream[channel]=NULL;
+  }
 log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)channel);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
   rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
@@ -227,6 +251,10 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   log_info("%s: rate=%f\n",__FUNCTION__,rate);
 
   size_t channel=rx->adc;
+  if(channel>=MAX_CHANNELS) {
+    log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)channel,MAX_CHANNELS);
+    return;
+  }
   rx_channel=channel;
   rx_stream_active=TRUE;
   rc=SoapySDRDevice_activateStream(soapy_device, rx_stream[channel], 0, 0LL, 0);
@@ -236,13 +264,15 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   }
 
 log_info("%s: create receive_thread\n",__FUNCTION__);
-  receive_thread_id = g_thread_new( "rx_thread", receive_thread, rx);
-  if( ! receive_thread_id )
+  rx_thread_running[channel]=TRUE;
+  running=TRUE;
+  receive_thread_id[channel] = g_thread_new( "rx_thread", receive_thread, rx);
+  if( ! receive_thread_id[channel] )
   {
     log_info("%s: g_thread_new failed for receive_thread\n",__FUNCTION__);
     exit( -1 );
   }
-  log_info( "%s: receive_thread: id=%p\n",__FUNCTION__,receive_thread_id);
+  log_info( "%s: receive_thread: id=%p\n",__FUNCTION__,receive_thread_id[channel]);
 }
 
 void soapy_protocol_create_transmitter(TRANSMITTER *tx) {
@@ -386,13 +416,16 @@ static gpointer receive_thread(gpointer data) {
   long timeoutUs=100000L;
   int i;
   RECEIVER *rx=(RECEIVER *)data;
-  float *buffer=g_new(float,max_samples*2);
+  // Capture max_samples once: it is a global that the NEXT receiver's
+  // create_receiver rewrites, and readStream() must never be asked for more
+  // than this thread's own buffer holds.
+  const int block=max_samples;
+  float *buffer=g_new(float,block*2);
   void *buffs[]={buffer};
 
-  running=TRUE;
 log_info("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
-  while(running) {
+  while(rx_thread_running[channel]) {
     // Paused while transmitting (half-duplex): the RX stream is deactivated,
     // so don't read from it - just idle until it is resumed.  The stream is
     // torn down and rebuilt fresh in soapy_protocol_rx_resume() (see there),
@@ -401,7 +434,7 @@ log_info("%s: running\n",__FUNCTION__);
       g_usleep(1000);
       continue;
     }
-    elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,max_samples,&flags,&timeNs,timeoutUs);
+    elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
     if(elements<0) continue;
     if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
     // This thread was handed its RECEIVER at start-up and holds it for its whole
@@ -445,10 +478,45 @@ log_info("%s: running\n",__FUNCTION__);
     }
     g_mutex_unlock(&radio->delete_rx_mutex);
   }
-log_info("%s: receive_thread: SoapySDRDevice_deactivateStream\n",__FUNCTION__);
-  SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
+  // The stream is NOT touched here.  Whoever stopped this thread joins it and
+  // then deactivates/closes the stream; doing it from both ends would race a
+  // close against a readStream that has not returned yet.
+log_info("%s: exit (channel=%ld)\n",__FUNCTION__,(long)channel);
+  g_free(buffer);
+  return NULL;
+}
 
-  g_thread_exit((gpointer)0);
+// Stop one receiver's thread and let go of its stream.
+//
+// MUST be called with radio->delete_rx_mutex NOT held: this thread takes that
+// same mutex around every block it delivers, so joining it while holding the
+// lock would block for ever on ourselves -- the shape that wedged protocol 1's
+// output path.  delete_receiver() therefore calls this before it locks.
+void soapy_protocol_stop_receiver(RECEIVER *rx) {
+  if(rx==NULL) return;
+  // Only a receiver that is one of the radio's owns a stream slot.  A hidden
+  // PureSignal/diversity receiver shares its adc number with a real one, so
+  // without this it would stop that receiver's thread on its way out.
+  if(!receiver_is_live(rx)) return;
+  size_t channel=rx->adc;
+  if(channel>=MAX_CHANNELS) return;
+  if(receive_thread_id[channel]==NULL) return;
+
+log_info("%s: stopping receive thread for channel %ld\n",__FUNCTION__,(long)channel);
+  rx_thread_running[channel]=FALSE;
+  g_thread_join(receive_thread_id[channel]);
+  receive_thread_id[channel]=NULL;
+
+  if(soapy_device!=NULL && rx_stream[channel]!=NULL) {
+    SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
+    SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
+    rx_stream[channel]=NULL;
+  }
+
+  running=FALSE;
+  for(int i=0;i<MAX_CHANNELS;i++) {
+    if(receive_thread_id[i]!=NULL) running=TRUE;
+  }
 }
 
 void soapy_protocol_process_local_mic(RADIO *r) {
@@ -590,9 +658,17 @@ void soapy_protocol_set_tx_drive(double drive) {
 
 void soapy_protocol_stop(void) {
 log_info("%s\n",__FUNCTION__);
+  // Every receiver's thread, not just the last one started.
+  for(int i=0;i<MAX_CHANNELS;i++) {
+    if(receive_thread_id[i]==NULL) continue;
+    rx_thread_running[i]=FALSE;
+    g_thread_join(receive_thread_id[i]);
+    receive_thread_id[i]=NULL;
+    if(soapy_device!=NULL && rx_stream[i]!=NULL) {
+      SoapySDRDevice_deactivateStream(soapy_device,rx_stream[i],0,0LL);
+    }
+  }
   running=FALSE;
-log_info("%s: g_thread_join\n",__FUNCTION__);
-  g_thread_join(receive_thread_id);
 }
 
 // Re-apply the stored RX frequency and gain a moment after streaming resumes.
@@ -619,14 +695,16 @@ gboolean soapy_protocol_reconnect(RECEIVER *rx) {
 
 log_info("%s: tearing down old device/streams\n",__FUNCTION__);
 
-  // Stop the receive thread (it may be spinning on read errors from the dead
-  // device).  receive_thread_id can be NULL if a previous reconnect failed.
-  if(running) {
-    running=FALSE;
-    if(receive_thread_id!=NULL) {
-      g_thread_join(receive_thread_id);
-      receive_thread_id=NULL;
-    }
+  // Stop this receiver's thread (it may be spinning on read errors from the
+  // dead device).  The slot can be NULL if a previous reconnect failed.
+  if(channel<MAX_CHANNELS && receive_thread_id[channel]!=NULL) {
+    rx_thread_running[channel]=FALSE;
+    g_thread_join(receive_thread_id[channel]);
+    receive_thread_id[channel]=NULL;
+  }
+  running=FALSE;
+  for(int i=0;i<MAX_CHANNELS;i++) {
+    if(receive_thread_id[i]!=NULL) running=TRUE;
   }
 
   // Best-effort teardown of streams and device.  These calls may fail on an

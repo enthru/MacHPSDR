@@ -26,6 +26,9 @@ SoapySDRDevice *get_soapy_device(void);
 
 void soapy_protocol_create_receiver(RECEIVER *rx);
 void soapy_protocol_start_receiver(RECEIVER *rx);
+// Stop one receiver's receive thread and close its RX stream.  Call with
+// radio->delete_rx_mutex NOT held -- see the note at the definition.
+void soapy_protocol_stop_receiver(RECEIVER *rx);
 
 void soapy_protocol_init(RADIO *r,int rx);
 void soapy_protocol_stop(void);
