@@ -931,29 +931,13 @@ app: $(PROGRAM)
 		-s $(WDSP_DIR) \
 		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
 
-	@# Collapse LC_RPATH to exactly one entry.
-	@# The binary is linked with two rpaths (@loader_path/wdsp and
-	@# @executable_path/../Frameworks); dylibbundler rewrites BOTH to its
-	@# -p prefix, leaving two identical LC_RPATH entries.  Modern dyld refuses to
-	@# load a binary with a duplicate LC_RPATH — the app dies at launch with
-	@# "Library not loaded ... (duplicate LC_RPATH '@executable_path/../
-	@# Frameworks/')" before main() runs.
-	@#
-	@# DELETE ALL, THEN ADD ONE.  The earlier version looped while an otool
-	@# line count was > 1 and stopped on the first failed delete, so anything
-	@# that made either step behave differently — a tool version that words the
-	@# line differently, a delete refused on a signed binary — left the
-	@# duplicates in place and the bundle crashed at launch.  It did that on the
-	@# CI runner while working on the developer's machine, which is exactly the
-	@# failure a build must not have.  Deleting until the tool says there is
-	@# nothing left to delete, then adding a single entry back, has no such
-	@# dependency: the end state is what the code asks for, not what the parse
-	@# happened to find.  Verified by the check at the end of this target.
-	@echo "Collapsing LC_RPATH to a single entry..."
-	@BIN=$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin; \
-		while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null; do :; done; \
-		install_name_tool -add_rpath "@executable_path/../Frameworks/" "$$BIN" 2>/dev/null || true; \
-		codesign --force --sign - "$$BIN" 2>/dev/null || true
+	@# LC_RPATH is NOT de-duplicated here.  The binary is linked with two rpaths
+	@# (@loader_path/wdsp and @executable_path/../Frameworks) and dylibbundler
+	@# rewrites both to its -p prefix, so duplicates appear — but they appear in
+	@# the copied dylibs too, and more bundling follows this step.  There is one
+	@# normalisation pass over every Mach-O near the end of this target; doing it
+	@# here as well would be a second copy of the same rule, which is how the
+	@# executable came to be handled and the libraries not.
 
 	@# Copy and fix gdk-pixbuf loaders
 	@echo "Copying gdk-pixbuf loaders..."
@@ -962,8 +946,6 @@ app: $(PROGRAM)
 		find $(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0 \( -name "*.dylib" -o -name "*.so" \) | while read lib; do \
 			dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
 				-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
-			while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null; do :; done; \
-			install_name_tool -add_rpath "@executable_path/../Frameworks/" "$$lib" 2>/dev/null || true; \
 			codesign --force --sign - "$$lib" 2>/dev/null || true; \
 		done; \
 		if [ -f "$(APP_BUNDLE)/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]; then \
@@ -1179,6 +1161,32 @@ app: $(PROGRAM)
 	@# problem (needed to claim a HackRF/RTL-SDR without root) is instead solved by
 	@# bundling an older libusb that predates the capture requirement — see the
 	@# libusb handling in the SoapySDR-module bundling step.
+	@# ---- one LC_RPATH normalisation pass over EVERYTHING ---------------------
+	@# Not just the executable.  The runner's build failed the check below on
+	@# Contents/Frameworks/libSoapySDR.0.8.1.dylib: dylibbundler copies Homebrew
+	@# dylibs in as they are and adds its own -p prefix, so a dylib whose bottle
+	@# already carries that rpath ends up with it twice — and dyld rejects a
+	@# duplicate LC_RPATH in ANY image it loads, not only in the main binary.
+	@# Which libraries this hits depends on how the bottle was built, i.e. on the
+	@# machine, which is why it appeared on CI and not here.
+	@#
+	@# So normalise every Mach-O in the bundle, and do it AFTER all bundling
+	@# (SoapySDR modules included) and BEFORE the signatures, since rewriting a
+	@# load command invalidates them.  Each distinct rpath value is deleted until
+	@# the tool says there is none left and then added back once; the values are
+	@# read from otool only to know what to normalise — the end state is asserted
+	@# by the check, not by the parse.
+	@echo "Normalising LC_RPATH across the bundle..."
+	@for f in $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin \
+	          $$(find $(APP_BUNDLE)/Contents/Frameworks $(APP_BUNDLE)/Contents/Resources/lib \
+	                  \( -name '*.dylib' -o -name '*.so' \) 2>/dev/null); do \
+		for v in $$(otool -l "$$f" 2>/dev/null | awk '$$1=="path" && $$3=="(offset" {print $$2}' | sort -u); do \
+			while install_name_tool -delete_rpath "$$v" "$$f" 2>/dev/null; do :; done; \
+			install_name_tool -add_rpath "$$v" "$$f" 2>/dev/null || true; \
+		done; \
+		codesign --force --sign - "$$f" 2>/dev/null || true; \
+	done
+
 	@echo "Re-signing binary (plain ad-hoc)..."
 	@codesign --force --sign - $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin 2>/dev/null || true
 
