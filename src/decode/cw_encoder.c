@@ -113,16 +113,29 @@ float *cw_encode_to_audio(const char *text, int wpm, int weight,
   double dot_ms = 1200.0 / (double)wpm;   // PARIS-standard dot length
 
   // weight==50 => exact standard timing (dot=1, dash=3, gaps=1/3/7 dot-units).
-  // Otherwise scale the mark and compensate the gap that immediately follows
-  // it so the element period (mark+gap) is preserved.
+  // Otherwise the mark is stretched (or shortened) and the ELEMENT gap takes the
+  // difference, which is the WinKeyer convention: weight is the share of a
+  // dot-plus-gap period the key is down, so at 65 the dot is 1.3 units and the
+  // element gap 0.7. Dash stays 3x the dot and the letter/word gaps stay at
+  // 3/7 units, so heavy weighting costs a little speed rather than legibility.
+  //
+  // The compensation is per-gap and uniform — NOT proportional to the mark it
+  // follows, and never accumulated. Accumulating a whole character's worth onto
+  // the one inter-character gap (what this did before) leaves the elements at
+  // standard spacing and pays for all of it in a single place: at weight 65 that
+  // gap collapsed to the anti-click ramp and the letters ran together into one
+  // unbroken stream. Guarded at both extremes by tools/cw_offline.c.
   double wscale = (double)weight / 50.0;
   if (wscale < 0.3) wscale = 0.3;
   if (wscale > 2.5) wscale = 2.5;
+  // A gap has to survive an extreme setting: the UI spinner goes to 100, where
+  // 2 - wscale is negative and mark and gap would fuse into one longer mark.
+  double elem_gap_ms = (2.0 - wscale) * dot_ms;
+  if (elem_gap_ms < 0.25 * dot_ms) elem_gap_ms = 0.25 * dot_ms;
 
   cw_seg_t *segs = NULL;
   int n_segs = 0, cap_segs = 0;
   double total_ms = 0.0;
-  double gap_carry_ms = 0.0;    // weight compensation owed to the next gap
   double next_gap_dots = 0.0;   // dot-units owed before the NEXT character
   gboolean first_char = TRUE;
   gboolean have_output = FALSE;
@@ -139,22 +152,19 @@ float *cw_encode_to_audio(const char *text, int wpm, int weight,
       continue;
     }
     if (!first_char) {
-      double gap_ms = next_gap_dots * dot_ms + gap_carry_ms;
-      if (gap_ms < 0.0) gap_ms = 0.0;
+      double gap_ms = next_gap_dots * dot_ms;
       seg_push(&segs, &n_segs, &cap_segs, FALSE, gap_ms);
       total_ms += gap_ms;
-      gap_carry_ms = 0.0;
     }
     for (int k = 0; code[k] != '\0'; k++) {
-      if (k > 0) {   // intra-character (element) gap
-        seg_push(&segs, &n_segs, &cap_segs, FALSE, dot_ms);
-        total_ms += dot_ms;
+      if (k > 0) {   // intra-character (element) gap — the one weight acts on
+        seg_push(&segs, &n_segs, &cap_segs, FALSE, elem_gap_ms);
+        total_ms += elem_gap_ms;
       }
       double nominal_dots = (code[k] == '-') ? 3.0 : 1.0;
       double mark_ms = nominal_dots * dot_ms * wscale;
       seg_push(&segs, &n_segs, &cap_segs, TRUE, mark_ms);
       total_ms += mark_ms;
-      gap_carry_ms += (nominal_dots * dot_ms) - mark_ms;
     }
     next_gap_dots = 3.0;   // default: a letter gap before the next character
     first_char = FALSE;
