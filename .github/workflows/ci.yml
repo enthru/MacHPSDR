@@ -278,11 +278,25 @@ jobs:
       # Both the app and metis_emu, so the second churn step has its radio.
       # The serial retry is the `build` job's, for the same reason: an
       # instrumented build is no more readable in parallel than an ordinary one.
+      # `all` is named explicitly ALONGSIDE metis-emu, and that is the whole
+      # story of this step: naming only `metis-emu` builds ONLY metis_emu, so
+      # the app is never linked and the churn steps below die on
+      # "./machpsdr: not found" twenty minutes later.  That is exactly what the
+      # first run of this job did.
+      #
+      # Hence the assertion after it.  A build step that leaves no binary must
+      # fail HERE, where the reason is one line up, and not in a later step
+      # whose error message is about something else entirely -- the same rule
+      # as the "cycles completed" check further down.
       - name: Build (SANITIZE=1)
         run: |
-          make SANITIZE=1 -j"$(getconf _NPROCESSORS_ONLN)" metis-emu && exit 0
-          echo "::group::parallel build failed - rebuilding serially for a readable error"
-          make SANITIZE=1 -j1 metis-emu
+          make SANITIZE=1 -j"$(getconf _NPROCESSORS_ONLN)" all metis-emu \
+            || { echo "::group::parallel build failed - rebuilding serially for a readable error"; \
+                 make SANITIZE=1 -j1 all metis-emu; }
+          for f in ./machpsdr ./metis_emu; do
+            [ -x "$f" ] || { echo "::error::$f was not built - the churn steps cannot run"; exit 1; }
+          done
+          ls -l machpsdr metis_emu
 
       # The same harnesses the `build` job runs, instrumented and with leak
       # detection on.  UBSan is built -fno-sanitize-recover=undefined, so
