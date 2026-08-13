@@ -261,9 +261,23 @@ void update_waterfall(RECEIVER *rx) {
     p=pixels;
     samples=rx->pixel_samples;
     int offset=rx->pan;
+    // The pixbuf and pixel_samples are resized by two INDEPENDENT 250 ms
+    // debounce timers (this file's resize_timeout and the panadapter's), so for
+    // a frame or two after a resize the pixbuf can be wider than the analyzer
+    // buffer -- and samples[i+offset] would then read past the end of the heap
+    // block.  Repeat the last valid column instead: it is one frame of a resize.
+    // (The panadapter side of the same bug was an ASan heap-buffer-overflow
+    // found under tools/p2_emu.c; see pan_sample_width() in rx_panadapter.c.)
+    int last_sample=rx->pixels-1;
+    // Nothing to draw from at all (no analyzer buffer yet): leave the picture as
+    // it is rather than dereferencing it.  This was an unguarded NULL before.
+    if(samples==NULL || last_sample<0) { gtk_widget_queue_draw(rx->waterfall); return; }
 
     for(i=0;i<width;i++) {
-        sample=samples[i+offset]+radio->adc[rx->adc].attenuation;
+        int si=i+offset;
+        if(si>last_sample) si=last_sample;
+        if(si<0) si=0;
+        sample=samples[si]+radio->adc[rx->adc].attenuation;
         // Exclude the two edge pixels from the auto-level average: the last bin
         // (i==width-1) holds the -200 dBm end marker the panadapter writes, and
         // the condition was `||` (always true), so the marker was dragging the

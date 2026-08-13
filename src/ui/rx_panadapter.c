@@ -234,11 +234,29 @@ static GdkRGBA pan_grad_rgba(double t, double S9) {
   return nrgba(r,g,b,1.0);
 }
 
+// How many columns may be indexed into a pixel_samples-shaped buffer this frame.
+//
+// The widget's allocation is LIVE; pixel_samples is only reallocated by the
+// DEBOUNCED (250 ms) resize_timeout, so from the moment a resize widens the
+// panadapter until that timer fires, the widget is wider than the buffer and
+// every `samples[i + rx->pan]` with i running to the widget width reads (or, at
+// the -200 dBm end marker, WRITES) past the end of the heap block.  Found by
+// AddressSanitizer under tools/p2_emu.c: adding a receiver re-lays-out the
+// window and a frame is presented before the timer runs.  Bound the loops by
+// what was allocated, not by the widget -- the missing columns are one frame of
+// a resize nobody can see.
+static int pan_sample_width(const RECEIVER *rx, int display_width, int offset) {
+  int avail = rx->pixels - offset;
+  if(avail < 0) avail = 0;
+  return display_width < avail ? display_width : avail;
+}
+
 // Draw a spectrum trace for `samples` as vertical color rects. base_y = the
 // baseline (display_height-20), y_clamp = the bottom clamp (panadapter_height-20),
 // add_db = attenuation + panadapter_calibration. gradient!=0 colours each column
 // by amplitude (S9 in [0,1]); otherwise `solid` is used. filled draws each column
-// down to base_y instead of connecting to the previous sample.
+// down to base_y instead of connecting to the previous sample. `display_width`
+// is used only as the loop bound, so callers pass pan_sample_width()'s clamp.
 static void pan_trace_rects(GtkSnapshot *snapshot, const float *samples, int offset,
                             int display_width, double add_db, double pan_high,
                             double dbm_per_line, double base_y, double y_clamp,
@@ -929,7 +947,14 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     return;
   }
 
-  samples[display_width-1+offset]=-200;
+  // Columns of pixel_samples that exist right now (see pan_sample_width).
+  int sample_width=pan_sample_width(rx,display_width,offset);
+  if(sample_width<=0) {
+    gtk_widget_queue_draw(rx->panadapter);
+    return;
+  }
+
+  samples[sample_width-1+offset]=-200;
 
   double attenuation=radio->adc[rx->adc].attenuation;
   if (radio->divmixer[rx->dmix_id] != NULL) {
@@ -947,7 +972,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
   // Auto dB scale, before anything derives from panadapter_low/high this frame.
   // Skipped in vectorscope mode, which draws no trace and has its own scaling.
   if(rx->panadapter_automatic && running && !rx->panadapter_phase) {
-    pan_auto_levels(rx,samples,offset,display_width,attenuation+radio->panadapter_calibration);
+    pan_auto_levels(rx,samples,offset,sample_width,attenuation+radio->panadapter_calibration);
   }
   double dbm_per_line=(double)display_height/((double)rx->panadapter_high-(double)rx->panadapter_low);
 
@@ -961,7 +986,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
     }
     float h_half=(float)display_width/2.0;
     float v_half=(float)rx->panadapter_low+(((float)rx->panadapter_high-(float)rx->panadapter_low)/2.0);
-    for(i=0;i<display_width;i++) {
+    for(i=0;i<sample_width;i++) {
       float x=((float)i-h_half)/h_half;
       double s2=(double)samples[i+offset]+attenuation+radio->panadapter_calibration;
       float y=((float)s2-v_half)/v_half;
@@ -1012,13 +1037,13 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
       double bx=((double)qo100_beacon_frequency(radio->qo100_beacon_sel)-(double)min_display)
                 /rx->hz_per_pixel;
       int c=(int)lround(bx);
-      if(c>=0 && c<display_width) {
+      if(c>=0 && c<sample_width) {
         // A carrier lands in one bin but wanders a little; take the strongest of
         // a small neighbourhood so a half-bin offset does not read as a fade.
         double best=-1000.0;
         for(int d=-2;d<=2;d++) {
           int cc=c+d;
-          if(cc<0 || cc>=display_width) continue;
+          if(cc<0 || cc>=sample_width) continue;
           double s2=(double)samples[cc+offset]+attenuation+radio->panadapter_calibration;
           if(s2>best) best=s2;
         }
@@ -1066,8 +1091,14 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   int offset=rx->pan;
   float *samples=rx->pixel_samples;
   if(samples==NULL) return;
+  // Columns of pixel_samples that exist right now: the widget can be wider than
+  // the buffer between a resize and the debounced resize_timeout that reallocates
+  // it (see pan_sample_width).  Geometry below still uses the full display_width;
+  // only the sample-indexing loops are bounded by this.
+  int sample_width=pan_sample_width(rx,display_width,offset);
 
   float *samples_hidden_rx=NULL;
+  int hidden_width=0;
   int gain_cal_error=FALSE;
   int filled=rx->panadapter_filled;
 
@@ -1079,7 +1110,13 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       filled = FALSE;
       if (radio->divmixer[rx->dmix_id]->rx_hidden->pixel_samples != NULL) {
         samples_hidden_rx = radio->divmixer[rx->dmix_id]->rx_hidden->pixel_samples;
-        samples_hidden_rx[display_width-1 + offset] = -200;
+        // Bounded by the HIDDEN receiver's own buffer: resize_timeout keeps its
+        // pixel count in step with ours, but the end marker is a heap WRITE and
+        // must not trust that.
+        hidden_width = pan_sample_width(radio->divmixer[rx->dmix_id]->rx_hidden,
+                                        display_width, offset);
+        if(hidden_width > 0) samples_hidden_rx[hidden_width-1 + offset] = -200;
+        else                 gain_cal_error = TRUE;
       } else {
         gain_cal_error = TRUE;
       }
@@ -1536,7 +1573,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
       solid=nrgba(sr,sg,sb, filled?0.5:1.0);
     }
 
-    pan_trace_rects(snapshot, samples, offset, display_width, add_db,
+    pan_trace_rects(snapshot, samples, offset, sample_width, add_db,
                     (double)rx->panadapter_high, dbm_per_line, base_y, y_clamp,
                     gradient, S9v, solid, filled);
 
@@ -1544,7 +1581,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     if (radio->divmixer[rx->dmix_id] != NULL) {
       if ((radio->divmixer[rx->dmix_id]->calibrate_gain) && (!gain_cal_error) && samples_hidden_rx!=NULL) {
         GdkRGBA tq=nrgba(0.259,0.960,0.950,1.0);
-        pan_trace_rects(snapshot, samples_hidden_rx, offset, display_width, add_db,
+        pan_trace_rects(snapshot, samples_hidden_rx, offset, hidden_width, add_db,
                         (double)rx->panadapter_high, dbm_per_line, base_y, y_clamp,
                         FALSE, 1.0, tq, FALSE);
       }
@@ -1554,7 +1591,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   // ---- peak-hold trace (line only, on top) --------------------------------
   if(rx->panadapter_peak_hold && rx->panadapter_peaks!=NULL) {
     GdkRGBA pk=nrgba(0.95,0.95,0.95,0.85);
-    pan_trace_rects(snapshot, rx->panadapter_peaks, offset, display_width,
+    pan_trace_rects(snapshot, rx->panadapter_peaks, offset, sample_width,
                     attenuation+radio->panadapter_calibration, (double)rx->panadapter_high,
                     dbm_per_line, (double)(display_height-20), (double)(rx->panadapter_height-20),
                     FALSE, 1.0, pk, FALSE);

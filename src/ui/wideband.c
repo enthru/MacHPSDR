@@ -384,7 +384,11 @@ static gboolean update_timer_cb(void *data) {
   int rc;
   WIDEBAND *w=(WIDEBAND *)data;
 
-  if(w->panadapter_resize_timer==-1) {
+  // pixel_samples is NULL until the panadapter's first resize_timeout runs
+  // (w->pixels starts at 0, so wideband_init_analyzer() allocates nothing), and
+  // this timer starts before that: GetPixels() would write the analyzer's output
+  // through a NULL pointer.  Same unguarded-NULL as the waterfall had.
+  if(w->panadapter_resize_timer==-1 && w->pixel_samples!=NULL) {
     GetPixels(w->channel,0,w->pixel_samples,&rc);
     if(rc) {
       update_wideband_panadapter(w);

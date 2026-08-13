@@ -126,9 +126,35 @@ void update_wideband_waterfall(WIDEBAND *w) {
     guchar *p;
     p=pixels;
     samples=w->pixel_samples;
-    for(i=0;i<w->pixels;i++) {
-            sample=samples[i+w->pixels];
-            if(i>0 || i<(w->pixels-1)) {
+    // The pixbuf and pixel_samples are resized by two INDEPENDENT 250 ms
+    // debounce timers (this file's resize_timeout and wideband_panadapter.c's,
+    // which is the only place w->pixels changes), so between a resize and those
+    // timers the two disagree in BOTH directions.  The loop ran to w->pixels
+    // while writing three bytes per column into a pixbuf `width` wide: with
+    // w->pixels > width that walks off the end of the first row and, on a short
+    // pane, off the end of the pixbuf's heap block entirely -- the same class of
+    // bug AddressSanitizer found in rx_panadapter.c under tools/p2_emu.c (see
+    // pan_sample_width() there).  Bound the loop by the PIXBUF, as waterfall.c
+    // does, and clamp the sample index to what the analyzer buffer actually
+    // holds: repeating the last valid column for one frame of a resize is
+    // invisible, and it fills every pixel of the row rather than leaving the
+    // right-hand end holding the previous line.
+    int last_sample=w->pixels-1;
+    // Nothing to read from at all (no analyzer buffer yet -- w->pixels is 0
+    // until the first resize_timeout): leave the picture as it is rather than
+    // dereferencing NULL.
+    if(samples==NULL || last_sample<0) { gtk_widget_queue_draw(w->waterfall); return; }
+
+    for(i=0;i<width;i++) {
+            int si=i+w->pixels;                 // second half = the trace bins
+            if(i>last_sample) si=last_sample+w->pixels;
+            sample=samples[si];
+            // Interior columns only: the last bin holds the -200 dBm end marker
+            // wideband_panadapter.c writes, and the condition was `||` (always
+            // true), so the marker dragged the automatic waterfall_low down
+            // every frame. `&&` gives the mean over exactly width-2 samples,
+            // which is the divisor used below.
+            if(i>0 && i<(width-1)) {
                 average+=(int)sample;
             }
             if(sample<(float)w->waterfall_low) {
@@ -183,7 +209,9 @@ void update_wideband_waterfall(WIDEBAND *w) {
     }
 
 
-    if(w->waterfall_automatic) {
+    // width>2 or the divisor below is zero (integer division by zero, i.e. a
+    // crash, not a wrong colour) -- a pane can be dragged that narrow.
+    if(w->waterfall_automatic && width>2) {
       w->waterfall_low=average/(width-2);
       w->waterfall_high=w->waterfall_low+50;
     }
