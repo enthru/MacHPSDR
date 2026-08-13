@@ -294,7 +294,16 @@ endif
 # waterfall / SSTV / WEFAX images now composite through the GtkSnapshot/GdkTexture
 # GPU pipeline via the GpuImage widget (gpu_image.c). The build is therefore
 # deprecation-clean and -Wno-deprecated-declarations is no longer needed.
-CFLAGS= -g -O3 -std=gnu23 -Wall -Wextra \
+#
+# The flag is PROBED, not hardcoded: `gnu23` is the spelling gcc 14+ and clang
+# 18+ accept, while gcc 13 (Ubuntu 24.04's default, and what CI runs) and older
+# Apple clang know the same standard only as `gnu2x` and fail the build outright
+# with "unrecognized command-line option". Both spellings select C23, so the
+# ()->(void) rule this tree depends on holds either way; newer compilers still
+# accept gnu2x, so the fallback is safe rather than merely tolerated.
+STD_FLAG := $(shell $(CC) -std=gnu23 -E -x c /dev/null >/dev/null 2>&1 \
+                    && echo -std=gnu23 || echo -std=gnu2x)
+CFLAGS= -g -O3 $(STD_FLAG) -Wall -Wextra \
         -Wno-unused-parameter -Wno-unused-variable \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
