@@ -3,6 +3,12 @@
 // print every decoded message. No GTK, no audio, no radio.
 //
 //   hfdl_offline <iq.wav> <centre_hz> <cursor_hz> [rotate_hz] [conj] [out_rate]
+//   hfdl_offline --selftest
+//
+// --selftest needs no recording: it runs every layer's own test (demod, FEC,
+// framer, PDU, message, ARINC-622, MIAM, OHMA, CPDLC) the way the other three
+// harnesses do, so the decode chain can be checked on a machine that has no
+// HFDL capture at all.
 //
 // out_rate resamples the file the way the I/Q Player does (cubic, looping),
 // so the app's 192 kHz path can be reproduced from a 62.5 kHz recording.
@@ -27,7 +33,16 @@ static int rd16(FILE *f, unsigned *v) { unsigned char b[2]; if (fread(b,1,2,f)!=
   *v = b[0] | (b[1]<<8); return 1; }
 
 int main(int argc, char **argv) {
-  if (argc < 4) { fprintf(stderr, "usage: %s <iq.wav> <centre_hz> <cursor_hz>\n", argv[0]); return 2; }
+  if (argc == 2 && !strcmp(argv[1], "--selftest")) {
+    gboolean ok = hfdl_decoder_selftest();
+    printf("selftest: %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+  }
+  if (argc < 4) {
+    fprintf(stderr, "usage: %s <iq.wav> <centre_hz> <cursor_hz> [rotate_hz] [conj] [out_rate]\n"
+                    "       %s --selftest\n", argv[0], argv[0]);
+    return 2;
+  }
   const char *path = argv[1];
   long long centre = atoll(argv[2]);
   long long cursor = atoll(argv[3]);

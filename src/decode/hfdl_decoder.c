@@ -339,6 +339,31 @@ int hfdl_decoder_channel_count(void) { return nchans; }
 
 // --- API -------------------------------------------------------------------
 
+// Every layer's own test, in the order the signal passes through them, so a
+// failure names the first stage that broke rather than "HFDL is broken".  Kept
+// in one place because there are two callers: MACHPSDR_HFDL_SELFTEST inside the
+// running app, and `hfdl_offline --selftest`, which needs no recording at all.
+gboolean hfdl_decoder_selftest(void) {
+  static const struct { const char *name; gboolean (*run)(void); } layers[] = {
+    { "demod", hfdl_demod_selftest },
+    { "fec",   hfdl_fec_selftest   },
+    { "frame", hfdl_frame_selftest },
+    { "pdu",   hfdl_pdu_selftest   },
+    { "msg",   hfdl_msg_selftest   },
+    { "arinc", hfdl_arinc_selftest },
+    { "miam",  hfdl_miam_selftest  },
+    { "ohma",  hfdl_ohma_selftest  },
+    { "cpdlc", hfdl_cpdlc_selftest },
+  };
+  gboolean all = TRUE;
+  for (unsigned i = 0; i < G_N_ELEMENTS(layers); i++) {
+    gboolean ok = layers[i].run();
+    g_printerr("[HFDL] %-5s selftest: %s\n", layers[i].name, ok ? "PASS" : "FAIL");
+    if (!ok) all = FALSE;
+  }
+  return all;
+}
+
 void hfdl_decoder_set_enabled(gboolean on) {
   gint was = g_atomic_int_get(&enabled);
   if (on && !was) {
@@ -359,17 +384,7 @@ void hfdl_decoder_set_enabled(gboolean on) {
              liquid_libversion());
     if (do_echo) {
       g_printerr("[HFDL] enabled (liquid-dsp %s)\n", liquid_libversion());
-      if (g_getenv("MACHPSDR_HFDL_SELFTEST")) {
-        g_printerr("[HFDL] demod selftest: %s\n", hfdl_demod_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] fec selftest:   %s\n", hfdl_fec_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] frame selftest: %s\n", hfdl_frame_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] pdu selftest:   %s\n", hfdl_pdu_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] msg selftest:   %s\n", hfdl_msg_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] arinc selftest: %s\n", hfdl_arinc_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] miam selftest:  %s\n", hfdl_miam_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] ohma selftest:  %s\n", hfdl_ohma_selftest() ? "PASS" : "FAIL");
-        g_printerr("[HFDL] cpdlc selftest: %s\n", hfdl_cpdlc_selftest() ? "PASS" : "FAIL");
-      }
+      if (g_getenv("MACHPSDR_HFDL_SELFTEST")) hfdl_decoder_selftest();
     }
   } else if (!on && was) {
     demod_free();

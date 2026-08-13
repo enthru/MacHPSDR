@@ -202,6 +202,10 @@ HFDL_HEADERS= hfdl_decoder.h hfdl_demod.h hfdl_fec.h hfdl_frame.h hfdl_msg.h hfd
 # to build without HFDL and no second GPL story to tell — the link differs, the
 # messages do not.
 HFDL_OBJS= hfdl_decoder.o hfdl_demod.o hfdl_fec.o hfdl_frame.o hfdl_msg.o hfdl_arinc.o hfdl_asn1.o hfdl_cpdlc.o hfdl_miam.o hfdl_ohma.o hfdl_util.o hfdl_pdu.o hfdl_panel.o hfdl_lib/libfec/viterbi27_port.o hfdl_lib/hfdl_crc.o hfdl_lib/vstring.o acars_demod.o acars_decoder.o acars_panel.o
+# The objects in HFDL_OBJS that pull GTK in — every offline harness filters
+# exactly these out, so a new panel is named once here rather than in each rule
+# (which is how hfdl_offline came to be linked against acars_panel.o).
+HFDL_PANEL_OBJS= hfdl_panel.o acars_panel.o
 # The FANS-1/A ASN.1 tree (asn1c output + runtime, ~240 sources) is built into
 # its own archive by its own Makefile, like wdsp/ — it has no business in the
 # flat OBJS list, and it must never be rebuilt with our warning flags.
@@ -708,11 +712,11 @@ all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCE
 .PHONY: hfdl-offline
 hfdl-offline: hfdl_offline
 # Links only what the decode chain needs (no GTK, no WDSP, no audio): the panel
-# object is the one HFDL file that pulls the UI in, so it is filtered out.
+# objects are what pull the UI in, so they are filtered out.
 hfdl_offline: tools/hfdl_offline.c $(HFDL_OBJS) log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/hfdl_offline.c \
-	  $(filter-out hfdl_panel.o,$(HFDL_OBJS)) log.o \
+	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
 
 # Headless VHF ACARS harness: `--selftest` needs no recording, and it also eats
@@ -728,7 +732,7 @@ acars-offline: acars_offline
 acars_offline: tools/acars_offline.c $(HFDL_OBJS) log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(HFDL_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/acars_offline.c \
-	  $(filter-out hfdl_panel.o acars_panel.o,$(HFDL_OBJS)) log.o \
+	  $(filter-out $(HFDL_PANEL_OBJS),$(HFDL_OBJS)) log.o \
 	  $(shell pkg-config --libs glib-2.0) $(HFDL_LIBS) -lm
 
 # Headless APT harness: feeds a demodulated-audio WAV (the format APT recordings

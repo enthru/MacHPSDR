@@ -122,4 +122,10 @@ glong hfdl_decoder_get_frames(void);
 // thread; the state reset is applied on the next audio-thread feed.
 void hfdl_decoder_reset(void);
 
+// Run every layer's self-test (demod, FEC, framer, PDU, message, ARINC-622,
+// MIAM, OHMA, CPDLC), printing one PASS/FAIL line each; TRUE only if all pass.
+// Needs no recording and no radio — this is what `hfdl_offline --selftest` runs,
+// and what MACHPSDR_HFDL_SELFTEST runs inside the app.
+gboolean hfdl_decoder_selftest(void);
+
 #endif
