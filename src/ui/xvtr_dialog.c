@@ -174,7 +174,11 @@ void max_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
   const char* maxf=gtk_editable_get_text(GTK_EDITABLE(max_frequency[band]));
-  xvtr->frequencyMin=(long long)(atof(maxf)*1000000.0);
+  // frequencyMax.  This wrote frequencyMin -- on every keystroke, since the
+  // handler is on "changed" -- so typing the upper band edge overwrote the
+  // LOWER one with each partial value and the maximum never reached the live
+  // band at all.
+  xvtr->frequencyMax=(long long)(atof(maxf)*1000000.0);
   update_receiver(band);
 }
 

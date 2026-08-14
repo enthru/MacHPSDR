@@ -1467,6 +1467,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply);
           } else if(command[5]==';') {
             rx->rit_enabled=atoi(&command[4]);
+            frequency_changed(rx);   // apply it, as tci.c does
             update_vfo(rx);
           }
           break;
@@ -2845,6 +2846,7 @@ int parse_cmd(void *data) {
             send_resp(cmd,reply);
           } else if(command[3]==';') {
             rx->rit_enabled=atoi(&command[2]);
+            frequency_changed(rx);   // apply it, as tci.c does
             update_vfo(rx);
           }
           break;

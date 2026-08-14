@@ -482,6 +482,7 @@ int switch_action(void * data) {
       break;
     case RIT:
       rx->rit_enabled=!rx->rit_enabled;
+      frequency_changed(rx);   // apply it: update_vfo only draws the button
       update_vfo(rx);
       tci_notify_state(rx);
       break;

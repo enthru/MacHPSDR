@@ -117,6 +117,7 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
 }
 
 extern int midi_rx;
+extern RECEIVER *midi_active_receiver(void);
 
 void update_radio_info(RECEIVER *rx) {
   RADIO_INFO *info=(RADIO_INFO *)g_object_get_data((GObject *)rx->radio_info,"info_data");
@@ -140,7 +141,13 @@ void update_radio_info(RECEIVER *rx) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->cat_b), rx->cat_client_connected);
 
 #ifdef MIDI
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->midi_b),radio->midi_enabled && (radio->receiver[midi_rx]->channel==rx->channel));
+  // Resolved, not indexed: midi_rx names a slot the operator can close (see
+  // midi_active_receiver()), and this runs on every frame of every receiver.
+  {
+    RECEIVER *mrx=midi_active_receiver();
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->midi_b),
+                                 radio->midi_enabled && mrx!=NULL && mrx->channel==rx->channel);
+  }
 #endif
 
 #ifdef CWDAEMON

@@ -497,10 +497,7 @@ void receiver_close(RECEIVER *rx) {
   // Keep at least one receiver — never leave the radio headless
   if(radio->receivers<=1) return;
 
-  if(radio->dialog!=NULL) {
-    gtk_window_destroy(GTK_WINDOW(radio->dialog));
-    radio->dialog=NULL;
-  }
+  configure_dialog_close(radio);
   // Persist this receiver's current settings so they survive the close, then
   // mark the slot inactive: the settings are kept but the receiver is not
   // auto-recreated on the next start-up (and are restored if it is re-added).

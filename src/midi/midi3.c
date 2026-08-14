@@ -48,6 +48,26 @@
 int midi_rx;
 int midi_debug=FALSE;
 
+/* The receiver MIDI acts on.  midi_rx is moved by the SWAP_RX action and by
+   nothing else -- in particular delete_receiver() does not touch it -- so the
+   slot it names can be closed under it, and radio->receiver[midi_rx] is then
+   NULL for every later MIDI event and for the per-frame radio_info draw.
+   Resolve through here instead: fall back to the first live receiver and put
+   midi_rx back on it, so the next SWAP_RX starts from something real. */
+RECEIVER *midi_active_receiver(void) {
+  if(radio==NULL) return NULL;
+  if(midi_rx>=0 && midi_rx<MAX_RECEIVERS && radio->receiver[midi_rx]!=NULL) {
+    return radio->receiver[midi_rx];
+  }
+  for(int i=0;i<MAX_RECEIVERS;i++) {
+    if(radio->receiver[i]!=NULL) {
+      midi_rx=i;
+      return radio->receiver[i];
+    }
+  }
+  return NULL;
+}
+
 typedef struct _action {
   enum MIDIaction action;
   enum MIDItype type;
@@ -64,7 +84,11 @@ static int midi_action(void *data) {
     double dnew;
     double *dp;
     int    *ip;
-    RECEIVER *rx=radio->receiver[midi_rx];
+    RECEIVER *rx=midi_active_receiver();
+    if(rx==NULL) {
+      g_free(data);
+      return 0;
+    }
 
     if(midi_debug) log_info("%s: action=%d type=%d val=%d\n",__FUNCTION__,action,type,val);
     //

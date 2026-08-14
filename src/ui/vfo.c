@@ -67,6 +67,22 @@ static GtkWidget *vfo_pop_new(GtkWidget *relto) {
   g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
   return pop;
 }
+/* A menu row owns its CHOICE.  These are one g_new0 per ROW, passed as the
+   row's user_data, and only the row the operator actually clicked ever reached
+   the g_free at the end of its handler -- so every other row's block, and all
+   of them when the popover was dismissed without a selection, leaked.  The
+   closure notify hands the free to GLib, which runs it when the row (and with
+   it the popover) is destroyed, clicked or not.  Handlers therefore must NOT
+   free it themselves. */
+/* A real GClosureNotify rather than a cast g_free: the signatures differ, and
+   UBSan's function-type check would flag the cast the moment a row is
+   destroyed. */
+static void vfo_choice_free(gpointer data,GClosure *closure) {
+  g_free(data);
+}
+#define vfo_choice_connect(item,cb,ch) \
+  g_signal_connect_data((item),"clicked",G_CALLBACK(cb),(ch),vfo_choice_free,0)
+
 static GtkWidget *vfo_menu_button(const char *label) {
   GtkWidget *b=gtk_button_new_with_label(label);
   gtk_widget_add_css_class(b,"flat");
@@ -383,12 +399,16 @@ void split_cb(GtkWidget *menu_item,gpointer data) {
   }
   frequency_changed(rx);
   update_vfo(rx);
-  g_free(choice);
 }
 
 static gboolean split_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
 
@@ -416,28 +436,28 @@ static gboolean split_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,
       choice->rx=rx;
       choice->selection=SPLIT_OFF;
       choice->button=widget;
-      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
+      vfo_choice_connect(menu_item,split_cb,choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("SPLIT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_ON;
       choice->button=widget;
-      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
+      vfo_choice_connect(menu_item,split_cb,choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("SAT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_SAT;
       choice->button=widget;
-      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
+      vfo_choice_connect(menu_item,split_cb,choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
       menu_item=gtk_menu_item_new_with_label("RSAT");
       choice=g_new0(CHOICE,1);
       choice->rx=rx;
       choice->selection=SPLIT_RSAT;
       choice->button=widget;
-      g_signal_connect(menu_item,"clicked",G_CALLBACK(split_cb),choice);
+      vfo_choice_connect(menu_item,split_cb,choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 #if GTK_CHECK_VERSION(3,22,0)
       gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
@@ -458,12 +478,16 @@ void zoom_cb(GtkWidget *menu_item,gpointer data) {
   receiver_change_zoom(rx,choice->selection);
   sprintf(temp,"ZOOM x%d",rx->zoom);
   gtk_button_set_label(GTK_BUTTON(choice->button),temp);
-  g_free(choice);
 }
 
 static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
   menu=gtk_menu_new();
@@ -472,56 +496,56 @@ static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x3");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=3;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x4");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=4;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x5");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=5;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x6");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=6;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x7");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=7;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("x8");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=8;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+  vfo_choice_connect(menu_item,zoom_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   // Deep zoom levels (handy for FT8 / narrow digital signals).
   int deep_zoom[]={10,12,16,32};
@@ -533,7 +557,7 @@ static void zoom_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=deep_zoom[dz];
     choice->button=widget;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(zoom_cb),choice);
+    vfo_choice_connect(menu_item,zoom_cb,choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   }
 #if GTK_CHECK_VERSION(3,22,0)
@@ -549,12 +573,16 @@ void step_cb(GtkWidget *menu_item,gpointer data) {
   char temp[16];
   sprintf(temp,"STEP %s",step_labels[choice->selection]);
   gtk_button_set_label(GTK_BUTTON(choice->button),temp);
-  g_free(choice);
 }
 
 static void step_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
   int i;
@@ -566,7 +594,7 @@ static void step_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=i;
     choice->button=widget;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(step_cb),choice);
+    vfo_choice_connect(menu_item,step_cb,choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   }
 #if GTK_CHECK_VERSION(3,22,0)
@@ -622,11 +650,12 @@ void mode_cb(GtkWidget *menu_item,gpointer data) {
     }
   }
   gtk_button_set_label(GTK_BUTTON(choice->button),mode_string[choice->selection]);
-  g_free(choice);
 }
 
 static void mode_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
+  /* Created here and USED here -- this handler builds exactly one popover,
+     unlike the ones that then build a second (see split_b_press_cb). */
   GtkWidget *menu=gtk_menu_new();
   GtkWidget *menu_item;
   CHOICE *choice;
@@ -638,7 +667,7 @@ static void mode_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=i;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(mode_cb),choice);
+    vfo_choice_connect(menu_item,mode_cb,choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     }
 #if GTK_CHECK_VERSION(3,22,0)
@@ -654,12 +683,16 @@ void filter_cb(GtkWidget *menu_item,gpointer data) {
   receiver_filter_changed(choice->rx,choice->selection);
   mode_filters=filters[choice->rx->mode_a];
   gtk_button_set_label(GTK_BUTTON(choice->button),mode_filters[choice->selection].title);
-  g_free(choice);
 }
 
 static void filter_b_cb(GtkWidget *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
   FILTER *mode_filters;
@@ -672,14 +705,14 @@ static void filter_b_cb(GtkWidget *widget,gpointer user_data) {
     choice->rx=rx;
     choice->selection=0;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
+    vfo_choice_connect(menu_item,filter_cb,choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     menu_item=gtk_menu_item_new_with_label("5.0k Dev");
     choice=g_new0(CHOICE,1);
     choice->rx=rx;
     choice->selection=1;
     choice->button=(GtkWidget *)widget;
-    g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
+    vfo_choice_connect(menu_item,filter_cb,choice);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   } else {
     mode_filters=filters[rx->mode_a];
@@ -695,7 +728,7 @@ static void filter_b_cb(GtkWidget *widget,gpointer user_data) {
       choice->rx=rx;
       choice->selection=i;
       choice->button=(GtkWidget *)widget;
-      g_signal_connect(menu_item,"clicked",G_CALLBACK(filter_cb),choice);
+      vfo_choice_connect(menu_item,filter_cb,choice);
       gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
     }
   }
@@ -735,7 +768,6 @@ void nb_cb(GtkWidget *menu_item,gpointer data) {
 
   update_noise(choice->rx);
 
-  g_free(choice);
 }
 
 static gboolean nb_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
@@ -750,21 +782,21 @@ static gboolean nb_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,d
   choice->rx=rx;
   choice->selection=0;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
+  vfo_choice_connect(menu_item,nb_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NB");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
+  vfo_choice_connect(menu_item,nb_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NB2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nb_cb),choice);
+  vfo_choice_connect(menu_item,nb_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
@@ -803,7 +835,6 @@ void nr_cb(GtkWidget *menu_item,gpointer data) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),choice->selection!=0);
   g_signal_handlers_unblock_by_func(v->nr_b,G_CALLBACK(nr_b_pressed_cb),data);
 
-  g_free(choice);
 }
 
 static gboolean nr_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
@@ -818,35 +849,35 @@ static gboolean nr_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,d
   choice->rx=rx;
   choice->selection=0;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  vfo_choice_connect(menu_item,nr_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=1;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  vfo_choice_connect(menu_item,nr_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR2");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=2;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  vfo_choice_connect(menu_item,nr_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR3");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=3;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  vfo_choice_connect(menu_item,nr_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("NR4");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=4;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(nr_cb),choice);
+  vfo_choice_connect(menu_item,nr_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
@@ -919,12 +950,16 @@ static gboolean rit_b_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,d
 void rit_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   choice->rx->rit_step=choice->selection;
-  g_free(choice);
 }
 
 static gboolean rit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
   switch(button) {
@@ -935,35 +970,35 @@ static gboolean rit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,do
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
+     vfo_choice_connect(menu_item,rit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("5Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=5;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
+     vfo_choice_connect(menu_item,rit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("10Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=10;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
+     vfo_choice_connect(menu_item,rit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("100Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=100;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
+     vfo_choice_connect(menu_item,rit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("1000Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1000;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(rit_cb),choice);
+     vfo_choice_connect(menu_item,rit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
 #if GTK_CHECK_VERSION(3,22,0)
@@ -1005,12 +1040,16 @@ static gboolean xit_b_scroll_event_cb(GtkEventControllerScroll *ctrl,double dx,d
 void xit_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   radio->transmitter->xit_step=choice->selection;
-  g_free(choice);
 }
 
 static gboolean xit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)user_data;
-  GtkWidget *menu=gtk_menu_new();
+  /* NULL, not gtk_menu_new(): a popover created here and then replaced by the
+     one built in the branch below is never popped up, so its "closed"
+     handler never runs and it stays parented to the button for ever --
+     one leaked GtkPopover per click, invisible to LeakSanitizer because
+     the widget tree still owns it. */
+  GtkWidget *menu=NULL;
   GtkWidget *menu_item;
   CHOICE *choice;
   switch(button) {
@@ -1021,35 +1060,35 @@ static gboolean xit_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,do
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
+     vfo_choice_connect(menu_item,xit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("5Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=5;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
+     vfo_choice_connect(menu_item,xit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("10Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=10;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
+     vfo_choice_connect(menu_item,xit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("100Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=100;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
+     vfo_choice_connect(menu_item,xit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
      menu_item=gtk_menu_item_new_with_label("1000Hz");
      choice=g_new0(CHOICE,1);
      choice->rx=rx;
      choice->selection=1000;
-     g_signal_connect(menu_item,"clicked",G_CALLBACK(xit_cb),choice);
+     vfo_choice_connect(menu_item,xit_cb,choice);
      gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
 #if GTK_CHECK_VERSION(3,22,0)
@@ -1123,7 +1162,6 @@ void agc_cb(GtkWidget *menu_item,gpointer data) {
 
   update_noise(choice->rx);
 
-  g_free(choice);
 }
 
 static gboolean agc_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
@@ -1138,35 +1176,35 @@ static gboolean agc_b_pressed_cb(GtkGestureClick *gesture,int n_press,double ex,
   choice->rx=rx;
   choice->selection=AGC_OFF;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
+  vfo_choice_connect(menu_item,agc_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("LONG");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_LONG;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
+  vfo_choice_connect(menu_item,agc_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("SLOW");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_SLOW;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
+  vfo_choice_connect(menu_item,agc_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("MEDIUM");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_MEDIUM;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
+  vfo_choice_connect(menu_item,agc_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
   menu_item=gtk_menu_item_new_with_label("FAST");
   choice=g_new0(CHOICE,1);
   choice->rx=rx;
   choice->selection=AGC_FAST;
   choice->button=widget;
-  g_signal_connect(menu_item,"clicked",G_CALLBACK(agc_cb),choice);
+  vfo_choice_connect(menu_item,agc_cb,choice);
   gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 #if GTK_CHECK_VERSION(3,22,0)
   gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);
@@ -1370,7 +1408,6 @@ void band_cb(GtkWidget *menu_item,gpointer data) {
   CHOICE *choice=(CHOICE *)data;
   set_band(choice->rx,choice->selection,choice->sub_selection);
   update_vfo(choice->rx);
-  g_free(choice);
 }
 
 // Set an absolute tune frequency (Hz), respecting the current tuning mode: in
@@ -1470,7 +1507,7 @@ static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double
     if(!rx->locked) vfo_show_freq_entry(rx,widget,FALSE);
     return TRUE;
   }
-  GtkWidget *menu=gtk_menu_new();
+  GtkWidget *menu=NULL;   /* see the note in split_b_press_cb */
   GtkWidget *band_menu;
   GtkWidget *menu_item;
   CHOICE *choice;
@@ -1509,7 +1546,7 @@ static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double
           choice->rx=rx;
           choice->selection=i;
           choice->sub_selection=j;
-          g_signal_connect(menu_item,"clicked",G_CALLBACK(band_cb),choice);
+          vfo_choice_connect(menu_item,band_cb,choice);
           gtk_menu_shell_append(GTK_MENU_SHELL(band_menu),menu_item);
 	}
       }
@@ -2252,16 +2289,21 @@ void update_vfo(RECEIVER *rx) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->agc_b),rx->agc!=AGC_OFF);
   g_signal_handlers_unblock_by_func(v->agc_b,G_CALLBACK(agc_cb),rx);
 
-  // update RIT button
-  g_signal_handlers_block_by_func(v->rit_b,G_CALLBACK(rit_b_press_cb),rx);
+  // update RIT button.  Block the handler that is CONNECTED to the button --
+  // rit_b_press_cb is on a GtkGestureClick, so blocking it here blocked nothing
+  // and this programmatic set_active re-entered rit_b_cb, which is how RIT from
+  // the keyboard and from CAT came to be applied at all (they set the flag and
+  // called update_vfo, nothing else).  Those paths call frequency_changed()
+  // themselves now.
+  g_signal_handlers_block_by_func(v->rit_b,G_CALLBACK(rit_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->rit_b),rx->rit_enabled);
-  g_signal_handlers_unblock_by_func(v->rit_b,G_CALLBACK(rit_b_press_cb),rx);
+  g_signal_handlers_unblock_by_func(v->rit_b,G_CALLBACK(rit_b_cb),rx);
 
   // update XIT button
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
-    g_signal_handlers_block_by_func(v->xit_b,G_CALLBACK(xit_b_press_cb),rx);
+    g_signal_handlers_block_by_func(v->xit_b,G_CALLBACK(xit_b_cb),rx);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->xit_b),radio->transmitter->xit_enabled);
-    g_signal_handlers_unblock_by_func(v->xit_b,G_CALLBACK(xit_b_press_cb),rx);
+    g_signal_handlers_unblock_by_func(v->xit_b,G_CALLBACK(xit_b_cb),rx);
   }
 
   // update CTUN button

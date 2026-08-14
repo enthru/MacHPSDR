@@ -137,7 +137,10 @@ static gboolean info_timeout(gpointer arg) {
   
   GetPSInfo(tx->channel,&info[0]);
   
-  if (tx->puresignal == NULL) return FALSE;
+  // Clear the stored id on every path that ends the timer: g_source_remove()
+  // on an id GLib has already dropped is a warning, and the page-destroy
+  // handler cannot tell the two apart otherwise.
+  if (tx->puresignal == NULL) { tx->ps_timer_id=0; return FALSE; }
 
   if (tx->puresignal->auto_on) {
     double fbk_db;
@@ -175,7 +178,8 @@ static gboolean info_timeout(gpointer arg) {
   GetPSMaxTX(tx->channel,&pk);
   update_ps(tx, pk);
 
-  return running;
+  if(!running) { tx->ps_timer_id=0; return FALSE; }
+  return TRUE;
 #else
   return FALSE;
 #endif
@@ -199,14 +203,29 @@ static void enable_cb(GtkWidget *widget, gpointer data) {
   }
 }
 
+/* The Configure page is going away: stop the 100 ms readout timer and drop the
+   widget pointer it draws through, so nothing is left pointing at a destroyed
+   PanaView.  The transmitter itself outlives the page, hence the fields being
+   cleared rather than the struct. */
+static void ps_page_destroy(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  running=FALSE;
+  if(tx->ps_timer_id>0) {
+    g_source_remove(tx->ps_timer_id);
+    tx->ps_timer_id=0;
+  }
+  tx->ps=NULL;
+}
+
 static void twotone_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   transmitter_set_twotone(tx,gtk_check_button_get_active(GTK_CHECK_BUTTON (widget)));
   if(tx->ps_twotone && (tx->puresignal != NULL)) {
     running=TRUE;
-    tx->ps_timer_id=g_timeout_add(100,info_timeout,(gpointer)tx);
+    if(tx->ps_timer_id==0) tx->ps_timer_id=g_timeout_add(100,info_timeout,(gpointer)tx);
   } else {
     running=FALSE;
+    if(tx->ps_timer_id>0) { g_source_remove(tx->ps_timer_id); tx->ps_timer_id=0; }
   }
 }
 
@@ -291,6 +310,12 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
   if(!ps_supported) {
     gtk_widget_set_sensitive(ps_frame, FALSE);
   }
+
+  // The Two Tone timer redraws tx->ps every 100 ms and nothing ever stopped it:
+  // close Configure with Two Tone on and it went on calling
+  // gtk_widget_queue_draw() on a finalised PanaView for the rest of the
+  // process.  Stop it with the page, the shape every decoder panel uses.
+  g_signal_connect(grid,"destroy",G_CALLBACK(ps_page_destroy),(gpointer)tx);
 
   return grid;
 }

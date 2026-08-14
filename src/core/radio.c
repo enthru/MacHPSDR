@@ -457,10 +457,7 @@ void delete_wideband(WIDEBAND *w) {
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_stop_wideband();
   }
-  if(radio->dialog) {
-    gtk_window_destroy(GTK_WINDOW(radio->dialog));
-    radio->dialog=NULL;
-  }
+  configure_dialog_close(radio);
   // Protocol 1 only -- see the note in add_wideband().
   if(radio->discovered->protocol==PROTOCOL_1) {
     protocol1_stop();
@@ -574,10 +571,7 @@ log_info("delete_receiver: receivers now %d\n",radio->receivers);
   // feedback RX) has no page, so deleting it — e.g. unticking "Enable diversity"
   // on the Diversity page — must leave the settings window open, mirroring the
   // add_receiver path.
-  if(was_visible && radio->dialog) {
-    gtk_window_destroy(GTK_WINDOW(radio->dialog));
-    radio->dialog=NULL;
-  }
+  if(was_visible) configure_dialog_close(radio);
 
   // The slot is clear and every module that cached the pointer has been told,
   // so nothing can reach this receiver any more: release it.  Holding
@@ -814,7 +808,10 @@ static void tune_cb(GtkToggleButton *widget,gpointer data) {
 // gain here to reproduce that nudge automatically.
 static gboolean soapy_reapply_rx_gain(gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  if(rx==NULL || soapy_protocol_is_running()==FALSE) return G_SOURCE_REMOVE;
+  // receiver_is_live(), not rx!=NULL: the pointer was captured non-NULL half a
+  // second ago and the operator can close that receiver in the gap -- the rule
+  // every other deferred callback carrying a RECEIVER* follows.
+  if(!receiver_is_live(rx) || soapy_protocol_is_running()==FALSE) return G_SOURCE_REMOVE;
   // A cold HackRF (freshly powered / just after a reboot) only latches control
   // settings into hardware once the stream is actually transferring samples.
   // The frequency and gain set before the stream started are cached but not
@@ -888,10 +885,7 @@ log_info("add_receiver: no receivers available\n");
   // hidden RX, PureSignal feedback RX) adds no page, and closing the dialog here
   // would slam the settings window shut the instant the user ticks "Enable
   // diversity" on the Diversity page — so leave it open for the hidden case.
-  if(show_rx && radio->dialog) {
-    gtk_window_destroy(GTK_WINDOW(radio->dialog));
-    radio->dialog=NULL;
-  }
+  if(show_rx) configure_dialog_close(radio);
   // Only rebuild the visible RX stack when a *visible* receiver was added. A
   // hidden receiver (diversity hidden RX, PureSignal feedback RX) has no table
   // and never appears in the stack, so rebuilding would pointlessly tear down
@@ -1858,10 +1852,7 @@ int add_wideband(void *data) {
   if(r->discovered->protocol==PROTOCOL_2) {
     protocol2_start_wideband(r->wideband);
   }
-  if(radio->dialog) {
-    gtk_window_destroy(GTK_WINDOW(radio->dialog));
-    radio->dialog=NULL;
-  }
+  configure_dialog_close(radio);
   return 0;
 }
 
@@ -3450,6 +3441,12 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 }
 
 void update_radio(RADIO *r) {
+  // All three buttons are built only inside `if(r->can_transmit)`, and an
+  // RX-only device (any RTL-SDR, Airspy or SDRplay: tx_channels==0) leaves them
+  // NULL.  Not every caller checks -- MIDI's VOX and VOX-LEVEL actions do not,
+  // unlike actions.c's MOX/TUNE -- so guard here, where the widgets are.
+  if(r->mox_button==NULL || r->tune_button==NULL || r->vox_button==NULL) return;
+
   // update MOX button
   g_signal_handlers_block_by_func(r->mox_button,G_CALLBACK(mox_cb),r);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(r->mox_button),r->mox);

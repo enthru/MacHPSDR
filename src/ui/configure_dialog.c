@@ -139,8 +139,15 @@ static GtkWidget *merge_pages(int n,...) {
 // FALSE lets the default handler destroy the window; we must clear the cached
 // radio->dialog (and per-receiver widget pointers) here or configure_cb's
 // "dialog==NULL" guard would block reopening after the first close.
-static gboolean close_request(GtkWindow *self, gpointer data) {
-  RADIO *radio=(RADIO *)data;
+// Everything that has to happen when this window goes away, wherever the close
+// came from.  It used to live inside the "close-request" handler alone, which
+// GTK4 emits for the close button and for gtk_window_close() -- but NOT for
+// gtk_window_destroy(), and five places in the tree close this dialog that way
+// (adding or closing a receiver, adding or closing the wideband window).  Down
+// those paths the transverter edits were never saved, MIDI stayed in learn mode
+// with every control dead, and each receiver was left holding pointers to five
+// destroyed widgets.
+static void configure_dialog_cleanup(RADIO *radio) {
   int i;
 
   save_xvtr();
@@ -157,6 +164,20 @@ static gboolean close_request(GtkWindow *self, gpointer data) {
       radio->receiver[i]->filter_grid=NULL;
     }
   }
+}
+
+// The one way for code outside this file to close the settings window.
+void configure_dialog_close(RADIO *radio) {
+  GtkWidget *dialog=radio->dialog;
+  if(dialog==NULL) return;
+  configure_dialog_cleanup(radio);
+  gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+static gboolean close_request(GtkWindow *self, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+
+  configure_dialog_cleanup(radio);
   return FALSE;
 }
 
