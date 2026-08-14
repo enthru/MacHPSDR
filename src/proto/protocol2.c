@@ -149,7 +149,7 @@ static gpointer protocol2_thread(gpointer data);
 static gpointer protocol2_timer_thread(gpointer data);
 static void  process_iq_data(RECEIVER *rx,unsigned char *buffer);
 static void  process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer);
-static void  process_wideband_data(WIDEBAND *w,unsigned char *buffer);
+static void  process_wideband_data(WIDEBAND *w,int bytes,unsigned char *buffer);
 #ifdef PURESIGNAL_P2
 static void  process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer);
 #endif
@@ -349,7 +349,36 @@ void protocol2_general(void) {
 
     if(radio!=NULL) {
       if(radio->wideband!=NULL) {
-        general_buffer[23]=0x01; // enable for ADC-0
+        WIDEBAND *w=radio->wideband;
+        // Byte 23 is the wideband capture enable, one bit per ADC.  Bytes 24..28
+        // are its PARAMETERS, and leaving them zero -- as this did for its whole
+        // life -- is not "use the defaults": a board loads its wideband IP with
+        // exactly these numbers, so nought samples in nought packets every
+        // nought ms is a request for no data at all.  Checked against the one
+        // board-side implementation that is open (laurencebarker/Saturn,
+        // sw_projects/P2_app: generalpacket.c reads the enable at 23, a
+        // big-endian sample count at 24, the sample size in bits at 26, the
+        // update period in ms at 27 and packets-per-frame at 28;
+        // Outwideband.c then sends samples*2+4 bytes per datagram and loops
+        // packets-per-frame times, i.e. zero times for our old register block).
+        //
+        // Samples per packet is the number process_wideband_data() reads back,
+        // and packets per frame is chosen so ONE frame fills the analyzer buffer
+        // exactly: each FFT then covers a single contiguous ADC capture instead
+        // of being spliced across two of them.  Both fields are one byte
+        // (24..25 is the 16-bit one), hence the clamps.
+        int per_frame=w->buffer_size/WIDEBAND_SAMPLES_PER_PACKET;
+        int rate_ms=w->fps>0?1000/w->fps:100;
+        if(per_frame<1)   per_frame=1;
+        if(per_frame>255) per_frame=255;
+        if(rate_ms<1)     rate_ms=1;
+        if(rate_ms>255)   rate_ms=255;
+        general_buffer[23]=1<<(w->adc&0x01);
+        general_buffer[24]=(WIDEBAND_SAMPLES_PER_PACKET>>8)&0xFF;
+        general_buffer[25]=WIDEBAND_SAMPLES_PER_PACKET&0xFF;
+        general_buffer[26]=WIDEBAND_SAMPLE_BITS;
+        general_buffer[27]=rate_ms;
+        general_buffer[28]=per_frame;
       }
     }
 
@@ -1393,10 +1422,14 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
               free(buffer);
               break;
             case WIDE_BAND_TO_HOST_PORT:
+              // Freed either way: a board keeps streaming until the next general
+              // packet clears the enable, and delete_wideband() NULLs the pointer
+              // as soon as the window closes -- so the packets that arrive in
+              // that gap used to leak one NET_BUFFER_SIZE block each.
               if(radio->wideband!=NULL) {
-                process_wideband_data(radio->wideband,buffer);
-                free(buffer);
+                process_wideband_data(radio->wideband,bytesread,buffer);
               }
+              free(buffer);
               break;
             case COMMAND_RESPONCE_TO_HOST_PORT:
               process_command_response(buffer);
@@ -1623,19 +1656,21 @@ static void process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer) {
 }
 #endif
 
-static void process_wideband_data(WIDEBAND *w,unsigned char *buffer) {
+static void process_wideband_data(WIDEBAND *w,int bytes,unsigned char *buffer) {
   //long sequence; // UNUSED
   int b;
   int sample;
   double sampledouble;
-  //unsigned char *buffer;
-
-  //buffer=wide_buffer;
-
 
   //sequence=((buffer[0]&0xFF)<<24)+((buffer[1]&0xFF)<<16)+((buffer[2]&0xFF)<<8)+(buffer[3]&0xFF); // UNUSED
+
+  // Driven by the datagram LENGTH, not by the fixed 1028 this used to walk.  The
+  // packet carries the samples-per-packet the general registers asked for
+  // (WIDEBAND_SAMPLES_PER_PACKET, byte 24..25), and a board sends that many
+  // 16-bit samples after the 4-byte sequence -- so a constant reads 1024 bytes
+  // out of a shorter datagram and silently drops the tail of a longer one.
   b=4;
-  while(b<1028) {
+  while(b+1<bytes) {
     sample   = (int)(signed char)buffer[b++]*256;
     sample  |= (int)((unsigned char)buffer[b++]&0xFF);
     sampledouble=(double)sample/32767.0; // for 16 bits

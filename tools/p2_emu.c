@@ -157,14 +157,19 @@
 //     REAL-input mapping the code intends: it asks the analyzer for pixels*2
 //     values across the full complex span and displays the upper half, i.e.
 //     0..fs/2, over WIDEBAND_SPAN_HZ.
-//   - The rate is not.  The app enables the feed with general byte 23 and leaves
-//     bytes 24 onward -- the wideband sample count, sample size and update rate a
-//     real board is programmed with -- at ZERO, while its own
-//     process_wideband_data() hard-codes 512 samples of 16 bits per packet.
-//     Nothing in this tree parses those bytes, so this tool prints them raw and
-//     obeys --wb-rate instead.  What a board does when asked for 0 samples at 0
-//     bits every 0 ms is the one thing only a board can answer, and it decides
-//     whether the wideband display works on real hardware at all.
+//   - The GEOMETRY is the app's, not this tool's.  General bytes 23..28 carry the
+//     capture enable, samples per packet, sample size, update period and packets
+//     per frame, and all five are obeyed here: the datagram length, the burst
+//     size and the cadence all follow the registers, so a register block asking
+//     for nothing (which is what this tree sent for its whole life -- byte 23
+//     alone, the rest zero) produces NO stream and the window stays empty
+//     instead of quietly working against an invented rate.  That is the point of
+//     reading them: the emulator now fails when the two halves disagree.
+//   - The ADC CLOCK is still invented, and cannot be otherwise: no register in
+//     the protocol carries it, so --wb-rate is this fake board's own sample rate
+//     (a real one is 122.88 MS/s) and the tone's position is meaningful only as a
+//     fraction of it.  The absolute MHz labels and WIDEBAND_SPAN_HZ itself are
+//     still unverified against hardware.
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -212,10 +217,12 @@
 #define IQ_PKT_BYTES   1444
 #define IQ_SAMPLES     238
 
-// Wideband: 4-byte sequence then 512 16-bit samples.  process_wideband_data()
-// walks a FIXED range (b = 4 while b < 1028), so this length is not a choice.
-#define WB_PKT_BYTES   1028
-#define WB_SAMPLES     512
+// Wideband: 4-byte sequence then the 16-bit real ADC samples the general
+// registers asked for.  The buffer is a board's own UDP ceiling (Saturn:
+// VWBPACKETSIZE 1500) rather than the app's current 512-sample request, so a
+// register block asking for more is answered the way a board answers it --
+// refused for not fitting a datagram, not silently truncated.
+#define WB_PKT_BYTES   1500
 
 // Mic/line to host: 4-byte sequence then MIC_SAMPLES (64) 16-bit samples.
 #define MIC_SAMPLES    64
@@ -257,7 +264,16 @@ static int      running     = 0;             // high-priority byte 4 bit 0
 static unsigned ddc_enable  = 0;             // receive-specific byte 7
 static int      ddc_rate[MAX_DDC];           // Hz, from bytes 18..19 of each block
 static long long ddc_freq[MAX_DDC];          // Hz, from the phase words (log only)
-static int      wb_enable   = 0;             // general byte 23 bit 0
+static int      wb_enable   = 0;             // general byte 23, bit per ADC
+// The wideband PARAMETERS, obeyed rather than printed (see the header comment):
+// samples per packet (bytes 24..25, big-endian), sample size in bits (26),
+// update period in ms (27) and packets per frame (28).  Zero is not a default
+// here any more than it is on a board: with no sample count and no packets there
+// is nothing to send, and this tool sends nothing.
+static int      wb_samples  = 0;
+static int      wb_bits     = 0;
+static int      wb_rate_ms  = 0;
+static int      wb_frame    = 0;
 static int      ddc_adc[MAX_DDC];            // ADC, from byte 17 of each block
 static unsigned ddc_sync[MAX_DDC];           // followers of DDC n, byte 1363+n
 
@@ -542,7 +558,8 @@ int main(int argc, char **argv) {
   long long next_iq_us[MAX_DDC];
   for (int i = 0; i < MAX_DDC; i++) next_iq_us[i] = 0;
   long long next_hp_us = 0, next_mic_us = 0, next_wb_us = 0;
-  uint32_t hp_seq = 0, mic_seq = 0, wb_seq = 0;
+  uint32_t hp_seq = 0, mic_seq = 0;
+  int wb_pkt_in_frame = 0;   // the wideband sequence number: 0 at each frame
   double wb_phase = 0.0;
   long long last_report_us = now_us();
   long long iq_pkts = 0, reg_pkts = 0, discoveries = 0, refused = 0, drained = 0;
@@ -617,25 +634,42 @@ int main(int argc, char **argv) {
         reg_pkts++;
 
         if (cmd_port[i] == PORT_GENERAL && n >= 29) {
-          int wb = rxbuf[23] & 0x01;
-          if (wb != wb_enable) {
-            wb_enable = wb;
-            // Byte 23 is the enable; the bytes after it are the wideband
-            // PARAMETERS -- samples per packet, sample size in bits, update
-            // rate.  Nothing in this tree parses them and nothing sets them, so
-            // they are printed raw rather than obeyed: what the app asks a real
-            // board for is a fact worth having on the record, and 00 00 00 00
-            // 00 is not obviously a request for the 512 16-bit samples per
-            // packet its own process_wideband_data() hard-codes.
+          // Byte 23 is the enable, one bit per ADC; ADC-0 is the only one this
+          // tool captures, so bit 0 is what decides whether it streams.  Bytes
+          // 24..28 are the parameters, and they are OBEYED: the packet length,
+          // the burst size and the cadence all come from them, so a register
+          // block that asks for nothing gets nothing, exactly as a board does.
+          int wb   = rxbuf[23] & 0x01;
+          int smp  = ((rxbuf[24] & 0xFF) << 8) | (rxbuf[25] & 0xFF);
+          int bits = rxbuf[26] & 0xFF;
+          int rate = rxbuf[27] & 0xFF;
+          int perf = rxbuf[28] & 0xFF;
+          if (wb != wb_enable || smp != wb_samples || bits != wb_bits ||
+              rate != wb_rate_ms || perf != wb_frame) {
+            wb_enable = wb; wb_samples = smp; wb_bits = bits;
+            wb_rate_ms = rate; wb_frame = perf;
             printf("p2-emu: wideband ADC feed %s "
                    "(general[23..28] = %02X %02X %02X %02X %02X %02X)\n",
                    wb ? "ENABLED" : "disabled",
                    rxbuf[23], rxbuf[24], rxbuf[25], rxbuf[26], rxbuf[27], rxbuf[28]);
-            if (wb)
-              printf("p2-emu: streaming %d real 16-bit samples/packet at %d S/s"
-                     "%s -- INVENTED, the registers above say nothing\n",
-                     WB_SAMPLES, opt_wb_rate,
-                     opt_wb_tone != 0.0 ? " with a tone" : " of noise");
+            if (wb) {
+              if (smp <= 0 || perf <= 0 || rate <= 0)
+                printf("p2-emu: ... and asks for %d samples in %d packets every "
+                       "%d ms -- NOTHING to send (a board's capture loop runs "
+                       "packets-per-frame times, i.e. never)\n", smp, perf, rate);
+              else if (bits != 16)
+                printf("p2-emu: ... at %d bits per sample -- not sent, this tool "
+                       "and the app's parser are both 16-bit\n", bits);
+              else if (4 + smp * 2 > (int)sizeof(wb_pkt))
+                printf("p2-emu: ... %d samples/packet is %d bytes, past the %d a "
+                       "board fits in one datagram -- not sent\n",
+                       smp, 4 + smp * 2, (int)sizeof(wb_pkt));
+              else
+                printf("p2-emu: streaming %d real 16-bit samples/packet, %d "
+                       "packets (%d samples) every %d ms, ADC clocked at %d S/s"
+                       "%s\n", smp, perf, smp * perf, rate, opt_wb_rate,
+                       opt_wb_tone != 0.0 ? ", with a tone" : ", noise only");
+            }
             next_wb_us = now_us();
           }
         } else if (cmd_port[i] == PORT_RXSPEC && n >= 1444) {
@@ -772,8 +806,9 @@ int main(int argc, char **argv) {
     }
 
     // Wideband ADC samples, only while the app has a wideband window open.
-    if (wb_enable && !dead_peer) {
-      int budget = 8;
+    if (wb_enable && wb_samples > 0 && wb_frame > 0 && wb_rate_ms > 0 &&
+        wb_bits == 16 && 4 + wb_samples * 2 <= (int)sizeof(wb_pkt) && !dead_peer) {
+      int budget = 8 * wb_frame;
       // The wideband stream is the RAW ADC, i.e. REAL samples -- one 16-bit
       // number per sample, not an I/Q pair.  --wb-tone puts a line in it, and
       // the only thing about that line an emulator can vouch for is its
@@ -785,9 +820,14 @@ int main(int argc, char **argv) {
       // the reason this carries a tone at all instead of only noise.
       double wb_dphi = 2.0 * M_PI * opt_wb_tone /
                        (double)(opt_wb_rate > 0 ? opt_wb_rate : 96000);
+      // A frame is wb_frame packets sent back to back, then wb_rate_ms of
+      // silence: that is a burst capture, not a continuous stream, and it is
+      // what the registers describe.  The sequence number restarts at 0 on each
+      // frame, as a board's does (Outwideband.c), and the tone's phase carries
+      // ACROSS the gap -- the ADC keeps running while the FIFO is idle.
       while (t >= next_wb_us && budget-- > 0) {
-        put_be32(wb_pkt, wb_seq++);
-        for (int s = 0; s < WB_SAMPLES; s++) {
+        put_be32(wb_pkt, (uint32_t)wb_pkt_in_frame);
+        for (int s = 0; s < wb_samples; s++) {
           double v = 0.05 * noise_sample();
           if (opt_wb_tone != 0.0) {
             wb_phase += wb_dphi;
@@ -800,12 +840,21 @@ int main(int argc, char **argv) {
           wb_pkt[4 + s * 2]     = (unsigned char)((q >> 8) & 0xFF);
           wb_pkt[4 + s * 2 + 1] = (unsigned char)( q       & 0xFF);
         }
-        if (sendto(fd_cmd[3], wb_pkt, sizeof(wb_pkt), 0,
+        if (sendto(fd_cmd[3], wb_pkt, (size_t)(4 + wb_samples * 2), 0,
                    (struct sockaddr *)&peer, peerlen) < 0 && errno == ECONNREFUSED) {
           dead_peer = 1; break;
         }
-        long long iv = (long long)((double)WB_SAMPLES * 1e6 * opt_pace /
-                                   (double)(opt_wb_rate > 0 ? opt_wb_rate : 96000));
+        if (++wb_pkt_in_frame < wb_frame) continue;   // rest of the frame, no wait
+        wb_pkt_in_frame = 0;
+        // The ADC does not stop between frames, so the tone advances across the
+        // gap too: without that, consecutive captures would be spuriously
+        // phase-continuous, which is the one thing a burst feed is not.
+        double gap = (double)wb_rate_ms * 1e-3 *
+                     (double)(opt_wb_rate > 0 ? opt_wb_rate : 96000) -
+                     (double)wb_samples * (double)wb_frame;
+        if (gap > 0.0 && opt_wb_tone != 0.0)
+          wb_phase = fmod(wb_phase + wb_dphi * gap, 2.0 * M_PI);
+        long long iv = (long long)wb_rate_ms * 1000 * (long long)opt_pace;
         if (iv < 1) iv = 1;
         next_wb_us += iv;
         if (t - next_wb_us > 200000) next_wb_us = t;

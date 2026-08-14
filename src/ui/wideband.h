@@ -25,6 +25,15 @@
    than a per-receiver sample rate. */
 #define WIDEBAND_SPAN_HZ 61440000
 
+/* The packet geometry the general registers ask a board for, and the geometry
+   process_wideband_data() reads back — one number, so the two halves cannot
+   drift.  A board programs its wideband IP with exactly what byte 24..28 carry
+   and sends `samples*2 + 4` bytes per datagram (4-byte sequence, then 16-bit
+   real ADC samples, MSB first); zero in those fields is a request for NO data,
+   not a request for the defaults. */
+#define WIDEBAND_SAMPLES_PER_PACKET 512
+#define WIDEBAND_SAMPLE_BITS        16
+
 typedef struct _wideband {
   gint channel; // WDSP channel
   gint adc;
