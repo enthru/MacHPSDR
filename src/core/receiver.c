@@ -468,6 +468,21 @@ void receiver_destroy(RECEIVER *rx) {
   g_clear_pointer(&rx->scope_tuned_ext,g_free);
   g_clear_pointer(&rx->scope_tuned_out,g_free);
   g_clear_pointer(&rx->resampled_buffer,g_free);
+  // rx->buffer and rx->resampler are SoapySDR's: allocated in
+  // soapy_protocol_create_receiver(), sized from the stream MTU.  Only its own
+  // idempotent re-entry guard ever freed them, at the TOP of that function, and
+  // no teardown reaches it -- so closing a SoapySDR receiver leaked 32 kB of
+  // buffer per cycle, which is what LeakSanitizer measured against
+  // tools/soapy_null.cpp.  The resampler exists only when the device's ADC rate
+  // differs from the receiver's (the null driver's does not, so that half was
+  // invisible to the same run).  Freed here rather than in a Soapy-specific
+  // teardown because this is where every other buffer of the receiver goes, and
+  // both fields are NULL on the protocols that never set them.
+  g_clear_pointer(&rx->buffer,g_free);
+  if(rx->resampler!=NULL) {
+    destroy_resample(rx->resampler);
+    rx->resampler=NULL;
+  }
   g_clear_pointer(&rx->audio_name,g_free);
 
   g_mutex_clear(&rx->mutex);

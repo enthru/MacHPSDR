@@ -52,6 +52,10 @@ typedef struct _divmixer {
 } DIVMIXER;
 
 extern DIVMIXER *create_diversity_mixer(int id, RECEIVER *rxa, RECEIVER *rxb);
+// The mirror of create_diversity_mixer: stops and destroys the WDSP block and
+// frees every buffer it owns.  Call it from delete_diversity_mixer_locked()
+// only, after the slot has been cleared.
+extern void destroy_diversity_mixer(DIVMIXER *dmix);
 extern void diversity_add_buffer(DIVMIXER *dmix);
 extern void diversity_mix_full_buffers(DIVMIXER *dmix);
 extern void set_gain_phase(DIVMIXER *dmix);

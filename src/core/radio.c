@@ -608,6 +608,13 @@ log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
     log_info("delete_diversity_mixer: delete the hidden rx\n");
     delete_receiver_locked(radio->receiver[hidden_channel]);
   }
+
+  // ... and only now the mixer itself: the slot is clear and the hidden
+  // receiver is gone, so nothing can still be handing it buffers.  Until this
+  // existed the mixer, its buffers and its WDSP block were all simply dropped
+  // (~180 kB per off-cycle, plus a create_divEXT over the top of the dead one
+  // on the next enable) -- see destroy_diversity_mixer.
+  destroy_diversity_mixer(dmix);
 }
 
 static void rxtx(RADIO *r) {

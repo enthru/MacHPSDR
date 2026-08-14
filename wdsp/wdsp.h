@@ -160,6 +160,10 @@ extern void RXANBPSetShiftFrequency (int channel, double shift);
 
 // Diversity prototypes
 extern void create_divEXT (int id, int run, int nr, int size);
+// Declared in div.h and exported all along, but never listed here, so the one
+// caller that wanted it would have got an implicit declaration.  Header-only
+// addition, as with the CFC/PHROT setters -- the symbol already exists.
+extern void destroy_divEXT (int id);
 extern void SetEXTDIVRun (int id, int run);
 extern void SetEXTDIVBuffsize (int id, int size);
 extern void SetEXTDIVNr (int id, int nr);

@@ -196,3 +196,39 @@ log_info("create_diversity_mixer: id=%d\n", id);
 
   return dmix;
 }
+
+// The mirror of create_diversity_mixer, and it exists for the same reason
+// receiver_destroy() does.  Switching diversity off used to clear the slot in
+// radio->divmixer[] and free NOTHING: not this struct, not iq_output_buffer,
+// not the per-stream iq_input[] blocks, not i_rotate/q_rotate -- and, worst of
+// the five, it never called destroy_divEXT(), so the next create_divEXT() ran
+// over the top of the dead one on the same integer id.  That is exactly the
+// OpenChannel-over-the-top pattern that made a closed receiver cost 1.2 GB.
+// Measured at ~180 kB per off-cycle by LeakSanitizer, driving the toggle with
+// MACHPSDR_DIVERSITY against tools/p2_emu.c.
+//
+// NOT protocol-specific, despite where it was found: the same teardown runs on
+// Protocol 1 and on the faker.  Nothing had ever switched diversity off under a
+// leak checker before, because doing it needed a click.
+//
+// Order mirrors create: stop the WDSP block first so nothing can be mixing into
+// buffers that are about to go, then the buffers, then the struct.
+void destroy_diversity_mixer(DIVMIXER *dmix) {
+  if(dmix==NULL) return;
+log_info("destroy_diversity_mixer: id=%d\n", dmix->id);
+
+  SetEXTDIVRun(dmix->id, 0);
+  destroy_divEXT(dmix->id);
+
+  if(dmix->iq_input!=NULL) {
+    for (int i = 0; i < dmix->num_streams; i++) {
+      g_clear_pointer(&dmix->iq_input[i], g_free);
+    }
+    g_clear_pointer(&dmix->iq_input, g_free);
+  }
+  g_clear_pointer(&dmix->iq_output_buffer, g_free);
+  g_clear_pointer(&dmix->i_rotate, g_free);
+  g_clear_pointer(&dmix->q_rotate, g_free);
+
+  g_free(dmix);
+}

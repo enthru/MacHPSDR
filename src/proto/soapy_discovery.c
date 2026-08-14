@@ -298,6 +298,20 @@ log_info("Tx gains: \n");
   // fv
   SoapySDRDevice_unmake(sdr);
 
+  // Everything SoapySDR handed back that is NOT kept in discovered[].  The
+  // gain, antenna and sensor lists above are stored there and deliberately
+  // outlive this function; these five do not, and were leaked once per device
+  // per discovery pass -- LeakSanitizer named them in CI, ~128 bytes a device.
+  //
+  // The order matters more than the amount: this has to happen HERE, after the
+  // discovered[] entry is filled, because `version` points into info.vals[] and
+  // `address` may alias hardwarekey (the sdrplay branch assigns it), so freeing
+  // either earlier would copy freed memory into the device list.
+  SoapySDR_free(driverkey);
+  SoapySDR_free(hardwarekey);
+  SoapySDRKwargs_clear(&info);
+  SoapySDRStrings_clear(&formats, formats_length);
+
   free(ranges);
 
   return added;
