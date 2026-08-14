@@ -148,10 +148,21 @@ static void CALLBACK midi_in_proc(HMIDIIN h, UINT msg, DWORD_PTR instance,
   ring_head = next;
 }
 
+// The winmm device id each list entry came from.  NOT the list index: the loop
+// below skips a device whose caps cannot be read, and every skip shifts the
+// index of the ones after it -- so midiInOpen() would have opened a different
+// device than the operator picked.
+static UINT midi_dev_id[MAX_MIDI_DEVICES];
+
 void get_midi_devices(void) {
   UINT n = midiInGetNumDevs();
   UINT i;
 
+  // The dialog re-enumerates on every open and these names are allocated.
+  for (i = 0; i < (UINT)n_midi_devices; i++) {
+    g_free(midi_devices[i].name);
+    midi_devices[i].name = NULL;
+  }
   n_midi_devices = 0;
   for (i = 0; i < n && n_midi_devices < MAX_MIDI_DEVICES; i++) {
     MIDIINCAPSA caps;
@@ -159,6 +170,7 @@ void get_midi_devices(void) {
     log_info("%s: %s\n", __FUNCTION__, caps.szPname);
     midi_devices[n_midi_devices].name = g_strdup(caps.szPname);
     midi_devices[n_midi_devices].port = NULL;
+    midi_dev_id[n_midi_devices] = i;
     n_midi_devices++;
   }
   log_info("%s: devices=%d\n", __FUNCTION__, n_midi_devices);
@@ -173,8 +185,8 @@ int register_midi_device(char *myname) {
   configure = FALSE;
   log_info("%s: %s\n", __FUNCTION__, myname);
 
-  // The index into midi_devices[] IS the winmm device id: get_midi_devices()
-  // walks 0..midiInGetNumDevs() in order and skips nothing that can be queried.
+  // midi_dev_id[] carries the winmm id this entry was enumerated from; the list
+  // index is not it (get_midi_devices() skips devices whose caps fail).
   for (i = 0; i < n_midi_devices; i++) {
     if (!strncmp(midi_devices[i].name, myname, mylen)) {
       found = i;
@@ -185,7 +197,7 @@ int register_midi_device(char *myname) {
 
   close_midi_device();   // idempotent; a re-register must not leak the old handle
 
-  rc = midiInOpen(&midi_handle, (UINT)found, (DWORD_PTR)midi_in_proc,
+  rc = midiInOpen(&midi_handle, midi_dev_id[found], (DWORD_PTR)midi_in_proc,
                   0, CALLBACK_FUNCTION);
   if (rc != MMSYSERR_NOERROR) {
     log_error("%s: midiInOpen failed: %u\n", __FUNCTION__, (unsigned)rc);

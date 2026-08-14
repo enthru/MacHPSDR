@@ -47,11 +47,21 @@
 #include "tx_info_meter.h"
 
 
-// GTK4: window "close-request" replaces the removed "delete-event".
-static gboolean close_request(GtkWindow *widget, gpointer data) {
+// The window is going away with its widgets; the four TXMETER blocks hanging
+// off the transmitter are ours and have to go with it.  They used to be left
+// behind -- one set per open, each still pointing at a finalised PanaView --
+// and the next open simply allocated four more over the top.
+//
+// Hung off "destroy" rather than "close-request": GTK4 emits close-request for
+// the close button and gtk_window_close(), NOT for gtk_window_destroy(), and
+// clearing tx->tx_info is what stops update_tx_info() drawing on dead widgets.
+static void tx_info_gone(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx = (TRANSMITTER *)data;
   tx->tx_info = NULL;
-  return FALSE;
+  for (int i = 0; i <= NUM_TX_METERS; i++) {
+    g_free(tx->tx_info_meter[i]);      // the widget belongs to the window
+    tx->tx_info_meter[i] = NULL;
+  }
 }
 
 GtkWidget *create_tx_info(TRANSMITTER *tx) {
@@ -59,7 +69,7 @@ GtkWidget *create_tx_info(TRANSMITTER *tx) {
   GtkWidget *dialog = gtk_window_new();
 
   gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(main_window));
-  g_signal_connect (dialog, "close-request", G_CALLBACK(close_request), (gpointer)tx);
+  g_signal_connect (dialog, "destroy", G_CALLBACK(tx_info_gone), (gpointer)tx);
 
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
   gtk_window_set_child(GTK_WINDOW(dialog),content);

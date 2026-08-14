@@ -273,6 +273,12 @@ void get_midi_devices(void) {
     int found=0;
     char name[64];
 
+    // Both strings are allocated here, and the dialog re-enumerates on every
+    // open: without this, each open leaked the whole previous list.
+    for (int k=0; k<n_midi_devices; k++) {
+        g_free(midi_devices[k].name); midi_devices[k].name=NULL;
+        g_free(midi_devices[k].port); midi_devices[k].port=NULL;
+    }
     n_midi_devices=0;
     card=-1;
     if ((ret = snd_card_next(&card)) < 0) {
@@ -308,7 +314,10 @@ void get_midi_devices(void) {
 	    //fprintf(stderr,"Number of MIDI input devices: %d\n", subs);
 	    if (!subs) break;
 	    // subs: number of sub-devices to device on card
-            for (sub = 0; sub < subs; ++sub) {
+            // Bounded by the array: a machine with more than MAX_MIDI_DEVICES
+            // raw MIDI sub-devices (a couple of interfaces with several ports
+            // each) wrote past the end of a global array.
+            for (sub = 0; sub < subs && n_midi_devices < MAX_MIDI_DEVICES; ++sub) {
                 snd_rawmidi_info_set_stream(info, SND_RAWMIDI_STREAM_INPUT);
                 snd_rawmidi_info_set_subdevice(info, sub);
                 ret = snd_ctl_rawmidi_info(ctl, info);

@@ -65,8 +65,9 @@ int n_midi_devices;
 #include <CoreAudio/HostTime.h>
 #include <CoreAudio/CoreAudio.h>
 
-MIDI_DEVICE midi_devices[MAX_MIDI_DEVICES];
-int n_midi_devices;
+// The endpoint each midi_devices[] entry was built from.  Kept because the list
+// index is NOT the CoreMIDI source index (see register_midi_device).
+static MIDIEndpointRef midi_endpoints[MAX_MIDI_DEVICES];
 int running;
 
 //
@@ -209,17 +210,34 @@ static void ReadMIDIdevice(const MIDIPacketList *pktlist, void *refCon, void *co
     } // j-loop through the list of packets
 }
 
+// The CoreMIDI objects the current registration owns.  They have to be kept:
+// close_midi_device() was an empty stub while register_midi_device() created a
+// NEW client and input port and connected it every time, so switching MIDI
+// device in the dialog leaked both AND left the previous port connected -- the
+// app then received every message twice, three times after the next switch, and
+// each copy drove the action it is bound to again.
+static MIDIClientRef   midi_client = 0;
+static MIDIPortRef     midi_port   = 0;
+static MIDIEndpointRef midi_source = 0;
+
 void close_midi_device(void) {
     log_info("%s\n",__FUNCTION__);
+    if (midi_port != 0) {
+        if (midi_source != 0) MIDIPortDisconnectSource(midi_port, midi_source);
+        MIDIPortDispose(midi_port);
+        midi_port = 0;
+    }
+    if (midi_client != 0) {
+        MIDIClientDispose(midi_client);
+        midi_client = 0;
+    }
+    midi_source = 0;
 }
 
 int register_midi_device(char *myname) {
     int i;
-    CFStringRef pname;
-    char name[100];
     int FoundMIDIref=-1;
     int mylen=strlen(myname);
-    int ret;
 
     configure=false;
 
@@ -229,30 +247,44 @@ int register_midi_device(char *myname) {
 // look whether the one we are looking for is there
 //
     for (i=0; i<n_midi_devices; i++) {
+        // `name` here used to be an uninitialised local: these two lines printed
+        // whatever was on the stack, with no NUL guaranteed inside it.
         if(!strncmp(midi_devices[i].name, myname, mylen)) {
 	    FoundMIDIref=i;
-	    log_info("MIDI device found and selected: >>>%s<<<\n", name);
+	    log_info("MIDI device found and selected: >>>%s<<<\n", midi_devices[i].name);
 	} else {
-	    log_info("MIDI device found BUT NOT SELECTED: >>>%s<<<\n", name);
+	    log_info("MIDI device found BUT NOT SELECTED: >>>%s<<<\n", midi_devices[i].name);
 	}
     }
 
-//
-// If we found "our" device, register a callback routine
-//
+    if (FoundMIDIref < 0) return -1;
 
-    if (FoundMIDIref >= 0) {
-        MIDIClientRef client = 0;
-        MIDIPortRef myMIDIport = 0;
-        //Create client
-        MIDIClientCreate(CFSTR("piHPSDR"),NULL,NULL, &client);
-        MIDIInputPortCreate(client, CFSTR("FromMIDI"), ReadMIDIdevice, NULL, &myMIDIport);
-        MIDIPortConnectSource(myMIDIport,MIDIGetSource(FoundMIDIref), NULL);
-        ret=0;
-    } else {
-        ret=-1;
+    close_midi_device();       // idempotent; a re-register must not stack ports
+
+    // The endpoint is the one this list entry was BUILT from, not
+    // MIDIGetSource(FoundMIDIref): get_midi_devices() skips sources it cannot
+    // open, and every skip shifts the index of everything after it -- so the
+    // list index stopped naming the same device the moment one source failed.
+    if (MIDIClientCreate(CFSTR("MacHPSDR"),NULL,NULL,&midi_client) != noErr) {
+        log_error("%s: MIDIClientCreate failed\n",__FUNCTION__);
+        midi_client = 0;
+        return -1;
     }
-    return ret;
+    if (MIDIInputPortCreate(midi_client, CFSTR("FromMIDI"), ReadMIDIdevice, NULL,
+                            &midi_port) != noErr) {
+        log_error("%s: MIDIInputPortCreate failed\n",__FUNCTION__);
+        midi_port = 0;
+        close_midi_device();
+        return -1;
+    }
+    midi_source = midi_endpoints[FoundMIDIref];
+    if (MIDIPortConnectSource(midi_port, midi_source, NULL) != noErr) {
+        log_error("%s: MIDIPortConnectSource failed\n",__FUNCTION__);
+        midi_source = 0;
+        close_midi_device();
+        return -1;
+    }
+    return 0;
 }
 
 void get_midi_devices(void) {
@@ -260,21 +292,37 @@ void get_midi_devices(void) {
     int i;
     CFStringRef pname;
     char name[100];
-    int FoundMIDIref=-1;
+
+    // The dialog calls this every time it is opened, and the names are
+    // allocated: without freeing the previous set, each open leaked all of them.
+    for (i=0; i<n_midi_devices; i++) {
+        g_free(midi_devices[i].name);
+        midi_devices[i].name=NULL;
+        midi_devices[i].port=NULL;      // never allocated on this platform
+        midi_endpoints[i]=0;
+    }
 
     n=MIDIGetNumberOfSources();
     n_midi_devices=0;
-    for (i=0; i<n; i++) {
+    // Bounded by the array, which this loop did not do: MIDIGetNumberOfSources()
+    // is whatever the machine has -- a DAW with virtual ports and a couple of
+    // IAC buses passes ten easily -- and every source past the tenth wrote a
+    // pointer past the end of a global array.  win_midi.c already had the test.
+    for (i=0; i<n && n_midi_devices<MAX_MIDI_DEVICES; i++) {
         MIDIEndpointRef dev = MIDIGetSource(i);
-        if (dev != 0) {
-            MIDIObjectGetStringProperty(dev, kMIDIPropertyName, &pname);
-            CFStringGetCString(pname, name, sizeof(name), 0);
-            CFRelease(pname);
-            log_info("%s: %s\n",__FUNCTION__,name);
-            midi_devices[n_midi_devices].name=g_new(gchar,strlen(name)+1);
-            strcpy(midi_devices[n_midi_devices].name,name);
-            n_midi_devices++;
-        }
+        if (dev == 0) continue;
+        // Unchecked, a failed property read left `pname` holding stack garbage
+        // that was then read as a CFString and released.
+        if (MIDIObjectGetStringProperty(dev, kMIDIPropertyName, &pname) != noErr) continue;
+        if (!CFStringGetCString(pname, name, sizeof(name), kCFStringEncodingUTF8))
+            name[0]='\0';
+        CFRelease(pname);
+        if (name[0]=='\0') continue;
+        log_info("%s: %s\n",__FUNCTION__,name);
+        midi_devices[n_midi_devices].name=g_strdup(name);
+        midi_devices[n_midi_devices].port=NULL;
+        midi_endpoints[n_midi_devices]=dev;
+        n_midi_devices++;
     }
     log_info("%s: devices=%d\n",__FUNCTION__,n_midi_devices);
 }

@@ -55,9 +55,12 @@ static void tx_info_meter_build(GtkSnapshot *snapshot,int width,int height,gpoin
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
   lm_text(snapshot,widget,5+width/2,height-2,10,&tb,meter->label,TRUE);
 
+  // snprintf, not sprintf: cur_peak is a number computed from hardware
+  // readings, and "%2.0f" of a large double is as many characters as the
+  // exponent says -- a fixed 32-byte stack buffer is not a length check.
   char text[32];
-  if(meter->cur_peak < 10.0) sprintf(text,"%2.2f",meter->cur_peak);
-  else                       sprintf(text,"%2.0f",meter->cur_peak);
+  if(meter->cur_peak < 10.0) snprintf(text,sizeof(text),"%2.2f",meter->cur_peak);
+  else                       snprintf(text,sizeof(text),"%2.0f",meter->cur_peak);
   lm_text(snapshot,widget,3*(width/4),height-2,10,&tb,text,FALSE);
 }
 
