@@ -453,7 +453,11 @@ static void update_audio_backends(RADIO *radio) {
       backend_rows[n_backend_rows++]=i;
     }
   }
-  if(radio->which_audio_backend>=0) {
+  // Only on a real change.  This is called every time the Radio page is built,
+  // i.e. on every Configure open, and radio_change_audio_backend() unconditionally
+  // re-runs create_audio() -- which used to leak the whole SoundIo connection
+  // (with its device-scan thread) and every device string, once per open.
+  if(radio->which_audio_backend>=0 && audio_get_current_backend()<0) {
     radio_change_audio_backend(radio,radio->which_audio_backend);
   }
   // create_audio() may have connected something other than what was asked for

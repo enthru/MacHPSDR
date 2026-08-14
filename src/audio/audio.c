@@ -107,6 +107,12 @@ static pa_context *pa_ctx;
 static int ready=0;
 static int sample_rate=48000;
 
+// Capacity of the local-microphone buffer under SoundIO, in frames.  It is
+// allocated once per open and never resized (see read_callback), so it has to
+// hold the largest capture block any device delivers -- 4096 is eight times a
+// typical 48 kHz block.
+#define MIC_BUFFER_FRAMES 4096
+
 // Sentinel device name for the synthetic "System Default" output entry.  When a
 // receiver's audio_name is this string, the output stream is (re)opened on
 // whatever device macOS currently considers the default output, resolved fresh
@@ -572,19 +578,13 @@ static void read_callback(struct SoundIoInStream *instream, int frame_count_min,
       return;
     }
 
-    if(r->local_microphone_buffer!=NULL) {
-      if(r->local_microphone_buffer_size!=frame_count_min) {
-        free(r->local_microphone_buffer);
-        r->local_microphone_buffer=NULL;
-      }
-    }
-
-    if(r->local_microphone_buffer==NULL) {
-      r->local_microphone_buffer_size=frame_count_min;
-      r->local_microphone_buffer=g_new0(float,r->local_microphone_buffer_size);
-log_info("read_callback: create microphone buffer: %p length=%d (%d bytes)\n",r->local_microphone_buffer,r->local_microphone_buffer_size,instream->bytes_per_sample*r->local_microphone_buffer_size);
-    }
-
+    // NOTHING is allocated here any more.  This runs on libsoundio's capture
+    // thread, whose contract forbids malloc/free/locks, and the buffer it used
+    // to free and re-allocate on every block-size change is handed to the
+    // protocol by mic_read_thread OUTSIDE the ring lock -- so a Bluetooth
+    // headset flipping A2DP/HFP mid-stream (which fires a burst of size
+    // changes) freed it under a reader.  audio_open_input allocates it once,
+    // at MIC_BUFFER_FRAMES, and mic_read_thread sets the per-block count.
     int frame_count=frame_count_min;
 
     if((err = soundio_instream_begin_read(instream, &areas, &frame_count))) {
@@ -636,22 +636,35 @@ log_info("read_callback: create microphone buffer: %p length=%d (%d bytes)\n",r-
       return;
     }
 
+    // The ring holds MONO float, one per frame -- that is what mic_read_thread
+    // and every protocol_process_local_mic() read out of it.  So it is measured
+    // and advanced in sizeof(float), NOT in the DEVICE's bytes_per_frame, and
+    // channel 0 is GATHERED through areas[0].step rather than memcpy'd: an
+    // instream opened on a stereo device (libsoundio's default layout when the
+    // device offers it, i.e. most USB interfaces and headsets) delivers
+    // L,R,L,R... So the old memcpy put the other channel between every mic
+    // sample and the advance moved the write pointer twice as far as bytes had
+    // been written -- half of every block reaching the transmitter was stale
+    // ring memory.  The resampling branch above already did it this way.
     char *write_ptr = soundio_ring_buffer_write_ptr(r->ring_buffer);
     int free_bytes = soundio_ring_buffer_free_count(r->ring_buffer);
-    int free_count = free_bytes / instream->bytes_per_frame;
+    int free_count = free_bytes / (int)sizeof(float);
     if(frame_count!=0 && free_count>=frame_count) {
+      float *out=(float *)write_ptr;
       if(areas==NULL) {
         log_info("read_callback: areas is NULL\n");
-        memset(write_ptr,0,frame_count*instream->bytes_per_sample);
+        memset(write_ptr,0,frame_count*sizeof(float));
       } else {
-        memcpy(write_ptr,areas[0].ptr,frame_count*instream->bytes_per_sample);
+        char *base=areas[0].ptr;
+        int step=areas[0].step;
+        for(int i=0;i<frame_count;i++) out[i]=*(float *)(base+(size_t)i*step);
       }
 
       if((err = soundio_instream_end_read(instream))) {
         log_info("read_callback: end read error: %s", soundio_strerror(err));
       }
 
-      soundio_ring_buffer_advance_write_ptr(r->ring_buffer, frame_count*instream->bytes_per_frame);
+      soundio_ring_buffer_advance_write_ptr(r->ring_buffer, frame_count*(int)sizeof(float));
       g_cond_signal (&r->ring_buffer_cond);
     } else {
       log_info("read_callback: frame_count is 0 or free_count too small\n");
@@ -1040,6 +1053,11 @@ int audio_open_input(RADIO *r) {
         return -1;
       }
       r->input_stream->format = SoundIoFormatFloat32NE;
+      // MONO, explicitly: libsoundio's documented default is "Stereo, if
+      // available", and the whole mic path downstream is one float per frame.
+      // If the device refuses mono the read callback still gathers channel 0
+      // through areas[0].step, so this is the preference, not the assumption.
+      r->input_stream->layout = *soundio_channel_layout_get_builtin(SoundIoChannelLayoutIdMono);
       r->input_stream->sample_rate = in_device_rate;
       r->input_stream->read_callback = read_callback;
       r->input_stream->userdata=(void *)r;
@@ -1048,6 +1066,12 @@ int audio_open_input(RADIO *r) {
         log_info("audio_open_input: unable to open input stream: %s", soundio_strerror(err));
         return -1;
       }
+
+      // One allocation for the whole life of the stream: see read_callback.
+      // MIC_BUFFER_FRAMES is well above any capture block a 48 kHz device
+      // delivers, and mic_read_thread clamps to it.
+      r->local_microphone_buffer=g_new0(float,MIC_BUFFER_FRAMES);
+      r->local_microphone_buffer_size=0;
 
       // guess that 8 input buffers should be enough
       int size=8*512*sizeof(float);
@@ -1358,7 +1382,14 @@ void audio_start_output(RECEIVER *rx) {
   int err;
   switch(radio->which_audio) {
     case USE_SOUNDIO:
-      if(rx->output_stream!=NULL) {
+      // Under the lock: this runs on the RX audio thread while the GTK thread
+      // can be inside audio_close_output() destroying the stream and the ring
+      // (changing the output device, turning local audio off, or CoreAudio
+      // reporting a new default output when headphones are unplugged).  Every
+      // other toucher of these two fields takes it; this one did not, and the
+      // window is open for the whole ~60 ms cushion after every open.
+      g_mutex_lock(&rx->local_audio_mutex);
+      if(rx->output_stream!=NULL && rx->ring_buffer!=NULL) {
         if(!rx->output_started) {
           // Don't start playback until the ring buffer holds a cushion (~60 ms):
           // starting on a near-empty buffer makes the consumer callback drain to
@@ -1367,7 +1398,15 @@ void audio_start_output(RECEIVER *rx) {
           // only a few ms of audio).  audio_write keeps filling the ring while
           // we wait; this is retried every buffer until the cushion is reached.
           int frames = soundio_ring_buffer_fill_count(rx->ring_buffer) / (int)(sizeof(float)*2);
-          if(frames < rx->output_stream->sample_rate / 16) break;
+          // sample_rate, not the DEVICE's rate: the ring stores 48 kHz DSP
+          // frames and is sized from that, so on a device opened at 192 kHz the
+          // threshold was 12000 frames against a 9600-frame ring -- the stream
+          // never started, the ring pinned full, and the operator got the
+          // "audio output is not keeping up" dialog for a healthy card.
+          if(frames < sample_rate / 16) {
+            g_mutex_unlock(&rx->local_audio_mutex);
+            break;
+          }
           underflow_count=0;
           if((err = soundio_outstream_start(rx->output_stream))) {
               log_info("audio_start_output: unable to start output device: %s", soundio_strerror(err));
@@ -1376,6 +1415,7 @@ void audio_start_output(RECEIVER *rx) {
           }
         }
       }
+      g_mutex_unlock(&rx->local_audio_mutex);
       break;
 #if !defined(__APPLE__) && !defined(_WIN32)
     case USE_PULSEAUDIO:
@@ -1556,7 +1596,21 @@ log_info("audio delay=%ld trim=%ld audio_buffer_size=%d\n",delay,trim,rx->local_
                 // nothing at all — delay pinned at the full buffer, every block
                 // dropped).  Waiting longer cannot conjure space and only holds
                 // up the RX thread, so drop the rest of the block now.
-                if(waits>0 && snd_pcm_avail_update(rx->playback_handle)<=0) break;
+                // snd_pcm_avail_update() returns a NEGATIVE error, not zero,
+                // when the stream has xrun'd or been suspended -- the very
+                // states the rc<0 arm below recovers from.  Treating that as
+                // "the device is slower than the radio" threw away the rest of
+                // the block on an ordinary underrun, and charged the drop to the
+                // window that raises the "not keeping up" dialog.
+                if(waits>0) {
+                  snd_pcm_sframes_t avail=snd_pcm_avail_update(rx->playback_handle);
+                  if(avail<0) {
+                    xruns++;
+                    if(snd_pcm_recover(rx->playback_handle,(int)avail,1) < 0) break;
+                    continue;   // recovered -- write the remainder
+                  }
+                  if(avail<=0) break;
+                }
                 if(g_get_monotonic_time() >= deadline) break;  // give up, drop the rest
                 waits++;
                 // The card frees space one PERIOD at a time (1024 frames =
@@ -1636,11 +1690,17 @@ static void *mic_read_thread(gpointer arg) {
         if(!running) { g_mutex_unlock (&r->ring_buffer_mutex); break; }
         char *read_ptr = soundio_ring_buffer_read_ptr(r->ring_buffer);
         int fill_bytes = soundio_ring_buffer_fill_count(r->ring_buffer);
-        if(fill_bytes>(r->local_microphone_buffer_size*sizeof(float))) {
-          fill_bytes=r->local_microphone_buffer_size*sizeof(float);
+        if(fill_bytes>(int)(MIC_BUFFER_FRAMES*sizeof(float))) {
+          fill_bytes=(int)(MIC_BUFFER_FRAMES*sizeof(float));
         }
-        memcpy(r->local_microphone_buffer,read_ptr,fill_bytes);
+        if(r->local_microphone_buffer!=NULL && fill_bytes>0) {
+          memcpy(r->local_microphone_buffer,read_ptr,fill_bytes);
+        }
         soundio_ring_buffer_advance_read_ptr(r->ring_buffer, fill_bytes);
+        // The COUNT the protocol will consume is what actually arrived: it used
+        // to be the buffer's capacity regardless, so a short block sent the
+        // previous one's tail after it.
+        r->local_microphone_buffer_size=fill_bytes/(int)sizeof(float);
         g_mutex_unlock (&r->ring_buffer_mutex);
         switch(r->discovered->protocol) {
           case PROTOCOL_1:
@@ -2334,11 +2394,21 @@ static void install_default_input_listener(void) {
 void create_audio(int backend_index,const char *backend) {
   int rc;
 
-  n_output_devices=0;
-  n_input_devices=0;
+  // The device counters are NOT zeroed here: soundio_build_device_lists()
+  // frees the previous scan's strings in a loop bounded by them and then zeroes
+  // them itself, so clearing them first made that loop free nothing.
 
   switch(radio->which_audio) {
     case USE_SOUNDIO:
+      // Destroy the previous instance rather than dropping it on the floor: it
+      // is a live connection (a CoreAudio client with libsoundio's device-scan
+      // thread and its property listeners, or a PulseAudio/JACK client).  Only
+      // reachable on a genuine backend change, where radio_change_audio_backend
+      // has already closed every stream bound to it.
+      if(soundio!=NULL) {
+        soundio_destroy(soundio);
+        soundio=NULL;
+      }
       soundio=soundio_create();
       if(!soundio) {
         log_info("create_audio: soundio_create failed\n");
