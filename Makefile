@@ -384,6 +384,9 @@ ifneq ($(ISMINGW),)
 # for the protocol-1 output pacing).
 LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) \
      $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
+# The same two for a harness that links net_compat.o without the whole app.
+# Empty off Windows, where net_compat.o needs nothing beyond libc.
+WIN_NET_LIBS=-lws2_32 -liphlpapi
 WDSP_INCLUDE=-I$(WDSP_DIR)
 WDSP_LIB=$(WDSP_DIR)/libwdsp.dll
 # Windows has no rpath: the loader looks next to the .exe, so libwdsp.dll is
@@ -700,6 +703,7 @@ dxcluster.o \
 cluster_dialog.o \
 tci.o \
 tci_cw.o \
+tci_ws.o \
 tci_dialog.o
 
 
@@ -877,16 +881,18 @@ wefax_offline$(EXE): tools/wefax_offline.c wefax_decoder.o image_save.o log.o
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
 
 # Headless TCI harness.  tci.c as a whole needs a live client to mean anything,
-# but its cw_msg field split is both an INTERPRETATION of an ambiguous part of
-# the spec and a command that puts Morse on the air, so it gets a test.  Links
-# tci_cw.o alone -- the parser is pure glib, which is why it was split out.
+# but two pieces of it do not: the cw_msg field split (an INTERPRETATION of an
+# ambiguous part of the spec, and a command that puts Morse on the air) and the
+# WebSocket codec (bytes chosen by whoever connected).  Links tci_cw.o and
+# tci_ws.o -- glib and sockets, no RADIO, no GTK, which is why both were split
+# out; the codec is driven over a socketpair.
 #   make tci-offline && ./tci_offline --selftest
 .PHONY: tci-offline
 tci-offline: tci_offline$(EXE)
-tci_offline$(EXE): tools/tci_offline.c tci_cw.o
+tci_offline$(EXE): tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
-	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o \
-	  $(shell pkg-config --libs glib-2.0)
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o \
+	  $(shell pkg-config --libs glib-2.0) $(WIN_NET_LIBS)
 
 # Headless property-store harness.  Everything the operator sets goes through
 # property.c, and it is invisible to every other test: the settings are written

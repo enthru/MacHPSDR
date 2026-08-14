@@ -248,9 +248,15 @@ static void parse_spot_line(const char *line) {
   freqtok[fi] = '\0';
   if (fi == 0) return;
 
+  // The frequency is a decimal number off a network socket, so it is bounded
+  // before it is converted, not after. strtod() happily returns inf for
+  // "1e400" and NaN for "nan" — both slip past a plain `<= 0.0` test (every
+  // comparison against NaN is false), and llround() of either is undefined.
+  // The upper bound is a decade above any amateur band a cluster carries.
   char *endptr = NULL;
   double khz = strtod(freqtok, &endptr);
-  if (endptr == freqtok || khz <= 0.0) return;
+  if (endptr == freqtok) return;
+  if (!(khz > 0.0) || !(khz < 1.0e8)) return;         // rejects NaN, inf, absurd
   long long freq_hz = (long long)llround(khz * 1000.0);
 
   while (*p == ' ') p++;
