@@ -157,6 +157,11 @@ void loadProperties(char* filename) {
 
     ensure_store();
     g_hash_table_remove_all(properties);
+    // Judge THIS file, not the last one: `version` is a static, so without the
+    // reset the gate below only ever ran on the first load of the process and a
+    // later file with no property_version line (or an older one) was accepted
+    // on the strength of its predecessor.
+    version=0.0;
 
     log_info("loadProperties: %s\n",filename);
 

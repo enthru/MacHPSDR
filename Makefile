@@ -888,6 +888,20 @@ tci_offline$(EXE): tools/tci_offline.c tci_cw.o
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o \
 	  $(shell pkg-config --libs glib-2.0)
 
+# Headless property-store harness.  Everything the operator sets goes through
+# property.c, and it is invisible to every other test: the settings are written
+# by the GUI at exit and read at start-up, so a defect there is silent until a
+# setting will not stick.  Five were (2026-08-14) -- the global store wiped by a
+# second file, the retain rule missing hidden receivers/wideband/MIDI, and the
+# locale-dependent floats.  Links property.o + log.o; the store is pure glib.
+#   make props-offline && ./props_offline --selftest
+.PHONY: props-offline
+props-offline: props_offline$(EXE)
+props_offline$(EXE): tools/props_offline.c property.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/props_offline.c property.o log.o \
+	  $(shell pkg-config --libs glib-2.0) -lm
+
 # A software HPSDR (Protocol-1) board: tools/metis_emu.c.  Not part of `make
 # check` -- it is a SERVER, not a self-test, and the thing it exists to drive is
 # the app itself.  "No hardware" is not "no protocol": this speaks enough of
@@ -940,7 +954,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), the other three want --selftest,
 # which is their mode that needs no recording.  All four already exit non-zero on
 # a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE)
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE)
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
@@ -1009,9 +1023,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
