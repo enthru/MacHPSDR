@@ -28,6 +28,39 @@ extern int midi_rx;
 
 struct cmdtable MidiCommandsTable;
 
+// --- getting off the MIDI thread ------------------------------------------
+//
+// NewMidiEvent() runs on whatever thread the platform layer reads MIDI on: the
+// CoreMIDI callback thread on macOS, a reader thread on ALSA, the drain thread
+// on winmm.  DoTheMidi() (midi3.c) is half marshalled and half not -- about
+// forty of its branches call update_vfo(), receiver_* and GTK straight -- so
+// every knob bound to one of those was touching widgets from a foreign thread,
+// which is the one thing this program's threading rule forbids.
+//
+// Fixing it branch by branch would be forty g_idle_adds and the next branch
+// added would be wrong again, so the hop happens HERE, once: layer 2 decides
+// what the action is on the MIDI thread (the table walk and the wheel timing
+// are ours and touch nothing shared), and the action itself is performed on the
+// GTK thread.  Branches inside DoTheMidi that already queue their own idle
+// simply queue it from the main loop instead, which costs one extra hop and
+// keeps working.  Ordering is preserved: idles at the same priority run FIFO.
+typedef struct { enum MIDIaction action; enum MIDItype type; int val; } MIDI_DO;
+
+static int midi_do_idle(void *data) {
+  MIDI_DO *d = (MIDI_DO *)data;
+  DoTheMidi(d->action, d->type, d->val);
+  g_free(d);
+  return G_SOURCE_REMOVE;
+}
+
+static void queue_midi_action(enum MIDIaction action, enum MIDItype type, int val) {
+  MIDI_DO *d = g_new(MIDI_DO, 1);
+  d->action = action;
+  d->type   = type;
+  d->val    = val;
+  g_idle_add(midi_do_idle, d);
+}
+
 void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
 
     struct desc *desc;
@@ -59,14 +92,14 @@ void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
 	    switch (desc->event) {
 		case MIDI_NOTE:
 		    if ((val == 1 || (desc->onoff == 1)) && desc->type == MIDI_KEY) {
-			DoTheMidi(desc->action, desc->type, val);
+			queue_midi_action(desc->action, desc->type, val);
 		    }
 		    break;
 		case MIDI_CTRL:
 		    if (desc->type == MIDI_KNOB) {
 			// normalize value to range 0 - 100
 			new = (val*100)/127;
-			DoTheMidi(desc->action, desc->type, new);
+			queue_midi_action(desc->action, desc->type, new);
 		    } else if (desc->type == MIDI_WHEEL) {
 			if (desc->delay > 0 && last_wheel_action == desc->action) {
 			  clock_gettime(CLOCK_MONOTONIC, &tp);
@@ -87,7 +120,7 @@ void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
 //			fprintf(stderr,"WHEEL: val=%d new=%d thrs=%d/%d, %d/%d, %d/%d, %d/%d, %d/%d, %d/%d\n",
 //                                  val, new, desc->vfl1, desc->vfl2, desc->fl1, desc->fl2, desc->lft1, desc->lft2,
 //				          desc->rgt1, desc->rgt2, desc->fr1, desc->fr2, desc->vfr1, desc->vfr2);
-			if (new != 0) DoTheMidi(desc->action, desc->type, new);
+			if (new != 0) queue_midi_action(desc->action, desc->type, new);
 			last_wheel_action=desc->action;
 		    }
 		    break;
@@ -95,7 +128,7 @@ void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
 		    if (desc->type == MIDI_KNOB) {
 			// normalize value to 0 - 100
 			new = (val*100)/16383;
-			DoTheMidi(desc->action, desc->type, new);
+			queue_midi_action(desc->action, desc->type, new);
 		    }
 		    break;
 		case EVENT_NONE:

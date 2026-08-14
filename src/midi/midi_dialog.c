@@ -160,7 +160,12 @@ static const char *md_selected_text(GtkWidget *dd) {
 
 static void device_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *r=(RADIO *)data;
-  device = (int)gtk_drop_down_get_selected(widget);
+  guint sel = gtk_drop_down_get_selected(widget);
+  // GTK_INVALID_LIST_POSITION is what a drop-down reports with nothing
+  // selected -- which is also what it reports the moment its model changes.
+  // Taken as an int that is -1, and midi_devices[-1].name was then strlen'd.
+  if(sel==GTK_INVALID_LIST_POSITION || (int)sel>=n_midi_devices) return;
+  device = (int)sel;
   if(midi_device_name!=NULL) {
     g_free(midi_device_name);
   }
@@ -879,7 +884,8 @@ static int update(void *data) {
   return 0;
 }
 
-void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val) {
+// MIDI-learn, ON THE GTK THREAD (see NewMidiConfigureEvent below).
+static void midi_configure_apply(enum MIDIevent event, int channel, int note, int val) {
 
   const char *str_event;
   const char *str_channel;
@@ -970,6 +976,32 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
 
     g_idle_add(update,GINT_TO_POINTER(UPDATE_NEW));
   }
+}
+
+// Called from the platform MIDI reader thread, so it does nothing but carry the
+// event across.  The body above walks the GtkListStore the GTK thread is adding
+// rows to and calls gtk_single_selection_set_selected() -- reading a GListModel
+// while another thread mutates it is not a stale read, it is a race on the
+// model's own array, and the selection call is GTK from a foreign thread
+// outright.  The note range test stays here: it costs nothing and keeps a wild
+// subscript out of the queue.
+typedef struct { enum MIDIevent event; int channel, note, val; } MIDI_CFG_EV;
+
+static int midi_configure_idle(void *data) {
+  MIDI_CFG_EV *e = (MIDI_CFG_EV *)data;
+  midi_configure_apply(e->event, e->channel, e->note, e->val);
+  g_free(e);
+  return G_SOURCE_REMOVE;
+}
+
+void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val) {
+  if(note<0 || note>127) return;
+  MIDI_CFG_EV *e = g_new(MIDI_CFG_EV, 1);
+  e->event = event;
+  e->channel = channel;
+  e->note = note;
+  e->val = val;
+  g_idle_add(midi_configure_idle, e);
 }
 
 /* Whether midi_save_state() will write anything.  `device` is set only when the
@@ -1106,6 +1138,13 @@ void midi_restore_state(void) {
     value=getProperty(name);
     if(value) {
       channels=atoi(value);
+      // A count out of a props file is a claim, not a bound (see property.c).
+      // Nothing here indexes an array with it, but the loop it drives does a
+      // hash lookup per iteration, so a hand-edited or corrupted "2000000000"
+      // is a start-up that never finishes.  128 is the size of the table these
+      // entries hang off, i.e. past any list a save can produce.
+      if(channels<0) channels=0;
+      if(channels>128) channels=128;
       for(int c=0;c<channels;c++) {
         sprintf(name,"midi[%d].channel[%d]",i,c);
         value=getProperty(name);
