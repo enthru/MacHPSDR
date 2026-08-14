@@ -559,6 +559,9 @@ extern void receiver_save_state(RECEIVER *rx);
 extern void receiver_restore_state(RECEIVER *rx);
 extern void receiver_change_sample_rate(RECEIVER *rx,int sample_rate);
 extern void set_agc(RECEIVER *rx);
+/* Size of panadapter_histogram_bins in floats: it is HALF resolution while
+   panadapter_histogram_w/h are the full widget dims. */
+extern int receiver_histogram_cells(int width,int height);
 extern void calculate_display_average(RECEIVER *rx);
 extern void receiver_fps_changed(RECEIVER *rx);
 extern void receiver_refit_vpaned(RECEIVER *rx);

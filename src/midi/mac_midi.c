@@ -98,7 +98,10 @@ static enum {
 static gboolean configure=FALSE;
 
 static void ReadMIDIdevice(const MIDIPacketList *pktlist, void *refCon, void *connRefCon) {
-    int i,j,byte,chan,arg1,arg2;
+    int i,j,byte,arg2;
+    // static, like `state` and `command`: a message can be split across two
+    // packet callbacks, and locals would then be read uninitialised.
+    static int chan=0,arg1=0;
     MIDIPacket *packet = (MIDIPacket *)pktlist->packet;
 	
 	
@@ -135,10 +138,26 @@ static void ReadMIDIdevice(const MIDIPacketList *pktlist, void *refCon, void *co
                     }
                     break;
                 case STATE_ARG2:	// store byte as first argument
+                    // A byte with bit 7 set is a STATUS byte, not data.  System
+                    // Real-Time (0xF8..0xFF -- clock, active sensing, which many
+                    // controllers send continuously) is explicitly allowed to
+                    // interleave with another message's data bytes, so it must be
+                    // dropped and the wait continued; any other status byte means
+                    // the message was truncated, so resync by re-reading this
+                    // byte in STATE_SKIP.  Storing it gave note=254 and a wild
+                    // pointer out of MidiCommandsTable.desc[128].
+                    if(byte & 0x80) {
+                        if(byte < 0xF8) { state=STATE_SKIP; i--; }
+                        break;
+                    }
                     arg1=byte;
                     state=STATE_ARG1;
                     break;
                 case STATE_ARG1:	// store byte as second argument, process command
+                    if(byte & 0x80) {   // see STATE_ARG2
+                        if(byte < 0xF8) { state=STATE_SKIP; i--; }
+                        break;
+                    }
                     arg2=byte;
                     // We have a command!
                     switch (command) {

@@ -893,6 +893,10 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
 
   //g_print("%s: event=%d channel=%d note=%d val=%d\n", __FUNCTION__,event,channel,note,val);
 
+  // Same range test as NewMidiEvent(): learn mode stores the note and it ends
+  // up subscripting MidiCommandsTable.desc[].
+  if(note<0 || note>127) return;
+
   if(event==thisEvent && channel==thisChannel && note==thisNote) {
     //g_print("%s: current event\n",__FUNCTION__);
     thisVal=val;

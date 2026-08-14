@@ -37,6 +37,15 @@ void NewMidiEvent(enum MIDIevent event, int channel, int note, int val) {
     long delta;
 
 //g_print("%s: EVENT=%d CHAN=%d NOTE=%d VAL=%d\n",__FUNCTION__,event,channel,note,val);
+    // The note is a subscript into a 128-entry table of LISTS, so an out-of-range
+    // one is not a wrong lookup but a wild pointer that is then walked.  A MIDI
+    // data byte is 7-bit by definition, but the platform parsers hand over
+    // whatever arrived -- and a System Real-Time byte (0xF8 clock, 0xFE active
+    // sensing) is explicitly allowed to interleave with another message's data
+    // bytes, so 254 is exactly what a controller sending active sensing
+    // produces.  The parsers drop those now; this is the belt, and it covers
+    // all three platforms.
+    if (note < 0 || note > 127) return;
     if (event == MIDI_PITCH) {
 	desc=MidiCommandsTable.pitch;
     } else {

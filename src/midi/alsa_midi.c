@@ -145,10 +145,22 @@ static void *midi_thread(void *arg) {
 		    }
 		    break;
 		case STATE_ARG2:
+		    // A status byte where data is expected: System Real-Time
+		    // (0xF8..0xFF) may interleave and must be dropped; anything
+		    // else means a truncated message, so resync.  See the same
+		    // case in mac_midi.c.
+		    if(byte & 0x80) {
+			if(byte < 0xF8) { state=STATE_SKIP; i--; }
+			break;
+		    }
 		    arg1=byte;
                     state=STATE_ARG1;
                     break;
 		case STATE_ARG1:
+		    if(byte & 0x80) {   // see STATE_ARG2
+			if(byte < 0xF8) { state=STATE_SKIP; i--; }
+			break;
+		    }
 		    arg2=byte;
 		    // We have a command!
 		    switch (command) {

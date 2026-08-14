@@ -471,8 +471,12 @@ static void panadapter_histogram_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_histogram=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
   // zero the density buffer on enable so it starts clean
   if(rx->panadapter_histogram && rx->panadapter_histogram_bins!=NULL) {
+    // The buffer is HALF resolution; _w/_h are the FULL widget dims (see
+    // receiver_histogram_cells).  Multiplying those wrote four times the
+    // allocation -- 1.8 MB past the end of a 600 kB block, on one click.
     memset(rx->panadapter_histogram_bins,0,
-           sizeof(float)*rx->panadapter_histogram_w*rx->panadapter_histogram_h);
+           sizeof(float)*receiver_histogram_cells(rx->panadapter_histogram_w,
+                                                  rx->panadapter_histogram_h));
   }
 }
 

@@ -598,10 +598,12 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->band_a=atoi(value);
   sprintf(name,"receiver[%d].mode_a",rx->channel);
   value=getProperty(name);
-  if(value) rx->mode_a=atoi(value);
+  // Clamped: mode_a subscripts filters[MODES] and mode_string[MODES], and a
+  // props file is a supported input for older versions and hand editing.
+  if(value) { int m=atoi(value); if(m>=0 && m<MODES) rx->mode_a=m; }
   sprintf(name,"receiver[%d].filter_a",rx->channel);
   value=getProperty(name);
-  if(value) rx->filter_a=atoi(value);
+  if(value) { int f=atoi(value); if(f>=0 && f<FILTERS) rx->filter_a=f; }
   for(int i=0;i<MODES;i++) {
     sprintf(name,"receiver[%d].mode_filter[%d]",rx->channel,i);
     value=getProperty(name);
@@ -636,10 +638,10 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->band_b=atoi(value);
   sprintf(name,"receiver[%d].mode_b",rx->channel);
   value=getProperty(name);
-  if(value) rx->mode_b=atoi(value);
+  if(value) { int m=atoi(value); if(m>=0 && m<MODES) rx->mode_b=m; }
   sprintf(name,"receiver[%d].filter_b",rx->channel);
   value=getProperty(name);
-  if(value) rx->filter_b=atoi(value);
+  if(value) { int f=atoi(value); if(f>=0 && f<FILTERS) rx->filter_b=f; }
   sprintf(name,"receiver[%d].filter_low_b",rx->channel);
   value=getProperty(name);
   if(value) rx->filter_low_b=atoi(value);

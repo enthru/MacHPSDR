@@ -111,7 +111,10 @@ static void microphone_choice_cb(GtkDropDown *widget,GParamSpec *ps,gpointer dat
   } else {
     gtk_widget_set_sensitive(radio->transmitter->local_microphone_b, TRUE);
   }
-  log_info("Input device changed: %d: %s (%s)\n",i,input_devices[i].name,output_devices[i].description);
+  // input_devices on both halves: this read the OUTPUT array with an input
+  // index, which on a device with more inputs than outputs is a slot whose
+  // description was freed and NULLed by the last device-list rebuild.
+  if(i>=0) log_info("Input device changed: %d: %s (%s)\n",i,input_devices[i].name,input_devices[i].description);
 }
 
 /*

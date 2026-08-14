@@ -108,8 +108,10 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
       version=info.vals[i];
     }
     if(strcmp(info.keys[i],"sdrplay_api_api_version")==0) {
-      /* take just the first 4 characters here */
-      info.vals[i][4]='\0';
+      /* take just the first 4 characters here -- but only if there ARE more
+         than four: the driver owns this string, and a shorter one ("3.7") means
+         writing past the end of its allocation. */
+      if(strlen(info.vals[i])>4) info.vals[i][4]='\0';
       version=info.vals[i];
     }
     if(strcmp(info.keys[i],"ip,ip-addr")==0) {
@@ -226,12 +228,15 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
   if(devices<MAX_DEVICES) {
     discovered[devices].device=DEVICE_SOAPYSDR;
     discovered[devices].protocol=PROTOCOL_SOAPYSDR;
-    strcpy(discovered[devices].name,driver);
+    // g_strlcpy, as the make_args copy below already does: both strings come
+    // from a plugin (or, for a networked device, off the network) and the
+    // fields are char[64] and char[128].
+    g_strlcpy(discovered[devices].name,driver,sizeof(discovered[devices].name));
     discovered[devices].supported_receivers=rx_channels;
     discovered[devices].supported_transmitters=tx_channels;
     discovered[devices].adcs=rx_channels;
     discovered[devices].status=STATE_AVAILABLE;
-    strcpy(discovered[devices].software_version,version);
+    g_strlcpy(discovered[devices].software_version,version,sizeof(discovered[devices].software_version));
     discovered[devices].frequency_min=ranges[0].minimum;
     discovered[devices].frequency_max=ranges[0].maximum;
     discovered[devices].info.soapy.sample_rate=sample_rate;

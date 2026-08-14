@@ -1608,6 +1608,12 @@ void receiver_fps_changed(RECEIVER *rx) {
 
 void receiver_filter_changed(RECEIVER *rx,int filter) {
 //fprintf(stderr,"receiver_filter_changed: %d\n",filter);
+  // Same reasoning as receiver_mode_changed: filter_a subscripts filters[mode][]
+  // and band_filters[].
+  if(filter<0 || filter>=FILTERS) {
+    log_error("receiver_filter_changed: filter %d out of range, ignored\n",filter);
+    return;
+  }
   rx->filter_a=filter;
   // Keep this mode's remembered filter in sync so the selection is restored
   // when the operator returns to the mode later.
@@ -1663,6 +1669,15 @@ void receiver_ft8_waterfall_sync(RECEIVER *rx) {
 #endif
 
 void receiver_mode_changed(RECEIVER *rx,int mode) {
+  // Refuse an out-of-range mode HERE rather than at each call site: it ends up
+  // in rx->mode_a, which is a bare subscript into filters[MODES] (whose entry is
+  // then dereferenced), into mode_string[MODES] and into the per-mode arrays.
+  // A CAT client can send one -- `ZZMD99;` reaches this directly -- and so can a
+  // hand-edited props file.
+  if(mode<0 || mode>=MODES) {
+    log_error("receiver_mode_changed: mode %d out of range, ignored\n",mode);
+    return;
+  }
   // Remember the filter selected for the mode we are leaving, then restore the
   // one this mode used last time, so each mode keeps its own bandwidth
   // independently (changing the AM filter must not move the SSB filter).
@@ -2292,6 +2307,17 @@ void add_iq_samples(RECEIVER *rx,double i_sample,double q_sample) {
   }
 }
 
+/* How many floats the phosphor/histogram buffer holds for a panadapter of these
+   dimensions.  It accumulates at HALF resolution while panadapter_histogram_w/h
+   keep the FULL widget dims (the resize guard compares against those), so the
+   two are easy to confuse -- and were: the Histogram checkbox memset the buffer
+   with the full dims, i.e. wrote four times its size, 1.8 MB past the end on a
+   1200x500 panadapter, on one click. */
+int receiver_histogram_cells(int width,int height) {
+  if(width<=0 || height<=0) return 0;
+  return ((width+1)/2) * ((height+1)/2);
+}
+
 void set_agc(RECEIVER *rx) {
 
   SetRXAAGCMode(rx->channel, rx->agc);
@@ -2574,8 +2600,8 @@ void receiver_init_analyzer(RECEIVER *rx) {
     // colour-map, in update_rx_panadapter) do 1/4 the work — matters maximised.
     // _w/_h stay the FULL widget dims (the resize guard compares against them);
     // the half dims are derived as (_w+1)/2 x (_h+1)/2 everywhere.
-    int hw=(rx->panadapter_width+1)/2, hh=(rx->panadapter_height+1)/2;
-    rx->panadapter_histogram_bins=g_new0(float,hw*hh);
+    rx->panadapter_histogram_bins=g_new0(float,receiver_histogram_cells(rx->panadapter_width,
+                                                                          rx->panadapter_height));
     rx->panadapter_histogram_w=rx->panadapter_width;
     rx->panadapter_histogram_h=rx->panadapter_height;
   }
