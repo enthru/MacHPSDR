@@ -142,11 +142,29 @@
 // transmits: the TX I/Q and RX audio the app sends are received and discarded
 // (so its sends never fail), the mic stream it sends back is silence, and the
 // PureSignal feedback DDCs are NOT emulated -- that path needs a board with a
-// feedback ADC and stays unverified.  The wideband feed is honest in format and
-// invented in pacing (the P2 rate registers are left at their defaults by the
-// app, so there is no rate to obey); it exists so the wideband window has
-// something to draw.  A green run says the app's protocol-2 path survives a live
-// feed; it says nothing about a real board's behaviour.
+// feedback ADC and stays unverified.  A green run says the app's protocol-2 path
+// survives a live feed; it says nothing about a real board's behaviour.
+//
+// THE WIDEBAND FEED is honest in format and INVENTED in rate.  It has now been
+// triggered (MACHPSDR_WIDEBAND opens the window headlessly, see the end of
+// src/ui/wideband.c) and the app draws it, which is the first time any of
+// wideband.c / wideband_panadapter.c / wideband_waterfall.c has ever run.  Two
+// things that run says and two it does not:
+//
+//   - The frequency axis is right.  --wb-tone at 0.125 of --wb-rate draws its
+//     peak at 0.2500 of the display, and at 0.25 of the rate at 0.5000, with no
+//     mirror image (the next peak is 45 dB down, in the noise).  That is the
+//     REAL-input mapping the code intends: it asks the analyzer for pixels*2
+//     values across the full complex span and displays the upper half, i.e.
+//     0..fs/2, over WIDEBAND_SPAN_HZ.
+//   - The rate is not.  The app enables the feed with general byte 23 and leaves
+//     bytes 24 onward -- the wideband sample count, sample size and update rate a
+//     real board is programmed with -- at ZERO, while its own
+//     process_wideband_data() hard-codes 512 samples of 16 bits per packet.
+//     Nothing in this tree parses those bytes, so this tool prints them raw and
+//     obeys --wb-rate instead.  What a board does when asked for 0 samples at 0
+//     bits every 0 ms is the one thing only a board can answer, and it decides
+//     whether the wideband display works on real hardware at all.
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -219,6 +237,8 @@ static int    opt_diversity = 0;      // all DDCs coherent, see header comment
 static double opt_div_gain  = 0.0;    // dB, DDC n>0 relative to DDC 0
 static double opt_div_phase = 0.0;    // degrees, DDC n>0 relative to DDC 0
 static int    opt_wb_rate   = 96000;  // wideband samples/s (see header comment)
+static double opt_wb_tone   = 0.0;    // Hz against --wb-rate, 0 = noise only
+static double opt_wb_amp    = 0.5;    // of 16-bit full scale
 static int    opt_quiet     = 0;
 // --pace: stream at 1/N of real time.  DELIBERATELY UNFAITHFUL, and the only
 // option here that is: a real board streams in real time and so does this by
@@ -440,6 +460,10 @@ static void usage(const char *me) {
     "  --noise A      noise floor amplitude (default 0.002)\n"
     "  --no-mic       do not send the (silent) mic/line stream\n"
     "  --wb-rate N    wideband samples/s when the app asks for it (default 96000)\n"
+    "  --wb-tone HZ   tone in the wideband stream, against --wb-rate (default 0,\n"
+    "                 noise only); what is testable is its position as a\n"
+    "                 fraction of the rate, not its absolute frequency\n"
+    "  --wb-amp A     wideband tone amplitude, fraction of full scale (default 0.5)\n"
     "  --pace N       stream at 1/N of real time (default 1 = real time);\n"
     "                 use e.g. 8 to feed a SANITIZE=1 build it can keep up with\n"
     "  --mac aa:bb:.. reported MAC address\n"
@@ -460,6 +484,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--div-phase") && i + 1 < argc)  opt_div_phase = atof(argv[++i]);
     else if (!strcmp(argv[i], "--no-mic"))                     opt_mic = 0;
     else if (!strcmp(argv[i], "--wb-rate") && i + 1 < argc)    opt_wb_rate = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--wb-tone") && i + 1 < argc)    opt_wb_tone = atof(argv[++i]);
+    else if (!strcmp(argv[i], "--wb-amp") && i + 1 < argc)     opt_wb_amp = atof(argv[++i]);
     else if (!strcmp(argv[i], "--pace") && i + 1 < argc)       opt_pace = atof(argv[++i]);
     else if (!strcmp(argv[i], "--quiet"))                      opt_quiet = 1;
     else if (!strcmp(argv[i], "--mac") && i + 1 < argc) {
@@ -517,8 +543,10 @@ int main(int argc, char **argv) {
   for (int i = 0; i < MAX_DDC; i++) next_iq_us[i] = 0;
   long long next_hp_us = 0, next_mic_us = 0, next_wb_us = 0;
   uint32_t hp_seq = 0, mic_seq = 0, wb_seq = 0;
+  double wb_phase = 0.0;
   long long last_report_us = now_us();
   long long iq_pkts = 0, reg_pkts = 0, discoveries = 0, refused = 0, drained = 0;
+  long long p1_cmds = 0;
 
   unsigned char iq_pkt[IQ_PKT_BYTES];
   unsigned char wb_pkt[WB_PKT_BYTES];
@@ -564,16 +592,50 @@ int main(int argc, char **argv) {
           continue;
         }
 
+        // A PROTOCOL-1 command, on a protocol-2 board's register port.  This is
+        // not hypothetical and not this tool's fault: radio.c's add_wideband()
+        // and delete_wideband() call protocol1_stop()/protocol1_run()
+        // unconditionally, so opening the wideband window on a P2 radio opens a
+        // second socket and fires "EF FE 04" Metis start/stop at port 1024.  A
+        // real board would not recognise it -- and, crucially, would not start
+        // streaming to whoever sent it, which is what adopting the sender as
+        // the peer here used to do: every DDC and wideband packet went to the
+        // protocol-1 socket instead until the next register block arrived, and
+        // protocol1's receive thread logged each one as "bad header bytes".
+        if (n >= 3 && rxbuf[0] == 0xEF && rxbuf[1] == 0xFE) {
+          if (!p1_cmds++)
+            printf("p2-emu: ignoring PROTOCOL-1 command %02X %02X %02X %02X from "
+                   "%s:%d (a P2 board would not answer it)\n",
+                   rxbuf[0], rxbuf[1], rxbuf[2], n >= 4 ? rxbuf[3] : 0,
+                   inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+          continue;
+        }
+
         // Every other packet comes from the app's one data socket, so any of
         // them identifies the peer to stream back to.
         peer = from; peerlen = fromlen; have_peer = 1;
         reg_pkts++;
 
-        if (cmd_port[i] == PORT_GENERAL && n >= 24) {
+        if (cmd_port[i] == PORT_GENERAL && n >= 29) {
           int wb = rxbuf[23] & 0x01;
           if (wb != wb_enable) {
             wb_enable = wb;
-            printf("p2-emu: wideband ADC feed %s\n", wb ? "ENABLED" : "disabled");
+            // Byte 23 is the enable; the bytes after it are the wideband
+            // PARAMETERS -- samples per packet, sample size in bits, update
+            // rate.  Nothing in this tree parses them and nothing sets them, so
+            // they are printed raw rather than obeyed: what the app asks a real
+            // board for is a fact worth having on the record, and 00 00 00 00
+            // 00 is not obviously a request for the 512 16-bit samples per
+            // packet its own process_wideband_data() hard-codes.
+            printf("p2-emu: wideband ADC feed %s "
+                   "(general[23..28] = %02X %02X %02X %02X %02X %02X)\n",
+                   wb ? "ENABLED" : "disabled",
+                   rxbuf[23], rxbuf[24], rxbuf[25], rxbuf[26], rxbuf[27], rxbuf[28]);
+            if (wb)
+              printf("p2-emu: streaming %d real 16-bit samples/packet at %d S/s"
+                     "%s -- INVENTED, the registers above say nothing\n",
+                     WB_SAMPLES, opt_wb_rate,
+                     opt_wb_tone != 0.0 ? " with a tone" : " of noise");
             next_wb_us = now_us();
           }
         } else if (cmd_port[i] == PORT_RXSPEC && n >= 1444) {
@@ -712,10 +774,28 @@ int main(int argc, char **argv) {
     // Wideband ADC samples, only while the app has a wideband window open.
     if (wb_enable && !dead_peer) {
       int budget = 8;
+      // The wideband stream is the RAW ADC, i.e. REAL samples -- one 16-bit
+      // number per sample, not an I/Q pair.  --wb-tone puts a line in it, and
+      // the only thing about that line an emulator can vouch for is its
+      // position as a FRACTION of the stream's sample rate: nothing here (and
+      // nothing in the app) knows what rate a real board would send at, but a
+      // tone at 0.25*fs must land a quarter of the way across a display whose
+      // span is fs/2 -- and at BOTH quarter and three-quarter if the app feeds
+      // real samples to a complex analyzer.  That is a measurement, and it is
+      // the reason this carries a tone at all instead of only noise.
+      double wb_dphi = 2.0 * M_PI * opt_wb_tone /
+                       (double)(opt_wb_rate > 0 ? opt_wb_rate : 96000);
       while (t >= next_wb_us && budget-- > 0) {
         put_be32(wb_pkt, wb_seq++);
         for (int s = 0; s < WB_SAMPLES; s++) {
           double v = 0.05 * noise_sample();
+          if (opt_wb_tone != 0.0) {
+            wb_phase += wb_dphi;
+            if (wb_phase >  M_PI) wb_phase -= 2.0 * M_PI;
+            v += opt_wb_amp * cos(wb_phase);
+          }
+          if (v >  1.0) v =  1.0;
+          if (v < -1.0) v = -1.0;
           int16_t q = (int16_t)(v * 32767.0);
           wb_pkt[4 + s * 2]     = (unsigned char)((q >> 8) & 0xFF);
           wb_pkt[4 + s * 2 + 1] = (unsigned char)( q       & 0xFF);
@@ -748,8 +828,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  printf("p2-emu: exit (%lld discoveries answered, %lld refused as non-local)\n",
-         discoveries, refused);
+  printf("p2-emu: exit (%lld discoveries answered, %lld refused as non-local, "
+         "%lld protocol-1 commands ignored)\n",
+         discoveries, refused, p1_cmds);
   for (int i = 0; i < 6; i++) close(fd_cmd[i]);
   for (int i = 0; i < MAX_DDC; i++) close(fd_iq[i]);
   return 0;

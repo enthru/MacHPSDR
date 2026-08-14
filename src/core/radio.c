@@ -445,8 +445,11 @@ void delete_wideband(WIDEBAND *w) {
     gtk_window_destroy(GTK_WINDOW(radio->dialog));
     radio->dialog=NULL;
   }
-  protocol1_stop();
-  protocol1_run();
+  // Protocol 1 only -- see the note in add_wideband().
+  if(radio->discovered->protocol==PROTOCOL_1) {
+    protocol1_stop();
+    protocol1_run();
+  }
 }
 
 // delete_receiver() and delete_diversity_mixer() call each other -- deleting a
@@ -1823,8 +1826,18 @@ int add_wideband(void *data) {
   RADIO *r=(RADIO *)data;
   r->wideband=create_wideband(WIDEBAND_CHANNEL);
 
-  protocol1_stop();
-  protocol1_run();
+  // Protocol 1 only, and it was not guarded.  On a Protocol-2 radio this fired
+  // Metis `EF FE 04` start/stop at the board's port 1024 and, worse,
+  // start_protocol1_thread() overwrites data_socket without closing the old
+  // one -- so every wideband open cost a UDP socket and a receive thread, and
+  // put protocol-1 traffic on a protocol-2 wire.  Found with tools/p2_emu.c,
+  // which logged 282 "bad header" packets in a 25 s run because it had adopted
+  // that protocol-1 socket as its streaming peer.  LinHPSDR legacy: this
+  // predates the tree having any protocol but 1.
+  if(r->discovered->protocol==PROTOCOL_1) {
+    protocol1_stop();
+    protocol1_run();
+  }
 
   if(r->discovered->protocol==PROTOCOL_2) {
     protocol2_start_wideband(r->wideband);

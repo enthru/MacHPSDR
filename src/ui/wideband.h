@@ -108,5 +108,10 @@ extern void wideband_leave_cb(GtkEventControllerMotion *controller, gpointer dat
 extern gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
 extern void wideband_save_state(WIDEBAND *w);
 extern void reset_wideband_buffer_index(WIDEBAND *w);
+/* MACHPSDR_WIDEBAND=<n> / MACHPSDR_WIDEBAND_TEST -- headless open/close of the
+   wideband window (see the block comment at the end of wideband.c).  Called from
+   create_radio() alongside rx_churn_init(); a no-op unless the variable is set. */
+struct _radio;
+extern void wideband_test_init(struct _radio *r);
 
 #endif

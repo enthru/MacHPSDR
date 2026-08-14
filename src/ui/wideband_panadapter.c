@@ -175,7 +175,12 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
   }
 
   GdkRGBA white=(GdkRGBA){1.0f,1.0f,1.0f,1.0f};
-  double dbm_per_line=(double)w->panadapter_height/((double)w->panadapter_high-(double)w->panadapter_low);
+  // The LIVE allocation, not the debounced panadapter_width/height: those catch
+  // up 250 ms after a resize (resize_timeout above), and for that window the
+  // graticule was drawn to a different scale from the trace below it, which
+  // uses cheight -- the dBm labels slid off their own lines while a pane was
+  // being dragged.
+  double dbm_per_line=(double)display_height/((double)w->panadapter_high-(double)w->panadapter_low);
 
   // dBm level graticule + labels
   {
@@ -186,7 +191,7 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
       if(labs(i)%20==0) {
         double y=(double)(w->panadapter_high-i)*dbm_per_line;
         gsk_path_builder_move_to(b,0.0f,(float)y);
-        gsk_path_builder_line_to(b,(float)w->panadapter_width,(float)y);
+        gsk_path_builder_line_to(b,(float)cwidth,(float)y);
         any=TRUE;
         sprintf(v,"%ld dBm",i);
         wbn_text(snapshot,widget,1,y,&white,v,NULL);
@@ -242,7 +247,7 @@ static void wb_pana_build(GtkSnapshot *snapshot, int cwidth, int cheight, gpoint
   if(radio->display_filled) {
     graphene_rect_t r=GRAPHENE_RECT_INIT(0,0,(float)cwidth,(float)cheight);
     GskColorStop stops[2]={ {0.0f,(GdkRGBA){0.0f,0.0f,1.0f,0.5f}}, {1.0f,(GdkRGBA){1.0f,1.0f,1.0f,0.5f}} };
-    graphene_point_t p0=GRAPHENE_POINT_INIT(0.0f,0.0f), p1=GRAPHENE_POINT_INIT(0.0f,(float)w->panadapter_height);
+    graphene_point_t p0=GRAPHENE_POINT_INIT(0.0f,0.0f), p1=GRAPHENE_POINT_INIT(0.0f,(float)cheight);
     gtk_snapshot_push_fill(snapshot,p,GSK_FILL_RULE_WINDING);
     gtk_snapshot_append_linear_gradient(snapshot,&r,&p0,&p1,stops,2);
     gtk_snapshot_pop(snapshot);
