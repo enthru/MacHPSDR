@@ -109,7 +109,11 @@
 
 double last_time = 0;
 
-static int data_socket;
+// -1, not the zero of static storage: "no socket" is tested with `>= 0`
+// everywhere, and stop_protocol1_thread() closes it before every start -- so a
+// zero here would close file descriptor 0, i.e. stdin, on the first run.
+// protocol2.c's has always been initialised for the same reason.
+static int data_socket=-1;
 static struct sockaddr_in data_addr;
 static int data_addr_length;
 
