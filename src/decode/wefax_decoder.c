@@ -82,16 +82,20 @@ static double  prevI = 0.0, prevQ = 0.0;
 
 // inst-freq ring
 static float   fr[FR_CAP];
-static long    ring_w = 0;                 // total samples written (absolute)
+// Absolute sample positions are gint64, NOT long: `long` is 32 bits on
+// Windows (LLP64), where a counter clocked at the audio or front-end rate
+// wraps in hours -- every position derived from it goes negative and the
+// decoder quietly stops resolving lines, with nothing in the log to say so.
+static gint64  ring_w = 0;                 // total samples written (absolute)
 
 // line tracking
 static gboolean started = FALSE;
 static double  line_start_d = 0.0;         // absolute sample of the current line start
-static long    phasing_until = 0;          // phase servo active while ring_w < this
+static gint64  phasing_until = 0;          // phase servo active while ring_w < this
 static double  freq_offset = 0.0;          // AFC (Hz)
 
 // start-tone / AFC estimator (1-second blocks)
-static long    st_block_start = 0;
+static gint64  st_block_start = 0;
 static int     st_state = 0;               // hysteresis state for crossing counter
 static int     st_trans = 0;               // low->high transitions in the block
 static int     st_match_run = 0;           // consecutive qualifying start-tone blocks
@@ -100,7 +104,7 @@ static double  st_lo_sum = 0.0, st_hi_sum = 0.0;
 static int     st_lo_n = 0, st_hi_n = 0;
 static int     st_blk_n = 0;               // samples in the current block
 static int     st_black_n = 0, st_white_n = 0; // samples near black / near white
-static long    start_cooldown = 0;         // suppress re-triggering the start tone until here
+static gint64  start_cooldown = 0;         // suppress re-triggering the start tone until here
 
 // continuous auto-phase: per-column EMA of the edge energy.  A vertical feature
 // that recurs at the same column every line (the fax margin / border) builds a
@@ -241,7 +245,16 @@ static void build_lut(guint8 lut[256]) {
 
 void wefax_decoder_start(void) { start_req = TRUE; }
 void wefax_decoder_reset(void) { reset_req = TRUE; }
-void   wefax_decoder_adjust_slant(double dppm) { slant_ppm += dppm; }
+// Clamped, for the reason apt_decoder.c pins its own line length: this value
+// scales the line period the drain loop advances by, so at -1e6 ppm the line
+// length reaches zero and the loop stops advancing -- an audio thread spinning
+// for ever. ±5000 ppm is two orders of magnitude past any real clock error and
+// four hundred clicks of the panel's ±50, so nothing an operator does reaches it.
+void   wefax_decoder_adjust_slant(double dppm) {
+  slant_ppm += dppm;
+  if (slant_ppm >  5000.0) slant_ppm =  5000.0;
+  if (slant_ppm < -5000.0) slant_ppm = -5000.0;
+}
 double wefax_decoder_get_slant(void) { return slant_ppm; }
 double wefax_decoder_get_afc(void) { return freq_offset; }
 void wefax_decoder_nudge_phase(double frac) {
@@ -251,13 +264,13 @@ void wefax_decoder_nudge_phase(double frac) {
 }
 
 // --- ring access -----------------------------------------------------------
-static inline float fr_at(long abs) {
+static inline float fr_at(gint64 abs) {
   if (abs < 0) abs = 0;
   if (abs >= ring_w) abs = ring_w - 1;
   if (abs < 0) abs = 0;
   return fr[abs & FR_MASK];
 }
-static double fr_mean(long a, int n) {
+static double fr_mean(gint64 a, int n) {
   double s = 0.0;
   for (int i = 0; i < n; i++) s += fr_at(a + i);
   return s / (n > 0 ? n : 1);
@@ -287,21 +300,21 @@ static void begin_page(const char *why) {
   g_mutex_unlock(&lock);
   started = TRUE;
   line_start_d = (double)ring_w;
-  phasing_until = ring_w + (long)(PHASING_MS * SR / 1000.0);
+  phasing_until = ring_w + (gint64)(PHASING_MS * SR / 1000.0);
   memset(col_energy, 0, sizeof(col_energy)); phase_locked = FALSE; acq_lines = 0;
   memset(freq_hist, 0, sizeof(freq_hist)); afc_lines = 0; afc_done = FALSE;
 }
 
 // Decode one scan line starting at absolute sample L, spanning line_len samples,
 // into the image; run the phasing servo from the strongest edge.
-static void decode_line(long L, double line_len) {
+static void decode_line(gint64 L, double line_len) {
   double psmp = line_len / (double)IMG_W;
   int navg = (int)(psmp * 0.6); if (navg < 1) navg = 1;
   static float row[IMG_W];
   static double rawf[IMG_W];
   for (int x = 0; x < IMG_W; x++) {
     double c = (double)L + (x + 0.5) * psmp;
-    double fm = fr_mean((long)(c) - navg / 2, navg);
+    double fm = fr_mean((gint64)(c) - navg / 2, navg);
     rawf[x] = fm;
     row[x] = (float)freq2val(fm);
   }
@@ -442,7 +455,7 @@ void wefax_decoder_add_audio(const gdouble *samples, int nframes) {
     if (val < 64.0)  st_black_n++;
     else if (val > 191.0) st_white_n++;
 
-    if (ring_w - st_block_start >= (long)SR) {
+    if (ring_w - st_block_start >= (gint64)SR) {
       // Classify the block by its low->high crossing rate (= the start-tone
       // frequency): 300 Hz for IOC576, 675 Hz for IOC288.
       int rate = st_trans;
@@ -477,7 +490,7 @@ void wefax_decoder_add_audio(const gdouble *samples, int nframes) {
         // A full page is minutes long, so suppress any re-trigger for a while —
         // this covers the rest of this start tone and its phasing, while still
         // catching the next chart's start tone.
-        start_cooldown = ring_w + (long)(SR * 60);
+        start_cooldown = ring_w + (gint64)(SR * 60);
         st_match_run = 0; st_match_cls = 0;
       }
       st_block_start = ring_w; st_trans = 0;
@@ -499,7 +512,7 @@ void wefax_decoder_add_audio(const gdouble *samples, int nframes) {
     // for the trailing pixel average).
     int guard = 8;
     while ((double)ring_w >= line_start_d + line_len + guard) {
-      long L = (long)(line_start_d + 0.5);
+      gint64 L = (gint64)(line_start_d + 0.5);
       decode_line(L, line_len);
       line_start_d += line_len;
       line_len = SR * 60.0 / (double)p_lpm * (1.0 + slant_ppm / 1e6);

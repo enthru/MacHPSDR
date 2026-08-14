@@ -159,7 +159,11 @@ static int     sc_n = 0;
 
 // envelope ring
 static float   fr[FR_CAP];
-static long    ring_w = 0;                   // total samples written (absolute)
+// Absolute sample positions are gint64, NOT long: `long` is 32 bits on
+// Windows (LLP64), where a counter clocked at the audio or front-end rate
+// wraps in hours -- every position derived from it goes negative and the
+// decoder quietly stops resolving lines, with nothing in the log to say so.
+static gint64  ring_w = 0;                   // total samples written (absolute)
 
 // line tracking
 static double  line_start = 0.0;             // absolute sample of the next line start
@@ -382,7 +386,7 @@ static void clear_image(const char *why) {
 }
 
 // --- ring access -----------------------------------------------------------
-static inline float fr_at(long abs) {
+static inline float fr_at(gint64 abs) {
   if (abs < 0) abs = 0;
   if (abs >= ring_w) abs = ring_w - 1;
   if (abs < 0) return 0.0f;
@@ -390,7 +394,7 @@ static inline float fr_at(long abs) {
   return fr[abs & FR_MASK];
 }
 static double fr_mean(double centre, int n) {
-  long a = (long)(centre - n / 2.0 + 0.5);
+  gint64 a = (gint64)(centre - n / 2.0 + 0.5);
   double s = 0.0;
   for (int i = 0; i < n; i++) s += fr_at(a + i);
   return s / (n > 0 ? n : 1);

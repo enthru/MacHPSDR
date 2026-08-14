@@ -111,15 +111,52 @@ static struct {
 } callsign_hashtable[CALLSIGN_HASHTABLE_SIZE];
 static int callsign_hashtable_size;
 
+// The table AGES OUT, and it has to: ft8_lib saves EVERY decoded callsign here
+// (unpack28 does it for standard messages too), so a busy band fills 256 slots
+// in well under an hour -- and both probe loops below scan until they find an
+// EMPTY slot, i.e. a full table makes them spin for ever on the decode thread.
+// Decoding would stop with no error and one core pegged.  Upstream's demo has
+// hashtable_cleanup() and calls it once per decode cycle; this port kept the
+// "reset age" line but dropped the ageing that gives it meaning (the age is the
+// top byte of `hash`, which is why the comparisons mask 0x3FFFFF).  Restored
+// with upstream's shape and its max_age of 10 cycles.
+#define CALLSIGN_HASH_MAX_AGE 10
+
 static void hashtable_init(void) {
   callsign_hashtable_size = 0;
   memset(callsign_hashtable, 0, sizeof(callsign_hashtable));
 }
 
+static void hashtable_cleanup(uint8_t max_age) {
+  for (int idx_hash = 0; idx_hash < CALLSIGN_HASHTABLE_SIZE; ++idx_hash) {
+    if (callsign_hashtable[idx_hash].callsign[0] == '\0') continue;
+    uint8_t age = (uint8_t)(callsign_hashtable[idx_hash].hash >> 24);
+    if (age > max_age) {
+      callsign_hashtable[idx_hash].callsign[0] = '\0';
+      callsign_hashtable[idx_hash].hash = 0;
+      callsign_hashtable_size--;
+    } else {
+      callsign_hashtable[idx_hash].hash =
+        (((uint32_t)age + 1u) << 24) | (callsign_hashtable[idx_hash].hash & 0x3FFFFFu);
+    }
+  }
+}
+
 static void hashtable_add(const char *callsign, uint32_t hash) {
   uint16_t hash10 = (hash >> 12) & 0x3FFu;
   int idx_hash = (hash10 * 23) % CALLSIGN_HASHTABLE_SIZE;
-  while (callsign_hashtable[idx_hash].callsign[0] != '\0') {
+  // Bounded probe: the ageing above is what normally keeps a slot free, but a
+  // slot count is not something to leave to a policy running on another path.
+  // A full table drops the callsign (the hashed-callsign message it would have
+  // resolved renders as <...>) instead of hanging the decoder.
+  for (int probe = 0; probe < CALLSIGN_HASHTABLE_SIZE; probe++) {
+    if (callsign_hashtable[idx_hash].callsign[0] == '\0') {
+      callsign_hashtable_size++;
+      strncpy(callsign_hashtable[idx_hash].callsign, callsign, 11);
+      callsign_hashtable[idx_hash].callsign[11] = '\0';
+      callsign_hashtable[idx_hash].hash = hash;
+      return;
+    }
     if (((callsign_hashtable[idx_hash].hash & 0x3FFFFFu) == hash) &&
         (0 == strcmp(callsign_hashtable[idx_hash].callsign, callsign))) {
       callsign_hashtable[idx_hash].hash &= 0x3FFFFFu; // reset age
@@ -127,10 +164,6 @@ static void hashtable_add(const char *callsign, uint32_t hash) {
     }
     idx_hash = (idx_hash + 1) % CALLSIGN_HASHTABLE_SIZE;
   }
-  callsign_hashtable_size++;
-  strncpy(callsign_hashtable[idx_hash].callsign, callsign, 11);
-  callsign_hashtable[idx_hash].callsign[11] = '\0';
-  callsign_hashtable[idx_hash].hash = hash;
 }
 
 static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type, uint32_t hash, char *callsign) {
@@ -138,9 +171,10 @@ static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type, uint32_t hash, 
                        (hash_type == FTX_CALLSIGN_HASH_12_BITS) ? 10 : 0;
   uint16_t hash10 = (hash >> (12 - hash_shift)) & 0x3FFu;
   int idx_hash = (hash10 * 23) % CALLSIGN_HASHTABLE_SIZE;
-  while (callsign_hashtable[idx_hash].callsign[0] != '\0') {
+  for (int probe = 0; probe < CALLSIGN_HASHTABLE_SIZE; probe++) {
+    if (callsign_hashtable[idx_hash].callsign[0] == '\0') break;
     if (((callsign_hashtable[idx_hash].hash & 0x3FFFFFu) >> hash_shift) == hash) {
-      strcpy(callsign, callsign_hashtable[idx_hash].callsign);
+      strcpy(callsign, callsign_hashtable[idx_hash].callsign); // c11[12] at the call site
       return true;
     }
     idx_hash = (idx_hash + 1) % CALLSIGN_HASHTABLE_SIZE;
@@ -234,6 +268,9 @@ static float measure_snr(const float *sig, int len, float f0, float t0,
 // Decode one accumulated slot buffer into the results[] list (worker thread).
 // ===========================================================================
 static void decode_slot(const float *sig, int len, time_t slot_start) {
+  // Age the callsign table once per decode cycle, where upstream does it.
+  hashtable_cleanup(CALLSIGN_HASH_MAX_AGE);
+
   monitor_config_t cfg = {
     .f_min = 100.0f,
     .f_max = 3000.0f,

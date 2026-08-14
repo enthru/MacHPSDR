@@ -71,13 +71,19 @@ void ft8_udp_log(const char *adif_record) {
            "\n<adif_ver:5>3.1.0\n<programid:8>MacHPSDR\n<EOH>\n%s",adif_record);
 
   uint8_t buf[1400];
+  // The datagram is three u32 headers, the "MacHPSDR" id as a counted string,
+  // and the ADIF text as another -- so the worst case is a compile-time
+  // quantity, and this asserts it rather than testing `off` AFTER the writes
+  // that would already have overrun (which is what stood here: a bound checked
+  // after the copy is not a bound, it is a comment with an if in front of it).
+  _Static_assert(sizeof(buf) >= 3*4 + 4+8 + 4+sizeof(adif),
+                 "WSJT-X UDP datagram buffer must hold the largest ADIF record");
   int off=0;
   off=put_u32(buf,off,WSJTX_MAGIC);
   off=put_u32(buf,off,WSJTX_SCHEMA);
   off=put_u32(buf,off,WSJTX_ADIF);
   off=put_str(buf,off,"MacHPSDR");   // id (unique key)
   off=put_str(buf,off,adif);         // ADIF text
-  if(off>(int)sizeof(buf)) return;   // record too large to send in one datagram
 
   char portstr[16];
   snprintf(portstr,sizeof(portstr),"%d",radio->ft8_log_udp_port);

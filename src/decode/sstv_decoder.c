@@ -106,17 +106,21 @@ static double  prevI = 0.0, prevQ = 0.0;
 
 // inst-freq ring
 static float   fr[FR_CAP];
-static long    ring_w = 0;                  // total samples written (absolute)
+// Absolute sample positions are gint64, NOT long: `long` is 32 bits on
+// Windows (LLP64), where a counter clocked at the audio or front-end rate
+// wraps in hours -- every position derived from it goes negative and the
+// decoder quietly stops resolving lines, with nothing in the log to say so.
+static gint64  ring_w = 0;                  // total samples written (absolute)
 
 // VIS leader detector
 static int     run1900 = 0, run1200 = 0;
 static gboolean leader_ok = FALSE;
-static long    leader_deadline = 0;        // latch timeout for leader_ok (abs)
-static long    cand_start = 0;              // candidate start-bit start (abs)
+static gint64  leader_deadline = 0;        // latch timeout for leader_ok (abs)
+static gint64  cand_start = 0;              // candidate start-bit start (abs)
 static gboolean vis_pending = FALSE;
-static long    vis_bit_ready = 0;           // decode VIS once ring_w passes this
+static gint64  vis_bit_ready = 0;           // decode VIS once ring_w passes this
 static int     sync_run = 0;                // consecutive ~1200 Hz samples (forced-mode sync hunt)
-static long    gsync_hist[5];               // recent sync-pulse start positions (auto period detect)
+static gint64  gsync_hist[5];               // recent sync-pulse start positions (auto period detect)
 static int     gsync_n = 0;                 // valid entries in gsync_hist
 static int     gsync_run = 0;               // generic sync-pulse run counter (auto)
 
@@ -125,11 +129,11 @@ typedef enum { ST_HUNT, ST_DECODE } sstv_state_t;
 static sstv_state_t state = ST_HUNT;
 static const sstv_mode_t *mode = NULL;
 static double  slant_ppm = 0.0;             // clock/slant trim (GTK thread sets)
-static long    sync0_abs = 0;               // located sync of line 0
+static gint64  sync0_abs = 0;               // located sync of line 0
 static int     cur_line = 0;                // next image ROW to write
-static long    tx_line = 0;                 // transmitted-line index (PD: 2 rows each)
-static long    line_samples = 0;            // samples per transmitted line (auto-slant adapts)
-static long    nominal_line = 0;            // the un-adapted line period (auto-slant reference)
+static gint64  tx_line = 0;                 // transmitted-line index (PD: 2 rows each)
+static gint64  line_samples = 0;            // samples per transmitted line (auto-slant adapts)
+static gint64  nominal_line = 0;            // the un-adapted line period (auto-slant reference)
 static double  clock_scale = 1.0;           // measured pixel-clock correction (auto-slant)
 static double  freq_offset = 0.0;           // measured audio-frequency offset (AFC, Hz)
 static int     img_w = 320, img_h = 256;    // current mode geometry
@@ -235,14 +239,14 @@ double sstv_decoder_get_slant(void) { return slant_ppm; }
 double sstv_decoder_get_afc(void) { return freq_offset; }
 
 // --- ring access -----------------------------------------------------------
-static inline float fr_at(long abs) {
+static inline float fr_at(gint64 abs) {
   if (abs < 0) abs = 0;
   if (abs >= ring_w) abs = ring_w - 1;
   return fr[abs & FR_MASK];
 }
 
 // Mean frequency over [a, a+n) absolute samples.
-static double fr_mean(long a, int n) {
+static double fr_mean(gint64 a, int n) {
   double s = 0.0;
   for (int i = 0; i < n; i++) s += fr_at(a + i);
   return s / (n > 0 ? n : 1);
@@ -278,12 +282,12 @@ static const sstv_mode_t *decode_vis(void) {
   double bit = ms2smp(30.0);
   int val = 0, parity = 0;
   for (int k = 0; k < 7; k++) {
-    long c = cand_start + (long)(bit * (k + 1) + bit * 0.5);   // bit-k centre
+    gint64 c = cand_start + (gint64)(bit * (k + 1) + bit * 0.5);   // bit-k centre
     int b = (fr_mean(c - (int)(bit * 0.3), (int)(bit * 0.6)) < F_SYNC) ? 1 : 0;
     val |= b << k;
     parity ^= b;
   }
-  long pc = cand_start + (long)(bit * 8 + bit * 0.5);
+  gint64 pc = cand_start + (gint64)(bit * 8 + bit * 0.5);
   int pbit = (fr_mean(pc - (int)(bit * 0.3), (int)(bit * 0.6)) < F_SYNC) ? 1 : 0;
   if (pbit != parity) return NULL;                 // even-parity check failed
   return mode_by_vis(val);
@@ -292,13 +296,13 @@ static const sstv_mode_t *decode_vis(void) {
 // --- per-line sync locating ------------------------------------------------
 // Find the sync pulse near predicted position `pred` (abs), snapped within ±win;
 // if no clear sync is found returns `pred` (free-run).
-static long locate_sync(long pred, int win) {
+static gint64 locate_sync(gint64 pred, int win) {
   int syncn = (int)ms2smp(mode->sync_ms);
   double target = F_SYNC + freq_offset;         // AFC-corrected sync frequency
-  double best = 1e9; long bestpos = pred; gboolean found = FALSE;
+  double best = 1e9; gint64 bestpos = pred; gboolean found = FALSE;
   int step = 4;
   for (int d = -win; d <= win; d += step) {
-    long p = pred + d;
+    gint64 p = pred + d;
     if (p < 0 || p + syncn >= ring_w) continue;
     double m = 0.0;
     for (int i = 0; i < syncn; i += 2) m += fabs(fr_at(p + i) - target);
@@ -316,11 +320,11 @@ static double pixel_smp(double scan_ms, int n) {
 
 // Sample one scan (from `sync` + off_ms, `n` pixels of `psmp` samples each) into
 // a 0..255 float row.
-static void scan_row(long sync, double off_ms, double psmp, int n, float *out) {
+static void scan_row(gint64 sync, double off_ms, double psmp, int n, float *out) {
   double start = sync + ms2smp(off_ms);
   int navg = (int)(psmp * 0.5); if (navg < 1) navg = 1;
   for (int x = 0; x < n; x++) {
-    long c = (long)(start + (x + 0.5) * psmp);
+    gint64 c = (gint64)(start + (x + 0.5) * psmp);
     out[x] = (float)freq2val(fr_mean(c - navg / 2, navg));
   }
 }
@@ -347,7 +351,7 @@ static void put_yuv_row(int row, const float *Y, const float *Cr, const float *C
 }
 
 // --- per-family line decoders ----------------------------------------------
-static void decode_gbr(long sync) {
+static void decode_gbr(gint64 sync) {
   int w = img_w;
   double ch = mode->y_ms, sep = mode->sep_ms, porch = mode->porch_ms;
   double psmp = pixel_smp(ch, w);
@@ -372,7 +376,7 @@ static void decode_gbr(long sync) {
   cur_line++;
 }
 
-static void decode_robot72(long sync) {
+static void decode_robot72(gint64 sync) {
   int w = img_w;
   double base = mode->sync_ms + mode->porch_ms;
   double yp = pixel_smp(mode->y_ms, w), cp = pixel_smp(mode->c_ms, w);
@@ -389,14 +393,14 @@ static void decode_robot72(long sync) {
   cur_line++;
 }
 
-static void decode_robot36(long sync) {
+static void decode_robot36(gint64 sync) {
   int w = img_w;
   double base = mode->sync_ms + mode->porch_ms;
   double yp = pixel_smp(mode->y_ms, w), cp = pixel_smp(mode->c_ms, w);
   double c_off = base + mode->y_ms + mode->sep_ms + ROBOT_CPORCH_MS;
   // The Y/chroma separator frequency encodes which chroma this line carries:
   // ~1500 Hz → R-Y (Cr), ~2300 Hz → B-Y (Cb).
-  double sepf = fr_mean(sync + (long)ms2smp(base + mode->y_ms + mode->sep_ms * 0.5),
+  double sepf = fr_mean(sync + (gint64)ms2smp(base + mode->y_ms + mode->sep_ms * 0.5),
                         (int)ms2smp(mode->sep_ms * 0.5));
   float Y[MAX_W], C[MAX_W];
   scan_row(sync, base,  yp, w, Y);
@@ -419,7 +423,7 @@ static void decode_robot36(long sync) {
   cur_line++;
 }
 
-static void decode_pd(long sync) {
+static void decode_pd(gint64 sync) {
   int w = img_w;
   double base = mode->sync_ms + mode->porch_ms;
   double sc = mode->y_ms;
@@ -468,11 +472,11 @@ static double line_period_ms(void) { return line_period_of(mode); }
 // Begin decoding mode `m` with line 0's reference sync at absolute sample
 // `sync0` (the sync between blue and red for Scottie; the line-start sync for
 // every other family).  Shared by the VIS path and the forced-mode sync anchor.
-static void start_decode(const sstv_mode_t *m, long sync0) {
+static void start_decode(const sstv_mode_t *m, gint64 sync0) {
   autosave_current("new picture");   // the one on screen is about to be wiped
   mode = m;
   img_w = m->width; img_h = m->height;
-  line_samples = (long)ms2smp(line_period_ms());
+  line_samples = (gint64)ms2smp(line_period_ms());
   nominal_line = line_samples; clock_scale = 1.0;   // reset auto-slant servo
   freq_offset = 0.0;                                // reset AFC
   sync0_abs = sync0;
@@ -513,7 +517,7 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
     if (f < 0.0) f = 0.0;                 // real audio: fold to positive
 
     fr[ring_w & FR_MASK] = (float)f;
-    long n = ring_w;
+    gint64 n = ring_w;
     ring_w++;
 
     // 2) VIS leader detector.  The header is 1900 Hz leader → 1200 Hz start bit →
@@ -527,7 +531,7 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
       run1900++; run1200 = 0;
       if (run1900 >= (int)ms2smp(180.0)) {
         leader_ok = TRUE;
-        leader_deadline = n + (long)ms2smp(600.0);   // refreshed by each 1900 segment
+        leader_deadline = n + (gint64)ms2smp(600.0);   // refreshed by each 1900 segment
       }
     } else if (fabs(f - F_SYNC) < 150.0) {
       run1200++;
@@ -540,7 +544,7 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
       // clobber the correct cand_start before it is decoded.
       if (leader_ok && run1200 == (int)ms2smp(20.0) && !vis_pending) {
         vis_pending = TRUE;
-        vis_bit_ready = cand_start + (long)ms2smp(30.0 * 10 + 20.0);
+        vis_bit_ready = cand_start + (gint64)ms2smp(30.0 * 10 + 20.0);
       }
       run1900 = 0;
     } else { run1900 = 0; run1200 = 0; }   // dead-zone glide keeps the latch
@@ -554,9 +558,9 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
       const sstv_mode_t *m = forced_vis ? NULL : decode_vis();
       if (m != NULL && state == ST_HUNT) {
         mode = m;   // needed by line_*_ms() used inside start_decode
-        long img_start = cand_start + (long)ms2smp(30.0 * 10);  // after stop bit
-        long s0 = (m->family == FAM_SCOTTIE)
-                    ? img_start + (long)ms2smp(m->sync_ms + 2.0*m->sep_ms + 2.0*m->y_ms)
+        gint64 img_start = cand_start + (gint64)ms2smp(30.0 * 10);  // after stop bit
+        gint64 s0 = (m->family == FAM_SCOTTIE)
+                    ? img_start + (gint64)ms2smp(m->sync_ms + 2.0*m->sep_ms + 2.0*m->y_ms)
                     : img_start;
         start_decode(m, s0);
       }
@@ -580,7 +584,7 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
           int lo = (int)ms2smp(m->sync_ms * 0.5);
           int hi = (int)ms2smp(m->sync_ms * 2.5);
           if (sync_run >= lo && sync_run <= hi) {
-            long s0 = n - sync_run;               // start of the sync pulse
+            gint64 s0 = n - sync_run;               // start of the sync pulse
             double sf = fr_mean(s0, sync_run);
             start_decode(m, s0);                  // resets freq_offset to 0…
             freq_offset = sf - F_SYNC;            // …then seed AFC from this sync
@@ -601,9 +605,9 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
         gsync_run++;
       } else {
         if (gsync_run >= (int)ms2smp(4.0) && gsync_run <= (int)ms2smp(30.0)) {
-          long pos = n - gsync_run;                 // sync-pulse start
+          gint64 pos = n - gsync_run;                 // sync-pulse start
           if (gsync_n < 5) gsync_hist[gsync_n++] = pos;
-          else { memmove(gsync_hist, gsync_hist + 1, 4 * sizeof(long)); gsync_hist[4] = pos; }
+          else { memmove(gsync_hist, gsync_hist + 1, 4 * sizeof(gint64)); gsync_hist[4] = pos; }
           if (gsync_n >= 5) {
             double mn = 1e18, mx = 0.0, sum = 0.0;
             for (int k = 0; k < 4; k++) {
@@ -633,14 +637,14 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
 
     // 4) line decoding: decode the current line once its last scan is buffered.
     if (state == ST_DECODE) {
-      long pred = sync0_abs + (long)((double)tx_line * line_samples);
-      long need = pred + (long)ms2smp(line_r_end_ms()) + (long)ms2smp(20.0);
+      gint64 pred = sync0_abs + (gint64)((double)tx_line * line_samples);
+      gint64 need = pred + (gint64)ms2smp(line_r_end_ms()) + (gint64)ms2smp(20.0);
       if (ring_w >= need) {
         // Line 0 is anchored on the VIS-derived timing, NOT searched: the first
         // sync abuts the 1200 Hz VIS stop bit (Martin/Robot/PD) so a search would
         // lock onto the stop bit.  From line 1 on every sync is cleanly flanked
         // by a 1500 Hz porch/separator, so searching cancels clock drift/slant.
-        long sync = (tx_line == 0) ? pred : locate_sync(pred, (int)ms2smp(12.0));
+        gint64 sync = (tx_line == 0) ? pred : locate_sync(pred, (int)ms2smp(12.0));
         // Auto-slant: the residual (sync − pred) is the per-line clock error
         // (true line period − assumed).  Servo the assumed line period toward the
         // truth and scale the pixel clock by the same factor (clock_scale), so a
@@ -648,9 +652,9 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
         // automatically.  Skip the first few lines (forced-mode anchor settling)
         // and clamp to ±5 % to stay stable.
         if (tx_line > 2) {
-          line_samples += (long)llround(0.25 * (double)(sync - pred));
-          if (line_samples < (long)(nominal_line * 0.95)) line_samples = (long)(nominal_line * 0.95);
-          if (line_samples > (long)(nominal_line * 1.05)) line_samples = (long)(nominal_line * 1.05);
+          line_samples += (gint64)llround(0.25 * (double)(sync - pred));
+          if (line_samples < (gint64)(nominal_line * 0.95)) line_samples = (gint64)(nominal_line * 0.95);
+          if (line_samples > (gint64)(nominal_line * 1.05)) line_samples = (gint64)(nominal_line * 1.05);
           clock_scale = (double)line_samples / (double)nominal_line;
         }
         // AFC: the located sync pulse is a known 1200 Hz reference, so its mean
@@ -662,7 +666,7 @@ void sstv_decoder_add_audio(const gdouble *samples, int nframes) {
           if (fabs(sf - (F_SYNC + freq_offset)) < 200.0)
             freq_offset += 0.10 * (sf - F_SYNC - freq_offset);
         }
-        sync0_abs = sync - (long)((double)tx_line * line_samples);  // re-lock
+        sync0_abs = sync - (gint64)((double)tx_line * line_samples);  // re-lock
         tx_line++;
 
         switch (mode->family) {

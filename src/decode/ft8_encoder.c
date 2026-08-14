@@ -95,10 +95,23 @@ static struct {
   uint32_t hash;
 } callsign_hashtable[CALLSIGN_HASHTABLE_SIZE];
 
+// Both probe loops are BOUNDED, for the reason spelled out in ft8_decoder.c:
+// scanning to the first empty slot spins for ever once the table is full.  The
+// TX table fills far more slowly than the decoder's (only callsigns we pack go
+// in, i.e. ours and whoever we work), but "slowly" is not "never" — an auto-QSO
+// session that works 256 stations gets there — and a hang here is a transmitter
+// that stops mid-sequence.  Full ⇒ the callsign is dropped, which at worst
+// leaves a non-standard message unpackable.
 static void hashtable_add(const char *callsign, uint32_t hash) {
   uint16_t hash10 = (hash >> 12) & 0x3FFu;
   int idx = (hash10 * 23) % CALLSIGN_HASHTABLE_SIZE;
-  while (callsign_hashtable[idx].callsign[0] != '\0') {
+  for (int probe = 0; probe < CALLSIGN_HASHTABLE_SIZE; probe++) {
+    if (callsign_hashtable[idx].callsign[0] == '\0') {
+      strncpy(callsign_hashtable[idx].callsign, callsign, 11);
+      callsign_hashtable[idx].callsign[11] = '\0';
+      callsign_hashtable[idx].hash = hash;
+      return;
+    }
     if (((callsign_hashtable[idx].hash & 0x3FFFFFu) == hash) &&
         (0 == strcmp(callsign_hashtable[idx].callsign, callsign))) {
       callsign_hashtable[idx].hash &= 0x3FFFFFu;
@@ -106,9 +119,6 @@ static void hashtable_add(const char *callsign, uint32_t hash) {
     }
     idx = (idx + 1) % CALLSIGN_HASHTABLE_SIZE;
   }
-  strncpy(callsign_hashtable[idx].callsign, callsign, 11);
-  callsign_hashtable[idx].callsign[11] = '\0';
-  callsign_hashtable[idx].hash = hash;
 }
 
 static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type, uint32_t hash, char *callsign) {
@@ -116,9 +126,10 @@ static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type, uint32_t hash, 
                   (hash_type == FTX_CALLSIGN_HASH_12_BITS) ? 10 : 0;
   uint16_t hash10 = (hash >> (12 - shift)) & 0x3FFu;
   int idx = (hash10 * 23) % CALLSIGN_HASHTABLE_SIZE;
-  while (callsign_hashtable[idx].callsign[0] != '\0') {
+  for (int probe = 0; probe < CALLSIGN_HASHTABLE_SIZE; probe++) {
+    if (callsign_hashtable[idx].callsign[0] == '\0') break;
     if (((callsign_hashtable[idx].hash & 0x3FFFFFu) >> shift) == hash) {
-      strcpy(callsign, callsign_hashtable[idx].callsign);
+      strcpy(callsign, callsign_hashtable[idx].callsign); // c11[12] at the call site
       return true;
     }
     idx = (idx + 1) % CALLSIGN_HASHTABLE_SIZE;

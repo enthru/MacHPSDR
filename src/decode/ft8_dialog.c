@@ -104,6 +104,13 @@ static void free_closure_data(gpointer data, GClosure *closure) {
   g_free(data);
 }
 
+// The progress bar is going away: disarm the pulse timer that draws it, and
+// clear the stored id so nothing removes a source GLib has already dropped.
+static void dxcc_reload_stop(GtkWidget *w, gpointer p) {
+  dxcc_reload_ctx *c = p;
+  if (c->pulse_id) { g_source_remove(c->pulse_id); c->pulse_id = 0; }
+}
+
 static gboolean dxcc_reload_pulse(gpointer p) {
   gtk_progress_bar_pulse(GTK_PROGRESS_BAR(((dxcc_reload_ctx *)p)->bar));
   return G_SOURCE_CONTINUE;
@@ -230,6 +237,13 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   dctx->bar=dbar; dctx->result=dresult; dctx->status=dstatus; dctx->button=dreload;
   g_signal_connect_data(dreload,"clicked",G_CALLBACK(dxcc_reload_cb),dctx,
                         free_closure_data,0);
+  // The pulse timer redraws dbar, so the page going away has to stop it -- the
+  // rule the decoder panels' on_destroy handlers follow.  The window between
+  // arming it and dxcc_reload_run disarming it is one main-loop iteration, but
+  // "narrow" is not "closed": five call sites destroy the Configure dialog
+  // directly, and a timer left running on a finalised GtkProgressBar takes the
+  // ctx it dereferences with it (free_closure_data runs on this same destroy).
+  g_signal_connect(dbar,"destroy",G_CALLBACK(dxcc_reload_stop),dctx);
 
   // ---- Network logging (WSJT-X/JTDX UDP) ----
   GtkWidget *lframe=gtk_frame_new("Network Logging");

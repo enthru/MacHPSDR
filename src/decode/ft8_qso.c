@@ -114,7 +114,14 @@ static gboolean adif_get(const char *line, const char *field, char *out, int out
   if (!gt || len <= 0) return FALSE;
   const char *val = gt + 1;
   int n = len < outsz - 1 ? len : outsz - 1;
-  memcpy(out, val, n);
+  // The length in the tag is a number in a FILE, so it is a claim and not a
+  // bound: clamping it to the output buffer alone still copies `n` bytes from
+  // wherever `val` points.  A truncated record ("<CALL:15>AB" at the end of the
+  // line, which is what a log cut short by a full disk or a crash looks like)
+  // then reads past the end of the caller's line buffer.
+  int avail = (int)strlen(val);
+  if (n > avail) n = avail;
+  memcpy(out, val, (size_t)n);
   out[n] = '\0';
   return TRUE;
 }
