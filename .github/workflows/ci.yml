@@ -193,17 +193,42 @@ jobs:
   #      CLAUDE.md that no macOS run could answer, and answering it needs the
   #      program actually run, not a harness linked against parts of it.
   #
+  #      It does that FOUR times, once for each protocol path this tree can
+  #      drive with no hardware: PROTOCOL_FAKE, protocol 1 through metis_emu,
+  #      protocol 2 through p2_emu (with the diversity mixer's create and
+  #      teardown on top), and SoapySDR through the null module in
+  #      tools/soapy_null.cpp.  Four runs and not one because the teardown is
+  #      per-protocol and barely shared: only the SoapySDR path owns a receive
+  #      thread and an RX stream PER RECEIVER, only protocol 2 pairs DDC0/DDC1
+  #      through a diversity mixer, and only protocol 1 reaches its output path
+  #      from inside add_iq_samples.  A leak or a use-after-free in any one of
+  #      those is invisible to the other three, which is exactly how each of
+  #      them arrived: the SoapySDR run found a leaked receive thread and RX
+  #      stream on its first execution ever, and the protocol-1 run found the
+  #      output-path self-deadlock.
+  #
   # WHAT A GREEN RUN HERE PROVES, AND NOTHING MORE:
   #   - the self-tests are clean under ASan/UBSan/LSan on Linux;
   #   - the paths the churn hook actually walks are free of ASan errors and of
   #     unreachable leaks: start-up, discovery, create_receiver/create_visual,
   #     add_receiver, receiver_close/delete_receiver, and the DSP + panadapter
-  #     + waterfall + VFO code that runs while a receiver is streaming.
+  #     + waterfall + VFO code that runs while a receiver is streaming --
+  #     on all four of PROTOCOL_FAKE, protocol 1, protocol 2 and SoapySDR, plus
+  #     the diversity mixer's enable/disable on protocol 2.
   #
   # WHAT IT SAYS NOTHING ABOUT, and must never be written up as covering:
-  #   - PROTOCOL 2 and SoapySDR.  The faker is PROTOCOL_FAKE and metis_emu is
-  #     Protocol 1; neither goes near protocol2.c or soapy_protocol.c, so their
-  #     receive threads and their teardown remain reasoned-and-compiled only.
+  #   - THE RADIOS.  Every one of the four runs is answered by something in
+  #     this tree -- the faker, metis_emu, p2_emu, tools/soapy_null.cpp -- so
+  #     each agrees with this tree's own reading of protocol 1, protocol 2 and
+  #     the SoapySDR API.  They catch the app and the emulator drifting apart;
+  #     they cannot catch a misreading the two share, and no register whose
+  #     semantics nobody here parses (filters, ALEX, attenuators, OC bits) is
+  #     touched by any of them.  soapy_null is a plugin against SoapySDR's ABI
+  #     rather than a wire format, so it exercises the calls soapy_protocol.c
+  #     makes into libSoapySDR and says nothing whatever about how a real
+  #     driver answers them.
+  #   - PURESIGNAL, on either protocol.  Nothing here enables it, and the P2
+  #     feedback path needs TX hardware to close its loop at all.
   #   - the audio backends.  A runner has no sound card: soundio falls back to
   #     its Dummy backend, so ALSA, PulseAudio, JACK and CoreAudio are linked
   #     and never opened.
@@ -258,9 +283,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The `build` job's Linux list, plus xvfb/xauth for the two churn steps.
+      # The `build` job's Linux list, plus xvfb/xauth for the churn steps.
       # xauth is not optional: xvfb-run writes an auth file and X refuses the
       # connection without it.
+      #
+      # g++ is here for one step and one step only: tools/soapy_null.cpp is C++
+      # (SoapySDR's plugin ABI is a C++ class), and this tree is C, so a runner
+      # image that can build the app does not by that fact have a C++ compiler.
+      # Named for the same reason as zlib1g-dev above -- it is preinstalled
+      # today, and this file should still work on an image that stops
+      # preinstalling it.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -273,14 +305,15 @@ jobs:
             libsoapysdr-dev \
             libliquid-dev \
             zlib1g-dev \
+            g++ \
             xvfb xauth
 
-      # Both the app and metis_emu, so the second churn step has its radio.
-      # The serial retry is the `build` job's, for the same reason: an
+      # The app and both packet emulators, so every churn step below has its
+      # radio.  The serial retry is the `build` job's, for the same reason: an
       # instrumented build is no more readable in parallel than an ordinary one.
-      # `all` is named explicitly ALONGSIDE metis-emu, and that is the whole
-      # story of this step: naming only `metis-emu` builds ONLY metis_emu, so
-      # the app is never linked and the churn steps below die on
+      # `all` is named explicitly ALONGSIDE metis-emu and p2-emu, and that is
+      # the whole story of this step: naming only `metis-emu` builds ONLY
+      # metis_emu, so the app is never linked and the churn steps below die on
       # "./machpsdr: not found" twenty minutes later.  That is exactly what the
       # first run of this job did.
       #
@@ -290,13 +323,41 @@ jobs:
       # as the "cycles completed" check further down.
       - name: Build (SANITIZE=1)
         run: |
-          make SANITIZE=1 -j"$(getconf _NPROCESSORS_ONLN)" all metis-emu \
+          make SANITIZE=1 -j"$(getconf _NPROCESSORS_ONLN)" all metis-emu p2-emu \
             || { echo "::group::parallel build failed - rebuilding serially for a readable error"; \
-                 make SANITIZE=1 -j1 all metis-emu; }
-          for f in ./machpsdr ./metis_emu; do
+                 make SANITIZE=1 -j1 all metis-emu p2-emu; }
+          for f in ./machpsdr ./metis_emu ./p2_emu; do
             [ -x "$f" ] || { echo "::error::$f was not built - the churn steps cannot run"; exit 1; }
           done
-          ls -l machpsdr metis_emu
+          ls -l machpsdr metis_emu p2_emu
+
+      # The SoapySDR path has no wire to fake -- it is a plugin ABI, not a
+      # packet layout -- so its stand-in is a MODULE that enumerates, opens and
+      # streams, and the app finds it only because SOAPY_SDR_PLUGIN_PATH names
+      # the directory below.  Nothing else in this job or in `make` builds it:
+      # it is opt-in twice over (a C++ fixture in a C tree, and a fake radio
+      # that must never be loadable by an ordinary run).
+      #
+      # DELIBERATELY NOT BUILT WITH THE SANITISERS, though it is dlopen'd into a
+      # process that has them.  ASan's allocator interception is process-wide,
+      # so every allocation this module makes still goes through ASan's
+      # allocator and LeakSanitizer still reports whatever it forgets -- the
+      # same reason CLAUDE.md gives for the vendored trees, which are also
+      # uninstrumented and also covered.  Instrumenting it would add redzones
+      # and UB checks to the FIXTURE, which is not the code under test, and
+      # would leave a module no unsanitised process (SoapySDRUtil, an ordinary
+      # ./machpsdr) could load.  The script builds it -g -fno-omit-frame-pointer
+      # instead, which is what the fast unwinder needs to name a function if a
+      # leak's stack ever does pass through it.
+      #
+      # It is built HERE, next to the other builds and before the long
+      # self-test step, so a missing C++ compiler fails in ten seconds with the
+      # reason on screen rather than twenty minutes later as "the plugin does
+      # not register".
+      - name: Build the SoapySDR null module
+        run: |
+          tools/build-soapy-null.sh
+          ls -l build/soapy-null/
 
       # The same harnesses the `build` job runs, instrumented and with leak
       # detection on.  UBSan is built -fno-sanitize-recover=undefined, so
@@ -308,11 +369,12 @@ jobs:
       # --- the churn runs ---------------------------------------------------
       #
       # HOME is a directory of this job's own, for the reason CLAUDE.md gives:
-      # the app rewrites its saved settings on exit, and a shared HOME would
-      # also mean the second step inherits the first's props.  It is shared
-      # BETWEEN the two churn steps on purpose, though — WDSP plans its FFT
-      # wisdom into $HOME on first run and that takes minutes under ASan, so
-      # the second step reuses what the first one planned.
+      # the app rewrites its saved settings on exit.  It is shared BETWEEN the
+      # four churn steps on purpose — WDSP plans its FFT wisdom into $HOME on
+      # first run and that takes minutes under ASan, so every step after the
+      # first reuses what it planned.  Each device keeps its own props file
+      # (named after the device), so sharing the directory does not mean one
+      # step inheriting another's settings.
       - name: Prepare a throw-away HOME
         run: |
           echo "MACHPSDR_HOME=$(mktemp -d)" >> "$GITHUB_ENV"
@@ -397,6 +459,116 @@ jobs:
         if: always()
         run: pkill -f '[m]etis_emu' || true
 
+      # PROTOCOL 2, through tools/p2_emu.c, with the diversity mixer on top.
+      # This is not metis_emu with different numbers.  Protocol 2 gives every
+      # register block and every DDC stream its own UDP port and the app
+      # dispatches on the SOURCE port, so this is the only run in existence
+      # that executes protocol2.c's port switch, the mutex-guarded
+      # receive_specific register block, and process_div_iq_data's unpacking of
+      # a synchronised DDC0/DDC1 pair — which arrives sample-INTERLEAVED on the
+      # base DDC's port, not as two streams, and is the shape the P2 PureSignal
+      # path is documented as still getting wrong.
+      #
+      # MACHPSDR_DIVERSITY=2 composes with the churn on purpose; radio.c
+      # documents the pairing.  Switching diversity on adds a hidden receiver
+      # and a mixer, and the =2 also switches it OFF and on again — the only
+      # operator-reachable path that deletes a receiver carrying a mixer, i.e.
+      # the mutually recursive delete_receiver/delete_diversity_mixer pair that
+      # once hung the whole UI by re-locking a non-recursive GMutex.  The churn
+      # cannot reach it by itself: protocol 2 pins diversity to receiver 0,
+      # which has no close button.
+      #
+      # EXPECTED IN A CLEAN LOG, and not a failure: at most a line or two of
+      # "diversity-test: receiver 1 is in use".  The churn and the diversity
+      # toggle are two timers at 1500 and 1300 ms, so they do collide; when
+      # they do, diversity_test_on refuses (P2 needs the DDC0/DDC1 pair free)
+      # and takes the next tick instead.  The step is asserted on cycles
+      # completed, not on a silent log.
+      - name: Leak check - receiver add/close + diversity, Protocol 2 (p2_emu)
+        run: |
+          set -u
+          export HOME="$MACHPSDR_HOME"
+          export MACHPSDR_RX_CHURN=4
+          export MACHPSDR_DIVERSITY=2
+          ./p2_emu --pace 8 --quiet > p2-emu.log 2>&1 &
+          sleep 2
+          rc=0
+          # 600 and not the 2400 above, because the failure mode of an --open
+          # step is a WAIT, not a crash: a device the emulator did not answer
+          # for leaves the app sitting in the device-selection window for a
+          # click that is never coming, and every second of the timeout is a
+          # runner doing nothing before the "cycles completed" check gets to
+          # say so.  Measured at ~20 s for this step in an ubuntu:24.04
+          # container, so 600 is thirty times over.
+          timeout -k 30 600 xvfb-run -a -s "-screen 0 1280x900x24" \
+            ./machpsdr --open Angelia > churn-p2.log 2>&1 || rc=$?
+          echo "machpsdr exited $rc"
+          grep -E "rx-churn|diversity-test|--open" churn-p2.log || true
+          if ! grep -q "add/close cycles completed" churn-p2.log; then
+            echo "::error::the churn never ran to completion - this step proved nothing"
+            echo "::group::p2_emu"; tail -30 p2-emu.log; echo "::endgroup::"
+            tail -80 churn-p2.log
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::sanitiser report"
+            sed -n '/ERROR: \(Address\|Leak\|Undefined\)/,$p' churn-p2.log
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: Stop p2_emu
+        if: always()
+        run: pkill -f '[p]2_emu' || true
+
+      # SoapySDR, through the null module built above.  This is the only thing
+      # anywhere that runs soapy_protocol.c: SoapySDRDevice_make, the RX stream
+      # and the receive thread that are created PER RECEIVER, and the teardown
+      # that stops both from delete_receiver() BEFORE it takes delete_rx_mutex
+      # (that thread takes the same lock around every block it delivers, so
+      # joining it under the lock is the self-deadlock protocol 1 taught).  It
+      # earned its keep the first time it was ever executed: a receive thread
+      # and an RX stream were leaking on every single close, which no amount of
+      # reading had found.
+      #
+      # MACHPSDR_NULL_PACE=8 is metis_emu's --pace for the same reason — an
+      # instrumented build runs about an order of magnitude slower than wall
+      # clock, and an app buried by a real-time feed never fires the churn
+      # timer at all.
+      #
+      # No process to stop afterwards, and no `if: always()` step to do it:
+      # this emulator is a shared object inside the app, so it goes when the
+      # app goes.
+      - name: Leak check - receiver add/close, SoapySDR (null module)
+        run: |
+          set -u
+          export HOME="$MACHPSDR_HOME"
+          export MACHPSDR_RX_CHURN=4
+          export MACHPSDR_NULL_PACE=8
+          export SOAPY_SDR_PLUGIN_PATH="$PWD/build/soapy-null"
+          rc=0
+          # 600, for the reason the Protocol 2 step above gives.  Verified by
+          # deleting the module and running this step: the app discovers no
+          # machpsdrnull, falls back to the selection window, and the run is
+          # only ended by the timeout -- after which "cycles completed" is
+          # missing and the step fails, correctly, but forty minutes late if
+          # the number is 2400.
+          timeout -k 30 600 xvfb-run -a -s "-screen 0 1280x900x24" \
+            ./machpsdr --open machpsdrnull > churn-soapy.log 2>&1 || rc=$?
+          echo "machpsdr exited $rc"
+          grep -E "rx-churn|--open|machpsdrnull: (setup|close)Stream" churn-soapy.log || true
+          if ! grep -q "add/close cycles completed" churn-soapy.log; then
+            echo "::error::the churn never ran to completion - this step proved nothing"
+            tail -80 churn-soapy.log
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::sanitiser report"
+            sed -n '/ERROR: \(Address\|Leak\|Undefined\)/,$p' churn-soapy.log
+            echo "::endgroup::"
+            exit 1
+          fi
+
       # The logs are the product of this job when it fails: a sanitiser report
       # is a hundred lines of stack that the step summary truncates.  Uploaded
       # only on failure — a green run's logs are 40 MB of DSP chatter nobody
@@ -409,5 +581,8 @@ jobs:
           path: |
             churn-faker.log
             churn-p1.log
+            churn-p2.log
+            churn-soapy.log
             metis-emu.log
+            p2-emu.log
           if-no-files-found: warn

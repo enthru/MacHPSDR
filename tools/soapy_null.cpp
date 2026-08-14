@@ -1,9 +1,12 @@
 // A SoapySDR device that is not there: a null radio, in one file.
 //
 //   tools/build-soapy-null.sh                       # builds build/soapy-null/
-//   SOAPY_SDR_PLUGIN_PATH=build/soapy-null SoapySDRUtil --find
-//   SOAPY_SDR_PLUGIN_PATH=build/soapy-null \
-//     HOME=$(mktemp -d) ./machpsdr --open machpsdrnull
+//   export SOAPY_SDR_PLUGIN_PATH=build/soapy-null
+//   SoapySDRUtil --find
+//   HOME=$(mktemp -d) ./machpsdr --open machpsdrnull
+//
+// (no line here ends in a backslash on purpose: a `//` comment continued that
+// way swallows the line after it, and gcc -Wall says so where clang does not.)
 //
 // WHY THIS EXISTS.  The SoapySDR path in this tree -- device open/close, stream
 // setup and teardown, and above all the receive thread in soapy_protocol.c,
@@ -16,8 +19,9 @@
 //
 // USE WITH MACHPSDR_RX_CHURN.  The pairing this was written for:
 //
-//   SOAPY_SDR_PLUGIN_PATH=build/soapy-null HOME=$(mktemp -d) \
-//     MACHPSDR_RX_CHURN=10 ./machpsdr --open machpsdrnull     # SANITIZE=1 build
+//   export SOAPY_SDR_PLUGIN_PATH=build/soapy-null
+//   export MACHPSDR_RX_CHURN=10 MACHPSDR_NULL_PACE=8
+//   HOME=$(mktemp -d) ./machpsdr --open machpsdrnull          # SANITIZE=1 build
 //
 // which adds and closes receivers over a live SoapySDR stream.  The device
 // advertises two RX channels for exactly that reason: create_receiver gives
