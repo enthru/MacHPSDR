@@ -338,6 +338,10 @@ extern void *create_resample (int run, int size, double* in, double* out, int in
 extern void destroy_resample (void *a);
 extern void flush_resample (void *a);
 extern int xresample (void *a);
+/* Same resampler, but the input COUNT is per call rather than fixed at create
+   time -- what a stream delivering "up to N" samples needs.  Exported by
+   wdsp/resample.c and only missing from this header. */
+extern void xresampleV (double* input, double* output, int numsamps, int* outsamps, void* ptr);
 
 extern void* create_resampleFV (int in_rate, int out_rate);
 extern void xresampleFV (float* input, float* output, int numsamps, int* outsamps, void* ptr);

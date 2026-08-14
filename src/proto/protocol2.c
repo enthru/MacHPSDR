@@ -147,11 +147,11 @@ static unsigned char receive_specific_buffer[1444];
 
 static gpointer protocol2_thread(gpointer data);
 static gpointer protocol2_timer_thread(gpointer data);
-static void  process_iq_data(RECEIVER *rx,unsigned char *buffer);
-static void  process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer);
+static void  process_iq_data(RECEIVER *rx,int bytes,unsigned char *buffer);
+static void  process_div_iq_data(DIVMIXER *dmix,int bytes,unsigned char *buffer);
 static void  process_wideband_data(WIDEBAND *w,int bytes,unsigned char *buffer);
 #ifdef PURESIGNAL_P2
-static void  process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer);
+static void  process_ps_iq_data(RECEIVER *fbk,int bytes,unsigned char *buffer);
 #endif
 static void  process_command_response(unsigned char *buffer);
 static void  process_high_priority(unsigned char *buffer);
@@ -1382,12 +1382,12 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
                 RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk;
                 RECEIVER *rxfbk=radio->transmitter->rx_puresignal_rxfbk;
                 if(txfbk!=NULL && ddc==txfbk->channel) {
-                  process_ps_iq_data(txfbk,buffer);
+                  process_ps_iq_data(txfbk,bytesread,buffer);
                   free(buffer);
                   break;
                 }
                 if(rxfbk!=NULL && ddc==rxfbk->channel) {
-                  process_ps_iq_data(rxfbk,buffer);
+                  process_ps_iq_data(rxfbk,bytesread,buffer);
                   free(buffer);
                   break;
                 }
@@ -1412,9 +1412,9 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
                   // slot, so this needs no bounds test.
                   DIVMIXER *dmix=radio->divmixer[rx->dmix_id];
                   if(dmix!=NULL && dmix->rx_visual==rx && dmix->rx_hidden!=NULL) {
-                    process_div_iq_data(dmix,buffer);
+                    process_div_iq_data(dmix,bytesread,buffer);
                   } else {
-                    process_iq_data(rx,buffer);
+                    process_iq_data(rx,bytesread,buffer);
                   }
                 }
                 g_mutex_unlock(&radio->delete_rx_mutex);
@@ -1489,7 +1489,23 @@ static inline double p2_sample24(const unsigned char *p) {
 //
 // Called with radio->delete_rx_mutex held (the caller in protocol2_thread
 // takes it), so both receivers are alive for the duration.
-static void process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer) {
+/* The wire's sample count, clamped to what actually ARRIVED.  Bytes 14..15 are
+   a 16-bit field, so a radio that miscounts -- or anything else on the LAN,
+   since the dispatch is on source port alone -- can ask for 65535 samples of 6
+   bytes out of a 2048-byte block: a ~384 kB heap over-read whose values go
+   straight into add_iq_samples.  A short datagram is the other half of the
+   same question: the count itself would then be read out of uninitialised
+   malloc memory, so anything below one sample is dropped. */
+static int p2_iq_samples(int bytes,unsigned char *buffer) {
+  int n=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
+  int fits=(bytes-16)/6;
+  if(bytes<16+6) return 0;
+  if(n>fits) n=fits;
+  if(n<0) n=0;
+  return n;
+}
+
+static void process_div_iq_data(DIVMIXER *dmix,int bytes,unsigned char *buffer) {
   if(buffer==NULL) return;
   RECEIVER *rxv=dmix->rx_visual;
   RECEIVER *rxh=dmix->rx_hidden;
@@ -1500,11 +1516,9 @@ static void process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer) {
   }
   rxv->iq_sequence++;
 
-  int samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
   // 6 bytes an I/Q sample after the 16-byte header; never walk past the packet
   // even if a radio (or an emulator) lies about the count.
-  int maxpairs=(NET_BUFFER_SIZE-16)/6;
-  if(samplesperframe>maxpairs) samplesperframe=maxpairs;
+  int samplesperframe=p2_iq_samples(bytes,buffer);
 
   int b=16;
   for(int i=0;i+1<samplesperframe;i+=2) {
@@ -1517,7 +1531,7 @@ static void process_div_iq_data(DIVMIXER *dmix,unsigned char *buffer) {
   }
 }
 
-static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
+static void process_iq_data(RECEIVER *rx,int bytes,unsigned char *buffer) {
   long sequence;
   /*
   long long timestamp;
@@ -1550,7 +1564,7 @@ static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
 
   bitspersample=((buffer[12]&0xFF)<<8)+(buffer[13]&0xFF);
   */
-  samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
+  samplesperframe=p2_iq_samples(bytes,buffer);
 
 //fprintf(stderr,"process_iq_data: rx=%d seq=%ld bitspersample=%d samplesperframe=%d\n",rx->id, sequence,bitspersample,samplesperframe);
   b=16;
@@ -1616,11 +1630,11 @@ static void process_iq_data(RECEIVER *rx,unsigned char *buffer) {
 // UNVERIFIED: never run against a real P2 feedback ADC.  If the correction loop
 // diverges, suspect (a) the two streams drifting out of lock-step here, (b) the
 // I/Q sign/scaling convention, or (c) the sync-register setup upstream.
-static void process_ps_iq_data(RECEIVER *fbk, unsigned char *buffer) {
+static void process_ps_iq_data(RECEIVER *fbk,int bytes,unsigned char *buffer) {
   TRANSMITTER *tx=radio->transmitter;
   if(tx==NULL) return;
 
-  int samplesperframe=((buffer[14]&0xFF)<<8)+(buffer[15]&0xFF);
+  int samplesperframe=p2_iq_samples(bytes,buffer);
   int b=16;
 
   for(int i=0;i<samplesperframe;i++) {
@@ -1830,8 +1844,23 @@ void* protocol2_timer_thread(void* arg) {
 log_info("protocol2_timer_thread\n");
   while(running) {
     usleep(100000); // 100ms
-    protocol2_transmit_specific();
-    protocol2_receive_specific();
+    // Both walk radio->receiver[], radio->divmixer[] and transmitter->rx from
+    // THIS thread, ten times a second, while the GTK thread can be inside
+    // delete_receiver() freeing exactly those -- the "sampled the pointer
+    // outside the lock" shape protocol1 was fixed for.
+    //
+    // The lock goes HERE and not inside the two functions: delete_receiver_locked
+    // reaches protocol2_receive_specific() (via the PureSignal reopen,
+    // add_receiver -> protocol2_start_receiver) while already holding it, and a
+    // non-recursive GMutex re-locked on the same thread is the self-deadlock
+    // protocol 1's output path taught. Every other caller is the GTK thread,
+    // which is the only thread that deletes, so it needs nothing.
+    if(radio!=NULL) {
+      g_mutex_lock(&radio->delete_rx_mutex);
+      protocol2_transmit_specific();
+      protocol2_receive_specific();
+      g_mutex_unlock(&radio->delete_rx_mutex);
+    }
   }
   return NULL;
 }

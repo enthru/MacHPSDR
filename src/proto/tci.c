@@ -1328,11 +1328,21 @@ static void tci_send_handshake(TCI_CLIENT *c) {
 // client & accept threads
 // ---------------------------------------------------------------------------
 
+// Closes the socket too, and does BOTH under send_mtx.  The descriptor must not
+// be released while a foreign thread is inside client_send_framed_try(), which
+// reads c->fd under that lock and then sends: the kernel hands the same number
+// to the next accept(), so an IQ frame from the audio thread could land in a
+// brand-new client's socket before its handshake had even finished.  Lock order
+// is the documented clients_mutex -> send_mtx.
 static void clients_remove(TCI_CLIENT *c) {
   g_mutex_lock(&clients_mutex);
   client_set_iq(c, -1, FALSE);      // clear all rx bits, keep iq_sub_count balanced
   client_set_audio(c, -1, FALSE);   // clear all rx bits, keep audio_sub_count balanced
+  g_mutex_lock(&c->send_mtx);
+  int fd = c->fd;
   c->fd = -1;
+  if (fd >= 0) closesocket(fd);
+  g_mutex_unlock(&c->send_mtx);
   g_mutex_unlock(&clients_mutex);
 }
 
@@ -1349,8 +1359,7 @@ static gpointer tci_client_thread(gpointer data) {
 
   if (!ws_handshake(fd)) {
     log_info("tci: websocket handshake failed for fd=%d\n", fd);
-    clients_remove(c);
-    closesocket(fd);
+    clients_remove(c);   // closes fd
     return NULL;
   }
   log_info("tci: client connected (fd=%d)\n", fd);
@@ -1375,8 +1384,7 @@ static gpointer tci_client_thread(gpointer data) {
   }
 
   log_info("tci: client disconnected (fd=%d)\n", fd);
-  clients_remove(c);
-  closesocket(fd);
+  clients_remove(c);   // closes fd
   return NULL;
 }
 

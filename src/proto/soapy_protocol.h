@@ -39,6 +39,9 @@ void soapy_protocol_set_lna_gain(RECEIVER *rx,int gain);
 void soapy_protocol_set_gain(ADC *adc);
 void soapy_protocol_set_attenuation(RECEIVER *rx,int attenuation);
 void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate);
+/* Same, for a caller that already holds radio->delete_rx_mutex (it must be
+   taken before rx->mutex -- see the note on the definition). */
+void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate);
 gboolean soapy_protocol_get_automatic_gain(ADC *adc);
 void soapy_protocol_set_automatic_gain(RECEIVER *rx,gboolean mode);
 void soapy_protocol_create_transmitter(TRANSMITTER *tx);

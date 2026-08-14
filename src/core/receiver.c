@@ -138,6 +138,11 @@ static void center_pan_on_cursor(RECEIVER *rx) {
 
 void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
 log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
+  // delete_rx_mutex FIRST, then rx->mutex: the SoapySDR receive thread takes
+  // them in that order (the lock around each block, then rx->mutex inside
+  // full_rx_buffer), and the resampler rebuilt below is one of the things it
+  // is using.  The other order is an ABBA deadlock.
+  g_mutex_lock(&radio->delete_rx_mutex);
   g_mutex_lock(&rx->mutex);
   SetChannelState(rx->channel,0,1);
   g_free(rx->audio_output_buffer);
@@ -171,7 +176,7 @@ log_info("receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_
 
 #ifdef SOAPYSDR
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-    soapy_protocol_change_sample_rate(rx,sample_rate);
+    soapy_protocol_change_sample_rate_locked(rx,sample_rate);   // lock held above
 /*
     rx->resample_step=radio->sample_rate/rx->sample_rate;
 log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
@@ -181,6 +186,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 
   SetChannelState(rx->channel,1,0);
   g_mutex_unlock(&rx->mutex);
+  g_mutex_unlock(&radio->delete_rx_mutex);
 
   /* Freetune moved the span centre onto the cursor above: retune the LO and
      re-zero the digital shift (frequency_changed), then keep the cursor centred

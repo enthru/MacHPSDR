@@ -59,6 +59,18 @@ static SoapySDRStream *tx_stream;
 static int soapy_rx_sample_rate;
 static int soapy_tx_sample_rate;
 static int max_samples;
+// The block size each receiver's buffers and resampler were built for.
+// max_samples above is a GLOBAL that the next receiver's create_receiver
+// rewrites from its own MTU and fft_size, so anything that rebuilds one
+// receiver's resampler later must use ITS size, not whatever the last receiver
+// left behind (the same trap the receive thread's `const int block` avoids).
+static int rx_block[MAX_CHANNELS];
+// Set by each receive thread while it is parked on the rx_stream_active flag,
+// cleared while it may be inside readStream().  soapy_protocol_rx_pause() waits
+// for it rather than sleeping a fixed 2 ms: readStream's timeout is 100 ms, so
+// the sleep was fifty times too short and the stream could be deactivated --
+// and, on the next resume, CLOSED -- under a reader still inside the driver.
+static volatile gint rx_parked[MAX_CHANNELS];
 
 static int samples=0;
 
@@ -113,8 +125,15 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
   mic_sample_divisor=rate/48000;
 }
 
-void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
+/* Rebuilds rx->resampler, which the receive thread is using inside
+   delete_rx_mutex -- so the caller must hold that lock.  The public wrapper
+   below takes it; receiver_change_sample_rate takes it itself, BEFORE
+   rx->mutex, because the receive thread takes them in that order
+   (delete_rx_mutex around the block, then rx->mutex inside full_rx_buffer) and
+   the other order is a deadlock. */
+void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
   int rc;
+  const int block=rx_block[rx->adc<MAX_CHANNELS?rx->adc:0];
 
   if(strcmp(radio->discovered->name,"sdrplay")==0) {
     soapy_rx_sample_rate=rx->sample_rate;
@@ -136,11 +155,17 @@ void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
       destroy_resample(rx->resampler);
       rx->resampler=NULL;
     }
-    rx->resampled_buffer_size=2*max_samples/(radio->sample_rate/rx->sample_rate);
-    rx->resampler=create_resample (1,max_samples,rx->buffer,rx->resampled_buffer,radio->sample_rate,rx->sample_rate,0.0,0,1.0);
+    rx->resampled_buffer_size=2*block/(radio->sample_rate/rx->sample_rate);
+    rx->resampler=create_resample (1,block,rx->buffer,rx->resampled_buffer,radio->sample_rate,rx->sample_rate,0.0,0,1.0);
 
-log_info("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->sample_rate=%d rx->sample_rate=%d\n",__FUNCTION__,max_samples*2,rx->resampled_buffer_size,radio->sample_rate,rx->sample_rate);
+log_info("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->sample_rate=%d rx->sample_rate=%d\n",__FUNCTION__,block*2,rx->resampled_buffer_size,radio->sample_rate,rx->sample_rate);
   }
+}
+
+void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
+  g_mutex_lock(&radio->delete_rx_mutex);
+  soapy_protocol_change_sample_rate_locked(rx,rate);
+  g_mutex_unlock(&radio->delete_rx_mutex);
 }
 
 void soapy_protocol_create_receiver(RECEIVER *rx) {
@@ -215,6 +240,7 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   if(max_samples>(2*rx->fft_size)) {
     max_samples=2*rx->fft_size;
   }
+  rx_block[channel]=max_samples;
   rx->buffer=g_new(double,max_samples*2);
   rx->resampled_buffer=g_new(double,max_samples*2);
 
@@ -431,9 +457,11 @@ log_info("%s: running\n",__FUNCTION__);
     // torn down and rebuilt fresh in soapy_protocol_rx_resume() (see there),
     // so no backlog reaches us here.
     if(!rx_stream_active) {
+      g_atomic_int_set(&rx_parked[channel],1);
       g_usleep(1000);
       continue;
     }
+    g_atomic_int_set(&rx_parked[channel],0);
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
     if(elements<0) continue;
     if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
@@ -454,7 +482,12 @@ log_info("%s: running\n",__FUNCTION__);
       rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
     }
     if(rx->resampler!=NULL) {
-      int out_elements=xresample(rx->resampler);
+      // xresampleV, not xresample: the latter always consumes the count the
+      // resampler was CREATED with, while readStream returns "up to" block --
+      // so a short read re-resampled the tail of the previous one, and the
+      // very first one resampled uninitialised heap (rx->buffer is g_new).
+      int out_elements=0;
+      xresampleV(rx->buffer,rx->resampled_buffer,elements,&out_elements,rx->resampler);
       for(i=0;i<out_elements;i++) {
         if(radio->iqswap) {
           qsample=rx->resampled_buffer[i*2];
@@ -560,19 +593,32 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
 
 // ---- Half-duplex RX pause/resume ------------------------------------------
 
+// Wait (bounded) for a receive thread to acknowledge the pause.  Typically
+// returns at once -- readStream comes back as soon as a block is ready, which
+// at any usable sample rate is well under a millisecond -- and the ceiling is
+// just over readStream's own 100 ms timeout for a stream that has gone quiet.
+static void wait_rx_parked(size_t channel) {
+  if(receive_thread_id[channel]==NULL) return;
+  for(int i=0;i<150 && !g_atomic_int_get(&rx_parked[channel]);i++) {
+    g_usleep(1000);
+  }
+}
+
 void soapy_protocol_rx_pause(void) {
   if(soapy_device==NULL) return;
   if(!rx_stream_active) return;
   rx_stream_active=FALSE;
-  // let an in-flight readStream() return before we deactivate the stream
-  g_usleep(2000);
-  SoapySDRDevice_deactivateStream(soapy_device,rx_stream[rx_channel],0,0LL);
+  // EVERY stream, not rx_channel's: that global holds whichever receiver was
+  // started last, so with two receivers this deactivated one and left the other
+  // streaming straight through a half-duplex transmit.
+  for(size_t ch=0;ch<MAX_CHANNELS;ch++) {
+    if(rx_stream[ch]==NULL) continue;
+    wait_rx_parked(ch);
+    SoapySDRDevice_deactivateStream(soapy_device,rx_stream[ch],0,0LL);
+  }
 }
 
-void soapy_protocol_rx_resume(void) {
-  if(soapy_device==NULL) return;
-  if(rx_stream_active) return;
-  size_t channel=rx_channel;
+static void rx_resume_channel(size_t channel) {
   // HackRF leaves the RX stream in a runaway overflow after a
   // deactivate/reactivate across a TX over: readStream then keeps returning
   // full buffers forever (observed 200M+ samples, far faster than real time),
@@ -590,7 +636,15 @@ void soapy_protocol_rx_resume(void) {
   rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
 #endif
   SoapySDRDevice_activateStream(soapy_device,rx_stream[channel],0,0LL,0);
-  rx_stream_active=TRUE;
+}
+
+void soapy_protocol_rx_resume(void) {
+  if(soapy_device==NULL) return;
+  if(rx_stream_active) return;
+  for(size_t ch=0;ch<MAX_CHANNELS;ch++) {
+    if(rx_stream[ch]!=NULL) rx_resume_channel(ch);
+  }
+  rx_stream_active=TRUE;   // last, so no thread reads a stream mid-rebuild
 }
 
 // ---- TX pump + stream activation ------------------------------------------

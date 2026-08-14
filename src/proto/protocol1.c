@@ -199,9 +199,35 @@ void protocol1_stop(void) {
   running=FALSE;
 }
 
+/* Take down the receive thread and its socket, if either is still up.  It has
+   to happen before every start: protocol1_stop() only clears `running`, and the
+   thread can be parked in a recvfrom with a one-second timeout, so
+   start_protocol1_thread() used to open a NEW socket over the old descriptor
+   (leaking it) and start a second thread whose first statement is
+   `running=TRUE` -- which the OLD thread then reads on its next loop and stays
+   alive for the rest of the process, reading the same socket and driving the
+   same file-static byte state machine and EP2 command buffer as the new one.
+   One leaked socket and one immortal thread per receiver close, per wideband
+   open, per sample-rate change.  shutdown() rather than waiting out the
+   timeout: it returns the blocked recvfrom immediately (the trick tci.c uses on
+   its listen socket), so the join costs nothing on the GTK thread. */
+static void stop_protocol1_thread(void) {
+  running=FALSE;
+  if(receive_thread_id!=NULL) {
+    if(data_socket>=0) shutdown(data_socket,SHUT_RDWR);
+    g_thread_join(receive_thread_id);
+    receive_thread_id=NULL;
+  }
+  if(data_socket>=0) {
+    closesocket(data_socket);
+    data_socket=-1;
+  }
+}
+
 void protocol1_run(void) {
   log_info("protocol1_run\n");
 
+  stop_protocol1_thread();
   start_protocol1_thread();
 
   for(int i=8;i<OZY_BUFFER_SIZE;i++) {
@@ -216,15 +242,7 @@ void protocol1_run(void) {
 // metis start command).  Runs on the GTK main thread.
 void protocol1_reconnect(void) {
   log_info("protocol1_reconnect\n");
-  running=FALSE;
-  if(receive_thread_id!=NULL) {
-    g_thread_join(receive_thread_id);   // returns within one SO_RCVTIMEO period
-    receive_thread_id=NULL;
-  }
-  if(data_socket>=0) {
-    closesocket(data_socket);
-    data_socket=-1;
-  }
+  stop_protocol1_thread();   // protocol1_run() repeats it; harmless and explicit
   protocol1_run();
 }
 
