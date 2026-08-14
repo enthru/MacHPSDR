@@ -138,12 +138,20 @@ static unsigned char receive_specific_buffer[1444];
 // There are eight DDC I/Q ports (RX_IQ_TO_HOST_PORT_0..7), so eight DDCs, and
 // the per-DDC configuration blocks start at byte 17 with a stride of 6.
 #define MAX_DDC_CHANNELS 8
-// DDC synchronisation map: one byte per DDC starting here, bit k meaning "this
-// DDC is synchronised to DDC k", i.e. started on the same sample.  Written for
-// the PureSignal feedback pair and for the diversity pair; the offset itself is
-// UNVERIFIED against real gateware (no Protocol-2 board here) and is the first
-// thing to suspect if either pair arrives out of lock-step.
+// DDC synchronisation map: one byte per DDC starting here, indexed by the BASE
+// DDC, with bit k meaning "DDC k is synchronised to this one" -- so a follower
+// is named by a bit, not by the byte.  Written for the diversity pair and for
+// the PureSignal feedback pair, both of which are DDC0+DDC1 (the only pair the
+// protocol allows).  The offset itself is UNVERIFIED against real gateware (no
+// Protocol-2 board here) and is the first thing to suspect if either pair
+// arrives out of lock-step.
 #define DDC_SYNC_BASE    1363
+
+// PureSignal feedback rate.  Fixed, not the feedback receiver's own rate: the
+// correction loop is designed around 192 kHz and pihpsdr hardcodes the same
+// ("the sample rate is always 192").  The feedback RECEIVERs here are buffers,
+// so their sample_rate never reaches the wire.
+#define PS_FEEDBACK_RATE 192000
 
 static gpointer protocol2_thread(gpointer data);
 static gpointer protocol2_timer_thread(gpointer data);
@@ -151,7 +159,7 @@ static void  process_iq_data(RECEIVER *rx,int bytes,unsigned char *buffer);
 static void  process_div_iq_data(DIVMIXER *dmix,int bytes,unsigned char *buffer);
 static void  process_wideband_data(WIDEBAND *w,int bytes,unsigned char *buffer);
 #ifdef PURESIGNAL_P2
-static void  process_ps_iq_data(RECEIVER *fbk,int bytes,unsigned char *buffer);
+static void  process_ps_iq_data(int bytes,unsigned char *buffer);
 #endif
 static void  process_command_response(unsigned char *buffer);
 static void  process_high_priority(unsigned char *buffer);
@@ -1126,67 +1134,82 @@ void protocol2_receive_specific(void) {
   }
 
 #ifdef PURESIGNAL_P2
-    // --- PureSignal feedback DDCs (EXPERIMENTAL / UNVERIFIED, see below) ------
-    // During a PureSignal TX two extra DDCs carry the feedback the correction
-    // loop needs: the DUC/pre-PA reference (what we asked the radio to send) and
-    // the post-PA/ADC feedback (what the amplifier actually produced).  Reuse
-    // the two RECEIVERs the transmitter already points at (rx_puresignal_txfbk /
-    // rx_puresignal_rxfbk, set in transmitter_set_ps) rather than inventing new
-    // dedicated feedback receiver structs (which this fork, unlike pihpsdr, does
-    // not have).  Both DDCs run at the feedback receiver's sample rate and the
-    // post-PA DDC is sync-slaved to the DUC DDC so the two streams stay
-    // sample-aligned when process_ps_iq_data() pairs them into pscc().
+    // --- PureSignal feedback: the DDC0/DDC1 pair, and nothing else -----------
+    // During a PureSignal TX two streams carry what the correction loop
+    // compares: the DUC / TX-DAC reference (what we asked the radio to send)
+    // and the post-PA / ADC feedback (what the amplifier actually produced).
+    // Protocol 2 delivers them as a SYNCHRONISED PAIR, which is the same
+    // mechanism -- and therefore the same three rules -- as the diversity block
+    // above:
     //
-    // UNVERIFIED: the exact P2 sync-register layout, the feedback DDC indices
-    // and the feedback rate are hardware-specific and have never been checked
-    // against a real Orion2/ANAN P2 radio.  If the loop misbehaves, this block
-    // and the discovery-time ps_tx_fdbk_chan assignment are the first suspects.
+    //   * only DDC0 and DDC1 may be synchronised, so the feedback pair is
+    //     pinned there.  It used to be programmed on the two feedback
+    //     RECEIVERs' own channels, i.e. "sync DDC3 to DDC4" on an Orion2
+    //     (ps_tx_fdbk_chan=4), which no board can honour;
+    //   * DDC1's ENABLE BIT STAYS CLEAR -- it rides DDC0's stream;
+    //   * DDC0's packets then carry BOTH streams, sample-interleaved, which is
+    //     what process_ps_iq_data() unpacks.  It used to accumulate two
+    //     separate per-port streams and hope they stayed in lock-step; the
+    //     second port never streams, so that shape could not have worked.
+    //
+    // The two RECEIVERs the transmitter points at (rx_puresignal_txfbk /
+    // rx_puresignal_rxfbk, allocated by transmitter_set_ps) are BUFFERS here,
+    // not DDCs: this fork has no dedicated feedback-receiver struct, so it
+    // reuses receiver slots, and only their iq_input_buffer/buffer_size reach
+    // the correction pass.  Their own DDCs are silenced for the duration.
+    //
+    // Roles follow protocol 1 and pihpsdr alike: the LOWER-numbered feedback
+    // receiver is the post-PA feedback and the higher one the DUC reference
+    // (transmitter.c sets rxfbk=receiver[chan-1], txfbk=receiver[chan]), and
+    // pihpsdr puts PS_RX_FEEDBACK on DDC0 with PS_TX_FEEDBACK on DDC1.  So
+    // DDC0 = post-PA, DDC1 = reference, and that is the order the interleaved
+    // samples arrive in.
+    //
+    // STILL UNVERIFIED -- there is no TX hardware here and no P2 board at all
+    // (CLAUDE.md, Verification status).  What is settled is only that this now
+    // asks for a pairing the protocol document permits, in the shape the
+    // document describes; the feedback ADC number, the fixed 192 kHz rate and
+    // the sign/scale of what comes back are hardware's answer.
     if((radio->transmitter!=NULL) && (radio->transmitter->puresignal != NULL)
         && isTransmitting(radio)) {
-      RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk; // DUC / pre-PA reference
+      RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk; // DUC / TX-DAC reference
       RECEIVER *rxfbk=radio->transmitter->rx_puresignal_rxfbk; // post-PA / ADC feedback
       if(txfbk!=NULL && rxfbk!=NULL) {
-        int ps_rate=txfbk->sample_rate;   // feedback rate (e.g. 192000)
-        int ct=txfbk->channel;            // DUC feedback DDC index
-        int cr=rxfbk->channel;            // post-PA feedback DDC index
+        // The feedback receivers' own DDCs must not stream: their samples would
+        // be off-air receive, delivered to buffers the correction pass is
+        // filling from DDC0.  Cleared FIRST, because either of them can be
+        // DDC0/DDC1 itself on a one-ADC board (ps_tx_fdbk_chan=1).
+        receive_specific_buffer[7]&=~(1<<txfbk->channel);
+        receive_specific_buffer[7]&=~(1<<rxfbk->channel);
 
-        // post-PA / ADC feedback DDC
-        receive_specific_buffer[5]|=radio->adc[rxfbk->adc].dither<<cr;
-        receive_specific_buffer[6]|=radio->adc[rxfbk->adc].random<<cr;
-        receive_specific_buffer[17+(cr*6)]=rxfbk->adc;
-        receive_specific_buffer[18+(cr*6)]=((ps_rate/1000)>>8)&0xFF;
-        receive_specific_buffer[19+(cr*6)]=(ps_rate/1000)&0xFF;
-        receive_specific_buffer[22+(cr*6)]=24;
+        // DDC0 -- post-PA / ADC feedback, on the feedback receiver's ADC.
+        receive_specific_buffer[17]=rxfbk->adc;
+        receive_specific_buffer[18]=((PS_FEEDBACK_RATE/1000)>>8)&0xFF;
+        receive_specific_buffer[19]=(PS_FEEDBACK_RATE/1000)&0xFF;
+        receive_specific_buffer[22]=24;
 
-        // DUC / pre-PA reference DDC
-        receive_specific_buffer[5]|=radio->adc[txfbk->adc].dither<<ct;
-        receive_specific_buffer[6]|=radio->adc[txfbk->adc].random<<ct;
-        receive_specific_buffer[17+(ct*6)]=txfbk->adc;
-        receive_specific_buffer[18+(ct*6)]=((ps_rate/1000)>>8)&0xFF;
-        receive_specific_buffer[19+(ct*6)]=(ps_rate/1000)&0xFF;
-        receive_specific_buffer[22+(ct*6)]=24;
+        // DDC1 -- DUC / TX-DAC reference.  Its "ADC" is the transmit DAC, which
+        // the protocol numbers one past the last real ADC (1 on a one-ADC
+        // board, 2 on Orion2), exactly as pihpsdr writes n_adc here.
+        receive_specific_buffer[17+6]=radio->discovered->adcs;
+        receive_specific_buffer[18+6]=((PS_FEEDBACK_RATE/1000)>>8)&0xFF;
+        receive_specific_buffer[19+6]=(PS_FEEDBACK_RATE/1000)&0xFF;
+        receive_specific_buffer[22+6]=24;
 
-        // Sync the post-PA DDC to the DUC DDC.  The sync byte is indexed by the
-        // BASE DDC and its bits name the FOLLOWERS, so this is [base] |= 1<<
-        // follower; it was written the other way round ([cr] = 1<<ct), i.e. the
-        // wrong byte AND the wrong bit, which for a DDC0/DDC1 pair says
-        // "DDC0 follows DDC1" instead of the reverse.  See DDC_SYNC_BASE.
-        //
-        // TWO THINGS HERE ARE STILL WRONG and are NOT fixed by this change,
-        // because PureSignal-over-P2 needs TX hardware to test and there is
-        // none (see CLAUDE.md, Verification status).  Recorded so the next
-        // person does not have to rediscover them:
-        //   1. The spec allows ONLY DDC0/DDC1 to be synchronised, but
-        //      ps_tx_fdbk_chan is 4 on Orion2 (protocol2_discovery.c), so this
-        //      asks to sync DDC3 to DDC4.  pihpsdr pins the feedback pair to
-        //      DDC0/DDC1 for exactly this reason.
-        //   2. A synchronised pair is presented INTERLEAVED ON THE BASE DDC's
-        //      port, so process_ps_iq_data()'s two-separate-streams model is
-        //      the wrong shape -- the diversity path below now does it the
-        //      other way, and PureSignal should follow it.
-        receive_specific_buffer[DDC_SYNC_BASE+ct]|=(1<<cr);
+        // The sync byte is indexed by the BASE DDC and its bits name the
+        // FOLLOWERS ("if bit set then DDC (n) is synched to DDC 0"), so
+        // DDC1-follows-DDC0 is [1363] |= 0x02.  It was written the other way
+        // round ([follower] = 1<<base): the wrong byte AND the wrong bit.
+        receive_specific_buffer[DDC_SYNC_BASE+0]|=0x02;
 
-        receive_specific_buffer[7]|=(1<<ct)|(1<<cr); // enable both feedback DDCs
+        receive_specific_buffer[7]|=0x01;   // DDC0 carries the interleaved pair
+        receive_specific_buffer[7]&=~0x02;  // DDC1 rides it, so it streams alone
+
+        // Dither and random are per-ADC bits in bytes 5/6, not per-DDC: the
+        // block this replaced shifted them by the DDC index, which on an
+        // Orion2 set bits 3 and 4 of a two-bit field.  The feedback path wants
+        // neither anyway, and bytes 5/6 already carry what the operator chose
+        // for the real ADCs.
       }
     }
 #endif
@@ -1373,24 +1396,22 @@ log_info("protocol2_thread: high_priority_addr setup for port %d\n",HIGH_PRIORIT
             case RX_IQ_TO_HOST_PORT_7:
               ddc=sourceport-RX_IQ_TO_HOST_PORT_0;
 #ifdef PURESIGNAL_P2
-              // While a PureSignal TX is running the two feedback DDCs arrive on
-              // their own IQ ports; steer them into the feedback pairing path
-              // instead of the normal per-receiver demod. (UNVERIFIED — the
-              // feedback DDC indices are hardware-specific.)
-              if(isTransmitting(radio) && radio->transmitter!=NULL
+              // While a PureSignal TX is running the feedback pair is DDC0 +
+              // DDC1 synchronised, which means ONE port: DDC0's, carrying both
+              // streams sample-interleaved (see the register block in
+              // protocol2_receive_specific).  There is nothing to steer on any
+              // other port -- DDC1 is not even enabled.
+              //
+              // The lock is the same rule as the normal I/Q path below: the
+              // feedback RECEIVERs are slots in radio->receiver[], and
+              // transmitter_set_ps(FALSE) deletes them from the GTK thread.
+              if(ddc==0 && isTransmitting(radio) && radio->transmitter!=NULL
                   && radio->transmitter->puresignal!=NULL) {
-                RECEIVER *txfbk=radio->transmitter->rx_puresignal_txfbk;
-                RECEIVER *rxfbk=radio->transmitter->rx_puresignal_rxfbk;
-                if(txfbk!=NULL && ddc==txfbk->channel) {
-                  process_ps_iq_data(txfbk,bytesread,buffer);
-                  free(buffer);
-                  break;
-                }
-                if(rxfbk!=NULL && ddc==rxfbk->channel) {
-                  process_ps_iq_data(rxfbk,bytesread,buffer);
-                  free(buffer);
-                  break;
-                }
+                g_mutex_lock(&radio->delete_rx_mutex);
+                process_ps_iq_data(bytesread,buffer);
+                g_mutex_unlock(&radio->delete_rx_mutex);
+                free(buffer);
+                break;
               }
 #endif
               if(ddc>=radio->discovered->supported_receivers)  {
@@ -1616,57 +1637,70 @@ static void process_iq_data(RECEIVER *rx,int bytes,unsigned char *buffer) {
 }
 
 #ifdef PURESIGNAL_P2
-// Decode one feedback-DDC packet (single 24-bit I/Q stream) into its feedback
-// receiver's iq_input_buffer, then — once the DUC/reference buffer is full —
-// hand the paired reference + post-PA blocks to WDSP's pscc() correction pass.
+// THE PURESIGNAL FEEDBACK PAIR IS ONE STREAM, exactly like the diversity pair
+// above and for the same reason: DDC0 and DDC1 are synchronised, and a
+// synchronised pair is "presented from DDC0's output" -- one packet on DDC0's
+// port carrying both streams SAMPLE-INTERLEAVED, base first.  So this reads
+// four 24-bit values per iteration and steps the sample counter by two.
 //
-// This is the P2 analogue of add_ps_iq_samples() (transmitter.c), but the two
-// feedback streams arrive as two SEPARATE synced DDC packet streams rather than
-// interleaved in one Protocol-1 frame, so each is accumulated independently and
-// the DUC stream drives the pscc() trigger.  The post-PA (rxfbk) stream is
-// assumed to advance in lock-step because its DDC is sync-slaved to the DUC DDC
-// in protocol2_receive_specific().
+// It used to accumulate each stream separately as it arrived on its own port,
+// with the DUC stream driving the pscc() trigger and lock-step merely assumed.
+// That could never have run: the follower's enable bit is clear, so the second
+// port delivers nothing and the pair would have sat half-full for ever.
+//
+// Order is base-then-follower = DDC0-then-DDC1 = post-PA feedback, then DUC
+// reference (see the register block), which is what add_ps_iq_samples() is
+// handed as (i_tx,q_tx, i_rx,q_rx).  Reusing the protocol-1 entry point rather
+// than repeating its buffer/trigger logic is the point: one implementation of
+// "fill both blocks, run pscc when they are full" for both protocols.
+//
+// Called with radio->delete_rx_mutex held.
 //
 // UNVERIFIED: never run against a real P2 feedback ADC.  If the correction loop
-// diverges, suspect (a) the two streams drifting out of lock-step here, (b) the
-// I/Q sign/scaling convention, or (c) the sync-register setup upstream.
-static void process_ps_iq_data(RECEIVER *fbk,int bytes,unsigned char *buffer) {
+// diverges, suspect (a) which of the pair is the reference, (b) the I/Q
+// sign/scaling convention, or (c) the sync-register setup upstream.
+static void process_ps_iq_data(int bytes,unsigned char *buffer) {
   TRANSMITTER *tx=radio->transmitter;
-  if(tx==NULL) return;
+  if(tx==NULL || buffer==NULL) return;
 
   int samplesperframe=p2_iq_samples(bytes,buffer);
-  int b=16;
 
-  for(int i=0;i<samplesperframe;i++) {
-    int isample  = (int)(signed char)buffer[b++]*65536;
-    isample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    isample     |= (int)((unsigned char)buffer[b++]&0xFF);
-    int qsample  = (int)(signed char)buffer[b++]*65536;
-    qsample     |= (int)((((unsigned char)buffer[b++])<<8)&0xFF00);
-    qsample     |= (int)((unsigned char)buffer[b++]&0xFF);
-
-    double id=(double)isample/8388607.0; // 24-bit
-    double qd=(double)qsample/8388607.0;
-
-    if(fbk->samples < fbk->buffer_size) {
-      fbk->iq_input_buffer[fbk->samples*2]   = id;
-      fbk->iq_input_buffer[fbk->samples*2+1] = qd;
-      fbk->samples++;
+  // An ODD sample count means what arrived is not an interleaved pair -- DDC0
+  // streaming alone, i.e. a radio that did not honour the sync map.  Half of
+  // such a packet handed to the correction loop as if it were a pair is worse
+  // than no feedback at all, so drop it and say so.  Once per process: the
+  // register block is resent every 100 ms and this would otherwise print at the
+  // packet rate.
+  if(samplesperframe&1) {
+    static int reported=0;
+    if(!reported) {
+      log_error("PureSignal P2: DDC0 delivered %d samples, an odd count -- the "
+                "feedback pair is not interleaved; check the DDC sync map\n",
+                samplesperframe);
+      reported=1;
     }
-
-    // The DUC/reference stream drives the correction pass: when its block is
-    // complete, run pscc() with both blocks and reset the pair.
-    if(fbk==tx->rx_puresignal_txfbk && fbk->samples>=fbk->buffer_size) {
-      RECEIVER *rxfbk=tx->rx_puresignal_rxfbk;
-      if(rxfbk!=NULL && rxfbk->samples>=fbk->buffer_size && isTransmitting(radio)) {
-        pscc(tx->channel, fbk->buffer_size,
-             tx->rx_puresignal_txfbk->iq_input_buffer,
-             rxfbk->iq_input_buffer);
-      }
-      fbk->samples=0;
-      if(rxfbk!=NULL) rxfbk->samples=0;
-    }
+    return;
   }
+
+  int b=16;
+  for(int i=0;i+1<samplesperframe;i+=2) {
+    double i_rx=p2_sample24(&buffer[b]); b+=3;   // DDC0: post-PA / ADC feedback
+    double q_rx=p2_sample24(&buffer[b]); b+=3;
+    double i_tx=p2_sample24(&buffer[b]); b+=3;   // DDC1: DUC / TX-DAC reference
+    double q_tx=p2_sample24(&buffer[b]); b+=3;
+    add_ps_iq_samples(tx,i_tx,q_tx,i_rx,q_rx);
+  }
+
+  // One line, the first time feedback ever arrives in this process, saying the
+  // path is running at all; everything after it is debug-level, so an ordinary
+  // transmission prints nothing per packet.
+  static long packets=0;
+  if(packets==0) {
+    log_info("PureSignal P2: feedback pair streaming on DDC0, %d pairs/packet\n",
+             samplesperframe/2);
+  }
+  packets++;
+  if((packets&0x7FF)==0) log_debug("PureSignal P2: %ld feedback packets\n",packets);
 }
 #endif
 

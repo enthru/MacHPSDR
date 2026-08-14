@@ -959,9 +959,18 @@ void transmitter_fps_changed(TRANSMITTER *tx) {
   tx->update_timer_id=g_timeout_add(1000/tx->fps,update_timer_cb,(gpointer)tx);
 }
 
+// Leaving PureSignal changes which receivers the radio is asked to stream, so
+// the protocol is restarted once the hidden feedback receivers are gone.
+// Protocol 1 has to be stopped for that (its receiver count rides in the EP2
+// command stream, which metis_start_stop restarts); Protocol 2 rebuilds its DDC
+// register block from scratch on the next 100 ms timer tick and needs nothing --
+// while protocol1_stop() on a P2 radio would write a Metis stop command into a
+// socket that protocol never opened.
 static int ps_end_timer_cb(gpointer data) {
-  log_info("**************Restart P1\n");
-  protocol1_stop();
+  if(radio->discovered->protocol==PROTOCOL_1) {
+    log_info("**************Restart P1\n");
+    protocol1_stop();
+  }
   g_idle_add(radio_restart,(void *)radio);
   return FALSE;
 }
@@ -984,18 +993,39 @@ void transmitter_set_ps(TRANSMITTER *tx,gboolean state) {
 
     SetPSControl(tx->channel, 0, 0, 1, 0);
   } else {
-    // Delete hidden rxs
-    for (int i = 0; i <= (radio->receivers + 1); i++) {
-      if (radio->receiver[i] != NULL) {
-        log_info("RX%i\n", i);
-        if (radio->receiver[i]->show_rx == FALSE) {
-          log_info("Delete RX%i\n", i);
-          delete_receiver(radio->receiver[i]);
-        }
+    // Stop the feedback path BEFORE the receivers it points at are freed.  The
+    // protocol threads test tx->puresignal and then walk rx_puresignal_txfbk /
+    // rx_puresignal_rxfbk; clearing them afterwards -- which is what this did --
+    // leaves a window in which they fill the iq_input_buffer of a receiver
+    // delete_receiver has already freed.  Observed as an abort inside WDSP's
+    // CloseChannel freeing a pointer libmalloc says was never allocated, i.e.
+    // the heap corrupted a receiver or two earlier, and intermittent: it needs
+    // a feedback packet to land inside the teardown.
+    PSIGNAL *ps = tx->puresignal;
+    tx->puresignal = NULL;
+    tx->rx_puresignal_txfbk = NULL;
+    tx->rx_puresignal_rxfbk = NULL;
+    // create_puresignal() is a g_new0 with no destructor, and the enable branch
+    // allocates a fresh one whenever the field is NULL -- so every off/on cycle
+    // leaked one.  Freed after the field is cleared, never before: the protocol
+    // threads test that pointer (they only test it, which is why this is safe
+    // at all) and the dialog's readout timer is on this thread.
+    g_free(ps);
+
+    // Delete the hidden feedback receivers.  Over the WHOLE receiver array: the
+    // bound used to be radio->receivers + 1, and radio->receivers is
+    // DECREMENTED by each delete, so the scan met the shrinking bound halfway
+    // and stopped.  With ps_tx_fdbk_chan=4 that left the highest feedback
+    // receiver (the DUC reference) behind on every single PureSignal-off --
+    // still allocated, still holding a WDSP channel, and still asking the radio
+    // to stream a DDC nothing reads.
+    for (int i = 0; i < radio->discovered->supported_receivers && i < MAX_RECEIVERS; i++) {
+      if (radio->receiver[i] != NULL && radio->receiver[i]->show_rx == FALSE) {
+        log_info("PureSignal off: delete hidden RX%i\n", i);
+        delete_receiver(radio->receiver[i]);
       }
     }
     //Disable PureSignal
-    tx->puresignal = NULL;
     SetPSControl(tx->channel, 1, 0, 0, 0);
     g_timeout_add(500,ps_end_timer_cb, tx);
   }
@@ -1527,33 +1557,58 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
   }
 }
 
+// Fill the two feedback blocks and, when they are full, hand them to WDSP's
+// correction pass.  Both protocols come through here: protocol 1 unpacks the
+// pair out of one interleaved frame, protocol 2 out of one synchronised-DDC
+// packet -- neither has its own copy of the buffer/trigger logic.
 void add_ps_iq_samples(TRANSMITTER *tx, double i_sample_tx,double q_sample_tx, double i_sample_rx, double q_sample_rx) {
 #ifdef PURESIGNAL
-  // DUC/TX feedback
-  tx->rx_puresignal_txfbk->iq_input_buffer[tx->rx_puresignal_txfbk->samples * 2] = i_sample_tx;
-  tx->rx_puresignal_txfbk->iq_input_buffer[(tx->rx_puresignal_txfbk->samples * 2) + 1] = q_sample_tx;
+  RECEIVER *txfbk = tx->rx_puresignal_txfbk;   // DUC / TX-DAC reference
+  RECEIVER *rxfbk = tx->rx_puresignal_rxfbk;   // post amplifier / ADC feedback
+  if(txfbk == NULL || rxfbk == NULL) return;
 
-  // Post amplifier/ADC feedback
-  tx->rx_puresignal_rxfbk->iq_input_buffer[tx->rx_puresignal_rxfbk->samples * 2] = i_sample_rx;
-  tx->rx_puresignal_rxfbk->iq_input_buffer[(tx->rx_puresignal_rxfbk->samples * 2) + 1] = q_sample_rx;
+  // One bound for both blocks.  They are written and reset in lock step, so the
+  // shorter of the two is what either may be indexed by: the pair is normally
+  // created with the same buffer size, but nothing in the code that allocates
+  // them (transmitter_set_ps, off whatever receiver slots were free) enforces
+  // it, and a sample count driven by a wire packet is not the place to find out.
+  int size = txfbk->buffer_size < rxfbk->buffer_size
+             ? txfbk->buffer_size : rxfbk->buffer_size;
+  if(size <= 0) return;
 
-  tx->rx_puresignal_rxfbk->samples++;
-  tx->rx_puresignal_txfbk->samples++;
+  // ONE index for both blocks, not each receiver's own count.  The feedback
+  // receivers are ordinary receivers between transmissions -- their DDCs stream
+  // off-air I/Q and add_iq_samples advances `samples` independently -- so the
+  // two counters are in general NOT equal when a transmission starts.  Writing
+  // each block at its own count then runs one of them past the end: ASan caught
+  // an 8-byte write one byte past a 16 kB iq_input_buffer within three
+  // PureSignal on/off cycles.  A stale count is discarded rather than trusted;
+  // a feedback block has to start at the beginning to mean anything.
+  int n = txfbk->samples;
+  if(n < 0 || n >= size) n = 0;
 
-  if(tx->rx_puresignal_txfbk->samples >= tx->rx_puresignal_txfbk->buffer_size) {
+  txfbk->iq_input_buffer[n * 2]       = i_sample_tx;
+  txfbk->iq_input_buffer[(n * 2) + 1] = q_sample_tx;
+  rxfbk->iq_input_buffer[n * 2]       = i_sample_rx;
+  rxfbk->iq_input_buffer[(n * 2) + 1] = q_sample_rx;
+  n++;
+  txfbk->samples = n;
+  rxfbk->samples = n;
+
+  if(n >= size) {
 
     if(isTransmitting(radio)) {
 //      g_print("pscc: size %i sample %i\n", tx->fbk_buffer_size, tx->rx_fbk_sample);
-      pscc(tx->channel, tx->rx_puresignal_txfbk->buffer_size, 
-           tx->rx_puresignal_txfbk->iq_input_buffer, 
-           tx->rx_puresignal_rxfbk->iq_input_buffer);
+      pscc(tx->channel, size,
+           txfbk->iq_input_buffer,
+           rxfbk->iq_input_buffer);
 //      if(transmitter->displaying && transmitter->feedback) {
 //        Spectrum0(1, rx_feedback->id, 0, 0, rx_feedback->iq_input_buffer);
 //      }
     }
-  
-    tx->rx_puresignal_rxfbk->samples = 0;
-    tx->rx_puresignal_txfbk->samples = 0;
+
+    rxfbk->samples = 0;
+    txfbk->samples = 0;
   }
 #endif
 }

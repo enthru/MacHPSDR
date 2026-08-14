@@ -52,6 +52,7 @@
 #include "soapy_protocol.h"
 #endif
 #include "reconnect.h"
+#include "ext.h"
 #include "main.h"
 #include "configure_dialog.h"
 #include "audio.h"
@@ -642,7 +643,20 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
       }
     }
     SetChannelState(r->transmitter->channel,1,0);
-    if (r->transmitter->puresignal != NULL) SetPSMox(r->transmitter->channel, 1);
+    if (r->transmitter->puresignal != NULL) {
+      SetPSMox(r->transmitter->channel, 1);
+      // The feedback receivers are ordinary receivers between transmissions, so
+      // their sample counters hold wherever the off-air I/Q happened to stop.
+      // A feedback block starts here or it is part off-air, part feedback --
+      // and pscc() would be handed the mixture as if it were the amplifier's
+      // answer to the reference.  Under the lock the protocol threads take
+      // around each delivered block, so the counters cannot be advanced
+      // mid-reset.
+      g_mutex_lock(&r->delete_rx_mutex);
+      if(r->transmitter->rx_puresignal_txfbk!=NULL) r->transmitter->rx_puresignal_txfbk->samples=0;
+      if(r->transmitter->rx_puresignal_rxfbk!=NULL) r->transmitter->rx_puresignal_rxfbk->samples=0;
+      g_mutex_unlock(&r->delete_rx_mutex);
+    }
     switch(r->discovered->protocol) {
       case PROTOCOL_1:
         break;
@@ -2039,6 +2053,107 @@ static void rx_churn_init(RADIO *r) {
 //
 // Zero cost when unset -- one getenv at start-up.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// MACHPSDR_PS_TEST=<seconds> -- switch PureSignal on, key the transmitter for
+// that long, unkey, switch it off again, and quit.
+//
+// WARNING, and the reason this one is not like the others: it KEYS THE
+// TRANSMITTER.  Against tools/p2_emu.c that is a UDP stream; against a radio
+// with an antenna on it, it transmits.  Never set it on a run that has hardware
+// attached.
+//
+// Without it the whole PureSignal feedback path is unreachable headlessly: it
+// needs a checkbox on a Configure page AND the MOX button held down, so no
+// register in protocol2_receive_specific's feedback block and no line of
+// process_ps_iq_data had ever been executed by anything -- which is how a
+// feedback pair asking to synchronise DDC3 to DDC4 (a pairing the protocol
+// forbids) and an unpacker built for two streams that only ever arrive as one
+// survived in the tree.
+//
+//   ./p2_emu --board 5 --receivers 8 --pace 8 &
+//   HOME=$(mktemp -d) MACHPSDR_PS_TEST=6 MACHPSDR_PS_CYCLES=3 ./machpsdr --open Orion
+//
+// MACHPSDR_PS_CYCLES repeats the whole on/key/unkey/off sequence, which is what
+// exercises the teardown -- the half that deletes the hidden feedback receivers
+// while the protocol thread is still delivering to them.
+//
+// The emulator needs no PureSignal support of its own: it already reads the
+// sync map and interleaves a synchronised pair onto the base DDC's port, which
+// is exactly what the feedback pair now asks for.  So a run proves the register
+// block is one a board can honour and that the interleaved unpacking runs on
+// what comes back -- not that the correction loop converges, which needs a PA.
+//
+// It calls what the operator's own controls call (ext_tx_set_ps, the applier
+// behind the Configure checkbox, and set_mox, behind the MOX button), so it
+// cannot drift into exercising something the program does not do.  Zero cost
+// when unset -- one getenv at start-up.
+// ---------------------------------------------------------------------------
+#ifdef PURESIGNAL
+static int ps_test_seconds;
+static int ps_test_left;
+static int ps_test_done;
+
+static gboolean ps_test_key(gpointer data);
+
+static gboolean ps_test_unkey(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  set_mox(r,FALSE);
+  // Switching PureSignal off is the half that matters most: it deletes the
+  // hidden feedback receivers under a protocol thread that may still be
+  // delivering to them, which is where the abort inside WDSP's CloseChannel
+  // came from.  Hence the cycles.
+  ext_tx_set_ps(GINT_TO_POINTER(0));
+  ps_test_done++;
+  if(ps_test_left>0) {
+    log_info("ps-test: cycle %d done, %d to go\n",ps_test_done,ps_test_left);
+    g_timeout_add(2000,ps_test_key,(gpointer)r);
+    return FALSE;
+  }
+  log_info("ps-test: %d PureSignal transmit cycles completed, quitting\n",ps_test_done);
+  g_application_quit(g_application_get_default());
+  return FALSE;
+}
+
+static gboolean ps_test_key(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  ps_test_left--;
+  ext_tx_set_ps(GINT_TO_POINTER(1));
+  if(r->transmitter==NULL || !r->transmitter->puresignal_enabled) {
+    // Most often too few free receiver slots for the feedback pair (see
+    // ext_tx_set_ps).  Quit rather than key the transmitter with PureSignal
+    // off: that would test nothing while still transmitting.
+    log_error("ps-test: PureSignal would not enable; not keying\n");
+    g_application_quit(g_application_get_default());
+    return FALSE;
+  }
+  log_info("ps-test: PureSignal on, keying for %d s\n",ps_test_seconds);
+  set_mox(r,TRUE);
+  g_timeout_add(ps_test_seconds*1000,ps_test_unkey,(gpointer)r);
+  return FALSE;
+}
+#endif
+
+static void ps_test_init(RADIO *r) {
+#ifdef PURESIGNAL
+  const char *e=g_getenv("MACHPSDR_PS_TEST");
+  if(e==NULL || *e=='\0') return;
+  ps_test_seconds=atoi(e);
+  if(ps_test_seconds<=0) return;
+  // MACHPSDR_PS_CYCLES=<n>: run the on/key/unkey/off sequence n times.
+  const char *c=g_getenv("MACHPSDR_PS_CYCLES");
+  ps_test_left=(c!=NULL && *c!='\0') ? atoi(c) : 1;
+  if(ps_test_left<1) ps_test_left=1;
+  if(!r->can_transmit) {
+    log_error("ps-test: this device cannot transmit\n");
+    return;
+  }
+  // 2 s before keying: the receivers have to exist and be streaming first, so
+  // that switching PureSignal on exercises the reconfiguration a running radio
+  // gets rather than a start-up special case.
+  g_timeout_add(2000,ps_test_key,(gpointer)r);
+#endif
+}
+
 static void reconnect_test_init(void) {
   const char *e=g_getenv("MACHPSDR_RECONNECT_TEST");
   if(e==NULL || *e=='\0') return;
@@ -3436,6 +3551,10 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   wideband_test_init(r);
 
   reconnect_test_init();
+
+  // MACHPSDR_PS_TEST: enable PureSignal and key the transmitter.  Last, so it
+  // runs against a radio that is already streaming.
+  ps_test_init(r);
 
   return r;
 }

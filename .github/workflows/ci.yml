@@ -521,6 +521,65 @@ jobs:
         if: always()
         run: pkill -f '[p]2_emu' || true
 
+      # PROTOCOL 2 PURESIGNAL.  A separate p2_emu because the feedback pair only
+      # exists on a board that has one: ps_tx_fdbk_chan is set for Orion2 alone,
+      # hence --board 5, and --receivers 8 because switching PureSignal on
+      # allocates receiver slots up to that channel.
+      #
+      # This step KEYS THE TRANSMITTER (MACHPSDR_PS_TEST), which against the
+      # emulator is a UDP stream and nothing else.  It is the only thing that
+      # executes the feedback register block in protocol2_receive_specific and
+      # process_ps_iq_data's unpacking of the DDC0/DDC1 pair — both of which
+      # were unreachable without a checkbox and a held MOX button, which is how
+      # a pairing the protocol forbids (sync DDC3 to DDC4) and an unpacker built
+      # for two streams that only ever arrive as one survived in the tree.
+      #
+      # MACHPSDR_PS_CYCLES=3 is the teardown half, and it is where the bugs
+      # were: switching PureSignal off deletes the hidden feedback receivers
+      # while the protocol thread is still delivering into them.  The first run
+      # of this found a heap-buffer-overflow in add_ps_iq_samples and an
+      # intermittent abort inside WDSP's CloseChannel.
+      #
+      # BOTH greps are load-bearing.  "cycles completed" says the sequence ran;
+      # "feedback pair streaming on DDC0" says the radio actually answered with
+      # an interleaved pair, i.e. that the register block asked for something a
+      # board can honour.  A run that only satisfies the first tested the UI
+      # path and nothing on the wire.
+      - name: Leak check - PureSignal feedback pair, Protocol 2 (p2_emu)
+        run: |
+          set -u
+          export HOME="$MACHPSDR_HOME"
+          export MACHPSDR_PS_TEST=4
+          export MACHPSDR_PS_CYCLES=3
+          ./p2_emu --board 5 --receivers 8 --pace 8 --quiet > p2-emu-ps.log 2>&1 &
+          sleep 2
+          rc=0
+          timeout -k 30 600 xvfb-run -a -s "-screen 0 1280x900x24" \
+            ./machpsdr --open Orion > ps-p2.log 2>&1 || rc=$?
+          echo "machpsdr exited $rc"
+          grep -E "ps-test|PureSignal" ps-p2.log || true
+          if ! grep -q "PureSignal transmit cycles completed" ps-p2.log; then
+            echo "::error::the PureSignal cycles never ran to completion - this step proved nothing"
+            echo "::group::p2_emu"; tail -30 p2-emu-ps.log; echo "::endgroup::"
+            tail -80 ps-p2.log
+            exit 1
+          fi
+          if ! grep -q "feedback pair streaming on DDC0" ps-p2.log; then
+            echo "::error::no feedback data ever arrived - the DDC pair was never streamed"
+            echo "::group::p2_emu"; tail -30 p2-emu-ps.log; echo "::endgroup::"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::sanitiser report"
+            sed -n '/ERROR: \(Address\|Leak\|Undefined\)/,$p' ps-p2.log
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: Stop p2_emu (PureSignal)
+        if: always()
+        run: pkill -f '[p]2_emu' || true
+
       # SoapySDR, through the null module built above.  This is the only thing
       # anywhere that runs soapy_protocol.c: SoapySDRDevice_make, the RX stream
       # and the receive thread that are created PER RECEIVER, and the teardown
@@ -583,6 +642,8 @@ jobs:
             churn-p1.log
             churn-p2.log
             churn-soapy.log
+            ps-p2.log
             metis-emu.log
             p2-emu.log
+            p2-emu-ps.log
           if-no-files-found: warn
