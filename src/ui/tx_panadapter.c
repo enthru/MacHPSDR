@@ -315,7 +315,7 @@ static void tx_pana_build(GtkSnapshot *snapshot, int width, int height, gpointer
       for (size_t si = 0; si < radio->discovered->info.soapy.sensors; si++) {
         if(strstr(radio->discovered->info.soapy.sensor[si],"temp")!=NULL) {
           char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[si]);
-          int v=(int)atof(value);
+          int v=(int)g_ascii_strtod(value,NULL);   // the driver's string is ASCII
           if(strcmp(radio->discovered->info.soapy.sensor[si],"xadc_temp0")==0) sprintf(text,"zynq = %dC",v);
           else if(strcmp(radio->discovered->info.soapy.sensor[si],"ad9361-phy_temp0")==0) sprintf(text,"pluto = %dC",v);
           else sprintf(text,"%s = %dC",radio->discovered->info.soapy.sensor[si],v);
@@ -323,7 +323,7 @@ static void tx_pana_build(GtkSnapshot *snapshot, int width, int height, gpointer
           y+=15;
         } else if(strcmp(radio->discovered->info.soapy.sensor[si],"adm1177_voltage0")==0) {
           char *value=soapy_protocol_read_sensor(radio->discovered->info.soapy.sensor[si]);
-          double v=atof(value);
+          double v=g_ascii_strtod(value,NULL);   // the driver's string is ASCII
           sprintf(text,"volts = %0.1fv",v);
           txn_text(snapshot,widget,width-(width/4),y,12,&ta,text);
           y+=15;

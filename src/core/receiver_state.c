@@ -126,8 +126,7 @@ void receiver_save_state(RECEIVER *rx) {
   setProperty(name,value);
 
   sprintf(name,"receiver[%d].display_average_time",rx->channel);
-  sprintf(value,"%f",rx->display_average_time);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->display_average_time);
   sprintf(name,"receiver[%d].panadapter_low",rx->channel);
   sprintf(value,"%d",rx->panadapter_low);
   setProperty(name,value);
@@ -358,14 +357,11 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->agc);
   setProperty(name,value);
   sprintf(name,"receiver[%d].agc_gain",rx->channel);
-  sprintf(value,"%f",rx->agc_gain);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->agc_gain);
   sprintf(name,"receiver[%d].agc_slope",rx->channel);
-  sprintf(value,"%f",rx->agc_slope);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->agc_slope);
   sprintf(name,"receiver[%d].agc_hang_threshold",rx->channel);
-  sprintf(value,"%f",rx->agc_hang_threshold);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->agc_hang_threshold);
 
   sprintf(name,"receiver[%d].enable_equalizer",rx->channel);
   sprintf(value,"%d",rx->enable_equalizer);
@@ -377,8 +373,7 @@ void receiver_save_state(RECEIVER *rx) {
   }
 
   sprintf(name,"receiver[%d].volume",rx->channel);
-  sprintf(value,"%f",rx->volume);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->volume);
 
   sprintf(name,"receiver[%d].mute",rx->channel);
   sprintf(value,"%d",rx->mute);
@@ -397,20 +392,15 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(value,"%d",rx->nr4);
   setProperty(name,value);
   sprintf(name,"receiver[%d].nr4_reduction",rx->channel);
-  sprintf(value,"%f",rx->nr4_reduction);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->nr4_reduction);
   sprintf(name,"receiver[%d].nr4_smoothing",rx->channel);
-  sprintf(value,"%f",rx->nr4_smoothing);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->nr4_smoothing);
   sprintf(name,"receiver[%d].nr4_whitening",rx->channel);
-  sprintf(value,"%f",rx->nr4_whitening);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->nr4_whitening);
   sprintf(name,"receiver[%d].nr4_rescale",rx->channel);
-  sprintf(value,"%f",rx->nr4_rescale);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->nr4_rescale);
   sprintf(name,"receiver[%d].nr4_postfilter",rx->channel);
-  sprintf(value,"%f",rx->nr4_postfilter);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->nr4_postfilter);
   sprintf(name,"receiver[%d].nb",rx->channel);
   sprintf(value,"%d",rx->nb);
   setProperty(name,value);
@@ -426,45 +416,35 @@ void receiver_save_state(RECEIVER *rx) {
 
   // Squelch (previously not persisted) + APF (CW peak filter).
   sprintf(name,"receiver[%d].squelch",rx->channel);
-  sprintf(value,"%f",rx->squelch);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->squelch);
   for(i=0;i<MODES;i++) {
     sprintf(name,"receiver[%d].mode_squelch[%d]",rx->channel,i);
-    sprintf(value,"%f",rx->mode_squelch[i]);
-    setProperty(name,value);
+    setPropertyDouble(name,rx->mode_squelch[i]);
   }
   sprintf(name,"receiver[%d].amsq_min_db",rx->channel);
-  sprintf(value,"%f",rx->amsq_min_db);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->amsq_min_db);
   sprintf(name,"receiver[%d].amsq_max_db",rx->channel);
-  sprintf(value,"%f",rx->amsq_max_db);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->amsq_max_db);
   sprintf(name,"receiver[%d].amsq_tail",rx->channel);
-  sprintf(value,"%f",rx->amsq_tail);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->amsq_tail);
   sprintf(name,"receiver[%d].apf_enable",rx->channel);
   sprintf(value,"%d",rx->apf_enable);
   setProperty(name,value);
   sprintf(name,"receiver[%d].apf_bw",rx->channel);
-  sprintf(value,"%f",rx->apf_bw);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->apf_bw);
   sprintf(name,"receiver[%d].apf_gain",rx->channel);
-  sprintf(value,"%f",rx->apf_gain);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->apf_gain);
 
   sprintf(name,"receiver[%d].notches",rx->channel);
   sprintf(value,"%d",rx->notches);
   setProperty(name,value);
   sprintf(name,"receiver[%d].notch_default_width",rx->channel);
-  sprintf(value,"%f",rx->notch_default_width);
-  setProperty(name,value);
+  setPropertyDouble(name,rx->notch_default_width);
   for(i=0;i<rx->notches;i++) {
     sprintf(name,"receiver[%d].notch[%d].fcenter",rx->channel,i);
-    sprintf(value,"%f",rx->notch[i].fcenter);
-    setProperty(name,value);
+    setPropertyDouble(name,rx->notch[i].fcenter);
     sprintf(name,"receiver[%d].notch[%d].fwidth",rx->channel,i);
-    sprintf(value,"%f",rx->notch[i].fwidth);
-    setProperty(name,value);
+    setPropertyDouble(name,rx->notch[i].fwidth);
     sprintf(name,"receiver[%d].notch[%d].active",rx->channel,i);
     sprintf(value,"%d",rx->notch[i].active);
     setProperty(name,value);
@@ -472,8 +452,7 @@ void receiver_save_state(RECEIVER *rx) {
     sprintf(value,"%d",rx->notch[i].af);
     setProperty(name,value);
     sprintf(name,"receiver[%d].notch[%d].af_offset",rx->channel,i);
-    sprintf(value,"%f",rx->notch[i].af_offset);
-    setProperty(name,value);
+    setPropertyDouble(name,rx->notch[i].af_offset);
   }
 
   sprintf(name,"receiver[%d].rit_enabled",rx->channel);
@@ -552,8 +531,7 @@ void receiver_save_state(RECEIVER *rx) {
       sprintf(value,"%d",rx->paned_position);
       setProperty(name,value);
       sprintf(name,"receiver[%d].paned_percent",rx->channel);
-      sprintf(value,"%f",paned_percent);
-      setProperty(name,value);
+      setPropertyDouble(name,paned_percent);
       log_info("receiver_save_sate: paned_position=%d paned_height=%d paned_percent=%f\n",rx->paned_position, paned_height, paned_percent);
     } else {
       log_info("receiver_save_sate: skip degenerate paned (pos=%d height=%d)\n",position,paned_height);
@@ -755,7 +733,7 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].volume",rx->channel);
   value=getProperty(name);
-  if(value) rx->volume=atof(value);
+  if(value) rx->volume=propToDouble(value);
 
   sprintf(name,"receiver[%d].mute",rx->channel);
   value=getProperty(name);
@@ -775,19 +753,19 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->nr4=atoi(value);
   sprintf(name,"receiver[%d].nr4_reduction",rx->channel);
   value=getProperty(name);
-  if(value) rx->nr4_reduction=atof(value);
+  if(value) rx->nr4_reduction=propToDouble(value);
   sprintf(name,"receiver[%d].nr4_smoothing",rx->channel);
   value=getProperty(name);
-  if(value) rx->nr4_smoothing=atof(value);
+  if(value) rx->nr4_smoothing=propToDouble(value);
   sprintf(name,"receiver[%d].nr4_whitening",rx->channel);
   value=getProperty(name);
-  if(value) rx->nr4_whitening=atof(value);
+  if(value) rx->nr4_whitening=propToDouble(value);
   sprintf(name,"receiver[%d].nr4_rescale",rx->channel);
   value=getProperty(name);
-  if(value) rx->nr4_rescale=atof(value);
+  if(value) rx->nr4_rescale=propToDouble(value);
   sprintf(name,"receiver[%d].nr4_postfilter",rx->channel);
   value=getProperty(name);
-  if(value) rx->nr4_postfilter=atof(value);
+  if(value) rx->nr4_postfilter=propToDouble(value);
   sprintf(name,"receiver[%d].nb",rx->channel);
   value=getProperty(name);
   if(value) rx->nb=atoi(value);
@@ -803,13 +781,13 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].squelch",rx->channel);
   value=getProperty(name);
-  if(value) rx->squelch=atof(value);
+  if(value) rx->squelch=propToDouble(value);
   if(rx->squelch<0.0) rx->squelch=0.0;
   if(rx->squelch>1.0) rx->squelch=1.0;
   for(i=0;i<MODES;i++) {
     sprintf(name,"receiver[%d].mode_squelch[%d]",rx->channel,i);
     value=getProperty(name);
-    if(value) rx->mode_squelch[i]=atof(value);
+    if(value) rx->mode_squelch[i]=propToDouble(value);
     if(rx->mode_squelch[i]<0.0) rx->mode_squelch[i]=0.0;
     if(rx->mode_squelch[i]>1.0) rx->mode_squelch[i]=1.0;
   }
@@ -819,22 +797,22 @@ void receiver_restore_state(RECEIVER *rx) {
   if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_squelch[rx->mode_a]=rx->squelch;
   sprintf(name,"receiver[%d].amsq_min_db",rx->channel);
   value=getProperty(name);
-  if(value) rx->amsq_min_db=atof(value);
+  if(value) rx->amsq_min_db=propToDouble(value);
   sprintf(name,"receiver[%d].amsq_max_db",rx->channel);
   value=getProperty(name);
-  if(value) rx->amsq_max_db=atof(value);
+  if(value) rx->amsq_max_db=propToDouble(value);
   sprintf(name,"receiver[%d].amsq_tail",rx->channel);
   value=getProperty(name);
-  if(value) rx->amsq_tail=atof(value);
+  if(value) rx->amsq_tail=propToDouble(value);
   sprintf(name,"receiver[%d].apf_enable",rx->channel);
   value=getProperty(name);
   if(value) rx->apf_enable=atoi(value);
   sprintf(name,"receiver[%d].apf_bw",rx->channel);
   value=getProperty(name);
-  if(value) rx->apf_bw=atof(value);
+  if(value) rx->apf_bw=propToDouble(value);
   sprintf(name,"receiver[%d].apf_gain",rx->channel);
   value=getProperty(name);
-  if(value) rx->apf_gain=atof(value);
+  if(value) rx->apf_gain=propToDouble(value);
 
   sprintf(name,"receiver[%d].notches",rx->channel);
   value=getProperty(name);
@@ -843,16 +821,16 @@ void receiver_restore_state(RECEIVER *rx) {
   if(rx->notches>MAX_NOTCHES) rx->notches=MAX_NOTCHES;
   sprintf(name,"receiver[%d].notch_default_width",rx->channel);
   value=getProperty(name);
-  if(value) rx->notch_default_width=atof(value);
+  if(value) rx->notch_default_width=propToDouble(value);
   if(rx->notch_default_width<NOTCH_MIN_WIDTH) rx->notch_default_width=NOTCH_MIN_WIDTH;
   if(rx->notch_default_width>NOTCH_MAX_WIDTH) rx->notch_default_width=NOTCH_MAX_WIDTH;
   for(i=0;i<rx->notches;i++) {
     sprintf(name,"receiver[%d].notch[%d].fcenter",rx->channel,i);
     value=getProperty(name);
-    if(value) rx->notch[i].fcenter=atof(value);
+    if(value) rx->notch[i].fcenter=propToDouble(value);
     sprintf(name,"receiver[%d].notch[%d].fwidth",rx->channel,i);
     value=getProperty(name);
-    if(value) rx->notch[i].fwidth=atof(value);
+    if(value) rx->notch[i].fwidth=propToDouble(value);
     sprintf(name,"receiver[%d].notch[%d].active",rx->channel,i);
     value=getProperty(name);
     if(value) rx->notch[i].active=atoi(value);
@@ -861,7 +839,7 @@ void receiver_restore_state(RECEIVER *rx) {
     rx->notch[i].af=value?atoi(value):FALSE;   // pre-AF configs: RF-anchored
     sprintf(name,"receiver[%d].notch[%d].af_offset",rx->channel,i);
     value=getProperty(name);
-    rx->notch[i].af_offset=value?atof(value):0.0;
+    rx->notch[i].af_offset=value?propToDouble(value):0.0;
   }
 
   sprintf(name,"receiver[%d].agc",rx->channel);
@@ -872,13 +850,13 @@ void receiver_restore_state(RECEIVER *rx) {
   if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_agc[rx->mode_a]=rx->agc;
   sprintf(name,"receiver[%d].agc_gain",rx->channel);
   value=getProperty(name);
-  if(value) rx->agc_gain=atof(value);
+  if(value) rx->agc_gain=propToDouble(value);
   sprintf(name,"receiver[%d].agc_slope",rx->channel);
   value=getProperty(name);
-  if(value) rx->agc_slope=atof(value);
+  if(value) rx->agc_slope=propToDouble(value);
   sprintf(name,"receiver[%d].agc_hang_threshold",rx->channel);
   value=getProperty(name);
-  if(value) rx->agc_hang_threshold=atof(value);
+  if(value) rx->agc_hang_threshold=propToDouble(value);
 
   sprintf(name,"receiver[%d].enable_equalizer",rx->channel);
   value=getProperty(name);
@@ -913,7 +891,7 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].display_average_time",rx->channel);
   value=getProperty(name);
-  if(value) rx->display_average_time=atof(value);
+  if(value) rx->display_average_time=propToDouble(value);
 
   sprintf(name,"receiver[%d].panadapter_low",rx->channel);
   value=getProperty(name);
@@ -1027,7 +1005,7 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].paned_percent",rx->channel);
   value=getProperty(name);
-  if(value) rx->paned_percent=atof(value);
+  if(value) rx->paned_percent=propToDouble(value);
 
   sprintf(name,"receiver[%d].show_panadapter",rx->channel);
   value=getProperty(name);

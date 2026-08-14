@@ -422,9 +422,8 @@ void bandSaveState(void) {
         sprintf(name,"band.%d.alexAttenuation",b);
         setProperty(name,value);
 
-        sprintf(value,"%f",bands[b].pa_calibration);
         sprintf(name,"band.%d.pa_calibration",b);
-        setProperty(name,value);
+        setPropertyDouble(name,bands[b].pa_calibration);
 
         sprintf(value,"%d",bands[b].OCrx);
         sprintf(name,"band.%d.OCrx",b);
@@ -619,7 +618,7 @@ void bandRestoreState(void) {
         sprintf(name,"band.%d.pa_calibration",b);
         value=getProperty(name);
         if(value) {
-          bands[b].pa_calibration=strtod(value,NULL);
+          bands[b].pa_calibration=propToDouble(value);
           if(bands[b].pa_calibration<38.8 || bands[b].pa_calibration>100.0) {
             bands[b].pa_calibration=38.8;
           }

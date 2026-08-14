@@ -975,7 +975,7 @@ static gboolean rx_stack_balance(gpointer data) {
       char pname[32];
       sprintf(pname,"radio.rx_paned[%d]",k);
       char *pvalue=getProperty(pname);
-      if(pvalue!=NULL) frac=atof(pvalue);
+      if(pvalue!=NULL) frac=propToDouble(pvalue);
     }
     int slot;
     if(frac>0.0 && frac<1.0) slot=(int)(frac*remaining);
@@ -1666,9 +1666,9 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.wefax_save_dir");
   if(value!=NULL) { strncpy(r->wefax_save_dir,value,sizeof(r->wefax_save_dir)-1); r->wefax_save_dir[sizeof(r->wefax_save_dir)-1]='\0'; }
   value=getProperty("radio.wefax_contrast");
-  if(value!=NULL) r->wefax_contrast=atof(value);
+  if(value!=NULL) r->wefax_contrast=propToDouble(value);
   value=getProperty("radio.wefax_brightness");
-  if(value!=NULL) r->wefax_brightness=atof(value);
+  if(value!=NULL) r->wefax_brightness=propToDouble(value);
   value=getProperty("radio.sstv_autosave");
   if(value!=NULL) r->sstv_autosave=atoi(value);
   value=getProperty("radio.sstv_save_dir");
@@ -1680,13 +1680,13 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.apt_save_dir");
   if(value!=NULL) { strncpy(r->apt_save_dir,value,sizeof(r->apt_save_dir)-1); r->apt_save_dir[sizeof(r->apt_save_dir)-1]='\0'; }
   value=getProperty("radio.apt_contrast");
-  if(value!=NULL) r->apt_contrast=atof(value);
+  if(value!=NULL) r->apt_contrast=propToDouble(value);
   value=getProperty("radio.apt_brightness");
-  if(value!=NULL) r->apt_brightness=atof(value);
+  if(value!=NULL) r->apt_brightness=propToDouble(value);
   value=getProperty("radio.apt_map");
   if(value!=NULL) r->apt_map=atoi(value);
   value=getProperty("radio.apt_time_trim");
-  if(value!=NULL) r->apt_time_trim=atof(value);
+  if(value!=NULL) r->apt_time_trim=propToDouble(value);
   value=getProperty("radio.apt_tle_path");
   if(value!=NULL) { strncpy(r->apt_tle_path,value,sizeof(r->apt_tle_path)-1); r->apt_tle_path[sizeof(r->apt_tle_path)-1]='\0'; }
   value=getProperty("radio.apt_rotate");
@@ -1734,23 +1734,23 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.cluster_spots_on");
   if(value!=NULL) r->cluster_spots_on=atoi(value);
   value=getProperty("radio.cluster_spots_bg_r");
-  if(value!=NULL) r->cluster_spots_bg_r=atof(value);
+  if(value!=NULL) r->cluster_spots_bg_r=propToDouble(value);
   value=getProperty("radio.cluster_spots_bg_g");
-  if(value!=NULL) r->cluster_spots_bg_g=atof(value);
+  if(value!=NULL) r->cluster_spots_bg_g=propToDouble(value);
   value=getProperty("radio.cluster_spots_bg_b");
-  if(value!=NULL) r->cluster_spots_bg_b=atof(value);
+  if(value!=NULL) r->cluster_spots_bg_b=propToDouble(value);
   value=getProperty("radio.cluster_spots_bg_a");
-  if(value!=NULL) r->cluster_spots_bg_a=atof(value);
+  if(value!=NULL) r->cluster_spots_bg_a=propToDouble(value);
   value=getProperty("radio.cluster_spots_fg_dxcc");
   if(value!=NULL) r->cluster_spots_fg_dxcc=atoi(value);
   value=getProperty("radio.cluster_spots_fg_r");
-  if(value!=NULL) r->cluster_spots_fg_r=atof(value);
+  if(value!=NULL) r->cluster_spots_fg_r=propToDouble(value);
   value=getProperty("radio.cluster_spots_fg_g");
-  if(value!=NULL) r->cluster_spots_fg_g=atof(value);
+  if(value!=NULL) r->cluster_spots_fg_g=propToDouble(value);
   value=getProperty("radio.cluster_spots_fg_b");
-  if(value!=NULL) r->cluster_spots_fg_b=atof(value);
+  if(value!=NULL) r->cluster_spots_fg_b=propToDouble(value);
   value=getProperty("radio.cluster_spots_fg_a");
-  if(value!=NULL) r->cluster_spots_fg_a=atof(value);
+  if(value!=NULL) r->cluster_spots_fg_a=propToDouble(value);
   value=getProperty("radio.tci_enable");
   if(value!=NULL) r->tci_enable=atoi(value);
   value=getProperty("radio.tci_port");

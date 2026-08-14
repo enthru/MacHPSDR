@@ -118,6 +118,31 @@ void releaseRetainedProperties(void) {
   }
 }
 
+/* A props file must not depend on the operator's locale.  Every float in it
+   used to go through sprintf("%f") and atof(), so under a comma-decimal locale
+   the file reads `ppm_correction_value=1,500000` -- which the same machine
+   parses back correctly and every other one, and every LC_NUMERIC=C run (CI, a
+   plain shell, a harness) reads as 1.  Colours went black, contrast and PA
+   calibration reset, the ppm correction was silently dropped.
+   Written in the C locale; read tolerant of BOTH, so an existing comma file is
+   still understood and is rewritten with dots on the next save. */
+void setPropertyDouble(char* name,double value) {
+  char buf[G_ASCII_DTOSTR_BUF_SIZE];
+  g_ascii_formatd(buf,sizeof(buf),"%f",value);
+  setProperty(name,buf);
+}
+
+double propToDouble(const char* value) {
+  char buf[64];
+  int i;
+  if(value==NULL) return 0.0;
+  for(i=0;i<(int)sizeof(buf)-1 && value[i]!='\0';i++) {
+    buf[i]=(value[i]==',')?'.':value[i];
+  }
+  buf[i]='\0';
+  return g_ascii_strtod(buf,NULL);
+}
+
 /* --------------------------------------------------------------------------*/
 /**
 * @brief Load Properties
@@ -143,7 +168,7 @@ void loadProperties(char* filename) {
                 if (name != NULL && value != NULL) {
                     setProperty(name,value);
                     if(strcmp(name,"property_version")==0) {
-                        version=atof(value);
+                        version=propToDouble(value);
                     }
                 }
             }
@@ -171,7 +196,7 @@ void saveProperties(char* filename) {
         return;
     }
 
-    sprintf(line,"%0.2f",PROPERTY_VERSION);
+    g_ascii_formatd(line,sizeof(line),"%0.2f",PROPERTY_VERSION);
     setProperty("property_version",line);
 
     ensure_store();

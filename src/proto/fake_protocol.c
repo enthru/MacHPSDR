@@ -429,7 +429,7 @@ void fake_protocol_init(RADIO *r) {
   iq_offset = r->iq_player_offset;
   {
     const char *env = getenv("MACHPSDR_FAKE_OFFSET");
-    if(env && env[0]) iq_offset = atof(env);
+    if(env && env[0]) iq_offset = g_ascii_strtod(env,NULL);   // an env var is ASCII
   }
   if(iq_offset != 0.0)
     log_info("fake: I/Q de-rotation %.0f Hz\n", iq_offset);

@@ -516,8 +516,7 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%d",tx->alex_antenna);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].mic_gain",tx->channel);
-  sprintf(value,"%f",tx->mic_gain);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->mic_gain);
   sprintf(name,"transmitter[%d].linein_gain",tx->channel);
   sprintf(value,"%d",tx->linein_gain);
   setProperty(name,value);
@@ -525,11 +524,9 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%d",tx->alc_meter);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].drive",tx->channel);
-  sprintf(value,"%f",tx->drive);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->drive);
   sprintf(name,"transmitter[%d].tune_percent",tx->channel);
-  sprintf(value,"%f",tx->tune_percent);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->tune_percent);
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   sprintf(value,"%d",tx->tune_use_drive);
   setProperty(name,value);
@@ -608,17 +605,13 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%i",tx->eer_amiq);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].eer_pgain",tx->channel);
-  sprintf(value,"%f",tx->eer_pgain);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->eer_pgain);
   sprintf(name,"transmitter[%d].eer_mgain",tx->channel);
-  sprintf(value,"%f",tx->eer_mgain);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->eer_mgain);
   sprintf(name,"transmitter[%d].eer_pdelay",tx->channel);
-  sprintf(value,"%f",tx->eer_pdelay);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->eer_pdelay);
   sprintf(name,"transmitter[%d].eer_mdelay",tx->channel);
-  sprintf(value,"%f",tx->eer_mdelay);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->eer_mdelay);
   sprintf(name,"transmitter[%d].eer_enable_delays",tx->channel);
   sprintf(value,"%i",tx->eer_enable_delays);
   setProperty(name,value);
@@ -642,8 +635,7 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%i",tx->compressor);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].compressor_level",tx->channel);
-  sprintf(value,"%f",tx->compressor_level);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->compressor_level);
   sprintf(name,"transmitter[%d].cfc_run",tx->channel);
   sprintf(value,"%d",tx->cfc_run);
   setProperty(name,value);
@@ -651,25 +643,20 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(value,"%d",tx->cfc_peq_run);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].cfc_precomp",tx->channel);
-  sprintf(value,"%f",tx->cfc_precomp);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->cfc_precomp);
   sprintf(name,"transmitter[%d].cfc_prepeq",tx->channel);
-  sprintf(value,"%f",tx->cfc_prepeq);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->cfc_prepeq);
   for(int i=0;i<5;i++){
     sprintf(name,"transmitter[%d].cfc_comp[%d]",tx->channel,i);
-    sprintf(value,"%f",tx->cfc_comp[i]);
-    setProperty(name,value);
+    setPropertyDouble(name,tx->cfc_comp[i]);
     sprintf(name,"transmitter[%d].cfc_eq[%d]",tx->channel,i);
-    sprintf(value,"%f",tx->cfc_eq[i]);
-    setProperty(name,value);
+    setPropertyDouble(name,tx->cfc_eq[i]);
   }
   sprintf(name,"transmitter[%d].phrot_run",tx->channel);
   sprintf(value,"%d",tx->phrot_run);
   setProperty(name,value);
   sprintf(name,"transmitter[%d].phrot_corner",tx->channel);
-  sprintf(value,"%f",tx->phrot_corner);
-  setProperty(name,value);
+  setPropertyDouble(name,tx->phrot_corner);
   sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
   sprintf(value,"%d",tx->phrot_nstages);
   setProperty(name,value);
@@ -688,7 +675,7 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->alex_antenna=atoi(value);
   sprintf(name,"transmitter[%d].mic_gain",tx->channel);
   value=getProperty(name);
-  if(value) tx->mic_gain=atof(value);
+  if(value) tx->mic_gain=propToDouble(value);
   sprintf(name,"transmitter[%d].linein_gain",tx->channel);
   value=getProperty(name);
   if(value) tx->linein_gain=atoi(value);
@@ -697,10 +684,10 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->alc_meter=atoi(value);
   sprintf(name,"transmitter[%d].drive",tx->channel);
   value=getProperty(name);
-  if(value) tx->drive=atof(value);
+  if(value) tx->drive=propToDouble(value);
   sprintf(name,"transmitter[%d].tune_percent",tx->channel);
   value=getProperty(name);
-  if(value) tx->tune_percent=atof(value);
+  if(value) tx->tune_percent=propToDouble(value);
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   value=getProperty(name);
   if(value) tx->tune_use_drive=atoi(value);
@@ -782,16 +769,16 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->eer_amiq=atoi(value);
   sprintf(name,"transmitter[%d].eer_pgain",tx->channel);
   value=getProperty(name);
-  if(value) tx->eer_pgain=atof(value);
+  if(value) tx->eer_pgain=propToDouble(value);
   sprintf(name,"transmitter[%d].eer_mgain",tx->channel);
   value=getProperty(name);
-  if(value) tx->eer_mgain=atof(value);
+  if(value) tx->eer_mgain=propToDouble(value);
   sprintf(name,"transmitter[%d].eer_pdelay",tx->channel);
   value=getProperty(name);
-  if(value) tx->eer_pdelay=atof(value);
+  if(value) tx->eer_pdelay=propToDouble(value);
   sprintf(name,"transmitter[%d].eer_mdelay",tx->channel);
   value=getProperty(name);
-  if(value) tx->eer_mdelay=atof(value);
+  if(value) tx->eer_mdelay=propToDouble(value);
   sprintf(name,"transmitter[%d].eer_enable_delays",tx->channel);
   value=getProperty(name);
   if(value) tx->eer_enable_delays=atoi(value);
@@ -817,7 +804,7 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->compressor=atoi(value);
   sprintf(name,"transmitter[%d].compressor_level",tx->channel);
   value=getProperty(name);
-  if(value) tx->compressor_level=atof(value);
+  if(value) tx->compressor_level=propToDouble(value);
 
   sprintf(name,"transmitter[%d].cfc_run",tx->channel);
   value=getProperty(name);
@@ -827,17 +814,17 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->cfc_peq_run=atoi(value);
   sprintf(name,"transmitter[%d].cfc_precomp",tx->channel);
   value=getProperty(name);
-  if(value) tx->cfc_precomp=atof(value);
+  if(value) tx->cfc_precomp=propToDouble(value);
   sprintf(name,"transmitter[%d].cfc_prepeq",tx->channel);
   value=getProperty(name);
-  if(value) tx->cfc_prepeq=atof(value);
+  if(value) tx->cfc_prepeq=propToDouble(value);
   for(int i=0;i<5;i++){
     sprintf(name,"transmitter[%d].cfc_comp[%d]",tx->channel,i);
     value=getProperty(name);
-    if(value) tx->cfc_comp[i]=atof(value);
+    if(value) tx->cfc_comp[i]=propToDouble(value);
     sprintf(name,"transmitter[%d].cfc_eq[%d]",tx->channel,i);
     value=getProperty(name);
-    if(value) tx->cfc_eq[i]=atof(value);
+    if(value) tx->cfc_eq[i]=propToDouble(value);
   }
 
   sprintf(name,"transmitter[%d].phrot_run",tx->channel);
@@ -845,7 +832,7 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->phrot_run=atoi(value);
   sprintf(name,"transmitter[%d].phrot_corner",tx->channel);
   value=getProperty(name);
-  if(value) tx->phrot_corner=atof(value);
+  if(value) tx->phrot_corner=propToDouble(value);
   sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
   value=getProperty(name);
   if(value) tx->phrot_nstages=atoi(value);

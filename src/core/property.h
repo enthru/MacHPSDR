@@ -36,6 +36,11 @@ extern void releaseRetainedProperties(void);
 extern void loadProperties(char* filename);
 extern char* getProperty(char* name);
 extern void setProperty(char* name,char* value);
+/* Floats go through these, never sprintf("%f")/atof: the props file is written
+   in the C locale and read tolerant of a comma decimal point, so it survives a
+   locale change and an LC_NUMERIC=C run. */
+extern void setPropertyDouble(char* name,double value);
+extern double propToDouble(const char* value);
 
 extern void saveProperties(char* filename);
 

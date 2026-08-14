@@ -152,7 +152,7 @@ static void worked_parse_line(const char *line) {
   char buf[16];
   if (adif_get(line, "BAND", buf, sizeof(buf))) band = atoi(buf);        // "20M" -> 20
   else if (adif_get(line, "FREQ", buf, sizeof(buf)))
-    band = band_from_hz((long long)(atof(buf) * 1.0e6));
+    band = band_from_hz((long long)(g_ascii_strtod(buf, NULL) * 1.0e6));   // ADIF is ASCII
   worked_add(call, band);
 }
 
@@ -302,7 +302,10 @@ static void log_qso(void) {
     dial = radio->active_receiver->frequency_a;
     mhz = (double)(dial + radio->ft8_tx_offset) / 1.0e6;
   }
-  snprintf(freq, sizeof(freq), "%.6f", mhz);
+  // ADIF is an ASCII interchange format read by other loggers: under a
+  // comma-decimal locale "%.6f" wrote <FREQ:9>14,074000, which is a malformed
+  // field everywhere it is sent (the log file, and the WSJT-X UDP message).
+  g_ascii_formatd(freq, sizeof(freq), "%.6f", mhz);
   int band = band_from_hz(dial);
   char bandstr[8];
   snprintf(bandstr, sizeof(bandstr), "%dm", band);
