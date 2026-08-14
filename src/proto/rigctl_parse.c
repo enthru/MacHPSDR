@@ -56,6 +56,14 @@
 
 #define NEW_PARSER
 
+/* FA / ZZFA.  Routed through the VFO's own applier so a CAT set is exactly what
+   typing the frequency into the panel does -- in particular it moves the CURSOR
+   under ctun/freetune, which is what the matching READ reports. */
+static void cat_set_vfo_a(RECEIVER *rx,long long hz) {
+  if(hz<=0) return;
+  vfo_apply_frequency(rx,hz,FALSE);
+}
+
 static int step_size(RECEIVER *rx) {
   int i=0;
   for(i=0;i<=14;i++) {
@@ -220,7 +228,10 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             // set the step size
             int i=atoi(&command[4]) ;
             if(i>0 && i<=14) {
-              rx->step=steps[i+1];
+              // steps[i-1]: step_size() reports arrayIndex+1, so the inverse is
+              // -1, not +1.  ZZAC01; selected 25 Hz and ZZAC14; reached a step
+              // the getter cannot name.  Its four siblings already do this.
+              rx->step=steps[i-1];
               update_vfo(rx);
             }
           } else {
@@ -677,6 +688,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
               rx->equalizer[1]=atoi(temp);
               strncpy(temp,&command[13],3);
               rx->equalizer[2]=atoi(temp);
+              // ...and apply.  SetRXAGrphEQ10 is what the dialog's slider calls;
+              // without it the values read back changed and the audio did not.
+              if(rx->channel>=0) SetRXAGrphEQ10(rx->channel,rx->equalizer);
             } else {
             }
           } else {
@@ -701,6 +715,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
                 tx->equalizer[1]=atoi(temp);
                 strncpy(temp,&command[13],3);
                 tx->equalizer[2]=atoi(temp);
+                SetTXAGrphEQ10(tx->channel,tx->equalizer);   // see ZZEA
               } else {
               }
             } else {
@@ -719,7 +734,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
               sprintf(reply,"ZZER%d;",rx->enable_equalizer);
               send_resp(cmd,reply) ;
             } else if(command[5]==';') {
-              rx->enable_equalizer=atoi(&command[4]);
+              rx->enable_equalizer=atoi(&command[4])?1:0;
+              if(rx->channel>=0) SetRXAEQRun(rx->channel,rx->enable_equalizer);
     	    }
           } else {
             implemented=FALSE;
@@ -732,7 +748,8 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
               sprintf(reply,"ZZET%d;",radio->transmitter->enable_equalizer);
               send_resp(cmd,reply) ;
             } else if(command[5]==';') {
-              radio->transmitter->enable_equalizer=atoi(&command[4]);
+              radio->transmitter->enable_equalizer=atoi(&command[4])?1:0;
+              SetTXAEQRun(radio->transmitter->channel,radio->transmitter->enable_equalizer);
 	    }
           } else {
             implemented=FALSE;
@@ -755,10 +772,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             }
             send_resp(cmd,reply) ;
           } else if(command[15]==';') {
-            long long f=atoll(&command[4]);
-            rx->frequency_a=f;
-            frequency_changed(rx);
-            update_frequency(rx);
+            cat_set_vfo_a(rx,atoll(&command[4]));   // see FA
           }
           break;
         case 'B': //ZZFB
@@ -815,7 +829,10 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply) ;
           } else if(command[6]==';') {
             int filter=atoi(&command[4]);
-            // update RX1 filter
+            // ...and apply it.  This used to parse the value and drop it, while
+            // the read above kept reporting the old one.
+            if(filter<0 || filter>=FILTERS) { implemented=FALSE; break; }
+            receiver_filter_changed(rx,filter);
           }
           break;
         case 'J': //ZZFJ
@@ -825,7 +842,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply) ;
           } else if(command[6]==';') {
             int filter=atoi(&command[4]);
-            // update RX2 filter
+            if(filter<0 || filter>=FILTERS) { implemented=FALSE; break; }
+            rx->filter_b=filter;
+            if(rx->subrx_enable) subrx_filter_changed(rx);
           }
           break;
         case 'L': //ZZFL
@@ -888,8 +907,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply) ;
           } else if(command[5]==';') {
             int agc=atoi(&command[4]);
-            // update RX1 AGC
+            if(agc<AGC_OFF || agc>AGC_LAST) { implemented=FALSE; break; }
             rx->agc=agc;
+            if(rx->channel>=0) set_agc(rx);   // see GT
             update_vfo(rx);
           }
           break;
@@ -1074,16 +1094,20 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             sprintf(reply,"ZZMD%02d;",rx->mode_a);
             send_resp(cmd,reply);
           } else if(command[6]==';') {
-            receiver_mode_changed(rx,atoi(&command[4]));
+            int m=atoi(&command[4]);
+            if(m<0 || m>=MODES) { implemented=FALSE; break; }
+            receiver_mode_changed(rx,m);
           }
           break;
         case 'E': //ZZME
           // set/read RX2 operating mode
           if(command[4]==';') {
-            sprintf(reply,"ZZMD%02d;",rx->mode_b);
+            sprintf(reply,"ZZME%02d;",rx->mode_b);   // ZZME, not ZZMD: this is VFO B
             send_resp(cmd,reply);
           } else if(command[6]==';') {
-            rx->mode_b=atoi(&command[4]);
+            int m=atoi(&command[4]);
+            if(m<0 || m>=MODES) { implemented=FALSE; break; }
+            rx->mode_b=m;
             if(rx->subrx_enable) {
               subrx_mode_changed(rx);
             }
@@ -1096,7 +1120,13 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
               sprintf(reply,"ZZMG%03d;",(int)radio->transmitter->mic_gain);
               send_resp(cmd,reply);
             } else if(command[7]==';') {
-              radio->transmitter->mic_gain=(double)atoi(&command[4]);
+              // ...and push it.  SetTXAPanelGain1 is what the mic-gain slider
+              // calls; the field alone changed the readout and nothing else.
+              double g=(double)atoi(&command[4]);
+              if(g<-10.0) g=-10.0;
+              if(g>50.0)  g=50.0;
+              radio->transmitter->mic_gain=g;
+              SetTXAPanelGain1(radio->transmitter->channel,pow(10.0,g/20.0));
             }
 	  } else {
             implemented=FALSE;
@@ -1113,6 +1143,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
           // read Filter Names and indexes
           if(command[6]==';') {
             int mode=atoi(&command[4])-1;
+            if(mode<0 || mode>=MODES) { implemented=FALSE; break; }   // filters[MODES]
             FILTER *f=filters[mode];
             sprintf(reply,"ZZMN");
             char temp[32];
@@ -1340,6 +1371,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
            implemented=FALSE;
            break;
       }
+      break;   // WITHOUT this every ZZN* fell into ZZO*, whose only arm is
+               // implemented=FALSE -- so NB/NR/ANF/SNB acted and then answered
+               // "?;", and a read answered its value AND "?;".
     case 'O': //ZZOx
       switch(command[3]) {
         default:
@@ -1489,6 +1523,9 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
           implemented=FALSE;
           break;
       }
+      break;   // same fallthrough as ZZN* above: every ZZR* (RIT) command acted
+               // and was then answered "?;", and ZZRM0; sent its meter reading
+               // followed by a bogus ZZSM frame.
     case 'S': //ZZSx
       switch(command[3]) {
         case 'A': //ZZSA
@@ -1856,7 +1893,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
           // set/read XIT
 	  if(radio->transmitter) {
             if(command[4]==';') {
-              sprintf(reply,"ZZXT%+05lld;",radio->transmitter->xit);
+              sprintf(reply,"ZZXF%+05lld;",radio->transmitter->xit);   // ZZXF, not ZZXT
               send_resp(cmd,reply) ;
             } else if(command[9]==';') {
               radio->transmitter->xit=(long long)atoi(&command[4]);
@@ -2086,7 +2123,7 @@ int parse_cmd(void *data) {
         case 'I': //AI
           // set/read Auto Information
           if(command[2]==';') {
-            sprintf(reply,"AI0%d;",0);
+            sprintf(reply,"AI%d;",0);   // AI + ONE digit, per the protocol
             send_resp(cmd,reply) ;
           } else if(command[3]==';') {
           }
@@ -2166,11 +2203,15 @@ int parse_cmd(void *data) {
         case 'N': //CN
           // sets/reads CTCSS function
 	  if(radio->transmitter) {
-            if(command[3]==';') {
+            // "CN;" terminates at index 2 and "CNnn;" at index 4.  The read
+            // gate tested index 3, so a read fell through to the SET branch and
+            // that branch then read command[4] past the terminator.
+            if(command[2]==';') {
               sprintf(reply,"CN%02d;",radio->transmitter->ctcss+1);
               send_resp(cmd,reply) ;
             } else if(command[4]==';') {
               int i=atoi(&command[2])-1;
+              if(i<0 || i>=CTCSS_FREQUENCIES) { implemented=FALSE; break; }
               transmitter_set_ctcss(radio->transmitter,radio->transmitter->ctcss_enabled,i);
             }
 	  }
@@ -2178,7 +2219,10 @@ int parse_cmd(void *data) {
         case 'T': //CT
           // sets/reads CTCSS status
           if(radio->transmitter) {
-            if(command[3]==';') {
+            // Both branches tested index 3, so the SET was unreachable and
+            // "CT;" (';' at index 2) matched neither -- no reply at all, and
+            // implemented stayed TRUE, so not even "?;".  The client blocked.
+            if(command[2]==';') {
               sprintf(reply,"CT%d;",radio->transmitter->ctcss_enabled);
               send_resp(cmd,reply) ;
             } else if(command[3]==';') {
@@ -2236,10 +2280,11 @@ int parse_cmd(void *data) {
             }
             send_resp(cmd,reply) ;
           } else if(command[13]==';') {
-            long long f=atoll(&command[2]);
-            rx->frequency_a=f;
-            frequency_changed(rx);
-            update_frequency(rx);
+            // Set what the READ above reports.  Under ctun/freetune the getter
+            // returns the cursor while this used to move the span CENTRE, so a
+            // logger's "put me on 14.074" left the receiver listening where it
+            // was -- and a following FA; returned the old frequency.
+            cat_set_vfo_a(rx,atoll(&command[2]));
           }
           break;
         case 'B': //FB
@@ -2268,7 +2313,10 @@ int parse_cmd(void *data) {
             sprintf(reply,"FR%d;",0);
             send_resp(cmd,reply) ;
           } else if(command[3]==';') {
-            // ?
+            // No honest counterpart: this radio's receive VFO is not selectable
+            // the way a TS-2000's is.  Say so rather than accepting it and
+            // doing nothing, which a client cannot detect.
+            implemented=FALSE;
           }
           break;
         case 'S': //FS
@@ -2292,11 +2340,9 @@ int parse_cmd(void *data) {
           }
           break;
         case 'W': //FW
-          // set/read filter width
-          // make sure filter is filterVar1
-          if(rx->filter_a!=FVar1) {
-            receiver_filter_changed(rx,FVar1);
-          }
+          // set/read filter width.  The switch to Var1 belongs to the SET path:
+          // done here it yanked the receiver off its selected filter on a plain
+          // "FW;" READ.
           FILTER *mode_filters=filters[rx->mode_a];
           FILTER *filter=&mode_filters[FVar1];
           int val=0;
@@ -2323,8 +2369,13 @@ int parse_cmd(void *data) {
             }
           } else if(command[6]==';') {
             int fw=atoi(&command[2]);
-            int val=
-            filter->low=fw;
+            // The stray `int val= filter->low=fw;` that used to be here wrote a
+            // LOW edge above the high one into the global filters[] table, and
+            // the default arm below then rejected the command -- leaving Var1
+            // corrupted for the rest of the session.
+            if(rx->filter_a!=FVar1) {
+              receiver_filter_changed(rx,FVar1);
+            }
             switch(rx->mode_a) {
               case CWL:
               case CWU:
@@ -2374,8 +2425,12 @@ int parse_cmd(void *data) {
             sprintf(reply,"GT%03d;",rx->agc*5);
             send_resp(cmd,reply) ;
           } else if(command[5]==';') {
-            // update RX1 AGC
-            rx->agc=atoi(&command[2])/5;
+            // update RX1 AGC.  set_agc() is what reaches SetRXAAGCMode -- the
+            // field alone changed the display and nothing else.
+            int a=atoi(&command[2])/5;
+            if(a<AGC_OFF || a>AGC_LAST) { implemented=FALSE; break; }
+            rx->agc=a;
+            if(rx->channel>=0) set_agc(rx);
             update_vfo(rx);
           }
           break;
@@ -2401,9 +2456,15 @@ int parse_cmd(void *data) {
         case 'F': //IF
           {
           int mode=ts2000_mode(rx->mode_a);
+          // IF is a FIXED-COLUMN reply and hamlib parses it positionally, so
+          // the step and RIT have to fit their fields: the UI offers steps up
+          // to 1 MHz, which printed seven digits into %04lld and shifted every
+          // field after it by three columns.
+          long long ifstep=rx->step; if(ifstep<0) ifstep=0; if(ifstep>9999) ifstep=9999;
+          long long ifrit=rx->rit;   if(ifrit<-99999) ifrit=-99999; if(ifrit>99999) ifrit=99999;
           sprintf(reply,"IF%011lld%04lld%+06lld%d%d%d%02d%d%d%d%d%d%d%02d%d;",
                   rx->ctun?rx->ctun_frequency:rx->frequency_a,
-                  rx->step,rx->rit,rx->rit_enabled,
+                  ifstep,ifrit,rx->rit_enabled,
                   radio->transmitter?radio->transmitter->xit_enabled:0,
                   0,0,isTransmitting(radio),mode,0,0,rx->split,
                   radio->transmitter&&radio->transmitter->ctcss_enabled?2:0,
@@ -2480,7 +2541,8 @@ int parse_cmd(void *data) {
           if(command[2]==';') {
             sprintf(reply,"LK%d%d;",rx->locked,rx->locked);
             send_resp(cmd,reply);
-          } else if(command[27]==';') {
+          } else if(command[4]==';') {   // "LKnn;" -- not index 27, which read
+                                         // 23 bytes past the terminator
             rx->locked=command[2]=='1';
             update_vfo(rx);
           }
@@ -2556,7 +2618,10 @@ int parse_cmd(void *data) {
             } else if(command[5]==';') {
               double gain=(double)atoi(&command[2]);
               gain=((gain/100.0)*72.0)-12.0;
+              if(gain<-10.0) gain=-10.0;
+              if(gain>50.0)  gain=50.0;
               radio->transmitter->mic_gain=gain;
+              SetTXAPanelGain1(radio->transmitter->channel,pow(10.0,gain/20.0));   // see ZZMG
             }
 	  } else {
             implemented=FALSE;
@@ -2884,7 +2949,11 @@ int parse_cmd(void *data) {
         case 'A': //SA
           // set/read stallite mode status
           if(command[2]==';') {
-            sprintf(reply,"SA%d%d%d%d%d%d%dSAT?    ;",rx->split==SPLIT_SAT|rx->split==SPLIT_RSAT,0,0,0,rx->split=SPLIT_SAT,rx->split=SPLIT_RSAT,0);
+            // == and ||, not = and |: this READ assigned rx->split twice and
+            // left the receiver in reverse-satellite split.
+            sprintf(reply,"SA%d%d%d%d%d%d%dSAT?    ;",
+                    (rx->split==SPLIT_SAT)||(rx->split==SPLIT_RSAT),0,0,0,
+                    rx->split==SPLIT_SAT,rx->split==SPLIT_RSAT,0);
             send_resp(cmd,reply);
           } else if(command[9]==';') {
             if(command[2]=='0') {
@@ -3179,7 +3248,15 @@ int parse_cmd(void *data) {
           if(command[3]==';') {
             int id=atoi(&command[2]);
             if(id==0 || id==1) {
-              sprintf(reply,"SM%04d;",(int)rx->meter_db);
+              // 0..30 as the TS-2000 defines it, from the same s_meter_level()
+              // ZZSM uses (which also carries the attenuator correction).  This
+              // printed raw dBm, i.e. "SM-073;" -- a minus sign in an unsigned
+              // fixed-width field, on a scale no client knows.
+              double level=s_meter_level(rx);
+              int sval=(int)lround((fmax(-140.0,fmin(-10.0,level))+140.0)*30.0/130.0);
+              if(sval<0) sval=0;
+              if(sval>30) sval=30;
+              sprintf(reply,"SM%04d;",sval);
               send_resp(cmd,reply);
             }
           }

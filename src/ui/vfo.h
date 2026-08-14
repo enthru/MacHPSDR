@@ -66,6 +66,9 @@ typedef struct _vfo_data {
 
 #define STEPS 16
 extern gint64 steps[STEPS];
+/* Absolute tune, honouring ctun/freetune -- what typing a frequency into the
+   VFO does, so CAT does exactly the same thing. */
+extern void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b);
 extern char *step_labels[STEPS];
 
 extern void vfo_a2b(RECEIVER *rx);

@@ -1414,7 +1414,11 @@ void band_cb(GtkWidget *menu_item,gpointer data) {
 // ctun/freetune the moved value is ctun_frequency (+hz) and for a normal VFO it
 // is frequency_a (-hz); VFO B always adds. Reuses receiver_move[_b] so the
 // [0, 6 GHz] guards apply. Computes the delta from the currently displayed value.
-static void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b) {
+/* The one absolute "put this VFO on that frequency", used by the type-in panel
+   and by CAT (FA/ZZFA).  It has to be shared: under ctun/freetune the dial the
+   operator reads is the CURSOR, so a setter that assigns frequency_a moves the
+   span centre and leaves the receiver listening where it was. */
+void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b) {
   if(rx==NULL || rx->locked) return;
   if(is_b) {
     long long want=target-rx->frequency_b;

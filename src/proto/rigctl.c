@@ -583,7 +583,7 @@ static void rigctl_client(RECEIVER *rx) {
   int i;
   int numbytes;
   char  cmd_input[MAXDATASIZE] ;
-  char *command=g_new(char,MAXDATASIZE);
+  char *command=g_new0(char,MAXDATASIZE);
   int command_index=0;
 
   log_info("%s: starting rigctl_client: socket=%d\n",__FUNCTION__,rigctl->socket_fd);
@@ -608,7 +608,7 @@ static void rigctl_client(RECEIVER *rx) {
         g_mutex_lock(&rigctl->mutex);
         g_idle_add(parse_cmd,cmd);
         g_mutex_unlock(&rigctl->mutex);
-        command=g_new(char,MAXDATASIZE);
+        command=g_new0(char,MAXDATASIZE);
         command_index=0;
       }
     }
@@ -798,7 +798,7 @@ static gpointer serial_server(gpointer data) {
      RECEIVER *rx=(RECEIVER *)data;
      RIGCTL *rigctl=(RIGCTL *)rx->rigctl;
      char cmd_input[MAXDATASIZE];
-     char *command=g_new(char,MAXDATASIZE);
+     char *command=g_new0(char,MAXDATASIZE);
      int command_index=0;
      int numbytes;
      int i;
@@ -822,7 +822,7 @@ static gpointer serial_server(gpointer data) {
           g_mutex_lock(&rigctl->mutex);
           g_idle_add(parse_cmd,cmd);
           g_mutex_unlock(&rigctl->mutex);
-          command=g_new(char,MAXDATASIZE);
+          command=g_new0(char,MAXDATASIZE);
           command_index=0;
         }
       }
