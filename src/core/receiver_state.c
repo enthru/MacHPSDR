@@ -599,22 +599,22 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].frequency_a",rx->channel);
   value=getProperty(name);
-  if(value) rx->frequency_a=atol(value);
+  if(value) rx->frequency_a=atoll(value);
   sprintf(name,"receiver[%d].lo_a",rx->channel);
   value=getProperty(name);
-  if(value) rx->lo_a=atol(value);
+  if(value) rx->lo_a=atoll(value);
   sprintf(name,"receiver[%d].lo_tx",rx->channel);
   value=getProperty(name);
-  if(value) rx->lo_tx=atol(value);
+  if(value) rx->lo_tx=atoll(value);
   sprintf(name,"receiver[%d].error_tx",rx->channel);
   value=getProperty(name);
-  if(value) rx->error_tx=atol(value);
+  if(value) rx->error_tx=atoll(value);
   sprintf(name,"receiver[%d].tx_track_rx",rx->channel);
   value=getProperty(name);
   if(value) rx->tx_track_rx=atoi(value);
   sprintf(name,"receiver[%d].error_a",rx->channel);
   value=getProperty(name);
-  if(value) rx->error_a=atol(value);
+  if(value) rx->error_a=atoll(value);
   sprintf(name,"receiver[%d].band_a",rx->channel);
   value=getProperty(name);
   if(value) rx->band_a=atoi(value);
@@ -645,13 +645,13 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->filter_high_a=atoi(value);
   sprintf(name,"receiver[%d].frequency_b",rx->channel);
   value=getProperty(name);
-  if(value) rx->frequency_b=atol(value);
+  if(value) rx->frequency_b=atoll(value);
   sprintf(name,"receiver[%d].lo_b",rx->channel);
   value=getProperty(name);
-  if(value) rx->lo_b=atol(value);
+  if(value) rx->lo_b=atoll(value);
   sprintf(name,"receiver[%d].error_b",rx->channel);
   value=getProperty(name);
-  if(value) rx->error_b=atol(value);
+  if(value) rx->error_b=atoll(value);
 #ifdef USE_VFO_B_MODE_AND_FILTER
   sprintf(name,"receiver[%d].band_b",rx->channel);
   value=getProperty(name);
@@ -675,16 +675,16 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->ctun=atoi(value);
   sprintf(name,"receiver[%d].ctun_offset",rx->channel);
   value=getProperty(name);
-  if(value) rx->ctun_offset=atol(value);
+  if(value) rx->ctun_offset=atoll(value);
   sprintf(name,"receiver[%d].ctun_frequency",rx->channel);
   value=getProperty(name);
-  if(value) rx->ctun_frequency=atol(value);
+  if(value) rx->ctun_frequency=atoll(value);
   sprintf(name,"receiver[%d].ctun_min",rx->channel);
   value=getProperty(name);
-  if(value) rx->ctun_min=atol(value);
+  if(value) rx->ctun_min=atoll(value);
   sprintf(name,"receiver[%d].ctun_max",rx->channel);
   value=getProperty(name);
-  if(value) rx->ctun_max=atol(value);
+  if(value) rx->ctun_max=atoll(value);
 
   /* freetune restore */
   sprintf(name,"receiver[%d].freetune",rx->channel);
@@ -745,7 +745,7 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].step",rx->channel);
   value=getProperty(name);
-  if(value) rx->step=atol(value);
+  if(value) rx->step=atoll(value);
   sprintf(name,"receiver[%d].zoom",rx->channel);
   value=getProperty(name);
   if(value) rx->zoom=atoi(value);
@@ -894,10 +894,10 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->rit_enabled=atoi(value);
   sprintf(name,"receiver[%d].rit",rx->channel);
   value=getProperty(name);
-  if(value) rx->rit=atol(value);
+  if(value) rx->rit=atoll(value);
   sprintf(name,"receiver[%d].rit_step",rx->channel);
   value=getProperty(name);
-  if(value) rx->rit_step=atol(value);
+  if(value) rx->rit_step=atoll(value);
 
   sprintf(name,"receiver[%d].bpsk_enable",rx->channel);
   value=getProperty(name);
@@ -930,14 +930,17 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_filled",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_filled=atoi(value);
+  // Read the gradient BEFORE name is rebuilt for the colour: the key was
+  // formatted here and then overwritten by the next sprintf, so the gradient
+  // flag was restored from panadapter_single_color -- silently forgotten on
+  // every restart, and coming back as "any colour but 0".
   sprintf(name,"receiver[%d].panadapter_gradient",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_gradient=atoi(value);
 
   sprintf(name,"receiver[%d].panadapter_single_color",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_single_color=atoi(value);
-
-  value=getProperty(name);
-  if(value) rx->panadapter_gradient=atoi(value);
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_agc_line=atoi(value);
@@ -1011,7 +1014,9 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->rigctl_serial_enable=atoi(value);
   sprintf(name,"receiver[%d].rigctl_serial_port",rx->channel);
   value=getProperty(name);
-  if(value) strcpy(rx->rigctl_serial_port,value);
+  // char[80] against a props line that can carry ~250 bytes: an unbounded copy
+  // here overruns the RECEIVER struct at a fixed offset.
+  if(value) g_strlcpy(rx->rigctl_serial_port,value,sizeof(rx->rigctl_serial_port));
   sprintf(name,"receiver[%d].rigctl_debug",rx->channel);
   value=getProperty(name);
   if(value) rx->rigctl_debug=atoi(value);

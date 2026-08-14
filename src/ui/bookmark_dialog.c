@@ -116,6 +116,12 @@ static void save_bookmarks(void) {
   char filename[512];
   snprintf(filename,sizeof(filename),"%s/.local/share/machpsdr/bookmarks",
                         g_get_home_dir());
+  // The bookmarks are a SEPARATE file through the one global store, so the
+  // radio's live properties are parked first -- initProperties() below would
+  // otherwise wipe them, and everything read from the store afterwards (a
+  // receiver added later, the wideband window, the paned split) would come up
+  // at factory defaults for the rest of the session.
+  pushPropertyStore();
   initProperties();
 
   int i=0;
@@ -154,6 +160,7 @@ static void save_bookmarks(void) {
     bookmark=(BOOKMARK *)bookmark->next;
   }
   saveProperties(filename);
+  popPropertyStore();
 }
 
 static void restore_bookmarks(void) {
@@ -166,6 +173,10 @@ static void restore_bookmarks(void) {
   char name[80];
   char *value;
 
+  // Park the radio's properties: loadProperties() wipes the store it reads
+  // into, and that store is the one the whole application uses (see
+  // save_bookmarks()).
+  pushPropertyStore();
   loadProperties(filename);
 
   while(1) {
@@ -218,6 +229,7 @@ static void restore_bookmarks(void) {
     }
     i++;
   }
+  popPropertyStore();
 }
 
 // GTK4: window "close-request" replaces "delete-event".

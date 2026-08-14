@@ -76,6 +76,14 @@ static void wb_clamp_pair(gint *low, gint *high) {
    note on create_wideband(). */
 static WIDEBAND *the_wideband=NULL;
 
+/* Whether wideband_save_state() has anything to write.  The singleton outlives
+   the window, so "opened at some point this session" is the question -- and it
+   is the one radio_save_state() needs, since it must retain the saved
+   wideband.* keys only when nothing is going to be written over them. */
+gboolean wideband_has_state(void) {
+  return the_wideband!=NULL;
+}
+
 void wideband_save_state(WIDEBAND *w) {
   char name[80];
   char value[80];

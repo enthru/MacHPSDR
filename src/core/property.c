@@ -47,6 +47,40 @@ void initProperties(void) {
   g_hash_table_remove_all(properties);
 }
 
+// A SECOND file needs a second store, not this one.  The store is a single
+// global that initProperties() and loadProperties() both wipe, so reading or
+// writing bookmarks or a MIDI file through it destroys the radio's live
+// settings: every getProperty() after that finds nothing (a receiver added
+// later comes up at factory defaults), and radio_save_state()'s retain pass
+// then writes a props file with the closed receivers' settings gone for good.
+// Push before touching another file, pop after; the pushed store is untouched
+// in between.  Not reentrant beyond one level, which is all any caller needs
+// (both are GTK-thread only).
+static GHashTable* parked=NULL;
+static double parked_version=0.0;
+
+void pushPropertyStore(void) {
+  ensure_store();
+  if(parked!=NULL) {
+    log_error("pushPropertyStore: already pushed -- the second file would clobber the first\n");
+    return;
+  }
+  parked=properties;
+  parked_version=version;   // loadProperties leaves it set, and it gates the load
+  properties=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
+}
+
+void popPropertyStore(void) {
+  if(parked==NULL) {
+    log_error("popPropertyStore: nothing pushed\n");
+    return;
+  }
+  if(properties!=NULL) g_hash_table_destroy(properties);
+  properties=parked;
+  version=parked_version;
+  parked=NULL;
+}
+
 // Move every property whose name begins with prefix out of the active store
 // into the retained stash. The stash is not touched by initProperties(), so
 // this is used to keep the settings of an inactive (user-closed) receiver

@@ -120,13 +120,35 @@ log_info("radio_save_state: %s\n",filename);
   // only live receivers are re-serialized below. Retain the saved settings of
   // any inactive (user-closed) receiver slot so they are not discarded — they
   // are merged back in after the live state has been written.
+  // A HIDDEN receiver (diversity partner, PureSignal feedback) counts as
+  // inactive here too: receiver_save_state() early-returns on show_rx==FALSE,
+  // so a slot holding one writes nothing -- and retaining only NULL slots meant
+  // enabling diversity, which parks a hidden RX in the first free slot,
+  // discarded the settings of the receiver the operator had closed there.
   for(i=0;i<radio->discovered->supported_receivers;i++) {
-    if(radio->receiver[i]==NULL) {
+    if(radio->receiver[i]==NULL || radio->receiver[i]->show_rx==FALSE) {
       char prefix[32];
       sprintf(prefix,"receiver[%d].",i);
       retainProperties(prefix);
     }
   }
+  // Same reasoning for the wideband window: wideband_save_state() writes
+  // nothing when the window was never opened this session, so without this its
+  // dB scales and geometry are erased by any run that did not open it.  The
+  // question is the singleton, not radio->wideband -- a window opened and
+  // closed again this session DOES write, and retaining then would put the old
+  // values back over the new ones (releaseRetainedProperties overwrites).
+  if(!wideband_has_state()) {
+    retainProperties("wideband.");
+  }
+#ifdef MIDI
+  // And the MIDI table, which is written only while the controller is
+  // CONNECTED: one run with it unplugged would otherwise erase the operator's
+  // whole mapping.
+  if(!midi_has_state()) {
+    retainProperties("midi");
+  }
+#endif
   initProperties();
 
   sprintf(value,"%d",radio->model);
@@ -272,8 +294,12 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.cw_keyer_mode",value);
   sprintf(value,"%d",radio->cw_keyer_weight);
   setProperty("radio.cw_keyer_weight",value);
+  // Its own key: this wrote cw_keyer_spacing under the cw_keyer_internal name
+  // and the next line overwrote it, so the field had no key and no reader at
+  // all -- harmless only because nothing sets it yet, and it does go on the
+  // wire (protocol1.c/protocol2.c read it).
   sprintf(value,"%d",radio->cw_keyer_spacing);
-  setProperty("radio.cw_keyer_internal",value);
+  setProperty("radio.cw_keyer_spacing",value);
   sprintf(value,"%d",radio->cw_keyer_internal);
   setProperty("radio.cw_keyer_internal",value);
   sprintf(value,"%d",radio->cw_keyer_ptt_delay);
@@ -356,11 +382,15 @@ log_info("radio_save_state: %s\n",filename);
 
 #ifdef SOAPYSDR
     if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+      // adc[i]/dac[i], not [0]: the key is per-ADC and the restore side reads
+      // it back into adc[i], so writing ADC 0's gain under every index
+      // overwrote the second ADC's gain and AGC flag on every save (a 2-RX
+      // SoapySDR device -- LimeSDR, Pluto -- has adcs == rx_channels).
       sprintf(name,"radio.adc[%d].gain",i);
-      sprintf(value,"%f", radio->adc[0].gain);
+      sprintf(value,"%f", radio->adc[i].gain);
       setProperty(name,value);
       sprintf(name,"radio.adc[%d].agc",i);
-      sprintf(value,"%d", soapy_protocol_get_automatic_gain(&radio->adc[0]));
+      sprintf(value,"%d", soapy_protocol_get_automatic_gain(&radio->adc[i]));
       setProperty(name,value);
       sprintf(name,"radio.dac[%d].gain",i);
       sprintf(value,"%f", radio->dac[0].gain);
@@ -536,6 +566,8 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->cw_keyer_weight=atoi(value);
   value=getProperty("radio.cw_keyer_internal");
   if(value!=NULL) radio->cw_keyer_internal=atoi(value);
+  value=getProperty("radio.cw_keyer_spacing");
+  if(value!=NULL) radio->cw_keyer_spacing=atoi(value);
   value=getProperty("radio.cw_keyer_ptt_delay");
   if(value!=NULL) radio->cw_keyer_ptt_delay=atoi(value);
   value=getProperty("radio.cw_keyer_hang_time");
@@ -710,5 +742,10 @@ void radio_restore_state(RADIO *radio) {
 #endif
 
   filterRestoreState();
+  // The 60 m band stack lives in a REGION-specific table, and radio->region has
+  // just been read: install that table before restoring the stacks, or every
+  // 60 m entry is written into the compiled-in UK array and then thrown away
+  // when create_radio() gets round to calling this itself.
+  radio_change_region(radio);
   bandRestoreState();
 }

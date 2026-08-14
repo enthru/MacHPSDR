@@ -116,6 +116,7 @@ extern void wideband_motion_cb(GtkEventControllerMotion *controller, double x, d
 extern void wideband_leave_cb(GtkEventControllerMotion *controller, gpointer data);
 extern gboolean wideband_scroll_cb(GtkEventControllerScroll *controller, double dx, double dy, gpointer data);
 extern void wideband_save_state(WIDEBAND *w);
+extern gboolean wideband_has_state(void);
 extern void reset_wideband_buffer_index(WIDEBAND *w);
 /* MACHPSDR_WIDEBAND=<n> / MACHPSDR_WIDEBAND_TEST -- headless open/close of the
    wideband window (see the block comment at the end of wideband.c).  Called from

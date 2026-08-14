@@ -570,17 +570,32 @@ void bandRestoreState(void) {
     BANDSTACK_ENTRY* entry;
 
     for(b=0;b<BANDS+XVTRS;b++) {
+        // The props file is a supported input for older versions and for hand
+        // editing, so nothing read out of it may be trusted with a length or a
+        // count: title is char[16] (a 250-byte line overran the BAND struct),
+        // and `entries` indexes a COMPILE-TIME array (bandstack_entries160[3]
+        // and friends) whose only bound is the count that is already there.
         sprintf(name,"band.%d.title",b);
         value=getProperty(name);
-        if(value) strcpy(bands[b].title,value);
+        if(value) g_strlcpy(bands[b].title,value,sizeof(bands[b].title));
 
+        int capacity=bands[b].bandstack->entries;
         sprintf(name,"band.%d.entries",b);
         value=getProperty(name);
-        if(value) bands[b].bandstack->entries=atoi(value);
+        if(value) {
+          int n=atoi(value);
+          if(n<0) n=0;
+          if(n>capacity) n=capacity;
+          bands[b].bandstack->entries=n;
+        }
 
         sprintf(name,"band.%d.current",b);
         value=getProperty(name);
-        if(value) bands[b].bandstack->current_entry=atoi(value);
+        if(value) {
+          int n=atoi(value);
+          if(n<0 || n>=bands[b].bandstack->entries) n=0;
+          bands[b].bandstack->current_entry=n;
+        }
 
         sprintf(name,"band.%d.preamp",b);
         value=getProperty(name);

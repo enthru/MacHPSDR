@@ -26,6 +26,11 @@
 // a GHashTable in property.c); the old singly-linked list made building the
 // store O(n^2) at save/restore time.
 extern void initProperties(void);
+// Park the store and work on a fresh empty one — for any file that is NOT the
+// radio's own props (bookmarks, a MIDI file). Without it, loading or saving a
+// second file wipes the live settings out from under the running radio.
+extern void pushPropertyStore(void);
+extern void popPropertyStore(void);
 extern void retainProperties(char* prefix);
 extern void releaseRetainedProperties(void);
 extern void loadProperties(char* filename);

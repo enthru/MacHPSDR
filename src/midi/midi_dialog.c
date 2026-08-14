@@ -319,9 +319,13 @@ static void save_done(GObject *src,GAsyncResult *res,gpointer user_data) {
   if(gf==NULL) return;
   char *savefilename=g_file_get_path(gf);
   g_object_unref(gf);
+  // A MIDI file is not the radio's props, and the store is global: park the
+  // live settings or this wipes them (see pushPropertyStore in property.c).
+  pushPropertyStore();
   initProperties();
   midi_save_state();
   saveProperties(savefilename);
+  popPropertyStore();
   g_free(savefilename);
 }
 
@@ -342,9 +346,11 @@ static void load_done(GObject *src,GAsyncResult *res,gpointer user_data) {
   char *loadfilename=g_file_get_path(gf);
   g_object_unref(gf);
   clear_cb(NULL,NULL);
+  pushPropertyStore();
   initProperties();
   loadProperties(loadfilename);
   midi_restore_state();
+  popPropertyStore();
   load_store();
   g_free(loadfilename);
 }
@@ -960,6 +966,15 @@ void NewMidiConfigureEvent(enum MIDIevent event, int channel, int note, int val)
 
     g_idle_add(update,GINT_TO_POINTER(UPDATE_NEW));
   }
+}
+
+/* Whether midi_save_state() will write anything.  `device` is set only when the
+   saved device name matches one that is CONNECTED, so running once with the
+   controller unplugged writes no midi[...] keys at all -- and radio_save_state
+   has already wiped the old ones, which is how a whole mapping disappears from
+   the props file.  radio_state.c asks this and retains them instead. */
+gboolean midi_has_state(void) {
+  return device!=-1;
 }
 
 void midi_save_state(void) {

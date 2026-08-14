@@ -198,19 +198,35 @@ void radio_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y,
   }
 }
 
+/* Called on a region change from the dialog AND at startup, once from
+   radio_restore_state (before the band stacks are read, so 60 m lands in the
+   right table) and once from create_radio.  It must therefore be idempotent:
+   current_entry is reset only when the stack really is a different one, and
+   otherwise merely kept in range -- zeroing it unconditionally threw away the
+   restored 60 m entry on every launch. */
 void radio_change_region(RADIO *r) {
+  BANDSTACK_ENTRY *want;
+  int entries;
+
   if(r->region==REGION_UK) {
     channel_entries=UK_CHANNEL_ENTRIES;
     band_channels_60m=&band_channels_60m_UK[0];
-    bandstack60.entries=UK_CHANNEL_ENTRIES;
-    bandstack60.current_entry=0;
-    bandstack60.entry=bandstack_entries60_UK;
+    entries=UK_CHANNEL_ENTRIES;
+    want=bandstack_entries60_UK;
   } else {
     channel_entries=OTHER_CHANNEL_ENTRIES;
     band_channels_60m=&band_channels_60m_OTHER[0];
-    bandstack60.entries=OTHER_CHANNEL_ENTRIES;
+    entries=OTHER_CHANNEL_ENTRIES;
+    want=bandstack_entries60_OTHER;
+  }
+
+  if(bandstack60.entry!=want) {
+    bandstack60.entry=want;
     bandstack60.current_entry=0;
-    bandstack60.entry=bandstack_entries60_OTHER;
+  }
+  bandstack60.entries=entries;
+  if(bandstack60.current_entry>=entries || bandstack60.current_entry<0) {
+    bandstack60.current_entry=0;
   }
 }
 

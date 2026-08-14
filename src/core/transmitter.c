@@ -807,10 +807,10 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   if(value) tx->xit_enabled=atoi(value);
   sprintf(name,"transmitter[%d].xit",tx->channel);
   value=getProperty(name);
-  if(value) tx->xit=atol(value);
+  if(value) tx->xit=atoll(value);
   sprintf(name,"transmitter[%d].xit_step",tx->channel);
   value=getProperty(name);
-  if(value) tx->xit_step=atol(value);
+  if(value) tx->xit_step=atoll(value);
 
   sprintf(name,"transmitter[%d].compressor",tx->channel);
   value=getProperty(name);
