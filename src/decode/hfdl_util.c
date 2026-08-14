@@ -57,7 +57,16 @@ gboolean hfdl_inflate(const uint8_t *in, int in_len, uint8_t **out, gsize *out_l
 
   int ret;
   gboolean overflow = FALSE;
+  uLong last_in = 0, last_out = 0;
   while ((ret = inflate(&s, Z_FINISH)) == Z_BUF_ERROR) {
+    // Z_BUF_ERROR with input left AND output space left should not be
+    // reachable -- zlib returns it only when it cannot progress -- and neither
+    // this loop nor libacars', which it is a port of, has a branch for it: the
+    // loop would just call inflate() again on the same state, for ever, on the
+    // RX audio thread, driven by a byte sequence that arrived off the air.
+    // One no-progress iteration is enough to say the stream is going nowhere.
+    if (s.total_in == last_in && s.total_out == last_out) { ret = Z_DATA_ERROR; break; }
+    last_in = s.total_in; last_out = s.total_out;
     if (s.avail_out == 0) {
       if (cap > HFDL_INFLATE_MAX - chunk) { overflow = TRUE; break; }
       int ncap = cap + chunk;
