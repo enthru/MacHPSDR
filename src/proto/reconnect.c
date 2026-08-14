@@ -55,6 +55,19 @@ static gboolean  dialog_open   = FALSE;   // the Reconnect/Exit dialog is up
 static gboolean  reconnecting  = FALSE;   // a reconnect attempt is in progress
 static guint     watchdog_id   = 0;
 
+// Cancels the dialog currently on screen.  A GtkAlertDialog started with a
+// GCancellable can be withdrawn without a click, which is what lets the radio
+// coming back by itself take the question away again (see watchdog_cb).
+static GCancellable *dialog_cancel = NULL;
+
+// Test hook, set from MACHPSDR_RECONNECT_TEST in radio.c: answer the dialog
+// without a click.  RECONNECT_ASK (the default) means "ask the operator".
+static int auto_answer = RECONNECT_ASK;
+
+void reconnect_set_auto(int button) {
+  auto_answer = button;
+}
+
 static gint monotonic_sec(void) {
   return (gint)(g_get_monotonic_time() / G_USEC_PER_SEC);
 }
@@ -99,27 +112,52 @@ static gboolean do_reconnect(RADIO *r) {
   return ok;
 }
 
-// GTK4: GtkMessageDialog is deprecated; GtkAlertDialog is async and returns the
-// chosen button index (0 = Reconnect, 1 = Exit, -1 = dismissed).
-static void on_dialog_response(GObject *src, GAsyncResult *res, gpointer data) {
-  int btn = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, NULL);
-
-  if(btn == 0) {            // Reconnect
+// The two branches the dialog's buttons take.  Kept separate from the GTK
+// callback so the MACHPSDR_RECONNECT_TEST hook runs *exactly* what a click runs
+// and cannot drift into testing something else.
+static void reconnect_answer(int btn) {
+  if(btn == RECONNECT_BTN_RECONNECT) {
     reconnecting = TRUE;
     do_reconnect(radio);
     reconnecting = FALSE;
     dialog_open = FALSE;
-  } else if(btn == 1) {     // Exit: save state, stop cleanly and quit
+  } else if(btn == RECONNECT_BTN_EXIT) {   // save state, stop cleanly and quit
     main_delete(NULL);
   } else {                  // dismissed — let the watchdog ask again
     dialog_open = FALSE;
+    // Re-arm the grace period: without it the watchdog re-raises the dialog on
+    // its very next tick, one second later.  If the dialog can never be shown
+    // (an unmappable parent), that is a new modal window every second.
+    g_atomic_int_set(&last_data_sec, monotonic_sec());
   }
+}
+
+// GTK4: GtkMessageDialog is deprecated; GtkAlertDialog is async and returns the
+// chosen button index (0 = Reconnect, 1 = Exit, -1 = dismissed/cancelled).
+static void on_dialog_response(GObject *src, GAsyncResult *res, gpointer data) {
+  GError *error = NULL;
+  int btn = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &error);
+
+  // Log which way it went.  A dialog that answers itself — a dismissal, a
+  // cancellation, a parent GTK could not present it over — is otherwise
+  // indistinguishable in the log from an operator's click, and that ambiguity
+  // is what made this path's behaviour look non-deterministic.
+  log_info("reconnect: lost-link dialog answered %d (%s)\n", btn,
+           error != NULL ? error->message :
+           btn == RECONNECT_BTN_RECONNECT ? "Reconnect" :
+           btn == RECONNECT_BTN_EXIT      ? "Exit" : "dismissed");
+  if(error != NULL) g_error_free(error);
+
+  g_clear_object(&dialog_cancel);
+  reconnect_answer(btn);
 }
 
 static void show_reconnect_dialog(RADIO *r) {
   const char *name = (r->discovered!=NULL) ? r->discovered->name : "device";
 
   dialog_open = TRUE;
+  g_clear_object(&dialog_cancel);
+  dialog_cancel = g_cancellable_new();
 
   GtkAlertDialog *dialog = gtk_alert_dialog_new("Connection to the SDR was lost");
   char detail[256];
@@ -131,15 +169,34 @@ static void show_reconnect_dialog(RADIO *r) {
   gtk_alert_dialog_set_buttons(dialog, buttons);
   gtk_alert_dialog_set_default_button(dialog, 0);
   gtk_alert_dialog_set_modal(dialog, TRUE);
-  gtk_alert_dialog_choose(dialog, GTK_WINDOW(main_window), NULL, on_dialog_response, NULL);
+  gtk_alert_dialog_choose(dialog, GTK_WINDOW(main_window), dialog_cancel,
+                          on_dialog_response, NULL);
   g_object_unref(dialog);
+  // Toplevel count: the one cheap way to see, in a log, whether a dialog really
+  // went away again rather than merely stopping talking to us.
+  log_info("reconnect: lost-link dialog shown (%u toplevel windows)\n",
+            g_list_model_get_n_items(gtk_window_get_toplevels()));
 }
 
 static gboolean watchdog_cb(gpointer data) {
   RADIO *r = radio;
 
   if(r == NULL || r->discovered == NULL) return TRUE;
-  if(dialog_open || reconnecting)        return TRUE;
+  if(reconnecting)                       return TRUE;
+
+  // The link can heal on its own — a radio power-cycled, a switch rebooted, a
+  // Wi-Fi drop that came back.  Nothing was ever stopped, so data simply
+  // resumes; but the dialog is MODAL, so without this the operator is left
+  // staring at a question about a link that is already up, with the whole UI
+  // locked behind it and nothing to do but quit the application.  Withdraw it.
+  if(dialog_open) {
+    if(seen_data && monotonic_sec() - g_atomic_int_get(&last_data_sec) < DISCONNECT_TIMEOUT_SEC) {
+      log_info("reconnect: data resumed - withdrawing the lost-link dialog\n");
+      if(dialog_cancel != NULL) g_cancellable_cancel(dialog_cancel);
+    }
+    return TRUE;
+  }
+
   if(!seen_data)                         return TRUE;   // not streaming yet
 
   // The fake test device has no hardware to lose.
@@ -156,6 +213,13 @@ static gboolean watchdog_cb(gpointer data) {
   gint gap = monotonic_sec() - g_atomic_int_get(&last_data_sec);
   if(gap >= DISCONNECT_TIMEOUT_SEC) {
     log_info("reconnect: no data for %d s - assuming the link is down\n", gap);
+    if(auto_answer != RECONNECT_ASK) {
+      log_info("reconnect: test hook answers '%s' (no dialog)\n",
+               auto_answer == RECONNECT_BTN_EXIT ? "Exit" : "Reconnect");
+      dialog_open = TRUE;          // reconnect_answer() clears it, as a click would
+      reconnect_answer(auto_answer);
+      return TRUE;
+    }
     show_reconnect_dialog(r);
   }
   return TRUE;

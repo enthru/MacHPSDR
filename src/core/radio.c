@@ -1894,11 +1894,16 @@ static gboolean rx_churn_tick(gpointer data) {
     if(r->receiver[i]!=NULL && r->receiver[i]->show_rx) { victim=r->receiver[i]; break; }
   }
   if(victim==NULL) {
-    // add_receiver returns the slot it used, or supported_receivers when there
-    // was none free -- so the failure test is the index, not a truth value.
-    if(add_receiver(r,TRUE)>=r->discovered->supported_receivers) {
+    // add_receiver returns the slot it used, or -1 when there was none free --
+    // so the failure test is a negative index, not a truth value and not a
+    // comparison against supported_receivers (which -1 never satisfies: the
+    // hook then re-tried for ever, silently testing nothing).  Quit HERE rather
+    // than falling through to the "cycles completed" line, which is what CI
+    // asserts on: a run that could not churn must not look like one that did.
+    if(add_receiver(r,TRUE)<0) {
       log_error("rx-churn: no spare receiver slot; nothing to churn\n");
-      churn_left=0;
+      g_application_quit(g_application_get_default());
+      return FALSE;
     }
   } else {
     receiver_close(victim);
@@ -2004,6 +2009,41 @@ static void rx_churn_init(RADIO *r) {
   // its WDSP channel and its display timer has fired before it is torn down.
   // A tighter cycle tests the teardown of a receiver that never ran.
   g_timeout_add(1500,rx_churn_tick,(gpointer)r);
+}
+
+// ---------------------------------------------------------------------------
+// MACHPSDR_RECONNECT_TEST=reconnect|exit -- answer the lost-link dialog without
+// a click.
+//
+// The disconnect watchdog (reconnect.c) raises a MODAL Reconnect/Exit dialog,
+// so everything below it -- protocol1_reconnect(), protocol2_reconnect(), the
+// exit-and-save path -- is reachable only by clicking a button and could not be
+// exercised headlessly at all.  Same shape and same reason as MACHPSDR_RX_CHURN
+// and MACHPSDR_DIVERSITY: the hook calls exactly what the button's handler
+// calls, so it cannot drift into testing a different thing:
+//
+//   ./p2_emu & sleep 15; kill %1; sleep 6; ./p2_emu &      # radio goes and comes back
+//   HOME=$(mktemp -d) MACHPSDR_RECONNECT_TEST=reconnect ./machpsdr --open Angelia
+//
+// With =reconnect the watchdog retries every DISCONNECT_TIMEOUT_SEC for as long
+// as the radio stays away, which is an operator clicking Reconnect repeatedly --
+// and is what makes a per-attempt thread or socket leak visible.  With =exit it
+// takes the save-state-and-quit branch the moment the link drops.
+//
+// Zero cost when unset -- one getenv at start-up.
+// ---------------------------------------------------------------------------
+static void reconnect_test_init(void) {
+  const char *e=g_getenv("MACHPSDR_RECONNECT_TEST");
+  if(e==NULL || *e=='\0') return;
+  if(g_ascii_strcasecmp(e,"reconnect")==0 || strcmp(e,"1")==0) {
+    reconnect_set_auto(RECONNECT_BTN_RECONNECT);
+    log_info("reconnect-test: a lost link will answer 'Reconnect' by itself\n");
+  } else if(g_ascii_strcasecmp(e,"exit")==0 || strcmp(e,"2")==0) {
+    reconnect_set_auto(RECONNECT_BTN_EXIT);
+    log_info("reconnect-test: a lost link will answer 'Exit' by itself\n");
+  } else {
+    log_error("reconnect-test: MACHPSDR_RECONNECT_TEST must be 'reconnect' or 'exit', not '%s'\n",e);
+  }
 }
 
 static gboolean add_wideband_cb(GtkWidget *widget,gpointer data) {
@@ -3382,6 +3422,13 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   diversity_test_init(r);
 
   rx_churn_init(r);
+
+  // MACHPSDR_WIDEBAND: open/close the wideband window headlessly.  Armed here
+  // rather than in wideband.c because add_wideband() lives in this file and
+  // every other test hook is armed on this line -- see wideband_test_init().
+  wideband_test_init(r);
+
+  reconnect_test_init();
 
   return r;
 }

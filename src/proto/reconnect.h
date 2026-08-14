@@ -36,4 +36,15 @@ extern void reconnect_init(void);
 // Thread-safe and cheap.
 extern void reconnect_note_data(void);
 
+// The dialog's two buttons, and "ask the operator" (the default).
+#define RECONNECT_ASK            (-1)
+#define RECONNECT_BTN_RECONNECT    0
+#define RECONNECT_BTN_EXIT         1
+
+// Test hook: answer the lost-link dialog with `button` instead of raising it.
+// Set from MACHPSDR_RECONNECT_TEST in radio.c -- see the comment there.  The
+// two branches are the same code a click runs, so this cannot drift into
+// exercising something the operator never gets.
+extern void reconnect_set_auto(int button);
+
 #endif

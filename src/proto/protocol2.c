@@ -1204,6 +1204,18 @@ void protocol2_reconnect(void) {
         g_thread_join(protocol2_thread_id);  // returns within one SO_RCVTIMEO period
         protocol2_thread_id=NULL;
     }
+    // The register timer thread is started by protocol2_start(), which runs
+    // INSIDE protocol2_thread -- so every reconnect starts another one.  It must
+    // be joined here, not merely left to notice running==0: it only re-checks
+    // between 100 ms sleeps, and the restarted data thread sets running back to
+    // TRUE, so an old timer that had not woken yet survives for the life of the
+    // process.  Each survivor sends its own transmit_specific/receive_specific
+    // block every 100 ms over the same socket, i.e. one extra register writer
+    // per reconnect racing the others on receive_specific_buffer.
+    if(protocol2_timer_thread_id!=NULL) {
+        g_thread_join(protocol2_timer_thread_id);   // exits within one 100 ms tick
+        protocol2_timer_thread_id=NULL;
+    }
     if(data_socket>=0) {
         closesocket(data_socket);
         data_socket=-1;
