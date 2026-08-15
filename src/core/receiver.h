@@ -425,7 +425,7 @@ typedef struct _receiver {
 
   void *resampler;
   gdouble *resampled_buffer;
-  gint resampled_buffer_size;
+  gint resampled_buffer_size;   // ALLOCATED capacity of resampled_buffer, in doubles
 
   GtkWidget *local_audio_b;
   GtkWidget *audio_choice_b;

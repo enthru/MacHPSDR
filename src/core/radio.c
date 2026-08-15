@@ -3067,6 +3067,16 @@ log_info("create_radio for %s %d\n",d->name,d->device);
         // than the app assumed -> garbage waterfall.  The per-receiver
         // resampler brings this ADC rate down to rx->sample_rate.
         r->sample_rate=2000000;
+      } else if(strcmp(r->discovered->name,"plutosdr")==0) {
+        // Same trap as HackRF, and worse because SoapyPlutoSDR reports SUCCESS:
+        // the AD9361 cannot deliver a stream below ~2.083 MHz, so a request for
+        // 768 kHz came back as 6.144 MHz (8x) with only getSampleRate() saying
+        // so.  2.304 MHz is above that floor and an integer multiple of every
+        // rx->sample_rate the app offers (48/96/192/384 kHz), so the resampler
+        // ratio stays exact; 3.072 MHz also fits but doubles the resampling
+        // cost, and a machine that cannot keep up drops blocks, which smears
+        // every signal on the band rather than merely slowing it down.
+        r->sample_rate=2304000;
       }
       r->buffer_size=2048;
       if(strcmp(r->discovered->name,"lime")==0) {

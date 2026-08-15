@@ -25,6 +25,7 @@
 
 #include "SoapySDR/Constants.h"
 #include "SoapySDR/Device.h"
+#include "SoapySDR/Errors.h"
 #include "SoapySDR/Formats.h"
 #include "SoapySDR/Version.h"
 
@@ -85,7 +86,20 @@ static GThread *receive_thread_id[MAX_CHANNELS];
 static gboolean rx_thread_running[MAX_CHANNELS];
 static gpointer receive_thread(gpointer data);
 
-static int actual_rate;
+// The rate the RX stream is REALLY running at, as the device reports it after
+// being asked for radio->sample_rate.  Those are not always the same number and
+// a driver owes us no error when it substitutes: SoapyPlutoSDR answers a request
+// for 768 kHz by running the AD9361 at 6.144 MHz (8x -- the part cannot deliver
+// a stream below ~2.08 MHz), returns success, and only says so through
+// getSampleRate().  Every earlier version of this file built the resampler from
+// the REQUESTED rate and believed it, so the stream arrived eight times faster
+// than the DSP consumed it: the driver dropped most of it, and samples either
+// side of a dropped block are spliced, which randomises the phase of every
+// signal on the band.  Measured on a PlutoSDR: FT8's 15 s slots landed 53 s
+// apart in an I/Q recording, carriers smeared into ~35 Hz humps, FM demodulated
+// to something that was not speech, and the audio sink discarded 72 %.
+// Whatever the device answers is the truth -- the resampler is built from THIS.
+static int soapy_rx_actual_rate;
 
 // TRUE while any receive thread is alive; what soapy_protocol_is_running()
 // answers, and what the receiver/radio update timers gate their display on.
@@ -125,6 +139,64 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
   mic_sample_divisor=rate/48000;
 }
 
+/* Asks the device for `requested` and returns what it is ACTUALLY running at.
+   A driver may substitute silently and still return success (see
+   soapy_rx_actual_rate), so the readback -- never the request -- is what the
+   rest of this file may rely on. */
+static int soapy_set_rx_rate(size_t adc,int requested) {
+  int rc=SoapySDRDevice_setSampleRate(soapy_device,SOAPY_SDR_RX,adc,(double)requested);
+  if(rc!=0) {
+    log_info("%s: SoapySDRDevice_setSampleRate(%d) failed: %s\n",__FUNCTION__,requested,SoapySDR_errToStr(rc));
+  }
+  double got=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_RX,adc);
+  int actual=(int)(got+0.5);
+  if(actual<=0) {
+    log_error("%s: device reports an RX rate of %f; falling back to the requested %d\n",__FUNCTION__,got,requested);
+    actual=requested;
+  } else if(actual!=requested) {
+    // Not a warning to be tidied away: at this point the operator's band is
+    // being resampled by a ratio nothing else in the app knows about.
+    log_error("%s: asked the device for %d Hz, it is running at %d Hz (x%.4f) -- resampling from the rate it reports\n",
+              __FUNCTION__,requested,actual,(double)actual/(double)requested);
+  }
+  soapy_rx_actual_rate=actual;
+  return actual;
+}
+
+/* (Re)builds rx->resampled_buffer and rx->resampler to take `block` frames at
+   the stream's real rate down to rx->sample_rate.  One implementation for both
+   callers -- create_receiver and the sample-rate change had drifted into two
+   copies of it, and only one of them was ever fixed.
+   Callers hold delete_rx_mutex whenever a receive thread is alive. */
+static void soapy_build_resampler(RECEIVER *rx,int block) {
+  if(rx->resampler!=NULL) {
+    destroy_resample(rx->resampler);
+    rx->resampler=NULL;
+  }
+  const int in_rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
+
+  /* Size the output for the WORST case rather than for the ratio we expect: a
+     device reporting a rate BELOW rx->sample_rate makes this an upsampler, and
+     the old `2*block/(in/out)` both divided by zero there and under-sized the
+     buffer xresampleV writes into.  resampled_buffer_size is the allocated
+     capacity in doubles. */
+  long long out_frames=((long long)block*(long long)rx->sample_rate+in_rate-1)/in_rate;
+  if(out_frames<block) out_frames=block;
+  const int need=(int)(out_frames*2)+16;
+  if(rx->resampled_buffer==NULL || rx->resampled_buffer_size<need) {
+    if(rx->resampled_buffer!=NULL) g_free(rx->resampled_buffer);
+    rx->resampled_buffer=g_new(double,need);
+    rx->resampled_buffer_size=need;
+  }
+
+  if(in_rate==rx->sample_rate) {
+    log_info("%s: no resampler needed: stream and receiver are both at %d\n",__FUNCTION__,in_rate);
+    return;
+  }
+  rx->resampler=create_resample(1,block,rx->buffer,rx->resampled_buffer,in_rate,rx->sample_rate,0.0,0,1.0);
+log_info("%s: created resampler: block=%d stream=%d -> rx=%d resampled_buffer=%d doubles\n",__FUNCTION__,block,in_rate,rx->sample_rate,rx->resampled_buffer_size);
+}
+
 /* Rebuilds rx->resampler, which the receive thread is using inside
    delete_rx_mutex -- so the caller must hold that lock.  The public wrapper
    below takes it; receiver_change_sample_rate takes it itself, BEFORE
@@ -132,34 +204,16 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
    (delete_rx_mutex around the block, then rx->mutex inside full_rx_buffer) and
    the other order is a deadlock. */
 void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
-  int rc;
   const int block=rx_block[rx->adc<MAX_CHANNELS?rx->adc:0];
 
+  // sdrplay is the one device driven straight at the receiver's rate instead of
+  // at the ADC rate.  It still goes through the readback: if the hardware lands
+  // somewhere else, the builder below puts a resampler in rather than pretending.
   if(strcmp(radio->discovered->name,"sdrplay")==0) {
     soapy_rx_sample_rate=rx->sample_rate;
-    log_info("%s: setting samplerate=%f resampled_buffer=%p resampler=%p\n",__FUNCTION__,(double)soapy_rx_sample_rate,rx->resampled_buffer,rx->resampler);
-    rc=SoapySDRDevice_setSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc,(double)soapy_rx_sample_rate);
-    if(rc!=0) {
-      log_info("%s: SoapySDRDevice_setSampleRate(%f) failed: %s\n",__FUNCTION__,(double)soapy_rx_sample_rate,SoapySDR_errToStr(rc));
-    }
-  } else if(rx->sample_rate==radio->sample_rate) {
-    if(rx->resampled_buffer!=NULL) {
-      rx->resampled_buffer_size=0;
-    }
-    if(rx->resampler!=NULL) {
-      destroy_resample(rx->resampler);
-      rx->resampler=NULL;
-    }
-  } else {
-    if(rx->resampler!=NULL) {
-      destroy_resample(rx->resampler);
-      rx->resampler=NULL;
-    }
-    rx->resampled_buffer_size=2*block/(radio->sample_rate/rx->sample_rate);
-    rx->resampler=create_resample (1,block,rx->buffer,rx->resampled_buffer,radio->sample_rate,rx->sample_rate,0.0,0,1.0);
-
-log_info("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->sample_rate=%d rx->sample_rate=%d\n",__FUNCTION__,block*2,rx->resampled_buffer_size,radio->sample_rate,rx->sample_rate);
+    soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
   }
+  soapy_build_resampler(rx,block);
 }
 
 void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
@@ -200,10 +254,7 @@ log_info("%s: setting bandwidth=%f\n",__FUNCTION__,bandwidth);
   }
 
 log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate);
-  rc=SoapySDRDevice_setSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc,(double)soapy_rx_sample_rate);
-  if(rc!=0) {
-    log_info("%s: SoapySDRDevice_setSampleRate(%f) failed: %s\n",__FUNCTION__,(double)soapy_rx_sample_rate,SoapySDR_errToStr(rc));
-  }
+  soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
 
   size_t channel=rx->adc;
   if(channel>=MAX_CHANNELS) {
@@ -242,17 +293,10 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   }
   rx_block[channel]=max_samples;
   rx->buffer=g_new(double,max_samples*2);
-  rx->resampled_buffer=g_new(double,max_samples*2);
-
-  if(rx->sample_rate==radio->sample_rate) {
-    rx->resampler=NULL;
-    rx->resampled_buffer_size=0;
-  } else {
-    rx->resampled_buffer_size=2*max_samples/(radio->sample_rate/rx->sample_rate);
-    rx->resampler=create_resample (1,max_samples,rx->buffer,rx->resampled_buffer,radio->sample_rate,rx->sample_rate,0.0,0,1.0);
-log_info("%s: created resampler: buffer_size=%d resampled_buffer_size=%d radio->sample_rate=%d rx->sample_rate=%d\n",__FUNCTION__,max_samples*2,rx->resampled_buffer_size,radio->sample_rate,rx->sample_rate);
-  }
-
+  // The freeing above cleared it; the builder allocates it to the size the real
+  // stream rate calls for.
+  rx->resampled_buffer_size=0;
+  soapy_build_resampler(rx,max_samples);
 }
 
 void soapy_protocol_start_receiver(RECEIVER *rx) {
@@ -268,18 +312,20 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   // expect the RX rate -> artefacts (a live reconnect happened to set RX last and
   // sounded clean, which is why toggling the device "fixed" it).  Setting it here
   // makes the RX rate authoritative at activation, independent of call order.
-  rc=SoapySDRDevice_setSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc,(double)soapy_rx_sample_rate);
-  if(rc!=0) {
-    log_info("%s: SoapySDRDevice_setSampleRate(%f) failed: %s\n",__FUNCTION__,(double)soapy_rx_sample_rate,SoapySDR_errToStr(rc));
-  }
-
-  double rate=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc);
-  log_info("%s: rate=%f\n",__FUNCTION__,rate);
+  const int rate_before=soapy_rx_actual_rate;
+  const int rate=soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
+  log_info("%s: rate=%d\n",__FUNCTION__,rate);
 
   size_t channel=rx->adc;
   if(channel>=MAX_CHANNELS) {
     log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)channel,MAX_CHANNELS);
     return;
+  }
+  if(rate!=rate_before) {
+    // The re-assert landed somewhere else than create_receiver's resampler was
+    // built for.  This channel's receive thread is started further down, so
+    // nothing is reading the buffer and the rebuild needs no lock.
+    soapy_build_resampler(rx,rx_block[channel]);
   }
   rx_channel=channel;
   rx_stream_active=TRUE;
@@ -448,6 +494,8 @@ static gpointer receive_thread(gpointer data) {
   const int block=max_samples;
   float *buffer=g_new(float,block*2);
   void *buffs[]={buffer};
+  int overruns=0;
+  gint64 overrun_reported=g_get_monotonic_time();
 
 log_info("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
@@ -463,6 +511,21 @@ log_info("%s: running\n",__FUNCTION__);
     }
     g_atomic_int_set(&rx_parked[channel],0);
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
+    // A dropped block is not a silence the DSP can see: the samples either side
+    // of it are spliced, so every signal on the band has its phase randomised at
+    // the seam and the receiver's clock quietly runs fast.  Nothing looked at
+    // this before, which is why a stream arriving faster than the app consumes
+    // it presented as smearing rather than as loss.
+    if(elements==SOAPY_SDR_OVERFLOW || (flags&SOAPY_SDR_END_ABRUPT)) {
+      overruns++;
+      const gint64 now=g_get_monotonic_time();
+      if(now-overrun_reported>=5000000) {
+        log_error("%s: %d overrun(s) in %.0f s on adc %ld -- the stream is arriving faster than it is consumed; signals will be smeared\n",
+                  __FUNCTION__,overruns,(double)(now-overrun_reported)/1.0e6,(long)channel);
+        overrun_reported=now;
+        overruns=0;
+      }
+    }
     if(elements<0) continue;
     if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
     // This thread was handed its RECEIVER at start-up and holds it for its whole

@@ -134,6 +134,14 @@ public:
     pace = std::max(1.0, env_or(args, "pace", "MACHPSDR_NULL_PACE", 1));
     ampl = env_or(args, "ampl", "MACHPSDR_NULL_AMPL", 0.1);
     noise = env_or(args, "noise", "MACHPSDR_NULL_NOISE", 0.002);
+    // Reproduce the way a driver may answer a rate its hardware cannot deliver:
+    // accept the call, return success, run somewhere else entirely, and say so
+    // only through getSampleRate().  SoapyPlutoSDR does exactly this with x8 --
+    // the AD9361 has no stream below ~2.08 MHz, so a request for 768 kHz comes
+    // back running at 6.144 MHz.  An app that believes the request then reads
+    // the stream eight times too fast.  Default 1 = no substitution.
+    rate_mult = std::max(0.0, env_or(args, "rate_mult", "MACHPSDR_NULL_RATE_MULT", 1.0));
+    if (rate_mult <= 0.0) rate_mult = 1.0;
 
     rx_state.resize(rx_channels);
     tx_state.resize(std::max<size_t>(tx_channels, 1));
@@ -249,7 +257,11 @@ public:
   // ---- sample rate ----
 
   void setSampleRate(const int direction, const size_t channel, const double rate) override {
-    chan(direction, channel).rate = clampd(rate, 48e3, 20e6);
+    // No error, no clue -- see rate_mult in the constructor.  The stream really
+    // does run at the substituted rate (the pacing and the tone below both use
+    // it), so an app that trusts its request rather than getSampleRate() gets
+    // the whole fault and not just a wrong number in a log line.
+    chan(direction, channel).rate = clampd(rate * rate_mult, 48e3, 20e6);
   }
   double getSampleRate(const int direction, const size_t channel) const override {
     return chan(direction, channel).rate;
@@ -501,6 +513,7 @@ private:
   double pace = 1.0;
   double ampl = 0.1;
   double noise = 0.002;
+  double rate_mult = 1.0;
 
   // Settings are per channel and mutated from the GTK thread while the receive
   // thread reads the rate; benign for a test source, and deliberately not

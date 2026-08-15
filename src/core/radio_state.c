@@ -525,8 +525,21 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->model=atoi(value);
   value=getProperty("radio.filter_board");
   if(value!=NULL) radio->filter_board=atoi(value);
+  // For every SoapySDR device except sdrplay, radio->sample_rate is the ADC rate
+  // and is chosen by the per-model table in create_radio, NOT by the operator --
+  // the Configure drop-down for those devices sets the per-RECEIVER rate
+  // (soapy_rx_rate_cb).  Restoring it would resurrect whatever rate an older
+  // build wrote, so a device whose supported rate is corrected in that table
+  // would go on being driven at the wrong one for every user who already has a
+  // props file.  Receiver rates below are restored as usual.
+  gboolean adc_rate_is_ours=FALSE;
+#ifdef SOAPYSDR
+  adc_rate_is_ours=(radio->discovered!=NULL &&
+                    radio->discovered->device==DEVICE_SOAPYSDR &&
+                    strcmp(radio->discovered->name,"sdrplay")!=0);
+#endif
   value=getProperty("radio.sample_rate");
-  if(value!=NULL) radio->sample_rate=atoi(value);
+  if(value!=NULL && !adc_rate_is_ours) radio->sample_rate=atoi(value);
   value=getProperty("radio.meter_calibration");
   if(value) radio->meter_calibration=propToDouble(value);
   value=getProperty("radio.panadapter_calibration");
