@@ -19,10 +19,22 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <glib.h>
 
 #include "mode.h"
 #include "filter.h"
 #include "property.h"
+
+// Bound for a persisted Var1/Var2 edge. Nothing read out of a props file is
+// trusted: an older or hand-edited one is a supported input, and these numbers
+// go straight to RXASetPassband(). Wider than any entry in the tables below
+// (WFM's +/-90 kHz is the widest) and than Nyquist at the highest rate the DSP
+// runs at, so it can never clip a setting an operator actually made.
+//
+// The ORDER is deliberately not checked. For CWL/CWU the pair is a half-width
+// either side of the sidetone pitch (receiver.c: pitch-low .. pitch+high), so
+// low == high is normal there and a `low < high` rule would be wrong.
+#define FILTER_EDGE_LIMIT_HZ 192000
 
 FILTER filterLSB[FILTERS]={
     {-5150,-150,"5.0k"},
@@ -144,9 +156,14 @@ FILTER filterSAM[FILTERS]={
     {-3300,3300,"Var2"}
     };
 
+// The first two labels used to read "8k" and "16k" for these same passbands --
+// a straight typo, and a visible one: it put a second button called "8k" next
+// to the real +/-4000 one, and called the +/-6000 filter wider than the
+// +/-8000 above it. Every other mode's table labels these two "16k" and "12k".
+// The passbands themselves are unchanged.
 FILTER filterFMN[FILTERS]={
-    {-8000,8000,"8k"},
-    {-6000,6000,"16k"},
+    {-8000,8000,"16k"},
+    {-6000,6000,"12k"},
     {-5000,5000,"10k"},
     {-4000,4000,"8k"},
     {-3300,3300,"6.6k"},
@@ -236,194 +253,64 @@ FILTER *filters[]={
 
 };
 
-void filterSaveState(void) {
-    char value[128];
+// Var1/Var2 are the only editable entries, and they are persisted for EVERY
+// mode by walking the same filters[] table the rest of the app indexes -- not
+// by a hand-written block per mode.
+//
+// The hand-written version covered ten of the thirteen: SPEC, DRM and WFM were
+// saved by nothing and restored by nothing, so a Var filter set in one of them
+// was silently discarded on exit. All three are reachable -- the UI edits Var
+// for whatever mode is current, and CAT (`FL`/`ZZFL` and friends) writes
+// filters[mode][FVar1] the same way. That is the "eleven ways a setting was
+// silently lost" disease in the one file that pass did not touch, and the cure
+// has to be structural: a per-mode block is a list that the next mode gets left
+// off, a loop over MODES cannot be.
+//
+// The key is the mode's own lowercased name, which reproduces the existing
+// spelling exactly ("filter.lsb.var1.low", ...), so props files written by
+// earlier builds still load.
+static void filter_var_key(char *buf, size_t n, int mode, int var, const char *edge) {
+  char m[16];
+  size_t i = 0;
+  for (; mode_string[mode][i] != '\0' && i < sizeof(m) - 1; i++)
+    m[i] = g_ascii_tolower(mode_string[mode][i]);
+  m[i] = '\0';
+  snprintf(buf, n, "filter.%s.var%d.%s", m, var == FVar1 ? 1 : 2, edge);
+}
 
-    // save the Var1 and Var2 settings
-    sprintf(value,"%d",filterLSB[FVar1].low);
-    setProperty("filter.lsb.var1.low",value);
-    sprintf(value,"%d",filterLSB[FVar1].high);
-    setProperty("filter.lsb.var1.high",value);
-    sprintf(value,"%d",filterLSB[FVar2].low);
-    setProperty("filter.lsb.var2.low",value);
-    sprintf(value,"%d",filterLSB[FVar2].high);
-    setProperty("filter.lsb.var2.high",value);
-    
-    sprintf(value,"%d",filterDIGL[FVar1].low);
-    setProperty("filter.digl.var1.low",value);
-    sprintf(value,"%d",filterDIGL[FVar1].high);
-    setProperty("filter.digl.var1.high",value);
-    sprintf(value,"%d",filterDIGL[FVar2].low);
-    setProperty("filter.digl.var2.low",value);
-    sprintf(value,"%d",filterDIGL[FVar2].high);
-    setProperty("filter.digl.var2.high",value);
-    
-    sprintf(value,"%d",filterCWL[FVar1].low);
-    setProperty("filter.cwl.var1.low",value);
-    sprintf(value,"%d",filterCWL[FVar1].high);
-    setProperty("filter.cwl.var1.high",value);
-    sprintf(value,"%d",filterCWL[FVar2].low);
-    setProperty("filter.cwl.var2.low",value);
-    sprintf(value,"%d",filterCWL[FVar2].high);
-    setProperty("filter.cwl.var2.high",value);
-    
-    sprintf(value,"%d",filterUSB[FVar1].low);
-    setProperty("filter.usb.var1.low",value);
-    sprintf(value,"%d",filterUSB[FVar1].high);
-    setProperty("filter.usb.var1.high",value);
-    sprintf(value,"%d",filterUSB[FVar2].low);
-    setProperty("filter.usb.var2.low",value);
-    sprintf(value,"%d",filterUSB[FVar2].high);
-    setProperty("filter.usb.var2.high",value);
-    
-    sprintf(value,"%d",filterDIGU[FVar1].low);
-    setProperty("filter.digu.var1.low",value);
-    sprintf(value,"%d",filterDIGU[FVar1].high);
-    setProperty("filter.digu.var1.high",value);
-    sprintf(value,"%d",filterDIGU[FVar2].low);
-    setProperty("filter.digu.var2.low",value);
-    sprintf(value,"%d",filterDIGU[FVar2].high);
-    setProperty("filter.digu.var2.high",value);
-    
-    sprintf(value,"%d",filterCWU[FVar1].low);
-    setProperty("filter.cwu.var1.low",value);
-    sprintf(value,"%d",filterCWU[FVar1].high);
-    setProperty("filter.cwu.var1.high",value);
-    sprintf(value,"%d",filterCWU[FVar2].low);
-    setProperty("filter.cwu.var2.low",value);
-    sprintf(value,"%d",filterCWU[FVar2].high);
-    setProperty("filter.cwu.var2.high",value);
-    
-    sprintf(value,"%d",filterAM[FVar1].low);
-    setProperty("filter.am.var1.low",value);
-    sprintf(value,"%d",filterAM[FVar1].high);
-    setProperty("filter.am.var1.high",value);
-    sprintf(value,"%d",filterAM[FVar2].low);
-    setProperty("filter.am.var2.low",value);
-    sprintf(value,"%d",filterAM[FVar2].high);
-    setProperty("filter.am.var2.high",value);
-    
-    sprintf(value,"%d",filterSAM[FVar1].low);
-    setProperty("filter.sam.var1.low",value);
-    sprintf(value,"%d",filterSAM[FVar1].high);
-    setProperty("filter.sam.var1.high",value);
-    sprintf(value,"%d",filterSAM[FVar2].low);
-    setProperty("filter.sam.var2.low",value);
-    sprintf(value,"%d",filterSAM[FVar2].high);
-    setProperty("filter.sam.var2.high",value);
-    
-    sprintf(value,"%d",filterFMN[FVar1].low);
-    setProperty("filter.fmn.var1.low",value);
-    sprintf(value,"%d",filterFMN[FVar1].high);
-    setProperty("filter.fmn.var1.high",value);
-    sprintf(value,"%d",filterFMN[FVar2].low);
-    setProperty("filter.fmn.var2.low",value);
-    sprintf(value,"%d",filterFMN[FVar2].high);
-    setProperty("filter.fmn.var2.high",value);
-    
-    sprintf(value,"%d",filterDSB[FVar1].low);
-    setProperty("filter.dsb.var1.low",value);
-    sprintf(value,"%d",filterDSB[FVar1].high);
-    setProperty("filter.dsb.var1.high",value);
-    sprintf(value,"%d",filterDSB[FVar2].low);
-    setProperty("filter.dsb.var2.low",value);
-    sprintf(value,"%d",filterDSB[FVar2].high);
-    setProperty("filter.dsb.var2.high",value);
-    
+void filterSaveState(void) {
+  char name[64];
+  char value[32];
+
+  for (int mode = 0; mode < MODES; mode++) {
+    for (int var = FVar1; var <= FVar2; var++) {
+      snprintf(value, sizeof(value), "%d", filters[mode][var].low);
+      filter_var_key(name, sizeof(name), mode, var, "low");
+      setProperty(name, value);
+      snprintf(value, sizeof(value), "%d", filters[mode][var].high);
+      filter_var_key(name, sizeof(name), mode, var, "high");
+      setProperty(name, value);
+    }
+  }
+}
+
+static int filter_edge(const char *value, int fallback) {
+  if (value == NULL) return fallback;
+  long v = atol(value);
+  if (v >  FILTER_EDGE_LIMIT_HZ) v =  FILTER_EDGE_LIMIT_HZ;
+  if (v < -FILTER_EDGE_LIMIT_HZ) v = -FILTER_EDGE_LIMIT_HZ;
+  return (int)v;
 }
 
 void filterRestoreState(void) {
-    char* value;
+  char name[64];
 
-    value=getProperty("filter.lsb.var1.low");
-    if(value) filterLSB[FVar1].low=atoi(value);
-    value=getProperty("filter.lsb.var1.high");
-    if(value) filterLSB[FVar1].high=atoi(value);
-    value=getProperty("filter.lsb.var2.low");
-    if(value) filterLSB[FVar2].low=atoi(value);
-    value=getProperty("filter.lsb.var2.high");
-    if(value) filterLSB[FVar2].high=atoi(value);
-
-    value=getProperty("filter.digl.var1.low");
-    if(value) filterDIGL[FVar1].low=atoi(value);
-    value=getProperty("filter.digl.var1.high");
-    if(value) filterDIGL[FVar1].high=atoi(value);
-    value=getProperty("filter.digl.var2.low");
-    if(value) filterDIGL[FVar2].low=atoi(value);
-    value=getProperty("filter.digl.var2.high");
-    if(value) filterDIGL[FVar2].high=atoi(value);
-
-    value=getProperty("filter.cwl.var1.low");
-    if(value) filterCWL[FVar1].low=atoi(value);
-    value=getProperty("filter.cwl.var1.high");
-    if(value) filterCWL[FVar1].high=atoi(value);
-    value=getProperty("filter.cwl.var2.low");
-    if(value) filterCWL[FVar2].low=atoi(value);
-    value=getProperty("filter.cwl.var2.high");
-    if(value) filterCWL[FVar2].high=atoi(value);
-
-    value=getProperty("filter.usb.var1.low");
-    if(value) filterUSB[FVar1].low=atoi(value);
-    value=getProperty("filter.usb.var1.high");
-    if(value) filterUSB[FVar1].high=atoi(value);
-    value=getProperty("filter.usb.var2.low");
-    if(value) filterUSB[FVar2].low=atoi(value);
-    value=getProperty("filter.usb.var2.high");
-    if(value) filterUSB[FVar2].high=atoi(value);
-
-    value=getProperty("filter.digu.var1.low");
-    if(value) filterDIGU[FVar1].low=atoi(value);
-    value=getProperty("filter.digu.var1.high");
-    if(value) filterDIGU[FVar1].high=atoi(value);
-    value=getProperty("filter.digu.var2.low");
-    if(value) filterDIGU[FVar2].low=atoi(value);
-    value=getProperty("filter.digu.var2.high");
-    if(value) filterDIGU[FVar2].high=atoi(value);
-
-    value=getProperty("filter.cwu.var1.low");
-    if(value) filterCWU[FVar1].low=atoi(value);
-    value=getProperty("filter.cwu.var1.high");
-    if(value) filterCWU[FVar1].high=atoi(value);
-    value=getProperty("filter.cwu.var2.low");
-    if(value) filterCWU[FVar2].low=atoi(value);
-    value=getProperty("filter.cwu.var2.high");
-    if(value) filterCWU[FVar2].high=atoi(value);
-
-    value=getProperty("filter.am.var1.low");
-    if(value) filterAM[FVar1].low=atoi(value);
-    value=getProperty("filter.am.var1.high");
-    if(value) filterAM[FVar1].high=atoi(value);
-    value=getProperty("filter.am.var2.low");
-    if(value) filterAM[FVar2].low=atoi(value);
-    value=getProperty("filter.am.var2.high");
-    if(value) filterAM[FVar2].high=atoi(value);
-
-    value=getProperty("filter.sam.var1.low");
-    if(value) filterSAM[FVar1].low=atoi(value);
-    value=getProperty("filter.sam.var1.high");
-    if(value) filterSAM[FVar1].high=atoi(value);
-    value=getProperty("filter.sam.var2.low");
-    if(value) filterSAM[FVar2].low=atoi(value);
-    value=getProperty("filter.sam.var2.high");
-    if(value) filterSAM[FVar2].high=atoi(value);
-
-    value=getProperty("filter.fmn.var1.low");
-    if(value) filterFMN[FVar1].low=atoi(value);
-    value=getProperty("filter.fmn.var1.high");
-    if(value) filterFMN[FVar1].high=atoi(value);
-    value=getProperty("filter.fmn.var2.low");
-    if(value) filterFMN[FVar2].low=atoi(value);
-    value=getProperty("filter.fmn.var2.high");
-    if(value) filterFMN[FVar2].high=atoi(value);
-
-    value=getProperty("filter.dsb.var1.low");
-    if(value) filterDSB[FVar1].low=atoi(value);
-    value=getProperty("filter.dsb.var1.high");
-    if(value) filterDSB[FVar1].high=atoi(value);
-    value=getProperty("filter.dsb.var2.low");
-    if(value) filterDSB[FVar2].low=atoi(value);
-    value=getProperty("filter.dsb.var2.high");
-    if(value) filterDSB[FVar2].high=atoi(value);
-
+  for (int mode = 0; mode < MODES; mode++) {
+    for (int var = FVar1; var <= FVar2; var++) {
+      filter_var_key(name, sizeof(name), mode, var, "low");
+      filters[mode][var].low  = filter_edge(getProperty(name), filters[mode][var].low);
+      filter_var_key(name, sizeof(name), mode, var, "high");
+      filters[mode][var].high = filter_edge(getProperty(name), filters[mode][var].high);
+    }
+  }
 }
-

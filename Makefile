@@ -903,10 +903,10 @@ tci_offline$(EXE): tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o
 #   make props-offline && ./props_offline --selftest
 .PHONY: props-offline
 props-offline: props_offline$(EXE)
-props_offline$(EXE): tools/props_offline.c property.o log.o
+props_offline$(EXE): tools/props_offline.c property.o log.o filter.o mode.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/props_offline.c property.o log.o \
-	  $(shell pkg-config --libs glib-2.0) -lm
+	  filter.o mode.o $(shell pkg-config --libs glib-2.0) -lm
 
 # A software HPSDR (Protocol-1) board: tools/metis_emu.c.  Not part of `make
 # check` -- it is a SERVER, not a self-test, and the thing it exists to drive is

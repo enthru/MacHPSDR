@@ -35,6 +35,8 @@
 #include <string.h>
 
 #include "property.h"
+#include "mode.h"
+#include "filter.h"
 
 static int fails = 0;
 static int checks = 0;
@@ -224,6 +226,71 @@ static void test_locale(void) {
          "and under C it reads the COMMA spelling as 1 (negative control)");
 }
 
+/* The Var1/Var2 filter edges are the one setting whose save and restore lived
+ * as a hand-written block PER MODE, and three modes (SPEC, DRM, WFM) were
+ * simply missing from both lists -- so a Var filter set in any of them was
+ * discarded at exit without a word. That is not a property-store defect at all,
+ * which is exactly why it survived: it is a caller forgetting an entry, and the
+ * only thing that catches it is asserting over every mode rather than over the
+ * ones someone remembered to write down.
+ *
+ * Each mode gets a distinct value so a save/restore that crosses two modes' keys
+ * shows up as a wrong number rather than an accidental pass. */
+static void test_filter_vars(void) {
+  printf("\n-- filter Var1/Var2 persist for EVERY mode --\n");
+  char *path = tmp_path("machpsdr_filter_selftest.props");
+
+  initProperties();
+  for (int m = 0; m < MODES; m++) {
+    filters[m][FVar1].low  = -1000 - m;
+    filters[m][FVar1].high =  1000 + m;
+    filters[m][FVar2].low  = -2000 - m;
+    filters[m][FVar2].high =  2000 + m;
+  }
+  filterSaveState();
+  saveProperties(path);
+
+  /* Wipe the tables to something no restore could produce by accident, then
+     bring them back from the file alone. */
+  for (int m = 0; m < MODES; m++) {
+    filters[m][FVar1].low = filters[m][FVar1].high = 0;
+    filters[m][FVar2].low = filters[m][FVar2].high = 0;
+  }
+  initProperties();
+  loadProperties(path);
+  filterRestoreState();
+
+  int lost = 0;
+  for (int m = 0; m < MODES; m++) {
+    if (filters[m][FVar1].low  != -1000 - m || filters[m][FVar1].high != 1000 + m ||
+        filters[m][FVar2].low  != -2000 - m || filters[m][FVar2].high != 2000 + m) {
+      printf("  FAIL  %s Var edges lost (Var1 %d..%d, Var2 %d..%d)\n", mode_string[m],
+             filters[m][FVar1].low, filters[m][FVar1].high,
+             filters[m][FVar2].low, filters[m][FVar2].high);
+      lost++;
+    }
+  }
+  checks++;
+  if (lost == 0) printf("  ok    all %d modes round-tripped\n", MODES);
+  else { fails++; printf("  FAIL  %d of %d modes lost their Var filters\n", lost, MODES); }
+
+  /* The key spelling is the contract with every props file already on disk. */
+  expect_str(getProperty("filter.lsb.var1.low"), "-1000",
+             "the key is still filter.<mode>.var<n>.<edge>, so old files load");
+
+  /* Nothing out of the file is trusted with a passband: these go straight to
+     RXASetPassband(). Negative control for the clamp. */
+  initProperties();
+  setProperty("filter.usb.var1.low", "-999999999");
+  setProperty("filter.usb.var1.high", "999999999");
+  filterRestoreState();
+  expect(filters[USB][FVar1].low  >= -192000 && filters[USB][FVar1].high <= 192000,
+         "an absurd persisted edge is clamped, not handed to the DSP");
+
+  g_remove(path);
+  g_free(path);
+}
+
 int main(int argc, char *argv[]) {
   int selftest = 0;
   for (int i = 1; i < argc; i++) {
@@ -239,6 +306,7 @@ int main(int argc, char *argv[]) {
   test_push_pop();
   test_retain();
   test_locale();
+  test_filter_vars();
 
   printf("\n%d checks, %d failures\n", checks, fails);
   return fails == 0 ? 0 : 1;

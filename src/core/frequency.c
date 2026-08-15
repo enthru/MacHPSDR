@@ -20,6 +20,23 @@
 //
 // frequency.c
 //
+// A US band plan: which sub-band a frequency falls in, its human-readable name,
+// and whether it is transmittable.
+//
+// NOTHING IN THE TREE CALLS ANY OF IT.  getBand(), getFrequencyInfo() and
+// canTransmit() have no callers outside this file, and the band readout the VFO
+// actually shows comes from band.c's much coarser table.  It is compiled and
+// linked into every build regardless.  Said here because it is not visible from
+// the code: the next reader should know the table is inert before spending time
+// on it, and should decide whether to wire it up or drop it rather than assume
+// it is load-bearing.
+//
+// THE TABLE MUST STAY SORTED BY minFrequency.  Both lookups walk it in order and
+// bail out the moment `frequency < info->minFrequency`, which is only valid on a
+// sorted table -- so an entry in the wrong place is not merely untidy, it is
+// unreachable, and so is nothing else.  "AM - Long Wave" (153..279 kHz) sat
+// after the 472/475 kHz entries and could therefore never be returned: every
+// frequency in it hit the early exit at 472000 and came back "Out of band".
 
 #include <gtk/gtk.h>
 #include "band.h"
@@ -35,9 +52,9 @@ struct frequency_info frequencyInfo[]=
         {75000LL, 75000LL, "HGB Time Signal",                   bandGen,FALSE}, 
         {77500LL, 77500LL, "DCF77 Time Signal",                   bandGen,FALSE}, 
         {135700LL, 137800LL, "136kHz CW",                         band2200,TRUE},
+        {153000LL, 279000LL, "AM - Long Wave",                    bandGen,FALSE}, 
         {472000LL, 474999LL, "472kHz CW",                         band630,TRUE},
         {475000LL, 479000LL, "472kHz CW/Data",                    band630,TRUE},
-        {153000LL, 279000LL, "AM - Long Wave",                    bandGen,FALSE}, 
         {530000LL, 1710000LL, "Broadcast AM Med Wave",            bandGen,FALSE},                                 
 
         {1800000LL, 1809999LL, "160M CW/Digital Modes",            band160, TRUE},
@@ -61,7 +78,7 @@ struct frequency_info frequencyInfo[]=
         {3590001LL, 3599999LL, "80M RTTY",                         band80, TRUE},
         {3600000LL, 3699999LL, "75M Extra SSB",                    band80, TRUE},
         {3700000LL, 3719999LL, "75M Ext/Adv SSB",                  band80, TRUE},
-        {3720000LL, 3723999LL, "75M Digital Voice",              band20, TRUE},
+        {3720000LL, 3723999LL, "75M Digital Voice",              band80, TRUE},
         {3724000LL, 3789999LL, "75M Ext/Adv SSB",                  band80, TRUE},
         {3790000LL, 3799999LL, "75M Ext/Adv DX Window",            band80, TRUE},
         {3800000LL, 3844999LL, "75M SSB",                          band80, TRUE},
