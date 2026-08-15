@@ -41,10 +41,15 @@ typedef struct _choice {
   int selection;
 } CHOICE;
 
-// S-meter peak-hold ("smax"), decayed once per frame in update_meter() and read
-// by the snapshot builder. Shared across meters as in the original (one meter
-// updates at a time); main-thread only.
-static double s_meter_smax=0;
+// The S-meter peak hold ("smax") lives on the RECEIVER, not here.
+//
+// It used to be a file-static shared by every meter, justified as "one meter
+// updates at a time" -- which is a statement about the thread, not about
+// ownership. Each receiver has its own meter widget and its own fps timer
+// calling update_meter(), so with two receivers open the two peak holds were
+// one variable: whichever was louder set the mark on BOTH faces, and a strong
+// signal on RX1 pinned RX0's peak to a level RX0 never heard. Same shape as the
+// fixed BPSK analyzer id -- a per-receiver reading kept in one global.
 
 static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,gpointer data);
 
@@ -149,12 +154,23 @@ void update_meter(RECEIVER *rx) {
     }
   }
 
-  // S-meter peak hold ("smax") with the same fps-scaled decay as before.
+  // S-meter peak hold, fps-scaled decay.
+  //
+  // The divisors are frame counts and BOTH are guarded. `rx->fps/2` is integer
+  // division, and the FPS slider offers 1 -- so at that setting the divisor was
+  // 0, and the moment the level equalled the held peak the subtraction became
+  // 0.0/0.0 = NaN. That is not a transient: every comparison against NaN is
+  // false, so `sl > smax` never re-seeded it and the peak hold stayed stuck for
+  // the rest of the session.
   double sl=level+127.0;
   if(sl<0) sl=0;
-  if(sl>s_meter_smax)  s_meter_smax=sl;
-  else if(sl>54)       s_meter_smax = s_meter_smax-((s_meter_smax-sl)/(3*rx->fps));
-  else                 s_meter_smax = s_meter_smax-((s_meter_smax-sl)/(rx->fps/2));
+  int fastf = 3*rx->fps;        // frames to decay from a strong signal
+  int slowf = rx->fps/2;        // ... and from a weak one
+  if(fastf < 1) fastf = 1;
+  if(slowf < 1) slowf = 1;
+  if(sl>rx->meter_smax) rx->meter_smax=sl;
+  else if(sl>54)        rx->meter_smax = rx->meter_smax-((rx->meter_smax-sl)/(double)fastf);
+  else                  rx->meter_smax = rx->meter_smax-((rx->meter_smax-sl)/(double)slowf);
 
   if(rx->meter!=NULL) gtk_widget_queue_draw(rx->meter);
 }
@@ -262,7 +278,7 @@ static void meter_build(GtkSnapshot *snapshot,int meter_width,int meter_height,g
 
   // S-number + optional +dB, from the peak-hold smax
   GdkRGBA tc=skin_rgba(TEXT_C,1.0);
-  double smax=s_meter_smax;
+  double smax=rx->meter_smax;
   i=(int)(smax/6); if(i>9) i=9;
   sprintf(sf,"S%d", i);
   lm_text(snapshot,widget, meter_width-250, meter_height-20, 36, &tc, sf, FALSE);

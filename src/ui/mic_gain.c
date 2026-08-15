@@ -67,6 +67,7 @@ static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer d
 static void mic_gain_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   int width=gtk_widget_get_width(radio->mic_gain)-10;
+  if(width<=0) return;                       // unallocated: no scale to invert
   double x=px-5.0;
   x=((x/(double)width)*60.0)-10.0;
   tx->mic_gain=x;
@@ -79,11 +80,10 @@ static void mic_gain_pressed_cb(GtkGestureClick *gesture,int n_press,double px,d
 // GTK4: GtkEventControllerScroll "scroll" handler (dy<0 = up).
 static gboolean mic_gain_scroll_cb(GtkEventControllerScroll *controller,double dx,double dy,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(dy<0) {
-    tx->mic_gain+=1.0;
-  } else {
-    tx->mic_gain-=1.0;
-  }
+  // scroll_notches(), not a raw dy -- see mic_level.c. n<0 is up.
+  int n=scroll_notches(controller,dy);
+  if(n==0) return TRUE;
+  tx->mic_gain-=1.0*(double)n;
   if(tx->mic_gain<-10.0) tx->mic_gain=-10.0;
   if(tx->mic_gain>50.0) tx->mic_gain=50.0;
   SetTXAPanelGain1(tx->channel,pow(10.0, tx->mic_gain / 20.0));

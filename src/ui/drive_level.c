@@ -77,6 +77,7 @@ static void drive_level_build(GtkSnapshot *snapshot,int width,int height,gpointe
 static void drive_level_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   int width=gtk_widget_get_width(radio->drive_level)-10;
+  if(width<=0) return;                       // unallocated: no scale to invert
   double x=px-5.0;
   x=(x/(double)width)*100.0;
   tx->drive=x;
@@ -95,11 +96,10 @@ static void drive_level_pressed_cb(GtkGestureClick *gesture,int n_press,double p
 // GTK4: GtkEventControllerScroll "scroll" handler (dy<0 = up).
 static gboolean drive_level_scroll_cb(GtkEventControllerScroll *controller,double dx,double dy,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
-  if(dy<0) {
-    tx->drive+=1.0;
-  } else {
-    tx->drive-=1.0;
-  }
+  // scroll_notches(), not a raw dy -- see mic_level.c. n<0 is up.
+  int n=scroll_notches(controller,dy);
+  if(n==0) return TRUE;
+  tx->drive-=1.0*(double)n;
   if(tx->drive<0.0) tx->drive=0.0;
   if(tx->drive>100.0) tx->drive=100.0;
   if(radio->discovered->protocol==PROTOCOL_2) {

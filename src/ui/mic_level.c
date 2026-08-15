@@ -56,7 +56,13 @@ static void mic_level_build(GtkSnapshot *snapshot,int width,int height,gpointer 
 
 // GTK4: GtkGestureClick "pressed" handler (x in widget coords).
 static void mic_level_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double py,gpointer data) {
-  int width=gtk_widget_get_width(radio->mic_level);
+  // The bar the builder draws is width-10 wide, starting at x=5, so the inverse
+  // has to divide by THAT and not by the whole widget -- it did not, and the
+  // marker therefore never landed under the pointer that placed it (at 170 px,
+  // clicking exactly on the marker moved it ~6% left). Its two sibling widgets,
+  // mic_gain and drive_level, already subtract the 10.
+  int width=gtk_widget_get_width(radio->mic_level)-10;
+  if(width<=0) return;                       // unallocated: no scale to invert
   radio->vox_threshold=(px-5.0)/(double)width;
   if(radio->vox_threshold<0.0) {
     radio->vox_threshold=0.0;
@@ -68,11 +74,12 @@ static void mic_level_pressed_cb(GtkGestureClick *gesture,int n_press,double px,
 
 // GTK4: GtkEventControllerScroll "scroll" handler (dy<0 = up).
 static gboolean mic_level_scroll_cb(GtkEventControllerScroll *controller,double dx,double dy,gpointer data) {
-  if(dy<0) {
-    radio->vox_threshold+=0.01;
-  } else {
-    radio->vox_threshold-=0.01;
-  }
+  // Through scroll_notches(), never a raw dy: a trackpad delivers a stream of
+  // small precise deltas per swipe, so testing the sign moved this control the
+  // whole way across on one flick. n<0 is up.
+  int n=scroll_notches(controller,dy);
+  if(n==0) return TRUE;
+  radio->vox_threshold-=0.01*(double)n;
   if(radio->vox_threshold<0.0) radio->vox_threshold=0.0;
   if(radio->vox_threshold>1.0) radio->vox_threshold=1.0;
   update_mic_level(radio);
