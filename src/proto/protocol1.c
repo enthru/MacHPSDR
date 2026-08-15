@@ -331,7 +331,7 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
     else if (bytes != EP6_BUFFER_SIZE)
     {
       log_error("protocol1_ep6_read: OzyBulkRead failed %d bytes\n",bytes);
-      perror("ozy_read(EP6 read failed");
+      net_perror("ozy_read(EP6 read failed");
       //exit(1);
     }
     else
@@ -360,34 +360,34 @@ static void start_protocol1_thread(void) {
     default:
       data_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
       if(data_socket<0) {
-        perror("protocol1: create socket failed for data_socket\n");
+        net_perror("protocol1: create socket failed for data_socket\n");
         exit(-1);
       }
 
       int optval = 1;
       if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval))<0) {
-        perror("data_socket: SO_REUSEADDR");
+        net_perror("data_socket: SO_REUSEADDR");
       }
 #ifdef SO_REUSEPORT   // no Winsock equivalent; SO_REUSEADDR above covers Windows
       if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval))<0) {
-        perror("data_socket: SO_REUSEPORT");
+        net_perror("data_socket: SO_REUSEPORT");
       }
 #endif
       // Receive timeout so recvfrom() returns periodically instead of blocking
       // forever: lets the thread notice running==FALSE (clean stop/reconnect)
       // and lets the disconnect watchdog see the data gap.
       if(net_set_rcvtimeo(data_socket, 1000)<0) {
-        perror("data_socket: SO_RCVTIMEO");
+        net_perror("data_socket: SO_RCVTIMEO");
       }
 #if !defined(__APPLE__) && !defined(_WIN32)   // SO_PRIORITY is Linux-only
       optval = 6;  
       if(setsockopt(data_socket, SOL_SOCKET, SO_PRIORITY, &optval, sizeof(optval))<0) {
-        perror("data_socket: SO_PRIORITY");
+        net_perror("data_socket: SO_PRIORITY");
       }      
 #endif
       // bind to the interface
       if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
-        perror("protocol1: bind socket failed for data_socket\n");
+        net_perror("protocol1: bind socket failed for data_socket\n");
         exit(-1);
       }
 
@@ -1631,6 +1631,10 @@ static int ozyusb_write(char* buffer,int length)
       i = ozy_write(EP2_OUT_ID,usb_output_buffer,EP6_BUFFER_SIZE);
       if(i != EP6_BUFFER_SIZE)
       {
+        // Left as perror deliberately: ozy_write is the USB path, so errno IS
+        // the right error source here. Every SOCKET failure in this file goes
+        // through net_perror() -- on Windows errno is untouched by Winsock, so a
+        // plain perror() on a socket prints an unrelated (usually zero) code.
         perror("protocol1: OzyWrite ozy failed");
       }
       break;
@@ -1725,7 +1729,7 @@ static void metis_start_stop(int command) {
 
 static void metis_send_buffer(unsigned char* buffer,int length) {
   if(sendto(data_socket,buffer,length,0,(struct sockaddr*)&data_addr,data_addr_length)!=length) {
-    perror("sendto socket failed for metis_send_data\n");
+    net_perror("sendto socket failed for metis_send_data\n");
   }
 }
 

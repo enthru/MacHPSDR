@@ -26,6 +26,17 @@
 #include <string.h>
 
 #include "band.h"
+// A transverter's edges and LO are typed in MHz with a decimal point, and this
+// dialog used sprintf("%f") to show them and atof() to read them back -- both of
+// which follow LC_NUMERIC. GTK calls setlocale(LC_ALL,"") at start-up, so on a
+// comma-decimal machine the entry displayed "144,500000" and an operator typing
+// the dot form got atof() stopping at the '.': 144.5 MHz silently became 144, a
+// 500 kHz error in the one number that has to agree with the hardware or the
+// radio is commanded to a nonsense IF with no clue why. Written with
+// g_ascii_formatd (always the dot, so it matches the props file), read with
+// propToDouble (which accepts either spelling) -- the pair property.c already
+// uses, and the rule CLAUDE.md states for every ASCII format this tree parses.
+#include "property.h"
 #include "bandstack.h"
 #include "bpsk.h"
 #include "mode.h"
@@ -70,11 +81,11 @@ void save_xvtr (void) {
     g_strlcpy(xvtr->title,t,sizeof(xvtr->title));
     if(strlen(t)!=0) {
       minf=gtk_editable_get_text(GTK_EDITABLE(min_frequency[i]));
-      xvtr->frequencyMin=(long long)(atof(minf)*1000000.0);
+      xvtr->frequencyMin=(long long)(propToDouble(minf)*1000000.0);
       maxf=gtk_editable_get_text(GTK_EDITABLE(max_frequency[i]));
-      xvtr->frequencyMax=(long long)(atof(maxf)*1000000.0);
+      xvtr->frequencyMax=(long long)(propToDouble(maxf)*1000000.0);
       lof=gtk_editable_get_text(GTK_EDITABLE(lo_frequency[i]));
-      xvtr->frequencyLO=(long long)(atof(lof)*1000000.0);
+      xvtr->frequencyLO=(long long)(propToDouble(lof)*1000000.0);
       loerr=gtk_editable_get_text(GTK_EDITABLE(lo_error[i]));
       xvtr->errorLO=atoll(loerr);
       xvtr->disablePA=gtk_check_button_get_active(GTK_CHECK_BUTTON(disable_pa[i]));
@@ -113,11 +124,11 @@ void xvtr_dialog_refresh_row(int band) {
   if(xvtr==NULL) return;
   char temp[32];
   gtk_editable_set_text(GTK_EDITABLE(title[band]),xvtr->title);
-  sprintf(temp,"%f",(double)xvtr->frequencyMin/1000000.0);
+  g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyMin/1000000.0);
   gtk_editable_set_text(GTK_EDITABLE(min_frequency[band]),temp);
-  sprintf(temp,"%f",(double)xvtr->frequencyMax/1000000.0);
+  g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyMax/1000000.0);
   gtk_editable_set_text(GTK_EDITABLE(max_frequency[band]),temp);
-  sprintf(temp,"%f",(double)xvtr->frequencyLO/1000000.0);
+  g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyLO/1000000.0);
   gtk_editable_set_text(GTK_EDITABLE(lo_frequency[band]),temp);
   sprintf(temp,"%lld",(long long)xvtr->errorLO);
   gtk_editable_set_text(GTK_EDITABLE(lo_error[band]),temp);
@@ -166,7 +177,7 @@ void min_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
   const char* minf=gtk_editable_get_text(GTK_EDITABLE(min_frequency[band]));
-  xvtr->frequencyMin=(long long)(atof(minf)*1000000.0);
+  xvtr->frequencyMin=(long long)(propToDouble(minf)*1000000.0);
   update_receiver(band);
 }
 
@@ -178,7 +189,7 @@ void max_frequency_cb(GtkEditable *editable,gpointer user_data) {
   // handler is on "changed" -- so typing the upper band edge overwrote the
   // LOWER one with each partial value and the maximum never reached the live
   // band at all.
-  xvtr->frequencyMax=(long long)(atof(maxf)*1000000.0);
+  xvtr->frequencyMax=(long long)(propToDouble(maxf)*1000000.0);
   update_receiver(band);
 }
 
@@ -186,7 +197,7 @@ void lo_frequency_cb(GtkEditable *editable,gpointer user_data) {
   int band=GPOINTER_TO_INT(user_data);
   BAND *xvtr=band_get_band(band);
   const char* lof=gtk_editable_get_text(GTK_EDITABLE(lo_frequency[band]));
-  xvtr->frequencyLO=(long long)(atof(lof)*1000000.0);
+  xvtr->frequencyLO=(long long)(propToDouble(lof)*1000000.0);
   update_receiver(band);
 }
 
@@ -313,21 +324,21 @@ GtkWidget *create_xvtr_dialog(RADIO *radio) {
 
     min_frequency[i]=gtk_entry_new();
     gtk_editable_set_width_chars(GTK_EDITABLE(min_frequency[i]),7);
-    sprintf(temp,"%f",(double)xvtr->frequencyMin/1000000.0);
+    g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyMin/1000000.0);
     gtk_editable_set_text(GTK_EDITABLE(min_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),min_frequency[i],col++,row,1,1);
     g_signal_connect(min_frequency[i],"changed",G_CALLBACK(min_frequency_cb),GINT_TO_POINTER(i));
 
     max_frequency[i]=gtk_entry_new();
     gtk_editable_set_width_chars(GTK_EDITABLE(max_frequency[i]),7);
-    sprintf(temp,"%f",(double)xvtr->frequencyMax/1000000.0);
+    g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyMax/1000000.0);
     gtk_editable_set_text(GTK_EDITABLE(max_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),max_frequency[i],col++,row,1,1);
     g_signal_connect(max_frequency[i],"changed",G_CALLBACK(max_frequency_cb),GINT_TO_POINTER(i));
 
     lo_frequency[i]=gtk_entry_new();
     gtk_editable_set_width_chars(GTK_EDITABLE(lo_frequency[i]),7);
-    sprintf(temp,"%f",(double)xvtr->frequencyLO/1000000.0);
+    g_ascii_formatd(temp,sizeof(temp),"%f",(double)xvtr->frequencyLO/1000000.0);
     gtk_editable_set_text(GTK_EDITABLE(lo_frequency[i]),temp);
     gtk_grid_attach(GTK_GRID(grid),lo_frequency[i],col++,row,1,1);
     g_signal_connect(lo_frequency[i],"changed",G_CALLBACK(lo_frequency_cb),GINT_TO_POINTER(i));

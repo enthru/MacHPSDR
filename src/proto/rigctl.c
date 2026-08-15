@@ -145,7 +145,7 @@ void disable_rigctl(RECEIVER *rx) {
   log_info("%s: server_socket=%d\n",__FUNCTION__,rigctl->server_socket);
   rigctl->socket_running=FALSE;
   if(setsockopt(rigctl->socket_fd,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
-    perror("setsockopt(...,SO_LINGER,...) failed for client");
+    net_perror("setsockopt(...,SO_LINGER,...) failed for client");
   }
   log_info("closing client socket: %d\n",rigctl->socket_fd);
   closesocket(rigctl->socket_fd);
@@ -153,7 +153,7 @@ void disable_rigctl(RECEIVER *rx) {
 
   if(rigctl->server_socket>=0) {
     if(setsockopt(rigctl->server_socket,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
-      perror("setsockopt(...,SO_LINGER,...) failed for server");
+      net_perror("setsockopt(...,SO_LINGER,...) failed for server");
     }
     closesocket(rigctl->server_socket);
     rigctl->server_socket=-1;
@@ -510,7 +510,7 @@ static gpointer rigctl_server(gpointer data) {
 
   rigctl->server_socket=socket(AF_INET,SOCK_STREAM,0);
   if(rigctl->server_socket<0) {
-    perror("rigctl_server: listen socket failed");
+    net_perror("rigctl_server: listen socket failed");
     return NULL;
   }
 
@@ -526,7 +526,7 @@ static gpointer rigctl_server(gpointer data) {
   rigctl->server_address.sin_addr.s_addr=INADDR_ANY;
   rigctl->server_address.sin_port=htons(rigctl->listening_port);
   if(bind(rigctl->server_socket,(struct sockaddr*)&rigctl->server_address,sizeof(rigctl->server_address))<0) {
-    perror("rigctl_server: listen socket bind failed");
+    net_perror("rigctl_server: listen socket bind failed");
     closesocket(rigctl->server_socket);
     return NULL;
   }
@@ -540,7 +540,7 @@ static gpointer rigctl_server(gpointer data) {
   rigctl->socket_listening=TRUE;
   while(rigctl->socket_listening) {
     if(listen(rigctl->server_socket,1)<0) {
-      perror("rigctl_server: listen failed");
+      net_perror("rigctl_server: listen failed");
       closesocket(server_socket);
       return NULL;
     }
@@ -548,7 +548,7 @@ static gpointer rigctl_server(gpointer data) {
 log_info("%s: accept connection\n",__FUNCTION__);
     rigctl->socket_fd=accept(rigctl->server_socket,(struct sockaddr*)&rigctl->address,&rigctl->address_length);
     if(rigctl->socket_fd<0) {
-      perror("rigctl_server: client accept failed");
+      net_perror("rigctl_server: client accept failed");
       continue;
     }
 
@@ -558,7 +558,7 @@ log_info("%s: accept connection\n",__FUNCTION__);
 #else
     if(setsockopt(rigctl->socket_fd, SOL_TCP, TCP_NODELAY, (void *)&on, sizeof(on))<0) {
 #endif
-      perror("TCP_NODELAY");
+      net_perror("TCP_NODELAY");
     }
 
     // no longer a separate thread as only one client per receiver
@@ -569,7 +569,7 @@ log_info("%s: accept connection\n",__FUNCTION__);
     linger.l_onoff = 1;
     linger.l_linger = 0;
     if(setsockopt(rigctl->socket_fd,SOL_SOCKET,SO_LINGER,(const char *)&linger,sizeof(linger))==-1) {
-      perror("setsockopt(...,SO_LINGER,...) failed for client");
+      net_perror("setsockopt(...,SO_LINGER,...) failed for client");
     }
     closesocket(rigctl->socket_fd);
   }
@@ -618,7 +618,7 @@ static void rigctl_client(RECEIVER *rx) {
   g_free(command);
   rx->cat_client_connected = FALSE;
   
-perror("recv");
+net_perror("recv");
 log_info("%s: running=%d numbytes=%d\n",__FUNCTION__,rigctl->socket_running,numbytes);
 }
 
