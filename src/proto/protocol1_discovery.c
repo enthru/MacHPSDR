@@ -38,19 +38,31 @@ static int discovery_socket;
 static GThread *discover_thread_id;
 static gpointer discover_receive_thread(gpointer data);
 
+// One interface's discovery pass. Every failure here is that interface's alone:
+// this runs once per adapter and a machine has several that cannot carry a
+// broadcast (loopback, disconnected NICs, the virtual adapters VPN and VM
+// software leave behind), so a failure SKIPS the interface -- it does not
+// exit(-1) and take the application down during start-up, which is what each of
+// these used to do. That argument was already made in this file for the sendto
+// below; it is the same argument for the socket, the bind and the sockopt.
 static void discover(struct ifaddrs* iface) {
     int rc;
     struct sockaddr_in *sa;
     struct sockaddr_in *mask;
 
-    strcpy(interface_name,iface->ifa_name);
+    // NOT strcpy: on Windows ifa_name is the adapter's FriendlyName out of
+    // net_compat.c's getifaddrs() shim, a 256-byte buffer holding a name the
+    // operator can rename at will and which several virtual adapters exceed 63
+    // characters of by default. POSIX caps it at IFNAMSIZ (16) and cannot
+    // overflow; Windows is the platform that has never run on real hardware.
+    g_strlcpy(interface_name,iface->ifa_name,sizeof(interface_name));
     log_info("discover: looking for HPSDR devices on %s\n", interface_name);
 
     // send a broadcast to locate hpsdr boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(discovery_socket<0) {
         net_perror("discover: create socket failed for discovery_socket");
-        exit(-1);
+        return;
     }
 
     int optval = 1;
@@ -68,7 +80,8 @@ static void discover(struct ifaddrs* iface) {
     interface_addr.sin_port = htons(0); // system assigned port
     if(bind(discovery_socket,(struct sockaddr*)&interface_addr,sizeof(interface_addr))<0) {
         net_perror("discover: bind socket failed for discovery_socket");
-        exit(-1);
+        closesocket(discovery_socket);
+        return;
     }
 
     log_info("discover: bound to %s\n",interface_name);
@@ -78,7 +91,8 @@ static void discover(struct ifaddrs* iface) {
     rc=setsockopt(discovery_socket, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
     if(rc != 0) {
         log_info("discover: cannot set SO_BROADCAST: rc=%d\n", rc);
-        exit(-1);
+        closesocket(discovery_socket);
+        return;
     }
 
     // setup to address
@@ -93,7 +107,8 @@ static void discover(struct ifaddrs* iface) {
     if( ! discover_thread_id )
     {
         log_info("g_thread_new failed on discover_receive_thread\n");
-        exit( -1 );
+        closesocket(discovery_socket);
+        return;
     }
 
 
@@ -110,18 +125,16 @@ static void discover(struct ifaddrs* iface) {
 
     if(sendto(discovery_socket,buffer,63,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
         net_perror("discover: sendto socket failed for discovery_socket");
-#ifndef _WIN32
-        if(errno!=EHOSTUNREACH && errno!=EADDRNOTAVAIL) {
-            exit(-1);
-        }
-#endif
-        // On Windows a per-adapter broadcast failure is NOT fatal, whatever the
-        // code.  This runs once per adapter, and a typical machine has several
-        // that cannot carry a broadcast: loopback (observed: WSAEINVAL 10022,
-        // with the socket bound to 127.0.0.1), disconnected NICs, and the
-        // virtual adapters VPN and VM software leave behind.  Enumerating the
-        // tolerable codes is guesswork; the alternative was exit(-1) killing the
-        // application during startup because one adapter out of several said no.
+        // A per-adapter broadcast failure is NOT fatal, on any platform and
+        // whatever the code.  This runs once per adapter and a typical machine
+        // has several that cannot carry a broadcast: loopback (observed on
+        // Windows: WSAEINVAL 10022, with the socket bound to 127.0.0.1),
+        // disconnected NICs, and the virtual adapters VPN and VM software leave
+        // behind -- and on POSIX a firewall answers EPERM.  Enumerating the
+        // tolerable codes is guesswork, which is what the errno test here used
+        // to be: it tolerated two codes and called exit(-1) on the rest, so one
+        // adapter out of several saying no killed the application during
+        // start-up.  Windows already tolerated everything; both do now.
         //
         // Deliberately NOT an early return: the receive thread was started
         // above, so falling through to the join below is what reaps it — and it
@@ -161,6 +174,15 @@ log_info("discover_receive_thread\n");
             break;
         }
         log_info("discovered: received %d bytes\n",bytes_read);
+        // A count off the wire is not a bound, and neither is the absence of
+        // one: this parse reaches buffer[0x15] (the Hermes-Lite receiver count),
+        // so anything shorter would have it reading whatever the last, longer
+        // datagram left on the stack -- and inventing a board type, a firmware
+        // version and a MAC out of it. The port is open to the whole LAN and a
+        // three-byte "EF FE 02" is enough to reach here. A real reply is 60
+        // bytes; the bound is tied to the highest index this code touches
+        // rather than to a spec number no board here can confirm.
+        if(bytes_read < 0x16) continue;
         if ((buffer[0] & 0xFF) == 0xEF && (buffer[1] & 0xFF) == 0xFE) {
             int status = buffer[2] & 0xFF;
             if (status == 2 || status == 3) {
@@ -297,7 +319,12 @@ void protocol1_discovery(void) {
     struct ifaddrs *addrs,*ifa;
 
 log_info("protocol1_discovery\n");
-    getifaddrs(&addrs);
+    // addrs is left UNSET when this fails, so the walk below would run off an
+    // uninitialised pointer rather than simply finding nothing.
+    if(getifaddrs(&addrs)!=0 || addrs==NULL) {
+        log_error("protocol1_discovery: getifaddrs failed, no interfaces to scan\n");
+        return;
+    }
     ifa = addrs;
     while (ifa) {
         // NB: runs in a worker thread (see discovery.c) — do not pump the GTK

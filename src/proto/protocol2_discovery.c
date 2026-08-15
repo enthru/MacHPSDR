@@ -58,7 +58,11 @@ void print_device(int i) {
 
 void protocol2_discovery(void) {
     struct ifaddrs *addrs,*ifa;
-    getifaddrs(&addrs);
+    // Unset on failure -- see protocol1_discovery.c.
+    if(getifaddrs(&addrs)!=0 || addrs==NULL) {
+        log_error("protocol2_discovery: getifaddrs failed, no interfaces to scan\n");
+        return;
+    }
     ifa = addrs;
     while (ifa) {
         // NB: runs in a worker thread (see discovery.c) — do not pump the GTK
@@ -90,14 +94,17 @@ void protocol2_discover(struct ifaddrs* iface) {
     char addr[16];
     char net_mask[16];
 
-    strcpy(interface_name,iface->ifa_name);
+    // NOT strcpy: see protocol1_discovery.c -- on Windows ifa_name is the
+    // adapter's FriendlyName, a 256-byte buffer the operator can rename, and
+    // this is 64.
+    g_strlcpy(interface_name,iface->ifa_name,sizeof(interface_name));
     log_info("protocol2_discover: looking for HPSDR devices on %s\n",interface_name);
 
     // send a broadcast to locate metis boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(discovery_socket<0) {
         net_perror("protocol2_discover: create socket failed for discovery_socket");
-        exit(-1);
+        return;
     }
 
     int optval = 1;
@@ -117,7 +124,8 @@ void protocol2_discover(struct ifaddrs* iface) {
     interface_addr.sin_port = htons(0);
     if(bind(discovery_socket,(struct sockaddr*)&interface_addr,sizeof(interface_addr))<0) {
         net_perror("protocol2_discover: bind socket failed for discovery_socket");
-        exit(-1);
+        closesocket(discovery_socket);
+        return;
     }
 
     strcpy(addr,inet_ntoa(sa->sin_addr));
@@ -130,7 +138,8 @@ void protocol2_discover(struct ifaddrs* iface) {
     rc=setsockopt(discovery_socket, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
     if(rc != 0) {
         log_info("protocol2_discover: cannot set SO_BROADCAST: rc=%d\n", rc);
-        exit(-1);
+        closesocket(discovery_socket);
+        return;
     }
 
     // setup to address
@@ -144,7 +153,8 @@ void protocol2_discover(struct ifaddrs* iface) {
     if( ! discover_thread_id )
     {
         log_info("g_thread_new failed on protocol2_discover_receive_thread\n");
-        exit( -1 );
+        closesocket(discovery_socket);
+        return;
     }
     log_info("protocol2_disovery: thread_id=%p\n",discover_thread_id);
 
@@ -163,14 +173,9 @@ void protocol2_discover(struct ifaddrs* iface) {
 
     if(sendto(discovery_socket,buffer,60,0,(struct sockaddr*)&to_addr,sizeof(to_addr))<0) {
         net_perror("protocol2_discover: sendto socket failed for discovery_socket");
-#ifndef _WIN32
-        if(errno!=EHOSTUNREACH) {
-            exit(-1);
-        }
-#endif
-        // See protocol1_discovery.c: on Windows, tolerate it and fall through to
-        // the join — never kill the app, and never leave the receive thread
-        // behind by returning early.
+        // See protocol1_discovery.c: tolerate it on every platform and fall
+        // through to the join — never kill the app over one adapter, and never
+        // leave the receive thread behind by returning early.
     }
 
     // wait for receive thread to complete
@@ -208,6 +213,12 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
                 break;
             }
         } else {
+        // The 1444 test above is the "already in use" case, NOT a parse gate:
+        // every other length falls in here, including a 4-byte datagram. This
+        // parse reaches buffer[20], so it needs its own minimum or it reads
+        // whatever the previous, longer datagram left on the stack. See the
+        // same bound in protocol1_discovery.c.
+        if(bytes_read < 21) continue;
         if(buffer[0]==0 && buffer[1]==0 && buffer[2]==0 && buffer[3]==0) {
             int status = buffer[4] & 0xFF;
             if (status == 2 || status == 3) {
