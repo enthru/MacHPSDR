@@ -83,6 +83,8 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <locale>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -92,12 +94,27 @@ static const char *DRIVER_KEY = "machpsdrnull";
 
 // ---- knobs -----------------------------------------------------------------
 
+// std::atof honours the process locale, and this module is dlopen'd INTO an app
+// that has called setlocale(LC_ALL,"") -- so on a comma-decimal machine a knob
+// written the way every other knob in this tree is written ("0.9999986979")
+// parses as 0 and the fixture silently runs unconfigured.  That is worse than a
+// wrong number: it is a test that reports PASS while exercising nothing, which
+// is exactly what happened the first time the rate-substitution knob was used
+// below 1.  Parse in the C locale, always, like the property store does.
+static double parse_c(const char *s) {
+  std::istringstream is(s);
+  is.imbue(std::locale::classic());
+  double v = 0.0;
+  is >> v;
+  return is.fail() ? 0.0 : v;
+}
+
 static double env_or(const SoapySDR::Kwargs &args, const char *key,
                      const char *env, double dflt) {
   const auto it = args.find(key);
-  if (it != args.end() && !it->second.empty()) return std::atof(it->second.c_str());
+  if (it != args.end() && !it->second.empty()) return parse_c(it->second.c_str());
   const char *e = std::getenv(env);
-  if (e != nullptr && *e != '\0') return std::atof(e);
+  if (e != nullptr && *e != '\0') return parse_c(e);
   return dflt;
 }
 

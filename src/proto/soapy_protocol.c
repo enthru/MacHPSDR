@@ -173,7 +173,33 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
     destroy_resample(rx->resampler);
     rx->resampler=NULL;
   }
-  const int in_rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
+  int in_rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
+
+  /* A device that lands a hair off the rate it was asked for is not substituting
+     -- it is the same rate with a rounding error, and treating the two as
+     different numbers is catastrophic.  A Pluto asked for 2304000 reports
+     2303999: one hertz, 0.43 ppm -- and gcd(2303999,192000) is 1, so
+     create_resample() interpolates by 192000 and stops resampling in any
+     meaningful sense.  Measured: a single 10 kHz tone comes out as TWO peaks
+     0.26 dB apart, at 8.80 and 11.20 kHz, and at the 768k span at 5.20 and
+     14.80 kHz.  That is what "duplicated signals everywhere" looks like from
+     the operator's chair.  So snap to the nearest exact integer ratio when the
+     reported rate is within 100 ppm of one: the timebase error that leaves is
+     three orders of magnitude below the ppm correction the operator already
+     dials by hand, while the ratio becomes exact.  Integer arithmetic only --
+     this is a rounding fix and has no business doing its own rounding. */
+  const int mult=(in_rate+rx->sample_rate/2)/rx->sample_rate;
+  if(mult>=1) {
+    const long long snapped=(long long)mult*(long long)rx->sample_rate;
+    const long long diff=(snapped>in_rate)?snapped-in_rate:(long long)in_rate-snapped;
+    if(diff!=0 && diff*10000LL<(long long)in_rate) {     // within 100 ppm
+      log_info("%s: stream reports %d Hz; snapping to %lld Hz -- exactly %dx the receiver's %d "
+               "(%lld Hz out, %.2f ppm), because an inexact ratio is not resampled but split\n",
+               __FUNCTION__,in_rate,snapped,mult,rx->sample_rate,diff,
+               1.0e6*(double)diff/(double)in_rate);
+      in_rate=(int)snapped;
+    }
+  }
 
   /* Size the output for the WORST case rather than for the ratio we expect: a
      device reporting a rate BELOW rx->sample_rate makes this an upsampler, and
