@@ -26,6 +26,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "vox.h"
 #include "main.h"
 #include "protocol1.h"
 #include "audio.h"
@@ -1045,7 +1046,7 @@ static int midi_action(void *data) {
 	case VOX: // only key supported
 	    // toggle VOX
 	    if (type == MIDI_KEY) {
-	      radio->vox_enabled = !radio->vox_enabled;
+	      vox_set_enabled(radio, !radio->vox_enabled);
 	      update_radio(radio);
 	    }
 	    break;

@@ -38,17 +38,18 @@
 #include "radio.h"
 #include "main.h"
 
-static GtkWidget *dialog;
-
-int timeout_cb(gpointer data) {
-  gtk_window_destroy(GTK_WINDOW(dialog));
-  exit(1);
-}
-
+// This logs and returns; it does not put up a dialog and does not terminate.
+// It used to build a second "... will terminate in 5 seconds" message (naming
+// piHPSDR, which this is not) into the same buffer and then drop it on the
+// floor, next to a timeout_cb that destroyed a `dialog` nothing ever assigned --
+// gtk_window_destroy(NULL) on a path that was already unreachable. Both are
+// gone; what remains is the one thing the single caller (protocol1.c, on a
+// failed recvfrom) actually wanted.
+//
+// It also formats straight into the log rather than through a fixed 1024-byte
+// stack buffer filled with two caller-supplied %s -- the shape ASan caught in
+// radio_restore_state, and a trap for the next caller even though today's one
+// passes a literal and strerror().
 void error_handler(char *text,char *err) {
-  char message[1024];
-  sprintf(message,"ERROR: %s: %s\n",text,err);
-  log_info("%s\n",message);
-
-  sprintf(message,"ERROR\n\n    %s:\n\n    %s\n\npiHPSDR will terminate in 5 seconds",text,err);
+  log_error("ERROR: %s: %s\n", text ? text : "(null)", err ? err : "(null)");
 }

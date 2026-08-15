@@ -27,7 +27,21 @@
 
 #define TRANSMITTER_CHANNEL 8
 #define WIDEBAND_CHANNEL 9
-#define BPSK_CHANNEL 10
+
+/* WDSP analyzer id for a receiver's BPSK LO-error helper: BASE + rx->channel,
+ * so 24..31 for the eight receivers.
+ *
+ * It used to be one fixed id (10) for every receiver, which does not match the
+ * object: a BPSK carries the band it is correcting, and each receiver has its
+ * own. Two receivers with it enabled therefore aliased one analyzer -- both fed
+ * Spectrum0 into it from different antennas, and closing either destroyed it
+ * under the other. ASan caught exactly that, as a heap-use-after-free in
+ * GetPixels off the surviving receiver's timer, on the first close.
+ *
+ * 24 keeps clear of the receivers (0..7), the transmitter (8), the wideband
+ * window (9) and the sub-receiver WDSP channels (SUBRX_BASE_CHANNEL, 16..23);
+ * the analyzer table is dMAX_DISPLAYS = 64 entries. */
+#define BPSK_BASE_CHANNEL 24
 
 #include "diversity_mixer.h"
 #include "hl2.h"

@@ -213,9 +213,27 @@ log_info("create_bpsk: channel=%d\n",channel);
   return bpsk;
 }
 
+// The mirror of create_bpsk, in the reverse order.
+//
+// DestroyAnalyzer is the load-bearing line. The analyzer is keyed by the integer
+// channel, so leaving it alive meant the next create_bpsk ran XCreateAnalyzer
+// over the top of the old one on the same id -- the disease receiver_destroy and
+// destroy_diversity_mixer were each written to cure, and reachable the same way:
+// by clicking the control off and on. Each cycle stranded a 262144-sample
+// analyzer and its dispatcher thread.
+//
+// It also requires the id to be the caller's alone (BPSK_BASE_CHANNEL + the
+// receiver's channel, see radio.h): while every BPSK shared one fixed id, this
+// line freed an analyzer another receiver was still reading.
 void destroy_bpsk(BPSK *bpsk) {
 log_info("destroy_bpsk\n");
-  g_source_remove(bpsk->update_timer_id);
+  if (bpsk == NULL) return;
+  if (bpsk->update_timer_id != 0) {
+    g_source_remove(bpsk->update_timer_id);
+    bpsk->update_timer_id = 0;
+  }
+  DestroyAnalyzer(bpsk->channel);
+  g_mutex_clear(&bpsk->mutex);
   g_free(bpsk->input_buffer);
   g_free(bpsk->pixel_samples);
   g_free(bpsk);

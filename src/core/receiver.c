@@ -3287,7 +3287,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   }
 
   if(rx->bpsk_enable) {
-    rx->bpsk=create_bpsk(BPSK_CHANNEL,rx->band_a);
+    rx->bpsk=create_bpsk(BPSK_BASE_CHANNEL+rx->channel,rx->band_a);
   }
 
   // Sub-RX was persisted on: its WDSP sub-channel needs the main channel open,

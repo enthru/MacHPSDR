@@ -17,8 +17,20 @@
 *
 */
 
+/* Include AFTER radio.h: everything here takes a RADIO *. */
+#ifndef VOX_H
+#define VOX_H
+
 extern void update_vox(RADIO *r);
 extern void vox_cancel(RADIO *r);
 
+/* The one setter for the VOX enable -- UI button, CAT (VX) and MIDI must all go
+ * through it. Turning VOX off while it is holding the key has to release it:
+ * isTransmitting() ORs in radio->vox, so clearing only vox_enabled strands the
+ * transmitter keyed. GTK thread. */
+extern void vox_set_enabled(RADIO *r, gboolean enabled);
+
 extern void update_cwvox(RADIO *r);
 extern void set_cwvox(RADIO *r, gboolean cw_key_state);
+
+#endif /* VOX_H */

@@ -43,6 +43,7 @@
 #include "dac.h"
 #include "diversity_mixer.h"
 #include "radio.h"
+#include "vox.h"
 #include "recorder.h"
 #include "tx_panadapter.h"
 #include "protocol1.h"
@@ -745,7 +746,7 @@ log_info("mox_cb: mox=%d\n",r->mox);
 
 static void vox_cb(GtkToggleButton *widget,gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->vox_enabled=!r->vox_enabled;
+  vox_set_enabled(r,!r->vox_enabled);   // releases the key if VOX was holding it
   update_radio(r);
 }
 

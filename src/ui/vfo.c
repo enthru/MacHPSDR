@@ -899,16 +899,31 @@ static void anf_b_cb(GtkToggleButton *widget,gpointer user_data) {
   update_noise(rx);
 }
 
+// add_iq_samples() feeds rx->bpsk from the receive thread, which holds
+// delete_rx_mutex around every block it delivers -- so the GTK thread has to
+// take the same lock to swap the object out from under it. Without it the
+// unchecked window is real: the feed tests `rx->bpsk != NULL` and then
+// dereferences it, and the old code freed the object BEFORE clearing the
+// pointer, so a receive thread already past the test wrote into freed memory.
 static void bpsk_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
-  rx->bpsk_enable=gtk_toggle_button_get_active(widget);
-  if(rx->bpsk_enable) {
-    rx->bpsk=create_bpsk(BPSK_CHANNEL,rx->band_a);
+  gboolean want=gtk_toggle_button_get_active(widget);
+  if(want) {
+    BPSK *b=create_bpsk(BPSK_BASE_CHANNEL+rx->channel,rx->band_a);
+    g_mutex_lock(&radio->delete_rx_mutex);
+    rx->bpsk=b;
     rx->bpsk_enable=TRUE;
+    g_mutex_unlock(&radio->delete_rx_mutex);
   } else {
-    destroy_bpsk(rx->bpsk);
-    rx->bpsk=NULL;
+    BPSK *b;
+    g_mutex_lock(&radio->delete_rx_mutex);
     rx->bpsk_enable=FALSE;
+    b=rx->bpsk;
+    rx->bpsk=NULL;
+    g_mutex_unlock(&radio->delete_rx_mutex);
+    // Freed outside the lock: destroy_bpsk joins the analyzer's dispatcher
+    // thread, and the feed can no longer reach the object.
+    if(b!=NULL) destroy_bpsk(b);
   }
 }
 

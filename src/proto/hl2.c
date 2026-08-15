@@ -315,11 +315,15 @@ void HL2i2cProcessReturnValue(HERMESLITE2 *hl2, unsigned char c0,
   //g_print("c0 %x \n", c0);  
   int raddr = (c0 >> 1) & 0xFF;
   //g_print("raddr %x \n", raddr);
+  // An unsigned char promotes to int, so `c1 << 24` overflows a signed int for
+  // any c1 >= 0x80 -- undefined behaviour on half the values the radio can send
+  // back. Same shape as the (signed char)b << 16 in the I/Q unpacking of both
+  // protocols. Shift in an unsigned long instead, where the width is defined.
   long rdata = 0;
-  rdata |= (c1 << 24) & 0xFFFFFFFF;
-  rdata |= (c2 << 16) & 0xFFFFFFFF;
-  rdata |= (c3 << 8) & 0xFFFFFFFF;
-  rdata |= (c4) & 0xFFFFFFFF;
+  rdata |= (long)(((unsigned long)c1 << 24) & 0xFFFFFFFFUL);
+  rdata |= (long)(((unsigned long)c2 << 16) & 0xFFFFFFFFUL);
+  rdata |= (long)(((unsigned long)c3 <<  8) & 0xFFFFFFFFUL);
+  rdata |= (long)(((unsigned long)c4      ) & 0xFFFFFFFFUL);
   
   //g_print("Read i2c %x %6lx\n", raddr, rdata);  
   
@@ -329,13 +333,31 @@ void HL2i2cProcessReturnValue(HERMESLITE2 *hl2, unsigned char c0,
 
 long long HL2cl2CalculateNearest(HERMESLITE2 *hl2, long long lo_freq) {
   log_info("HL2: Calculate nearest LO %lld \n", lo_freq);
-  // VCO = 38.4*68 = 2611.2 MHz 
+  // VCO = 38.4*68 = 2611.2 MHz
   //unsigned int divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
-  int divisor = (2611200000 / (double)lo_freq) / 2;
-  log_info("----- Use divisor CL2 %i \n", divisor);  
+  //
+  // The divisor is the operator's transverter LO run through a division, and it
+  // is then DIVIDED BY -- so it has to be checked, not assumed. Above
+  // VCO/2 = 1305.6 MHz it truncates to 0 and the next line is an integer divide
+  // by zero, i.e. SIGFPE: typing any 13 cm / 9 cm / 3 cm transverter LO into the
+  // XVTR page killed the application. A zero or negative LO is worse still --
+  // the double division gives inf, and the cast of that to int is undefined.
+  // Neither can be served by an integer divisor, so say so and change nothing.
+  if (lo_freq <= 0) {
+    log_error("HL2: CL2 integer mode needs a positive LO (got %lld)\n", lo_freq);
+    return lo_freq;
+  }
+  int divisor = (int)((2611200000.0 / (double)lo_freq) / 2.0);
+  log_info("----- Use divisor CL2 %i \n", divisor);
 
-  long long new_lo = (2611200000 / divisor) / 2;
-  
+  if (divisor < 1) {
+    log_error("HL2: LO %lld is above the CL2 VCO half-rate (1305.6 MHz); "
+              "no integer divisor exists, leaving it unchanged\n", lo_freq);
+    return lo_freq;
+  }
+
+  long long new_lo = (2611200000LL / divisor) / 2;
+
   log_info("HL2: New LO %lld\n", new_lo);
   return new_lo;
 }
@@ -345,18 +367,27 @@ void HL2cl2Enable(HERMESLITE2 *hl2) {
   log_info("HL2: Enable CL2 %lld \n", hl2->clock2_freq);
   // VCO = 38.4*68 = 2611.2 MHz 
   
-  unsigned int div = 1;
-  if (hl2->cl2_integer_mode) {
-    unsigned int divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
-    div = (unsigned int)(divisor * pow(2, 24) + 0.1);
-    log_info("-----Divisor CL2 %i \n", divisor);  
-  } 
-  else {
-    double divisor = (2611200000 / (double)hl2->clock2_freq) / 2;
-    div = (unsigned int)(divisor * pow(2, 24) + 0.1);
-    log_info("-----Divisor CL2 %f \n", divisor);  
+  // The divider register is 8 integer bits and 24 fractional, so the divisor has
+  // to land in [1, 255] -- which is an LO between ~5.12 MHz and 1305.6 MHz. The
+  // bound is not decoration: clock2_freq comes from the operator's transverter
+  // LO, and outside that window `divisor * 2^24` does not fit an unsigned int,
+  // where the cast is undefined rather than merely wrong. Programming a wrapped
+  // divider into a clock generator is worse than programming nothing.
+  if (hl2->clock2_freq <= 0) {
+    log_error("HL2: CL2 enable with no LO set (%lld) — not programming\n", hl2->clock2_freq);
+    return;
   }
-  
+  double divisor_f = (2611200000.0 / (double)hl2->clock2_freq) / 2.0;
+  if (hl2->cl2_integer_mode) divisor_f = (double)(unsigned int)divisor_f;
+  if (divisor_f < 1.0 || divisor_f > 255.0) {
+    log_error("HL2: LO %lld needs a CL2 divisor of %.3f, outside the 1..255 the "
+              "register holds — not programming\n", hl2->clock2_freq, divisor_f);
+    return;
+  }
+  log_info("-----Divisor CL2 %f \n", divisor_f);
+  unsigned int div = (unsigned int)(divisor_f * pow(2, 24) + 0.1);
+
+
   unsigned int addr = ADDR_VERSA5 >> 1;
   unsigned int intgr = div >> 24;
   unsigned int frac = (div & 0xFFFFFF) << 2;

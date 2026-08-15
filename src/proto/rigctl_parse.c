@@ -31,6 +31,7 @@
 #include "receiver.h"
 #include "wideband.h"
 #include "radio.h"
+#include "vox.h"
 #include "channel.h"
 #include "mode.h"
 #include "filter.h"
@@ -3375,13 +3376,25 @@ int parse_cmd(void *data) {
           break;
         case 'G': //VG
           // set/read VOX gain (0..9)
+          //
+          // The two halves must invert each other, and used not to: the read
+          // scaled by 90 (0.0..1.0 -> "VG090") while the write divided by 9, so
+          // reading VG and writing it straight back turned a threshold of 1.0
+          // into 10.0 -- off the 0..1 bar entirely, where VOX can never trigger.
+          // Both are 0..9 now, which is what Kenwood specifies and what both
+          // comments here always claimed. Integer field, so atoi, not atof:
+          // strtod-family parsing follows LC_NUMERIC.
           if(command[2]==';') {
-            // convert 0.0..1.0 to 0..9
-            sprintf(reply,"VG%03d;",(int)((radio->vox_threshold*100.0)*0.9));
+            int g=(int)lround(radio->vox_threshold*9.0);
+            if(g<0) g=0;
+            if(g>9) g=9;
+            sprintf(reply,"VG%03d;",g);
             send_resp(cmd,reply);
           } else if(command[5]==';') {
-            // convert 0..9 to 0.0..1.0
-            radio->vox_threshold=atof(&command[2])/9.0;
+            int g=atoi(&command[2]);
+            if(g<0) g=0;
+            if(g>9) g=9;
+            radio->vox_threshold=(double)g/9.0;
             update_vfo(rx);
           }
           break;
@@ -3392,10 +3405,13 @@ int parse_cmd(void *data) {
         case 'X': //VX
           // set/read VOX status
           if(command[2]==';') {
-            sprintf(reply,"VX%d;",radio->vox_enabled);
+            sprintf(reply,"VX%d;",radio->vox_enabled?1:0);
             send_resp(cmd,reply);
           } else if(command[3]==';') {
-            radio->vox_enabled=atoi(&command[2]);
+            // Through the one setter, so switching VOX off over CAT releases a
+            // key VOX is holding instead of leaving the transmitter up; and
+            // normalised, so "VX7;" cannot store a 7 in a gboolean field.
+            vox_set_enabled(radio,atoi(&command[2])!=0);
             update_vfo(rx);
           }
           break;
