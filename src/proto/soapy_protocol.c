@@ -193,6 +193,23 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
     log_info("%s: no resampler needed: stream and receiver are both at %d\n",__FUNCTION__,in_rate);
     return;
   }
+
+  /* create_resample() reduces in:out by their gcd and interpolates by the L that
+     falls out, so a substituted rate that shares no factor with rx->sample_rate
+     asks it for an L of six figures -- and it does not refuse, it quietly gets
+     the ratio wrong.  Measured: 2083333 -> 192000 (gcd 1) reads a 10.000 kHz
+     tone at 10.155 kHz, a 1.55 % error on every frequency the operator sees,
+     while 2100000 -> 192000 (gcd 12000) is exact.  Nothing downstream can detect
+     that, so say it here. */
+  int a=in_rate,b=rx->sample_rate;
+  while(b!=0) { int t=a%b; a=b; b=t; }
+  const int interp=rx->sample_rate/a;
+  if(interp>1024) {
+    log_error("%s: the stream's %d Hz and the receiver's %d Hz share no useful factor "
+              "(gcd %d, interpolation %d) -- the resampler cannot hold this ratio and the "
+              "frequency scale will be off by a percent or so.  Pick another receiver rate.\n",
+              __FUNCTION__,in_rate,rx->sample_rate,a,interp);
+  }
   rx->resampler=create_resample(1,block,rx->buffer,rx->resampled_buffer,in_rate,rx->sample_rate,0.0,0,1.0);
 log_info("%s: created resampler: block=%d stream=%d -> rx=%d resampled_buffer=%d doubles\n",__FUNCTION__,block,in_rate,rx->sample_rate,rx->resampled_buffer_size);
 }
