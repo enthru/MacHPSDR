@@ -472,6 +472,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].split",rx->channel);
   sprintf(value,"%d",rx->split);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].vfo_linked",rx->channel);
+  sprintf(value,"%d",rx->vfo_linked);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].duplex",rx->channel);
   sprintf(value,"%d",rx->duplex);
   setProperty(name,value);
@@ -976,6 +979,11 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].split",rx->channel);
   value=getProperty(name);
   if(value) rx->split=atoi(value);
+  // Absent from an older props file, which must keep meaning "linked": that is
+  // what every build before this one did.  rx->vfo_linked defaults to TRUE.
+  sprintf(name,"receiver[%d].vfo_linked",rx->channel);
+  value=getProperty(name);
+  if(value) rx->vfo_linked=atoi(value);
   sprintf(name,"receiver[%d].duplex",rx->channel);
   value=getProperty(name);
   if(value) rx->duplex=atoi(value);

@@ -825,7 +825,11 @@ void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
             rx->frequency_b=f;
           }
 	}
-        if(!b_only) {
+        // vfo_linked: the LINK toggle suspends the tie so the operator can set
+        // the TX/RX pair up in the first place.  Four sites move the other VFO
+        // (here, the RSAT branch below, receiver_move and receiver_move_to);
+        // all four ask this one field.
+        if(!b_only && rx->vfo_linked) {
           receiver_move_a(rx,hz,round);
           frequency_changed(rx);
         }
@@ -844,7 +848,7 @@ void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
             rx->frequency_b=f;
           }
 	}
-        if(!b_only) {
+        if(!b_only && rx->vfo_linked) {
           receiver_move_a(rx,-hz,round);
           frequency_changed(rx);
           update_frequency(rx);
@@ -868,7 +872,7 @@ void receiver_move(RECEIVER *rx,long long hz,gboolean round) {
         break;
       case SPLIT_SAT:
       case SPLIT_RSAT:
-        receiver_move_b(rx,delta,TRUE,round);
+        if(rx->vfo_linked) receiver_move_b(rx,delta,TRUE,round);
         break;
     }
 
@@ -929,10 +933,14 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
       case SPLIT_ON:
         break;
       case SPLIT_SAT:
-        receiver_move_b(rx,delta,TRUE,TRUE);
+        if(rx->vfo_linked) receiver_move_b(rx,delta,TRUE,TRUE);
         break;
       case SPLIT_RSAT:
-        receiver_move_b(rx,-delta,TRUE,TRUE);
+        // NOTE the sign disagrees with receiver_move above, which passes +delta
+        // for RSAT and lets receiver_move_b's own branch do the inverting.  Left
+        // alone deliberately: it is untestable without an inverting transponder
+        // and is not what this change is about.  See .claude/notes/backlog.md.
+        if(rx->vfo_linked) receiver_move_b(rx,-delta,TRUE,TRUE);
         break;
     }
 
@@ -2890,6 +2898,7 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   rx->error_b=0;
 
   rx->split=FALSE;
+  rx->vfo_linked=TRUE;
 
   rx->rit_enabled=FALSE;
   rx->rit=0;
@@ -3096,6 +3105,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->show_panadapter=TRUE;
 
   rx->split=SPLIT_OFF;
+  rx->vfo_linked=TRUE;   // SAT/RSAT track together unless the operator unlinks
   rx->duplex=FALSE;
   rx->mute_while_transmitting=FALSE;
 

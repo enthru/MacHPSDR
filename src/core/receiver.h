@@ -150,6 +150,15 @@ typedef struct _receiver {
   gint filter_b;
 
   split_type split;
+  // SAT/RSAT tie the two VFOs together: tuning either one moves the other by
+  // the same step, so the transponder offset the operator set up is preserved.
+  // That is the whole point of the mode -- and it is also why the offset cannot
+  // be SET while in it.  Clearing this breaks the tie without leaving the mode,
+  // so A and B tune independently; setting it again resumes tracking whatever
+  // relationship they now have.  Nothing is captured or computed at that moment
+  // because SAT tracks by DELTA: B-A (SAT) or B+A (RSAT) is already whatever the
+  // operator left it as.  TRUE is the behaviour every earlier build had.
+  gboolean vfo_linked;
   gboolean mute_while_transmitting;
   gboolean duplex;
 

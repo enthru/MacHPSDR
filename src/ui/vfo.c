@@ -1122,6 +1122,16 @@ static void dup_b_cb(GtkToggleButton *widget,gpointer user_data) {
   rx->duplex=gtk_toggle_button_get_active(widget);
 }
 
+// LINK: whether SAT/RSAT drag the other VFO along.  Clearing it lets the
+// operator set TX and RX up independently -- which is the only way to establish
+// the offset, since the mode exists to preserve it -- and setting it again
+// resumes tracking whatever they now are.  Nothing is captured at that moment:
+// SAT tracks by delta, so the relationship is already whatever it was left as.
+static void link_b_cb(GtkToggleButton *widget,gpointer user_data) {
+  RECEIVER *rx=(RECEIVER *)user_data;
+  rx->vfo_linked=gtk_toggle_button_get_active(widget);
+}
+
 static void ctun_b_cb(GtkToggleButton *widget,gpointer user_data) {
   RECEIVER *rx=(RECEIVER *)user_data;
   rx->ctun=!rx->ctun;
@@ -2084,6 +2094,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(v->dup_b, "toggled", G_CALLBACK(dup_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->dup_b);
 
+  // Only SAT/RSAT tie the VFOs together, so LINK means nothing in the other two
+  // split modes and is greyed there rather than hidden -- a control that comes
+  // and goes as the split changes is harder to find than one that is inactive.
+  v->link_b=gtk_toggle_button_new_with_label("LINK");
+  gtk_widget_set_name(v->link_b,"vfo-toggle");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->link_b),rx->vfo_linked);
+  gtk_widget_set_sensitive(v->link_b,rx->split==SPLIT_SAT || rx->split==SPLIT_RSAT);
+  g_signal_connect(v->link_b, "toggled", G_CALLBACK(link_b_cb),rx);
+  gtk_box_append(GTK_BOX(vfo_row_ctl),v->link_b);
+
 
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
     v->ant_b=gtk_toggle_button_new_with_label("RXANT");
@@ -2334,6 +2354,17 @@ void update_vfo(RECEIVER *rx) {
   g_signal_handlers_block_by_func(v->dup_b,G_CALLBACK(dup_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->dup_b),rx->duplex);
   g_signal_handlers_unblock_by_func(v->dup_b,G_CALLBACK(dup_b_cb),rx);
+
+  // update LINK button.  Blocked around the programmatic set like every other
+  // toggle here: the handler writes rx->vfo_linked, so an unblocked set_active
+  // during a refresh would write the value back over whatever CAT or a keybind
+  // had just changed.
+  if(v->link_b!=NULL) {
+    g_signal_handlers_block_by_func(v->link_b,G_CALLBACK(link_b_cb),rx);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->link_b),rx->vfo_linked);
+    g_signal_handlers_unblock_by_func(v->link_b,G_CALLBACK(link_b_cb),rx);
+    gtk_widget_set_sensitive(v->link_b,rx->split==SPLIT_SAT || rx->split==SPLIT_RSAT);
+  }
 
   // update RXANT button
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
