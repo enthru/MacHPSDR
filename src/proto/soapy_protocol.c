@@ -109,6 +109,10 @@ static int mic_sample_divisor=1;
 
 
 static int max_tx_samples;
+// TX samples the device refused to take (see soapy_protocol_iq_samples) and TX
+// underflows the driver reported, both drained by the pump thread's 5 s report.
+static long long tx_dropped;
+static long long tx_underflows;
 static float *output_buffer;
 static int output_buffer_index;
 
@@ -410,6 +414,30 @@ log_info("soapy_protocol_create_transmitter: setting samplerate=%f\n",(double)so
     log_info("soapy_protocol_configure_transmitter: SoapySDRDevice_setSampleRate(%f) failed: %s\n",(double)soapy_tx_sample_rate,SoapySDR_errToStr(rc));
   }
 
+  // Read the TX rate back for the same reason the RX one is (soapy_rx_actual_rate
+  // above): a driver may substitute silently and return success.  There is no TX
+  // resampler in this path -- WDSP is opened to produce exactly
+  // tx->iq_output_rate and those samples go straight to the DAC -- so a
+  // substitution here is not something to adapt to, it is something that puts
+  // the whole transmitted signal on the wrong clock.  Nothing can be done about
+  // it here; what can be done is to say so instead of transmitting into the dark.
+  {
+    double got=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_TX,tx->dac);
+    int actual=(int)(got+0.5);
+    // A hair off is the same rate with a rounding error (a Pluto answers 2303999
+    // for 2304000, 0.43 ppm) and means nothing here: there is no ratio to keep
+    // exact, only a DAC clock.  Anything further out is a real substitution.
+    long long diff=(actual>soapy_tx_sample_rate)?actual-soapy_tx_sample_rate
+                                                :(long long)soapy_tx_sample_rate-actual;
+    if(actual>0 && diff*10000LL>=(long long)soapy_tx_sample_rate) {
+      log_error("soapy_protocol_create_transmitter: asked the device for %d Hz on TX, it is running at "
+                "%d Hz (x%.4f) -- the transmitted signal will be off by that factor\n",
+                soapy_tx_sample_rate,actual,(double)actual/(double)soapy_tx_sample_rate);
+    } else {
+      log_info("soapy_protocol_create_transmitter: TX rate readback %d Hz\n",actual);
+    }
+  }
+
   size_t channel=tx->dac;
 log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=%ld\n",(long)channel);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
@@ -689,6 +717,14 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
         } else {
           // SOAPY_SDR_TIMEOUT / underflow / error: drop the rest of this block
           // rather than spin - the next block will keep the stream fed.
+          //
+          // Dropping is a hole in the transmitted waveform, not a late block, so
+          // it must never be silent: what comes out of the PA is a carrier
+          // chopped at the block rate, which on the air is not a weak signal but
+          // a wrong one -- hash where a tone should be.  Counted and reported so
+          // "Tune sounds like noise" can be answered with a number instead of a
+          // guess.
+          tx_dropped+=(max_tx_samples-written);
           break;
         }
       }
@@ -757,6 +793,9 @@ void soapy_protocol_rx_resume(void) {
 
 static gpointer tx_thread(gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
+  gboolean status_supported=TRUE;
+  int status_tick=0;
+  gint64 reported=g_get_monotonic_time();
 log_info("soapy tx_thread: start\n");
   // Feed silence into the TX exchange; writeStream() back-pressure paces us.
   // For tune, WDSP's tone generator fills the output regardless of this input.
@@ -774,6 +813,35 @@ log_info("soapy tx_thread: start\n");
       continue;
     }
     add_mic_sample(tx,0.0f);
+
+    // Ask the driver whether the DAC ran dry.  This is the only way to tell a
+    // transmitter that is merely quiet from one whose waveform has holes in it,
+    // and holes are what turn a Tune carrier into hash.  Polled every 256 mic
+    // samples (~190/s) with a zero timeout so it cannot pace the loop, and
+    // switched off for good if the driver does not implement it.
+    if(status_supported && ++status_tick>=256) {
+      status_tick=0;
+      size_t chan_mask=0;
+      int sflags=0;
+      long long stime=0;
+      int rc=SoapySDRDevice_readStreamStatus(soapy_device,tx_stream,&chan_mask,&sflags,&stime,0);
+      if(rc==SOAPY_SDR_NOT_SUPPORTED) {
+        status_supported=FALSE;
+      } else if(rc==SOAPY_SDR_UNDERFLOW) {
+        tx_underflows++;
+      }
+    }
+    const gint64 now=g_get_monotonic_time();
+    if(now-reported>=5000000) {
+      if(tx_dropped>0 || tx_underflows>0) {
+        log_error("%s: TX starved in the last %.0f s -- %lld sample(s) the device would not take, "
+                  "%lld underflow(s).  The transmitted waveform has holes in it.\n",
+                  __FUNCTION__,(double)(now-reported)/1.0e6,tx_dropped,tx_underflows);
+      }
+      tx_dropped=0;
+      tx_underflows=0;
+      reported=now;
+    }
   }
 log_info("soapy tx_thread: exit\n");
   return NULL;

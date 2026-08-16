@@ -641,16 +641,26 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   guint32 fmt     = ((guint32)buf[ 8]) | ((guint32)buf[ 9]<<8) | ((guint32)buf[10]<<16) | ((guint32)buf[11]<<24);
   guint32 dtype   = ((guint32)buf[24]) | ((guint32)buf[25]<<8) | ((guint32)buf[26]<<16) | ((guint32)buf[27]<<24);
   guint32 channels= ((guint32)buf[28]) | ((guint32)buf[29]<<8) | ((guint32)buf[30]<<16) | ((guint32)buf[31]<<24);
-  if (dtype != TCI_STREAM_TX_AUDIO) return;
-  // A frame refused here used to vanish without a word, so a client streaming TX
-  // audio in any other sample format looked exactly like a client streaming
-  // nothing: no RF, an empty TX panadapter and nothing anywhere to say why.
-  // Rate-limited because it is one line per audio frame otherwise.  The
-  // timestamps are plain statics shared by every client thread; the worst a race
-  // costs is a duplicated log line.
+  // Announce what arrives BEFORE any of the refusals below, and rate-limited
+  // because it is otherwise one line per audio frame.  The whole point is to
+  // separate "the client sends nothing" from "the client sends something we
+  // throw away", which are indistinguishable from the operator's chair -- no
+  // RF, an empty TX panadapter, and nothing anywhere saying why.  The first
+  // report of a run always prints, so a single stray frame is never missed.
+  // The timestamps are plain statics shared by every client thread; the worst a
+  // race costs is a duplicated log line.
+  static gint64 last_seen_log = 0;
   static gint64 last_fmt_gripe = 0;
   static gint64 last_accept_log = 0;
   const gint64 now_us = g_get_monotonic_time();
+  if (now_us - last_seen_log >= 5000000) {
+    last_seen_log = now_us;
+    log_info("tci: binary frame in: stream type %u, format %u, %u Hz, %u channel(s), %zu bytes"
+             " (TX audio is type %d, format %d)\n",
+             (unsigned)dtype, (unsigned)fmt, (unsigned)srate, (unsigned)channels,
+             len - TCI_HDR_BYTES, TCI_STREAM_TX_AUDIO, TCI_SAMPLE_FLOAT32);
+  }
+  if (dtype != TCI_STREAM_TX_AUDIO) return;
   if (fmt != TCI_SAMPLE_FLOAT32) {                    // only float32 supported
     if (now_us - last_fmt_gripe >= 5000000) {
       last_fmt_gripe = now_us;
