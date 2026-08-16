@@ -667,9 +667,16 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        // Half-duplex: pause RX, point at the TX frequency/antenna, then bring
-        // the TX stream up and start clocking samples out.
-        soapy_protocol_rx_pause();
+        // Pause RX only on a device that cannot do both at once.  This was
+        // unconditional, with a "half-duplex" comment, and soapy_protocol_rx_resume()
+        // does not merely reactivate the stream -- it tears it down and builds a new
+        // one, which is a HackRF workaround for a runaway overflow.  Applied to a
+        // full-duplex device that is the wrong trade twice over: the operator loses
+        // receive audio for the whole transmission, and gets it back late because the
+        // stream has to be rebuilt.  On a satellite it is worse than an
+        // inconvenience -- hearing your own downlink while you talk is the point.
+        // Costs CPU: RX and TX now run at once, at the ADC rate each.
+        if(!r->discovered->info.soapy.full_duplex) soapy_protocol_rx_pause();
         soapy_protocol_set_tx_frequency(r->transmitter);
         soapy_protocol_set_tx_antenna(r->transmitter,radio->dac[0].antenna);
         soapy_protocol_activate_tx(r->transmitter);
@@ -695,9 +702,9 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        // Bring the TX stream down, then resume RX (half-duplex).
+        // Bring the TX stream down, then resume RX -- if it was ever paused.
         soapy_protocol_deactivate_tx(r->transmitter);
-        soapy_protocol_rx_resume();
+        if(!r->discovered->info.soapy.full_duplex) soapy_protocol_rx_resume();
         break;
 #endif
     }

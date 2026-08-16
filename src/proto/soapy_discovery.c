@@ -119,16 +119,19 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     }
   }
 
+  int full_duplex=1;   // cleared below if the device says otherwise
   size_t rx_channels=SoapySDRDevice_getNumChannels(sdr, SOAPY_SDR_RX);
   log_info("Rx channels: %ld\n",(long)rx_channels);
   for(int i=0;i<rx_channels;i++) {
     log_info("Rx channel full duplex: channel=%d fullduplex=%d\n",i,SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_RX, i));
+    if(i==0 && !SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_RX, i)) full_duplex=0;
   }
 
   size_t tx_channels=SoapySDRDevice_getNumChannels(sdr, SOAPY_SDR_TX);
   log_info("Tx channels: %ld\n",(long)tx_channels);
   for(int i=0;i<tx_channels;i++) {
     log_info("Tx channel full duplex: channel=%d fullduplex=%d\n",i,SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_TX, i));
+    if(i==0 && !SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_TX, i)) full_duplex=0;
   }
 
 
@@ -250,6 +253,7 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
       discovered[devices].info.soapy.rtlsdr_count=0;
       discovered[devices].info.soapy.sdrplay_count=0;
     }
+    discovered[devices].info.soapy.full_duplex=full_duplex;
     discovered[devices].info.soapy.rx_channels=rx_channels;
     discovered[devices].info.soapy.rx_gains=rx_gains_length;
     discovered[devices].info.soapy.rx_gain=rx_gains;

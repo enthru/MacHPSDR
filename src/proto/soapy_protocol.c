@@ -794,7 +794,8 @@ void soapy_protocol_rx_resume(void) {
 static gpointer tx_thread(gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   gboolean status_supported=TRUE;
-  int status_tick=0;
+  const gboolean status_enabled=(g_getenv("MACHPSDR_SOAPY_TX_STATUS")!=NULL);
+  int block_tick=0;
   gint64 reported=g_get_monotonic_time();
 log_info("soapy tx_thread: start\n");
   // Feed silence into the TX exchange; writeStream() back-pressure paces us.
@@ -814,13 +815,23 @@ log_info("soapy tx_thread: start\n");
     }
     add_mic_sample(tx,0.0f);
 
-    // Ask the driver whether the DAC ran dry.  This is the only way to tell a
-    // transmitter that is merely quiet from one whose waveform has holes in it,
-    // and holes are what turn a Tune carrier into hash.  Polled every 256 mic
-    // samples (~190/s) with a zero timeout so it cannot pace the loop, and
-    // switched off for good if the driver does not implement it.
-    if(status_supported && ++status_tick>=256) {
-      status_tick=0;
+    // Everything below runs ONCE PER OUTPUT BLOCK, not once per sample.  The
+    // first version of this asked the driver for stream status 190 times a
+    // second and read the clock 48000 times a second, both from inside the loop
+    // that has to deliver the TX waveform in real time -- on a NETWORK-attached
+    // Pluto a status call is a round trip, and the pump owning the GTK thread's
+    // join on unkey means a pump that falls behind presents as "PTT stopped
+    // working and the audio breaks up".  Reported as a regression by the
+    // operator; the diagnostic is not worth a millisecond of the TX path.
+    if(++block_tick < 1024) continue;
+    block_tick=0;
+
+    // The status poll stays OFF unless asked for: its cost on any given driver
+    // is unknown, and this loop is the wrong place to find that out by trying.
+    // MACHPSDR_SOAPY_TX_STATUS=1 turns it on when a starved transmitter is
+    // actually being chased.  The dropped-sample count below is free -- it is
+    // incremented only where a write has already failed.
+    if(status_enabled && status_supported) {
       size_t chan_mask=0;
       int sflags=0;
       long long stime=0;

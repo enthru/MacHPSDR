@@ -96,6 +96,12 @@ struct _DISCOVERED {
       } network;
 #ifdef SOAPYSDR
       struct soapy {
+        // The device's own answer to getFullDuplex() on both directions.  It was
+        // asked for and only printed: every SoapySDR device was treated as
+        // half-duplex, so RX was torn down and rebuilt around every transmission
+        // -- a HackRF workaround applied to a Pluto, which is full duplex and on
+        // a satellite is expected to hear its own downlink while transmitting.
+        int full_duplex;
         int rtlsdr_count;
         int sdrplay_count;
         int sample_rate;
