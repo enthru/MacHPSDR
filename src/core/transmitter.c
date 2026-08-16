@@ -1764,7 +1764,13 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
 
       overlap = (int)max(0.0, ceil(fft_size - (double)tx->mic_sample_rate / (double)tx->fps));
 
-      log_info("SetAnalyzer id=%d buffer_size=%d overlap=%d\n",tx->channel,tx->output_samples,overlap);
+      // The transfer block, not tx->output_samples: printing the latter says the
+      // analyzer was handed a block that must divide its 2^19 input ring and
+      // does not (49152 at a 2304000 output rate), which reads as the heap bug
+      // receiver.h's _Static_assert exists to prevent.  What is actually passed
+      // is ANALYZER_FEED_BLOCK, and analyzer_feed() splits the buffer to match.
+      log_info("SetAnalyzer id=%d block=%d (buffer %d, fed in %d-sample pieces) overlap=%d\n",
+               tx->channel,ANALYZER_FEED_BLOCK,tx->output_samples,ANALYZER_FEED_BLOCK,overlap);
 
 
       SetAnalyzer(tx->channel,

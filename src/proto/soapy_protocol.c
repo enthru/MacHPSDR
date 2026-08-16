@@ -761,6 +761,18 @@ log_info("soapy tx_thread: start\n");
   // Feed silence into the TX exchange; writeStream() back-pressure paces us.
   // For tune, WDSP's tone generator fills the output regardless of this input.
   while(tx_pump_running) {
+    // ...but that back-pressure is the ONLY thing pacing this loop, and it only
+    // exists while soapy_protocol_iq_samples() is actually writing -- which it
+    // refuses to do unless we are keyed with a live TX stream.  Unkeying
+    // therefore leaves this spinning at whatever the CPU will give until
+    // deactivate_tx joins us, feeding WDSP far faster than real time; WDSP
+    // answers with "fexchange0: error=-2" (its output ring is empty, so it
+    // zeroes the block) once per iteration.  A user's PlutoSDR log is a wall of
+    // exactly that, every time between set_mox 0 and tx_thread exit.
+    if(!isTransmitting(radio) || !tx_stream_active) {
+      g_usleep(1000);
+      continue;
+    }
     add_mic_sample(tx,0.0f);
   }
 log_info("soapy tx_thread: exit\n");

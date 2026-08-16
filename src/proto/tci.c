@@ -642,8 +642,29 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   guint32 dtype   = ((guint32)buf[24]) | ((guint32)buf[25]<<8) | ((guint32)buf[26]<<16) | ((guint32)buf[27]<<24);
   guint32 channels= ((guint32)buf[28]) | ((guint32)buf[29]<<8) | ((guint32)buf[30]<<16) | ((guint32)buf[31]<<24);
   if (dtype != TCI_STREAM_TX_AUDIO) return;
-  if (fmt != TCI_SAMPLE_FLOAT32) return;              // only float32 supported
+  // A frame refused here used to vanish without a word, so a client streaming TX
+  // audio in any other sample format looked exactly like a client streaming
+  // nothing: no RF, an empty TX panadapter and nothing anywhere to say why.
+  // Rate-limited because it is one line per audio frame otherwise.  The
+  // timestamps are plain statics shared by every client thread; the worst a race
+  // costs is a duplicated log line.
+  static gint64 last_fmt_gripe = 0;
+  static gint64 last_accept_log = 0;
+  const gint64 now_us = g_get_monotonic_time();
+  if (fmt != TCI_SAMPLE_FLOAT32) {                    // only float32 supported
+    if (now_us - last_fmt_gripe >= 5000000) {
+      last_fmt_gripe = now_us;
+      log_error("tci: TX audio dropped -- sample format %u, this build accepts float32 (%d) only\n",
+                (unsigned)fmt, TCI_SAMPLE_FLOAT32);
+    }
+    return;
+  }
   if (channels < 1) channels = 1;
+  if (now_us - last_accept_log >= 5000000) {
+    last_accept_log = now_us;
+    log_info("tci: TX audio in: %u Hz, %u channel(s), %zu bytes\n",
+             (unsigned)srate, (unsigned)channels, len - TCI_HDR_BYTES);
+  }
 
   const float *s = (const float *)(buf + TCI_HDR_BYTES);
   size_t nfloats = (len - TCI_HDR_BYTES) / sizeof(float);
