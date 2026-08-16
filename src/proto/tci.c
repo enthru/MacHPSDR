@@ -731,6 +731,12 @@ static void tci_ack_echo(TCI_CLIENT *c, const char *token) {
 
 // Handle one ';'-stripped command token from client `c`.
 static void tci_handle_command(TCI_CLIENT *c, const char *token) {
+  // Every command a client sends, at DEBUG.  Nothing logged what came IN, so a
+  // client that goes quiet -- MSHV connecting, asking its questions and then
+  // never streaming TX audio -- left nothing to read: you could see what the app
+  // answered only by inferring it from the source.  The guard is in the macro,
+  // so this costs one int compare per command.
+  log_debug("tci: <- %s;\n", token);
   char name[32];
   const char *colon = strchr(token, ':');
   size_t nlen = colon ? (size_t)(colon - token) : strlen(token);
@@ -1125,6 +1131,14 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     char r[32];
     g_snprintf(r, sizeof(r), "trx_count:%d;", tci_trx_count());
     client_send_text(c, r);
+  } else if (!strcmp(name, "audio_stream_sample_type")) {
+    // Fact, not a stub: tci_stream_broadcast() writes float32 and
+    // tci_ingest_binary() accepts nothing else.  A client that configures the
+    // stream before sending TX audio asks this first.
+    client_send_text(c, "audio_stream_sample_type:float32;");
+  } else if (!strcmp(name, "audio_stream_channels")) {
+    // Also a fact: RX audio goes out as interleaved stereo.
+    client_send_text(c, "audio_stream_channels:2;");
   } else if (!strcmp(name, "channels_count")) {
     client_send_text(c, "channels_count:2;");         // main + sub per receiver
   } else if (!strcmp(name, "device")) {
@@ -1144,6 +1158,10 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   } else if (!strcmp(name, "modulations_list")) {
     client_send_text(c, "modulations_list:" TCI_MODLIST ";");
   } else {
+    // Say which ones landed here: an unimplemented command a client is WAITING
+    // on looks exactly like one it does not care about, and the echo below makes
+    // both of them look answered.
+    log_debug("tci: '%s' has no implementation here -- echoed as an ack\n", name);
     // Everything left over — start, stop, spot, spot_delete, sql_level,
     // rx_balance, rx_filter_band, cw_macros_delay, … — is echoed as an ack so a
     // request/response client cannot hang waiting on it.
