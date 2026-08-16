@@ -113,6 +113,16 @@ static int max_tx_samples;
 // underflows the driver reported, both drained by the pump thread's 5 s report.
 static long long tx_dropped;
 static long long tx_underflows;
+// Per-transmission accounting, reported once at unkey (see deactivate_tx).
+// "Nothing comes out" has four quite different causes that look identical from
+// the operator's chair -- WDSP producing nothing (a dead mic/tune path), the
+// device refusing the samples, the samples arriving at the wrong clock, or a
+// full-scale waveform going into an attenuator turned all the way down -- and
+// one line naming samples/s, peak level and the hardware gain separates them.
+// One transmission, one log line: it cannot pace the TX loop.
+static long long tx_written;
+static float tx_peak;
+static gint64 tx_key_us;
 static float *output_buffer;
 static int output_buffer_index;
 
@@ -705,6 +715,14 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
     output_buffer[output_buffer_index*2]=isample;
     output_buffer[(output_buffer_index*2)+1]=qsample;
     output_buffer_index++;
+    // Peak of what WDSP handed us, before the device sees it.  Two compares per
+    // sample; the alternative is being unable to tell a silent modulator from a
+    // silent transmitter without hardware on the other end.
+    {
+      const float ai=fabsf(isample), aq=fabsf(qsample);
+      if(ai>tx_peak) tx_peak=ai;
+      if(aq>tx_peak) tx_peak=aq;
+    }
     if(output_buffer_index>=max_tx_samples) {
       int written=0;
       while(written<max_tx_samples) {
@@ -714,6 +732,7 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
         int elements=SoapySDRDevice_writeStream(soapy_device,tx_stream,tx_buffs,max_tx_samples-written,&flags,timeNs,timeoutUs);
         if(elements>0) {
           written+=elements;
+          tx_written+=elements;
         } else {
           // SOAPY_SDR_TIMEOUT / underflow / error: drop the rest of this block
           // rather than spin - the next block will keep the stream fed.
@@ -749,6 +768,9 @@ static void wait_rx_parked(size_t channel) {
 void soapy_protocol_rx_pause(void) {
   if(soapy_device==NULL) return;
   if(!rx_stream_active) return;
+  // Which of the two branches in rxtx() ran is not otherwise visible in a log,
+  // and it decides whether the link/CPU is shared with RX for the whole over.
+  log_debug("%s: RX stream(s) down for the transmission\n",__FUNCTION__);
   rx_stream_active=FALSE;
   // EVERY stream, not rx_channel's: that global holds whichever receiver was
   // started last, so with two receivers this deactivated one and left the other
@@ -783,6 +805,7 @@ static void rx_resume_channel(size_t channel) {
 void soapy_protocol_rx_resume(void) {
   if(soapy_device==NULL) return;
   if(rx_stream_active) return;
+  log_debug("%s: rebuilding the RX stream(s)\n",__FUNCTION__);
   for(size_t ch=0;ch<MAX_CHANNELS;ch++) {
     if(rx_stream[ch]!=NULL) rx_resume_channel(ch);
   }
@@ -796,6 +819,7 @@ static gpointer tx_thread(gpointer data) {
   gboolean status_supported=TRUE;
   const gboolean status_enabled=(g_getenv("MACHPSDR_SOAPY_TX_STATUS")!=NULL);
   int block_tick=0;
+  long long last_dropped=0,last_underflows=0;
   gint64 reported=g_get_monotonic_time();
 log_info("soapy tx_thread: start\n");
   // Feed silence into the TX exchange; writeStream() back-pressure paces us.
@@ -844,13 +868,18 @@ log_info("soapy tx_thread: start\n");
     }
     const gint64 now=g_get_monotonic_time();
     if(now-reported>=5000000) {
-      if(tx_dropped>0 || tx_underflows>0) {
+      // Deltas, not a drain: the counters belong to the whole transmission and
+      // are read again by deactivate_tx's summary.  Zeroing them here meant a
+      // long over reported its holes and then forgot them.
+      const long long dropped=tx_dropped-last_dropped;
+      const long long under=tx_underflows-last_underflows;
+      if(dropped>0 || under>0) {
         log_error("%s: TX starved in the last %.0f s -- %lld sample(s) the device would not take, "
                   "%lld underflow(s).  The transmitted waveform has holes in it.\n",
-                  __FUNCTION__,(double)(now-reported)/1.0e6,tx_dropped,tx_underflows);
+                  __FUNCTION__,(double)(now-reported)/1.0e6,dropped,under);
       }
-      tx_dropped=0;
-      tx_underflows=0;
+      last_dropped=tx_dropped;
+      last_underflows=tx_underflows;
       reported=now;
     }
   }
@@ -870,6 +899,33 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   }
   // Make sure the hardware TX gain matches the drive slider before we key up.
   soapy_protocol_set_tx_drive(tx->drive);
+  tx_written=0;
+  tx_peak=0.0f;
+  tx_dropped=0;
+  tx_underflows=0;
+  tx_key_us=g_get_monotonic_time();
+  // What the DAC is actually clocked at, asked for at key-up rather than only at
+  // create_transmitter.  The two are not the same question: several drivers tie
+  // the RX and TX sample rates to one clock chain (the AD9361 in a Pluto does),
+  // so whichever direction was set LAST owns the hardware -- and this file
+  // re-asserts the RX rate at stream activation, which happens AFTER the TX rate
+  // was set and read back.  A disagreement here means WDSP is producing samples
+  // at one rate and the DAC is consuming them at another: the transmitted tone
+  // lands at the wrong offset by exactly that ratio and the waveform has holes
+  // in it for the difference.  One round trip per transmission, before any
+  // sample is due.
+  {
+    double got=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_TX,tx->dac);
+    double gain=SoapySDRDevice_getGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id);
+    log_info("%s: DAC rate %.0f Hz (WDSP is producing %d), TX gain %.1f dB of %.1f..%.1f, drive %.0f%%\n",
+             __FUNCTION__,got,soapy_tx_sample_rate,gain,tx_gain_min,tx_gain_max,tx->drive);
+    long long diff=(long long)fabs(got-(double)soapy_tx_sample_rate);
+    if(got>0.0 && diff*10000LL>=(long long)soapy_tx_sample_rate) {
+      log_error("%s: the DAC is clocked at %.0f Hz while WDSP produces %d -- the transmitted "
+                "signal is off by x%.4f and starved for the difference\n",
+                __FUNCTION__,got,soapy_tx_sample_rate,got/(double)soapy_tx_sample_rate);
+    }
+  }
   // Only run our own pump when nothing else clocks the TX exchange.  With a
   // local microphone the mic thread already feeds add_mic_sample().
   if(!radio->local_microphone && tx_thread_id==NULL) {
@@ -890,6 +946,26 @@ void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
     tx_stream_active=FALSE;
   }
   output_buffer_index=0;
+
+  // One line per transmission, after the pump is joined and the stream is down,
+  // so the counters can no longer move.  Read it as: samples/s should be the
+  // DAC rate logged at key-up (lower = starved, and the difference is where the
+  // holes in the waveform are); peak is what WDSP produced, so 0.000 means
+  // nothing was modulated at all and the radio is not the place to look; the
+  // gain is the one at key-up.  Costs nothing -- it runs once, on unkey.
+  {
+    const gint64 us=g_get_monotonic_time()-tx_key_us;
+    const double secs=(double)us/1.0e6;
+    log_info("%s: transmitted %.2f s, %lld sample(s) to the DAC (%.0f/s), %lld refused, peak %.3f\n",
+             __FUNCTION__,secs,tx_written,secs>0.0?(double)tx_written/secs:0.0,tx_dropped,(double)tx_peak);
+    if(tx_written==0) {
+      log_error("%s: nothing was written to the DAC during that transmission -- the TX exchange "
+                "was never clocked (no microphone and no pump, or WDSP produced no output)\n",__FUNCTION__);
+    } else if(tx_peak<=0.0f) {
+      log_error("%s: the DAC was fed %lld sample(s) of pure silence -- the modulator produced "
+                "nothing (check mic gain/source, or drive if this was Tune)\n",__FUNCTION__,tx_written);
+    }
+  }
 }
 
 // Map the 0..100 drive slider onto the hardware TX gain range.

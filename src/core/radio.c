@@ -632,6 +632,20 @@ log_info("delete_diversity_mixer: dmixers now %d\n",radio->diversity_mixers);
   destroy_diversity_mixer(dmix);
 }
 
+#ifdef SOAPYSDR
+// Does the operator want to keep hearing the band through this transmission?
+// That is what DUP says, and the loop below is the other half of it: with DUP
+// off every receiver's WDSP channel is STOPPED for the duration and
+// full_rx_buffer() discards every block that arrives.  So "the device can do
+// both at once" is only half the question -- see the pause site.
+static gboolean duplex_wanted(RADIO *r) {
+  for(int i=0;i<r->discovered->supported_receivers;i++) {
+    if(r->receiver[i]!=NULL && r->receiver[i]->duplex) return TRUE;
+  }
+  return FALSE;
+}
+#endif
+
 static void rxtx(RADIO *r) {
   int i;
 log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
@@ -667,16 +681,21 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        // Pause RX only on a device that cannot do both at once.  This was
-        // unconditional, with a "half-duplex" comment, and soapy_protocol_rx_resume()
-        // does not merely reactivate the stream -- it tears it down and builds a new
-        // one, which is a HackRF workaround for a runaway overflow.  Applied to a
-        // full-duplex device that is the wrong trade twice over: the operator loses
-        // receive audio for the whole transmission, and gets it back late because the
-        // stream has to be rebuilt.  On a satellite it is worse than an
-        // inconvenience -- hearing your own downlink while you talk is the point.
-        // Costs CPU: RX and TX now run at once, at the ADC rate each.
-        if(!r->discovered->info.soapy.full_duplex) soapy_protocol_rx_pause();
+        // Keep the RX stream running through the over only when the device can do
+        // both at once AND the operator asked to hear it (DUP).  Both halves are
+        // needed.  This was unconditional, with a "half-duplex" comment, and
+        // soapy_protocol_rx_resume() does not merely reactivate the stream -- it
+        // tears it down and builds a new one, which is a HackRF workaround for a
+        // runaway overflow; on a full-duplex device that costs the operator receive
+        // audio for the whole transmission and gives it back late, which on a
+        // satellite is the opposite of the point.  But gating on the DEVICE alone is
+        // just as wrong the other way: with DUP off the loop above has already
+        // stopped every receiver's WDSP channel and full_rx_buffer() discards each
+        // block, so the samples are read from the device and thrown away -- and on a
+        // network-attached Pluto at 2.304 MS/s that discarded stream is ~74 Mbit/s
+        // of USB-gadget ethernet taken away from the samples the DAC is waiting for.
+        // Costs CPU when it does run: RX and TX at the ADC rate each.
+        if(!(r->discovered->info.soapy.full_duplex && duplex_wanted(r))) soapy_protocol_rx_pause();
         soapy_protocol_set_tx_frequency(r->transmitter);
         soapy_protocol_set_tx_antenna(r->transmitter,radio->dac[0].antenna);
         soapy_protocol_activate_tx(r->transmitter);
@@ -702,9 +721,12 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        // Bring the TX stream down, then resume RX -- if it was ever paused.
+        // Bring the TX stream down, then resume RX.  Unconditional on purpose: the
+        // resume no-ops on a stream that was never paused, and recomputing the
+        // condition here would strand RX deactivated for good if DUP were switched
+        // on during the over.
         soapy_protocol_deactivate_tx(r->transmitter);
-        if(!r->discovered->info.soapy.full_duplex) soapy_protocol_rx_resume();
+        soapy_protocol_rx_resume();
         break;
 #endif
     }
