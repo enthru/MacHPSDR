@@ -112,6 +112,14 @@ own VFO, panadapter and waterfall.
   - Tuning is clamped to **0 – 6 GHz** (or the device's own upper limit if
     lower), so a stray edit can't run the VFO off to a nonsense frequency.
 - **VFO A / B**, split, and A↔B swap are on the VFO widget and bottom bar.
+- **LINK** — in the SAT/RSAT splits the two VFOs track each other, which is what
+  keeps a transponder offset while you tune, and also what makes the offset
+  impossible to set. Switch **LINK** off and A and B tune independently; put the
+  receiver and the transmitter exactly where you want them, switch it back on,
+  and they track from there. Nothing has to be entered or recalculated — the
+  offset is simply whatever you left it as. The button is greyed outside
+  SAT/RSAT, where the VFOs are independent anyway, and its state is remembered
+  between sessions.
 - **Zoom** — the panadapter can be zoomed to inspect narrow signals (quick jumps
   to ×10/×12/×16/×32 from the VFO zoom menu). The practical maximum depends on
   the panadapter width (WDSP's analyzer has a fixed internal buffer, so a very
@@ -590,6 +598,11 @@ transverter entries if they are not there yet, tunes to the downlink, puts VFO B
 on the matching uplink and links the two with the SAT split, so from then on
 tuning the receiver moves the transmitter with it. If you are already somewhere
 on the downlink your frequency is kept as it is.
+
+To re-trim the pair later, switch **LINK** off in the VFO row: the two VFOs
+then tune independently, so you can put the receiver on the station and the
+transmitter exactly where you want to answer. Switch it back on and they track
+again from wherever you left them.
 
 If your own converters do not translate by exactly the standard amount, adjust
 **Transponder offset**.
