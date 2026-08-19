@@ -83,4 +83,11 @@ extern void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int s
 extern gboolean tci_tx_active(void);
 extern float    tci_tx_next_sample(void);
 
+// Clocked by the TX chain (add_mic_sample, once per TX buffer) so the server can
+// ask a TCI client for the next block of modulator audio at the rate the
+// transmitter consumes it. No-op unless a client keyed with `trx:<n>,true,tci;`.
+// See the TX_CHRONO comment in tci.c: without these ticks such a client sends
+// nothing at all, and the transmitter runs perfectly on silence.
+extern void     tci_tx_chrono_tick(int nsamples);
+
 #endif

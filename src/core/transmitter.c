@@ -1553,6 +1553,11 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
     if(tx->mic_samples==tx->buffer_size) {
       full_tx_buffer_process(tx);
       tx->mic_samples=0;
+      // A TCI client that supplies the modulator audio has to be ASKED for each
+      // block (TCI_CHRONO); this is the clock that asks, and it is this one
+      // because it is the rate the transmitter actually consumes at, whichever
+      // thread and protocol is clocking it. No-op with no such client.
+      tci_tx_chrono_tick(tx->buffer_size);
     }
   }
 }

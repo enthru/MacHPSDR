@@ -63,7 +63,16 @@
 #define TCI_STREAM_IQ        0    // TciStreamType::IQ_STREAM
 #define TCI_STREAM_RX_AUDIO  1    // TciStreamType::RX_AUDIO_STREAM
 #define TCI_STREAM_TX_AUDIO  2    // TciStreamType::TX_AUDIO_STREAM
+#define TCI_STREAM_TX_CHRONO 3    // TciStreamType::TX_CHRONO
 #define TCI_HDR_BYTES        64
+// TCI 1.9 defaults for the TX-audio handshake: the block size a chrono asks for
+// at 48 kHz (AUDIO_STREAM_SAMPLES, range 100..2048) and how much audio the
+// client wants queued ahead (TX_STREAM_AUDIO_BUFFERING, ms).
+#define TCI_TX_SAMPLES_DEF   2048
+#define TCI_TX_SAMPLES_MIN   100
+#define TCI_TX_SAMPLES_MAX   2048
+#define TCI_TX_BUFFER_MS_DEF 50
+#define TCI_TX_BUFFER_MS_MAX 1000
 #define TCI_AUDIO_RATE       48000 // RX/TX audio streamed at the native AF rate
 #define TCI_TX_RING          48000 // TX-audio jitter ring: 1 s of mono float
 #define TCI_TX_ACTIVE_US     250000 // TX-audio idle timeout (µs) -> release mic
@@ -82,6 +91,7 @@ typedef struct {
   GMutex send_mtx;  // serialise all sends to fd
   gint   iq_mask;    // atomic: bitmask of rx indices subscribed to IQ (iq_start:<rx>)
   gint   audio_mask; // atomic: bitmask of rx indices subscribed to RX audio (audio_start:<rx>)
+  gint   tx_chrono;  // atomic: this client keyed with source "tci" -> it is owed TX_CHRONO ticks
 } TCI_CLIENT;
 
 static RADIO   *g_radio = NULL;
@@ -102,6 +112,22 @@ static float    tx_ring[TCI_TX_RING];
 static int      tx_ring_head = 0;             // next write
 static int      tx_ring_tail = 0;             // next read
 static gint64   tx_audio_last_us = 0;         // monotonic time of last TX-audio frame
+static gint     tx_frames_in = 0;             // atomic: TX-audio frames accepted, ever
+
+// TX_CHRONO state. A client that keys with `trx:<n>,true,tci;` is telling us it
+// will supply the modulator audio -- and per TCI 1.9 it then waits for us to ask
+// for it, tick by tick. `tx_chrono_clients` is how many clients are in that
+// state; the two knobs are what the client may configure with
+// AUDIO_STREAM_SAMPLES / TX_STREAM_AUDIO_BUFFERING.
+static gint     tx_chrono_clients = 0;        // atomic: armed clients
+static gint     tx_chrono_samples = TCI_TX_SAMPLES_DEF;   // atomic: Stream.length we ask for
+static gint     tx_chrono_buffer_ms = TCI_TX_BUFFER_MS_DEF; // atomic
+static gint     tx_chrono_at_arm = 0;         // tx_frames_in when the over started
+
+// Defined with the rest of the TX-audio machinery at the foot of this file; used
+// by the command handler and the client teardown above it.
+static void tci_set_tx_chrono(TCI_CLIENT *c, gboolean on);
+static void tci_tx_chrono_disarm_all(void);
 
 static char     status_line[96] = "stopped";
 
@@ -661,6 +687,12 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
              len - TCI_HDR_BYTES, TCI_STREAM_TX_AUDIO, TCI_SAMPLE_FLOAT32);
   }
   if (dtype != TCI_STREAM_TX_AUDIO) return;
+  // TCI 1.9's SampleType enum stops at FLOAT32 = 3, but at least one widely
+  // copied client library writes 4 in this field for float32 payloads.  Since 4
+  // means nothing else in the enum, take it as float32 rather than throw the
+  // audio away over a spelling: what arrives is measured in bytes below, not
+  // trusted from the header.
+  if (fmt == 4) fmt = TCI_SAMPLE_FLOAT32;
   if (fmt != TCI_SAMPLE_FLOAT32) {                    // only float32 supported
     if (now_us - last_fmt_gripe >= 5000000) {
       last_fmt_gripe = now_us;
@@ -717,6 +749,7 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
 
   g_free(mono);
   tx_audio_last_us = g_get_monotonic_time();
+  g_atomic_int_inc(&tx_frames_in);
 }
 
 // Answer a command whose value does not exist on this radio right now (no
@@ -809,7 +842,17 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     gboolean is_tx = (addr != NULL) && (req_index == tci_tx_index());
     if (nargs >= 2) {
       gboolean on = (!g_ascii_strcasecmp(args[1], "true") || !strcmp(args[1], "1"));
-      if (is_tx) dispatch_set_mox(on);
+      if (is_tx) {
+        // Third field is the signal source (TCI 2.0's updated TRX command).
+        // "tci" means the CLIENT supplies the modulator audio -- and that is
+        // what arms the TX_CHRONO ticks it then waits for.  Anything else, and
+        // an absent field (= the radio's own microphone), leaves the mic path
+        // alone: keying over the network must not take the microphone away.
+        gboolean src_tci = (nargs >= 3) && args[2] != NULL &&
+                           !g_ascii_strcasecmp(args[2], "tci");
+        tci_set_tx_chrono(c, on && src_tci);
+        dispatch_set_mox(on);
+      }
     } else if (g_radio != NULL) {
       char r[32];
       g_snprintf(r, sizeof(r), "trx:%d,%s;", req_index,
@@ -1139,6 +1182,32 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   } else if (!strcmp(name, "audio_stream_channels")) {
     // Also a fact: RX audio goes out as interleaved stereo.
     client_send_text(c, "audio_stream_channels:2;");
+  } else if (!strcmp(name, "audio_stream_samples")) {
+    // How many samples a TX_CHRONO tick asks for (TCI 1.9: 100..2048, default
+    // 2048 at 48 kHz).  Honoured rather than merely acknowledged -- it sets the
+    // block size the client is going to answer with, so agreeing to a number
+    // and then asking for another is how a modulator ends up stuttering.
+    if (nargs >= 1) {
+      int n = atoi(args[0]);
+      if (n < TCI_TX_SAMPLES_MIN) n = TCI_TX_SAMPLES_MIN;
+      if (n > TCI_TX_SAMPLES_MAX) n = TCI_TX_SAMPLES_MAX;
+      g_atomic_int_set(&tx_chrono_samples, n);
+    }
+    char r[48];
+    g_snprintf(r, sizeof(r), "audio_stream_samples:%d;", g_atomic_int_get(&tx_chrono_samples));
+    client_send_text(c, r);
+  } else if (!strcmp(name, "tx_stream_audio_buffering")) {
+    // How much TX audio the client wants queued ahead, in ms (default 50).
+    // Used to size the burst of ticks at the start of a transmission.
+    if (nargs >= 1) {
+      int ms = atoi(args[0]);
+      if (ms < 0) ms = 0;
+      if (ms > TCI_TX_BUFFER_MS_MAX) ms = TCI_TX_BUFFER_MS_MAX;
+      g_atomic_int_set(&tx_chrono_buffer_ms, ms);
+    }
+    char r[56];
+    g_snprintf(r, sizeof(r), "tx_stream_audio_buffering:%d;", g_atomic_int_get(&tx_chrono_buffer_ms));
+    client_send_text(c, r);
   } else if (!strcmp(name, "channels_count")) {
     client_send_text(c, "channels_count:2;");         // main + sub per receiver
   } else if (!strcmp(name, "device")) {
@@ -1272,6 +1341,7 @@ static void clients_remove(TCI_CLIENT *c) {
   g_mutex_lock(&clients_mutex);
   client_set_iq(c, -1, FALSE);      // clear all rx bits, keep iq_sub_count balanced
   client_set_audio(c, -1, FALSE);   // clear all rx bits, keep audio_sub_count balanced
+  tci_set_tx_chrono(c, FALSE);      // a client that vanishes owes us no TX audio
   g_mutex_lock(&c->send_mtx);
   int fd = c->fd;
   c->fd = -1;
@@ -1483,6 +1553,11 @@ void tci_notify_mode(RECEIVER *rx) {
 
 void tci_notify_trx(gboolean mox) {
   if (!g_atomic_int_get(&server_running)) return;
+  // A transmission that ends -- however it ended, including the operator's own
+  // MOX button -- ends the client's role as the audio source with it.  Left
+  // armed, the next over started from the microphone would still be asking a
+  // network client for audio and would take its samples over the mic's.
+  if (!mox) tci_tx_chrono_disarm_all();
   char line[32];
   g_snprintf(line, sizeof(line), "trx:%d,%s;", tci_tx_index(), mox ? "true" : "false");
   tci_broadcast_text(line);
@@ -1643,6 +1718,131 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
     g_free(inter);
   }
   g_free(inL); g_free(inR); g_free(outL); g_free(outR);
+}
+
+// --- TX_CHRONO: the half of TCI TX audio that has to come from the server ----
+//
+// TCI Protocol 1.9, section 3.4, on sending an audio stream to a transmitter:
+// "ExpertSDR3 sends a TX_CHRONO timestamp that notifies the client to send an
+// audio signal marked as TX_AUDIO_STREAM with the specified number of samples
+// in the Stream.length.  Timestamps are sent without waiting for a response
+// from the client."  Nothing here ever sent one, so a client that keys with
+// `trx:0,true,tci;` -- which is exactly what MSHV does -- keyed the radio and
+// then waited for a tick that was never coming.  Neither side was at fault in a
+// way either could see: the app reported a healthy transmitter (measured on a
+// PlutoSDR: 28209152 samples delivered to the DAC over 12.6 s, nothing refused)
+// and every one of those samples was silence, because the modulator was waiting
+// on a handshake with one half missing.
+//
+// The tick is clocked by the TX chain itself (add_mic_sample -> the buffer
+// boundary), not by a timer: that is the same 48 kHz the audio is consumed at,
+// on whatever thread the protocol clocks TX with, so the request rate cannot
+// drift from the consumption rate.
+static void tci_send_chrono(guint32 nsamples) {
+  guint8  wshdr[10];
+  size_t  wshlen = tci_ws_write_header(wshdr, 0x2 /*binary*/, TCI_HDR_BYTES);
+  size_t  flen = wshlen + TCI_HDR_BYTES;
+  guint8  frame[10 + TCI_HDR_BYTES];
+
+  memcpy(frame, wshdr, wshlen);
+  guint8 *th = frame + wshlen;
+  memset(th, 0, TCI_HDR_BYTES);
+  st32le(th +  0, (guint32)tci_tx_index());              // receiver (the transmitting trx)
+  st32le(th +  4, (guint32)g_atomic_int_get(&audio_stream_rate));
+  st32le(th +  8, TCI_SAMPLE_FLOAT32);                   // format
+  st32le(th + 12, 0);                                    // codec
+  st32le(th + 16, 0);                                    // crc
+  st32le(th + 20, nsamples);                             // length: what we are asking for
+  st32le(th + 24, TCI_STREAM_TX_CHRONO);                 // type
+  st32le(th + 28, 2);                                    // channels
+  // A chrono carries no payload -- it is a timestamp, and the client answers it
+  // with a TX_AUDIO_STREAM frame of its own.
+
+  g_mutex_lock(&clients_mutex);
+  for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
+    if (clients[i].fd < 0) continue;
+    if (!g_atomic_int_get(&clients[i].tx_chrono)) continue;
+    client_send_framed_try(&clients[i], frame, flen);
+  }
+  g_mutex_unlock(&clients_mutex);
+}
+
+// Arm/disarm one client as the TX-audio source. Called from that client's own
+// thread (the trx command) and from tci_notify_trx() when the transmission ends
+// -- including one the operator ended with the MOX button, which a client that
+// keyed over the network never hears about otherwise.
+static void tci_set_tx_chrono(TCI_CLIENT *c, gboolean on) {
+  if (c == NULL) return;
+  if (g_atomic_int_get(&c->tx_chrono) == (on ? 1 : 0)) return;
+  g_atomic_int_set(&c->tx_chrono, on ? 1 : 0);
+  if (on) {
+    g_atomic_int_inc(&tx_chrono_clients);
+    g_atomic_int_set(&tx_chrono_at_arm, g_atomic_int_get(&tx_frames_in));
+    log_info("tci: client (fd=%d) keyed with source=tci -- asking it for TX audio, "
+             "%d sample(s) per tick at %d Hz, %d ms of buffering\n",
+             c->fd, g_atomic_int_get(&tx_chrono_samples),
+             g_atomic_int_get(&audio_stream_rate), g_atomic_int_get(&tx_chrono_buffer_ms));
+  } else {
+    g_atomic_int_dec_and_test(&tx_chrono_clients);
+    // The one line that names the fault when a client keys and stays silent.
+    // Without it the operator sees a transmitter that runs perfectly and puts
+    // nothing on the air, and there is nothing in any log to read.
+    if (g_atomic_int_get(&tx_frames_in) == g_atomic_int_get(&tx_chrono_at_arm)) {
+      log_error("tci: the client keyed with source=tci and then sent no TX audio at all "
+                "-- it was asked for it (TX_CHRONO), so it either does not answer chrono "
+                "ticks or it is streaming to something else\n");
+    }
+  }
+}
+
+static void tci_tx_chrono_disarm_all(void) {
+  g_mutex_lock(&clients_mutex);
+  for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
+    if (clients[i].fd < 0) continue;
+    tci_set_tx_chrono(&clients[i], FALSE);
+  }
+  g_mutex_unlock(&clients_mutex);
+}
+
+// One TX buffer has been clocked into the transmitter (add_mic_sample). Turn
+// that into chrono ticks at the same rate. `nsamples` is in the 48 kHz mic
+// domain; a chrono asks for tx_chrono_samples samples of the STREAM rate, which
+// is not the same clock when a client asked for 8/12/24 kHz.
+//
+// The accumulator is a plain static: the TX chain is clocked by exactly one
+// thread at a time (the mic thread or the protocol's TX pump), and the arm path
+// resets it from a client thread only when no transmission is running.
+void tci_tx_chrono_tick(int nsamples) {
+  static int      acc = 0;
+  static gboolean primed = FALSE;
+
+  if (!g_atomic_int_get(&server_running)) return;
+  if (g_atomic_int_get(&tx_chrono_clients) <= 0) { acc = 0; primed = FALSE; return; }
+  if (g_radio == NULL || !g_radio->mox) { acc = 0; primed = FALSE; return; }
+  if (nsamples <= 0) return;
+
+  const int want = g_atomic_int_get(&tx_chrono_samples);
+  const int rate = g_atomic_int_get(&audio_stream_rate);
+  if (want <= 0 || rate <= 0) return;
+  // 48 kHz mic samples covered by one tick's worth of stream samples.
+  int per = (int)(((gint64)want * TCI_AUDIO_RATE) / rate);
+  if (per < 1) per = 1;
+
+  if (!primed) {
+    // Ask for the client's requested buffering depth up front, or the ring
+    // starts empty and the first tenth of a second of every over is silence.
+    int ms = g_atomic_int_get(&tx_chrono_buffer_ms);
+    int ticks = (int)(((gint64)ms * TCI_AUDIO_RATE) / (1000LL * per)) + 1;
+    if (ticks > 16) ticks = 16;          // a client that ignores us must not be flooded
+    for (int i = 0; i < ticks; i++) tci_send_chrono((guint32)want);
+    primed = TRUE;
+  }
+
+  acc += nsamples;
+  while (acc >= per) {
+    acc -= per;
+    tci_send_chrono((guint32)want);
+  }
 }
 
 // --- TX audio ingest -> mic substitution (transmitter.c:add_mic_sample) ------
