@@ -1309,6 +1309,14 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     client_send_text(c, r);
     g_snprintf(r, sizeof(r), "split_enable:%d,%s;", idx, (t->split != SPLIT_OFF) ? "true" : "false");
     client_send_text(c, r);
+    // "Sent to the client when connected" (TCI 1.9, TX_ENABLE), and it was not.
+    // A client that gates its transmit button on this never keys at all, and
+    // says nothing about why -- one line is cheaper than finding that out from
+    // a remote operator.  Per trx: only the one the transmitter is on may key.
+    g_snprintf(r, sizeof(r), "tx_enable:%d,%s;", idx,
+               (idx == tci_tx_index() && g_radio != NULL && g_radio->can_transmit)
+               ? "true" : "false");
+    client_send_text(c, r);
   }
   if (g_radio != NULL && g_radio->transmitter != NULL) {
     // Transmitter state is announced against the trx the transmitter is on, not
