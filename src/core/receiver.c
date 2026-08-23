@@ -36,6 +36,14 @@
 #include "band.h"
 #include "discovered.h"
 #include "bpsk.h"
+#ifdef LIQUID
+#include <complex.h>
+// <complex.h> defines I, and this file has its own `double I` locals (the
+// vectorscope downmix, among others).  The complex literal is spelled
+// _Complex_I here; drop the short alias rather than rename existing code.
+#undef I
+#include <liquid/liquid.h>
+#endif
 #include "receiver.h"
 #include "transmitter.h"
 #include "wideband.h"
@@ -189,6 +197,152 @@ static int rx_dsp_block(int sample_rate) {
   return (sample_rate>RX_ULTRAWIDE_SPAN)?(RX_BLOCK_WIDE/5):RX_BLOCK_WIDE;
 }
 
+// ---- the DSP feed --------------------------------------------------------
+//
+// WDSP's channel decimates its input rate down to the 48 kHz DSP rate with the
+// same single-stage resampler the SoapySDR front end used to use, sized at 140
+// taps per unit of ratio (wdsp/resample.c): at a 9.6 MHz span that is 200:1,
+// i.e. 28 000 taps per output sample -- 1.34 G complex multiply-accumulates a
+// second for the audio of one receiver.  So above the ultrawide threshold the
+// channel is not opened at the span at all.  The span is mixed so that the
+// CURSOR sits at DC and decimated by RX_FEED_DECIM here, in a liquid cascade,
+// and WDSP is opened at the rate that leaves (384 kHz at 9600000, 192 kHz at
+// 4800000 -- both rates this app already offers as spans of their own).
+//
+// Two things move with it, and both are why this is not just an optimisation:
+//   - the digital tuning shift is now OURS.  WDSP's shift block is switched off
+//     and the NCO does it (receiver_apply_shift).  RXANBPSetShiftFrequency is
+//     still told the same number, because the NBP uses tunefreq+shift only to
+//     place the notches (wdsp/nbp.c) and does not move the signal;
+//   - SUBRX listens somewhere else in the same span, so it gets its OWN feed
+//     rather than a copy of this one (subrx.c).
+// Everything else -- the panadapter, the recorder, every raw-I/Q decoder tap --
+// keeps reading the full-span buffer, which is untouched.
+//
+// 25 is the one decimation that suits both ultrawide spans: it takes 9600000 to
+// 384000 and 4800000 to 192000, both multiples of 48000, and it divides the
+// 25600-sample block into exactly 1024.
+#define RX_FEED_DECIM 25
+
+typedef struct {
+#ifdef LIQUID
+  msresamp_crcf decim;
+  nco_crcf nco;
+  liquid_float_complex *mix;   // in_n complex, the mixed input
+  liquid_float_complex *out;   // decimated output of one push
+  int mix_cap, out_cap;
+#endif
+  gdouble *acc;                // (Q,I) doubles waiting to be drained
+  int acc_n, acc_rd, acc_cap;  // in SAMPLES, not doubles; acc_rd = drained so far
+  int in_block;                // the drain unit == the channel's in_size
+  int in_rate;
+} RXFEED;
+
+void *rx_feed_create(int in_rate,int out_rate,int in_block) {
+#ifdef LIQUID
+  if(in_rate<=0 || out_rate<=0 || in_block<=0 || in_rate==out_rate) return NULL;
+  RXFEED *f=g_new0(RXFEED,1);
+  f->in_rate=in_rate;
+  f->in_block=in_block;
+  f->decim=msresamp_crcf_create((float)((double)out_rate/(double)in_rate),100.0f);
+  f->nco=nco_crcf_create(LIQUID_VCO);
+  if(f->decim==NULL || f->nco==NULL) {
+    log_error("rx_feed_create: %d -> %d failed; the channel stays at the span\n",in_rate,out_rate);
+    if(f->decim!=NULL) msresamp_crcf_destroy(f->decim);
+    if(f->nco!=NULL) nco_crcf_destroy(f->nco);
+    g_free(f);
+    return NULL;
+  }
+  // Four drain units of slack: the cascade's last stage is an arbitrary
+  // resampler and lands one either side of the nominal count, so the
+  // accumulator is what keeps fexchange0 fed with EXACTLY in_size every time.
+  f->acc_cap=4*in_block;
+  f->acc=g_new0(gdouble,2*f->acc_cap);
+  log_info("rx_feed_create: %d -> %d, draining in %d-sample blocks (delay %.1f samples)\n",
+           in_rate,out_rate,in_block,(double)msresamp_crcf_get_delay(f->decim));
+  return f;
+#else
+  (void)in_rate; (void)out_rate; (void)in_block;
+  return NULL;
+#endif
+}
+
+void rx_feed_destroy(void *feed) {
+  RXFEED *f=(RXFEED *)feed;
+  if(f==NULL) return;
+#ifdef LIQUID
+  if(f->decim!=NULL) msresamp_crcf_destroy(f->decim);
+  if(f->nco!=NULL) nco_crcf_destroy(f->nco);
+  g_free(f->mix);
+  g_free(f->out);
+#endif
+  g_free(f->acc);
+  g_free(f);
+}
+
+// The offset WDSP's shift block would have been given: the signal at +hz is
+// brought to DC.  The NCO keeps its phase, so retuning mid-stream does not
+// click.
+void rx_feed_set_offset(void *feed,double hz) {
+  RXFEED *f=(RXFEED *)feed;
+  if(f==NULL) return;
+#ifdef LIQUID
+  nco_crcf_set_frequency(f->nco,(float)(2.0*M_PI*hz/(double)f->in_rate));
+#else
+  (void)hz;
+#endif
+}
+
+void rx_feed_push(void *feed,const gdouble *iq,int n) {
+  RXFEED *f=(RXFEED *)feed;
+  if(f==NULL || n<=0) return;
+#ifdef LIQUID
+  // Compact first: the block handed out by the last take() has been through
+  // fexchange0 by now, so what is left may move to the front.  Doing it inside
+  // take() would move the buffer the caller is about to read.
+  if(f->acc_rd>0) {
+    f->acc_n-=f->acc_rd;
+    if(f->acc_n>0) memmove(f->acc,f->acc+2*f->acc_rd,(size_t)(2*f->acc_n)*sizeof(gdouble));
+    f->acc_rd=0;
+  }
+  if(f->mix_cap<n) {
+    g_free(f->mix); f->mix=g_new(liquid_float_complex,n); f->mix_cap=n;
+    g_free(f->out); f->out_cap=n; f->out=g_new(liquid_float_complex,n);
+  }
+  // The buffer is (Q, I): WDSP reads I from the odd element and Q from the even
+  // one (wdsp/analyzer.c, Spectrum0), and a consumer that builds the complex
+  // the other way round mixes in the opposite direction -- the cursor would
+  // then tune away from the signal instead of onto it.
+  for(int i=0;i<n;i++) {
+    f->mix[i]=(float)iq[2*i+1] + _Complex_I*(float)iq[2*i];
+  }
+  nco_crcf_mix_block_down(f->nco,f->mix,f->mix,(unsigned int)n);
+  unsigned int ny=0;
+  msresamp_crcf_execute(f->decim,f->mix,(unsigned int)n,f->out,&ny);
+  for(unsigned int k=0;k<ny;k++) {
+    if(f->acc_n>=f->acc_cap) {
+      // Only reachable if nothing drained for four blocks, which means the
+      // caller stopped calling rx_feed_take: drop rather than grow for ever.
+      log_error("rx_feed_push: accumulator full (%d samples); dropping\n",f->acc_n);
+      break;
+    }
+    f->acc[2*f->acc_n]   = (gdouble)cimagf(f->out[k]);   // Q, as WDSP wants it
+    f->acc[2*f->acc_n+1] = (gdouble)crealf(f->out[k]);   // I
+    f->acc_n++;
+  }
+#else
+  (void)iq;
+#endif
+}
+
+gboolean rx_feed_take(void *feed,gdouble **block) {
+  RXFEED *f=(RXFEED *)feed;
+  if(f==NULL || (f->acc_n-f->acc_rd)<f->in_block) return FALSE;
+  *block=f->acc+2*f->acc_rd;
+  f->acc_rd+=f->in_block;
+  return TRUE;
+}
+
 // The DSP rate WFM runs at.  WFM is the one mode that runs the whole chain at
 // the span, and it is only glitch-free while WDSP's dsp_insize equals the block
 // we hand it (in_size): otherwise the DSP thread fills the output ring only
@@ -200,8 +354,68 @@ static int rx_dsp_block(int sample_rate) {
 // existed.  Above it, it is a fifth of a fifth: 384 kHz at 9600000, 192 kHz at
 // 4800000, both still wide enough for broadcast FM.
 static int rx_wfm_dsp_rate(RECEIVER *rx) {
+  // With a feed in front the channel's input rate is already narrow and its
+  // dsp_size equals its in_size, so the equality is simply dsp_rate == in_rate.
+  if(rx->dsp_feed!=NULL) return rx->dsp_in_rate;
   if(rx->buffer_size<=0 || rx->dsp_size<=0) return rx->sample_rate;
   return (int)(((long long)rx->sample_rate*(long long)rx->dsp_size)/(long long)rx->buffer_size);
+}
+
+// (Re)decide whether this receiver's channel is fed the span or a decimated
+// stream, and build the feed if it is the latter.  Sets dsp_in_rate/dsp_in_block
+// to what the channel must be opened (or re-rated) with; leaves them at the span
+// when there is no feed, which is every span up to RX_ULTRAWIDE_SPAN and every
+// build without liquid-dsp.
+static void receiver_build_feed(RECEIVER *rx) {
+  if(rx->dsp_feed!=NULL) {
+    rx_feed_destroy(rx->dsp_feed);
+    rx->dsp_feed=NULL;
+  }
+  rx->dsp_in_rate=rx->sample_rate;
+  rx->dsp_in_block=rx->buffer_size;
+  // MACHPSDR_DSP_FEED=0 keeps the WDSP channel at the span, i.e. the behaviour
+  // before the feed existed.  Same reason as MACHPSDR_FRONTEND: one variable at
+  // a time when the operator reports that something sounds wrong.
+  static int feed_off=-1;
+  if(feed_off<0) {
+    const char *e=g_getenv("MACHPSDR_DSP_FEED");
+    feed_off=(e!=NULL && (*e=='0' || *e=='n' || *e=='N'))?1:0;
+    if(feed_off) log_info("receiver_build_feed: MACHPSDR_DSP_FEED=0: the channel stays at the span\n");
+  }
+  if(!feed_off &&
+     rx->sample_rate>RX_ULTRAWIDE_SPAN &&
+     (rx->sample_rate%(48000*RX_FEED_DECIM))==0 &&
+     (rx->buffer_size%RX_FEED_DECIM)==0) {
+    const int in_rate=rx->sample_rate/RX_FEED_DECIM;
+    const int in_block=rx->buffer_size/RX_FEED_DECIM;
+    void *f=rx_feed_create(rx->sample_rate,in_rate,in_block);
+    if(f!=NULL) {
+      rx->dsp_feed=f;
+      rx->dsp_in_rate=in_rate;
+      rx->dsp_in_block=in_block;
+      // dsp_size == in_size keeps WDSP's dsp_insize equal to the block we hand
+      // it, which is the WFM boundary-click rule (see rx_wfm_dsp_rate).
+      rx->dsp_size=in_block;
+    }
+  }
+}
+
+// The digital tuning shift.  Without a feed it is WDSP's own shift block, as it
+// always was; with one, WDSP is handed a stream already centred on the cursor,
+// so the shift is the feed's NCO and WDSP's block is switched off.  The NBP is
+// told the same number either way -- it uses tunefreq+shift only to place the
+// notches (wdsp/nbp.c), it does not move the signal.
+void receiver_apply_shift(RECEIVER *rx,gint64 offset,gboolean run) {
+  const double hz=run?(double)offset:0.0;
+  RXANBPSetShiftFrequency(rx->channel,hz);
+  if(rx->dsp_feed!=NULL) {
+    rx_feed_set_offset(rx->dsp_feed,hz);
+    SetRXAShiftFreq(rx->channel,0.0);
+    SetRXAShiftRun(rx->channel,0);
+  } else {
+    SetRXAShiftFreq(rx->channel,hz);
+    SetRXAShiftRun(rx->channel,run?1:0);
+  }
 }
 
 // Position the zoomed panadapter/waterfall pan window so the cursor (the
@@ -258,16 +472,17 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
       rx->scope_iq=g_new0(gfloat,2*block);
       rx->scope_iq_n=0;
       rx->samples=0;
-      SetInputBuffsize(rx->channel,block);
       SetEXTANBBuffsize(rx->channel,block);
       SetEXTNOBBuffsize(rx->channel,block);
     }
-    const int dsp=rx_dsp_block(rx->sample_rate);
-    if(dsp!=rx->dsp_size) {
-      rx->dsp_size=dsp;
-      SetDSPBuffsize(rx->channel,dsp);
-    }
+    rx->dsp_size=rx_dsp_block(rx->sample_rate);
   }
+
+  // The feed (and with it the channel's input rate and in_size) belongs to the
+  // span, so it is rebuilt here -- before the channel is re-rated below.
+  receiver_build_feed(rx);
+  SetInputBuffsize(rx->channel,rx->dsp_in_block);
+  SetDSPBuffsize(rx->channel,rx->dsp_size);
 
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
@@ -275,7 +490,13 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   //SetInputSamplerate(rx->channel, sample_rate);
   // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
   rx->dsp_rate=(rx->mode_a==WFM)?rx_wfm_dsp_rate(rx):48000;
-  SetAllRates(rx->channel,rx->sample_rate,rx->dsp_rate,48000);
+  SetAllRates(rx->channel,rx->dsp_in_rate,rx->dsp_rate,48000);
+  // The shift lives in the feed's NCO or in WDSP's block depending on what the
+  // rebuild above decided, and the NCO's step is per-sample at the NEW rate.
+  receiver_apply_shift(rx,rx->ctun_offset,rx->ctun||rx->freetune);
+
+  // VFO-B's channel is a channel of its own and follows the span with this one.
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_change_sample_rate(rx);
 
   receiver_init_analyzer(rx);
   SetEXTANBSamplerate (rx->channel, sample_rate);
@@ -603,6 +824,12 @@ void receiver_destroy(RECEIVER *rx) {
   // invisible to the same run).  Freed here rather than in a Soapy-specific
   // teardown because this is where every other buffer of the receiver goes, and
   // both fields are NULL on the protocols that never set them.
+  // The NCO + decimator in front of the WDSP channel, when this receiver's span
+  // needed one (receiver_build_feed).
+  if(rx->dsp_feed!=NULL) {
+    rx_feed_destroy(rx->dsp_feed);
+    rx->dsp_feed=NULL;
+  }
   g_clear_pointer(&rx->buffer,g_free);
   if(rx->resampler!=NULL) {
     destroy_resample(rx->resampler);
@@ -1093,7 +1320,7 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
     /* The hardware LO is already on the current centre; remember it so we only
        retune when the span centre later moves (see frequency_changed). */
     rx->freetune_hw_frequency = rx->frequency_a;
-    SetRXAShiftRun(rx->channel, 1);
+    receiver_apply_shift(rx,rx->ctun_offset,TRUE);
   } else {
     if(!rx->ctun) {
       /* Leaving freetune: keep listening to whatever the cursor was on by
@@ -1102,8 +1329,7 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
          WDSP shift. The retune to the new centre happens in frequency_changed. */
       rx->frequency_a = rx->ctun_frequency;
       rx->ctun_offset = 0;
-      SetRXAShiftFreq(rx->channel, 0.0);
-      SetRXAShiftRun(rx->channel, 0);
+      receiver_apply_shift(rx,0,FALSE);
     }
   }
 
@@ -2342,19 +2568,39 @@ static void full_rx_buffer(RECEIVER *rx) {
   }
 
   g_mutex_lock(&rx->mutex);
-  fexchange0(rx->channel, rx->iq_input_buffer, rx->audio_output_buffer, &error);
-  //if(error!=0 && error!=-2) {
-  if(error!=0) {
-    log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+  if(rx->dsp_feed!=NULL) {
+    // The channel is open at a decimated rate: mix the cursor to DC, decimate,
+    // and hand WDSP WHOLE in_size blocks -- fexchange0 consumes exactly the
+    // count the channel was opened with, while the cascade's last stage lands
+    // one either side of the nominal one, so the feed accumulates and this
+    // drains.  Usually one block per pass; occasionally none or two.
+    gdouble *blk;
+    rx_feed_push(rx->dsp_feed,rx->iq_input_buffer,rx->buffer_size);
+    if(rx->subrx_enable) subrx_iq_push(rx);
+    while(rx_feed_take(rx->dsp_feed,&blk)) {
+      fexchange0(rx->channel, blk, rx->audio_output_buffer, &error);
+      if(error!=0) {
+        log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+      }
+      if(rx->subrx_enable) subrx_iq_take(rx);
+      process_rx_buffer(rx);
+    }
+  } else {
+    fexchange0(rx->channel, rx->iq_input_buffer, rx->audio_output_buffer, &error);
+    //if(error!=0 && error!=-2) {
+    if(error!=0) {
+      log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+    }
+
+    if(rx->subrx_enable) {
+      subrx_iq_buffer(rx);
+    }
+    process_rx_buffer(rx);
   }
 
-  if(rx->subrx_enable) {
-    subrx_iq_buffer(rx);
-  }
-
+  // Always the FULL span, feed or no feed: this is what the panadapter and the
+  // waterfall draw.
   analyzer_feed(rx->channel, rx->iq_input_buffer, rx->buffer_size);
-
-  process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
 
 }
@@ -3324,10 +3570,14 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
   // by create_iobuffs inside OpenChannel below.
   SetDSPMult(rx_ring_depth(rx->sample_rate));
 
+  // Decide the channel's input geometry before opening it: above the ultrawide
+  // threshold the span is decimated in front of WDSP (see receiver_build_feed).
+  receiver_build_feed(rx);
+
   OpenChannel(rx->channel,
-              rx->buffer_size,
+              rx->dsp_in_block,
               rx->dsp_size,
-              rx->sample_rate,
+              rx->dsp_in_rate,
               48000, // dsp rate
               48000, // output rate
               0, // receive
@@ -3399,10 +3649,9 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   // Apply any restored manual notches now that the WDSP channel exists.
   receiver_notch_sync(rx);
 
-  /* Restore freetune WDSP shift state after channel open */
-  if(rx->freetune || rx->ctun) {
-    SetRXAShiftRun(rx->channel, 1);
-  }
+  /* Restore the tuning shift after the channel open -- into the feed's NCO or
+     into WDSP's shift block, whichever this receiver ended up with. */
+  receiver_apply_shift(rx,rx->ctun_offset,rx->ctun||rx->freetune);
   /* The LO starts on the current centre; seed the freetune retune tracker. */
   rx->freetune_hw_frequency = rx->frequency_a;
 
@@ -3501,11 +3750,7 @@ void receiver_set_ctun(RECEIVER *rx) {
   rx->ctun_frequency=rx->frequency_a;
   rx->ctun_min=rx->frequency_a-(rx->sample_rate/2);
   rx->ctun_max=rx->frequency_a+(rx->sample_rate/2);
-  if(!rx->ctun && !rx->freetune) {
-    SetRXAShiftRun(rx->channel, 0);
-  } else {
-    SetRXAShiftRun(rx->channel, 1);
-  }
+  receiver_apply_shift(rx,rx->ctun_offset,rx->ctun||rx->freetune);
   frequency_changed(rx);
   update_frequency(rx);
 }

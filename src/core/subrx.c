@@ -45,9 +45,17 @@ void subrx_frequency_changed(RECEIVER *rx) {
   //} else if(rx->mode_b==CWL) {
   //  offset-=(gint64)radio->cw_keyer_sidetone_frequency;
   //}
-  SetRXAShiftFreq(subrx->channel, (double)offset);
   RXANBPSetShiftFrequency(subrx->channel, (double)offset);
-  SetRXAShiftRun(subrx->channel, 1);
+  if(subrx->feed!=NULL) {
+    // The sub-channel sees a stream already centred on VFO-B, so WDSP's shift
+    // block stays off and the NCO carries the offset (see receiver_apply_shift).
+    rx_feed_set_offset(subrx->feed,(double)offset);
+    SetRXAShiftFreq(subrx->channel, 0.0);
+    SetRXAShiftRun(subrx->channel, 0);
+  } else {
+    SetRXAShiftFreq(subrx->channel, (double)offset);
+    SetRXAShiftRun(subrx->channel, 1);
+  }
 }
 
 void subrx_set_mode(RECEIVER *rx) {
@@ -140,10 +148,18 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
   subrx->channel=rx->channel+SUBRX_BASE_CHANNEL;
   g_mutex_init(&subrx->mutex);
   subrx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
+  // The same geometry as the main channel: when the span is decimated in front
+  // of WDSP (RECEIVER.dsp_feed), VFO-B's channel is opened at that decimated
+  // rate too -- with its OWN feed below, because it listens somewhere else in
+  // the same span.  With no feed these are the span and the full block, i.e.
+  // exactly what this call passed before.
+  subrx->feed=(rx->dsp_feed!=NULL)
+              ? rx_feed_create(rx->sample_rate,rx->dsp_in_rate,rx->dsp_in_block)
+              : NULL;
   OpenChannel(subrx->channel,
-              rx->buffer_size,
-              rx->fft_size,
-              rx->sample_rate,
+              rx->dsp_in_block,
+              (subrx->feed!=NULL)?rx->dsp_size:rx->fft_size,
+              rx->dsp_in_rate,
               48000, // dsp rate
               48000, // output rate
               0, // receive
@@ -205,6 +221,30 @@ void subrx_iq_buffer(RECEIVER *rx) {
   fexchange0(subrx->channel, rx->iq_input_buffer, subrx->audio_output_buffer, &error);
 }
 
+// The two halves of the same thing when the main receiver has a feed: the whole
+// span goes in once per block, and the sub-channel is exchanged whenever a full
+// decimated block has come out.  Called from full_rx_buffer around the main
+// channel's own exchange, so the two stay in step.
+void subrx_iq_push(RECEIVER *rx) {
+  SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL || subrx->feed==NULL) return;
+  rx_feed_push(subrx->feed,rx->iq_input_buffer,rx->buffer_size);
+}
+
+void subrx_iq_take(RECEIVER *rx) {
+  SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL) return;
+  gint error;
+  gdouble *blk;
+  if(subrx->feed==NULL) {
+    fexchange0(subrx->channel, rx->iq_input_buffer, subrx->audio_output_buffer, &error);
+    return;
+  }
+  if(rx_feed_take(subrx->feed,&blk)) {
+    fexchange0(subrx->channel, blk, subrx->audio_output_buffer, &error);
+  }
+}
+
 void subrx_volume_changed(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
   SetRXAPanelGain1(subrx->channel, rx->volume);
@@ -214,6 +254,21 @@ void subrx_change_sample_rate(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
   g_free(subrx->audio_output_buffer);
   subrx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
+  // The sub-channel is a full WDSP channel of its own and it was NOT re-rated
+  // here: it kept the input rate and block the span had when SUBRX was switched
+  // on, so changing the span left VFO-B demodulating at the wrong clock.  Its
+  // feed belongs to the new span too.
+  if(subrx->feed!=NULL) {
+    rx_feed_destroy(subrx->feed);
+    subrx->feed=NULL;
+  }
+  if(rx->dsp_feed!=NULL) {
+    subrx->feed=rx_feed_create(rx->sample_rate,rx->dsp_in_rate,rx->dsp_in_block);
+  }
+  SetInputBuffsize(subrx->channel,rx->dsp_in_block);
+  SetDSPBuffsize(subrx->channel,(subrx->feed!=NULL)?rx->dsp_size:rx->fft_size);
+  SetAllRates(subrx->channel,rx->dsp_in_rate,48000,48000);
+  subrx_frequency_changed(rx);
 }
 
 void destroy_subrx(RECEIVER *rx) {
@@ -228,6 +283,10 @@ log_info("%s\n",__FUNCTION__);
   destroy_anbEXT(subrx->channel);
   destroy_nobEXT(subrx->channel);
   CloseChannel(subrx->channel);
+  if(subrx->feed!=NULL) {
+    rx_feed_destroy(subrx->feed);
+    subrx->feed=NULL;
+  }
   g_mutex_clear(&subrx->mutex);
   g_free(subrx->audio_output_buffer);
   g_free(subrx);

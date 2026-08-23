@@ -316,10 +316,19 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
   }
 
 #ifdef LIQUID
+  /* MACHPSDR_FRONTEND=wdsp puts the old single-stage resampler back without a
+     rebuild.  It exists so a report of "the audio is wrong at some spans" can be
+     split in one session: same signal, same span, one variable. */
+  static int frontend_wdsp=-1;
+  if(frontend_wdsp<0) {
+    const char *e=g_getenv("MACHPSDR_FRONTEND");
+    frontend_wdsp=(e!=NULL && strcmp(e,"wdsp")==0)?1:0;
+    if(frontend_wdsp) log_info("%s: MACHPSDR_FRONTEND=wdsp: using WDSP's single-stage resampler\n",__FUNCTION__);
+  }
   /* The multistage cascade takes the ratio as a float, so the gcd of the two
      rates does not enter into it -- the arithmetic trap the WDSP path below has
      to warn about simply is not there. */
-  {
+  if(!frontend_wdsp) {
     const int adc=(rx->adc>=0 && rx->adc<MAX_CHANNELS)?rx->adc:0;
     const float rate=(float)((double)rx->sample_rate/(double)in_rate);
     ms_out_cap[adc]=(int)((double)block*(double)rate)+16;

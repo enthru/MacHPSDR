@@ -353,8 +353,9 @@ void frequency_changed(RECEIVER *rx) {
     if(rx->rit_enabled) {
       offset+=rx->rit;
     }
-    SetRXAShiftFreq(rx->channel, (double)offset);
-    RXANBPSetShiftFrequency(rx->channel, (double)offset);
+    // Into WDSP's shift block, or into the feed's NCO when this receiver's span
+    // is decimated in front of the channel -- receiver_apply_shift knows which.
+    receiver_apply_shift(rx,offset,TRUE);
     RXANBPSetTuneFrequency(rx->channel, (double)rx->frequency_a);
 
 
@@ -391,6 +392,10 @@ void frequency_changed(RECEIVER *rx) {
     // offset. Clear any stale value left over from ctun/freetune so the cursor
     // (drawn from ctun_offset in the panadapter) returns to the middle.
     rx->ctun_offset=0;
+    // ...and with it the shift, wherever it lives: a feed's NCO holds its last
+    // offset until it is told otherwise, so leaving ctun would keep listening
+    // off-centre.
+    receiver_apply_shift(rx,0,FALSE);
     // Manual notches are stored as absolute RF: keep WDSP's notch-DB tune
     // frequency tracking frequency_a here too, not just in the ctun/freetune
     // branch above, or a notch would drift off-station under plain tuning.

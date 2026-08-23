@@ -26,12 +26,22 @@
 
 typedef struct _subrx {
   gint channel;
+  // VFO-B's own NCO + decimator when the main receiver has one (see
+  // RECEIVER.dsp_feed): the sub-channel listens somewhere else in the same
+  // span, so it cannot share the main feed's output.
+  void *feed;
   gint buffer_size;
   gint fft_size;
   gdouble *audio_output_buffer;
   GMutex mutex;
 } SUBRX;
 
+// Called from full_rx_buffer while the main feed is active: push the full-span
+// I/Q into VFO-B's own feed, then exchange one decimated block if one is ready.
+extern void subrx_iq_push(RECEIVER *rx);
+extern void subrx_iq_take(RECEIVER *rx);
+
+extern void subrx_change_sample_rate(RECEIVER *rx);
 extern void create_subrx(RECEIVER *rx);
 extern void destroy_subrx(RECEIVER *rx);
 extern void subrx_iq_buffer(RECEIVER *rx);

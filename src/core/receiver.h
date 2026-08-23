@@ -82,6 +82,17 @@ typedef struct _receiver {
   gint dsp_rate;
   gint output_rate;
 
+  // ---- the DSP feed -------------------------------------------------------
+  // Above RX_ULTRAWIDE_SPAN the WDSP channel is NOT opened at the span: WDSP
+  // would then decimate span->48k in one FIR stage of 140 taps per unit of
+  // ratio (28 000 taps per output sample at 9.6 MHz), so the span is mixed to
+  // the cursor and decimated here first -- an NCO plus a liquid cascade -- and
+  // the channel is opened at dsp_in_rate with blocks of dsp_in_block.  NULL
+  // feed means the channel is opened at the span, exactly as it always was.
+  void *dsp_feed;
+  gint dsp_in_rate;    // the WDSP channel's input rate  (== sample_rate with no feed)
+  gint dsp_in_block;   // the WDSP channel's in_size     (== buffer_size  with no feed)
+
   gint fft_size;
   // OpenChannel's dsp_size: how much WDSP chews per DSP pass.  Equal to
   // fft_size everywhere except the ultrawide SoapySDR spans, where the I/Q
@@ -515,6 +526,20 @@ extern void full_diviqrx_buffer(RECEIVER *rx);
 
 // Feed `nsamples` complex I/Q samples (interleaved doubles, Q at [2i], I at
 // [2i+1] as Spectrum0 expects) into WDSP's analyzer for `channel`, split into
+// ---- the DSP feed: an NCO and a multistage decimator in front of a WDSP
+// channel.  Returns NULL when it is not wanted or not available (no liquid-dsp
+// in this build), and every caller then keeps the full-span path it had.
+// in_block is the DRAIN unit: what fexchange0 will be handed, i.e. the channel's
+// in_size.  Offsets are in Hz and are what WDSP's own shift would have been set
+// to; the NCO holds its phase across blocks, so it may be retuned at any time.
+extern void *rx_feed_create(int in_rate,int out_rate,int in_block);
+extern void rx_feed_destroy(void *feed);
+extern void rx_feed_set_offset(void *feed,double hz);
+extern void rx_feed_push(void *feed,const gdouble *iq,int n);
+extern gboolean rx_feed_take(void *feed,gdouble **block);
+// The digital tuning shift, wherever it lives for this receiver (see dsp_feed).
+extern void receiver_apply_shift(RECEIVER *rx,gint64 offset,gboolean run);
+
 // The span a receiver opens at when nothing is persisted for it (see the
 // definition in receiver.c).  radio.h includes this header, not the other way
 // round, so the type is named by its tag here.
