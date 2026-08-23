@@ -678,15 +678,17 @@ void update_frequency(RECEIVER *rx) {
   }
 }
 
-/* Upper tuning limit: a hard 6 GHz ceiling (HackRF's top end, and a sanity cap
-   that keeps a runaway edit from producing a garbage frequency), lowered to the
-   discovered device's own maximum when that is narrower (e.g. ~61 MHz for the
-   classic HPSDR radios).
+/* Upper tuning limit: a hard RECEIVER_FREQ_CEILING_HZ (20 GHz) ceiling — a
+   sanity cap that keeps a runaway edit from producing a garbage frequency, set
+   above the microwave bands an operator can reach through a converter rather
+   than at any device's own top end — lowered to the discovered device's own
+   maximum when that is narrower (e.g. ~61 MHz for the classic HPSDR radios, or
+   6 GHz for a HackRF).
 
    ...and RAISED to cover any configured transverter. With a transverter the dial
    shows the frequency at the antenna while the hardware only ever sees
    frequency - lo, so a transverter band legitimately sits far above the device's
-   own ceiling: QO-100's downlink is at 10.49 GHz, nearly twice the 6 GHz cap.
+   own ceiling: a HackRF stops at 6 GHz and QO-100's downlink is at 10.49 GHz.
    Without this the dial simply cannot be tuned there — and because the guard is
    directional (it rejects only moves pushing FURTHER out of range), a frequency
    restored from a saved bandstack could be tuned downwards but never back up,
@@ -704,7 +706,7 @@ void update_frequency(RECEIVER *rx) {
    and this is a sanity cap against a runaway edit, not a safety interlock, so
    being generous with it costs nothing. */
 long long receiver_max_frequency(RECEIVER *rx) {
-  long long cap = 6000000000LL;
+  long long cap = RECEIVER_FREQ_CEILING_HZ;
   if(radio != NULL && radio->discovered != NULL) {
     long long dev = (long long)radio->discovered->frequency_max;
     if(dev > 0 && dev < cap) cap = dev;

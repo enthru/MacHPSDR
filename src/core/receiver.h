@@ -563,6 +563,14 @@ extern void receiver_set_notch_af(RECEIVER *rx, int idx, gboolean af);
 extern gboolean receiver_has_af_notch(RECEIVER *rx);
 
 // Upper tuning limit (6 GHz, or the discovered device's own maximum).
+/* The hard ceiling receiver_max_frequency() starts from — a sanity cap against a
+   runaway edit rather than anything the hardware knows about, so it has to clear
+   the highest thing an operator can legitimately put on the dial through a
+   converter. That is the microwave bands: 10 GHz for QO-100's downlink, and
+   above it the 24 GHz band whose LNB-fed IF is the same trick. Reported to TCI
+   clients as the VFO limit, which is why it is a constant and not a local. */
+#define RECEIVER_FREQ_CEILING_HZ 20000000000LL
+
 extern long long receiver_max_frequency(RECEIVER *rx);
 
 extern void receiver_save_state(RECEIVER *rx);

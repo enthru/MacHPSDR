@@ -1218,7 +1218,14 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     client_send_text(c, (g_radio != NULL && g_radio->can_transmit)
                         ? "receive_only:false;" : "receive_only:true;");
   } else if (!strcmp(name, "vfo_limits")) {
-    client_send_text(c, "vfo_limits:0,6000000000;");
+    // The ceiling the tuning guard uses, not a device's own top end: a client
+    // told 6 GHz while the app accepts 10.49 GHz through a QO-100 converter is
+    // being lied to about the one thing this command exists to answer. The
+    // per-device narrowing is not reportable here — this is one number for a
+    // whole application that may have several receivers on it.
+    char r[48];
+    g_snprintf(r, sizeof(r), "vfo_limits:0,%lld;", (long long)RECEIVER_FREQ_CEILING_HZ);
+    client_send_text(c, r);
   } else if (!strcmp(name, "if_limits")) {
     int half = (trx != NULL && trx->sample_rate > 0) ? trx->sample_rate / 2 : 24000;
     char r[48];
@@ -1272,7 +1279,11 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     client_send_text(c, r);
   }
   client_send_text(c, "channels_count:2;");
-  client_send_text(c, "vfo_limits:0,6000000000;");
+  {
+    char r[48];
+    g_snprintf(r, sizeof(r), "vfo_limits:0,%lld;", (long long)RECEIVER_FREQ_CEILING_HZ);
+    client_send_text(c, r);
+  }
   if (rx != NULL && rx->sample_rate > 0) {
     char r[48];
     g_snprintf(r, sizeof(r), "if_limits:%d,%d;", -rx->sample_rate / 2, rx->sample_rate / 2);
