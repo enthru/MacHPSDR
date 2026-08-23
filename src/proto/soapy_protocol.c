@@ -339,12 +339,62 @@ static int soapy_hw_rate_for(RECEIVER *rx) {
 
 /* The analog baseband filter has to follow the rate the hardware is running at,
    or the widest spans are a picture of a 2 MHz hole in the middle of the
-   screen: this was a hardcoded 2000000 for every device and every rate. */
-static void soapy_set_rx_bandwidth(size_t adc,int hw_rate) {
-  int rc=SoapySDRDevice_setBandwidth(soapy_device,SOAPY_SDR_RX,adc,(double)hw_rate);
-  if(rc!=0) {
-    log_info("%s: SoapySDRDevice_setBandwidth(%d) failed: %s\n",__FUNCTION__,hw_rate,SoapySDR_errToStr(rc));
+   screen: this was a hardcoded 2000000 for every device and every rate.
+
+   And asking for exactly the rate is not the same as getting it.  A device
+   whose filter is a ladder of fixed steps rounds DOWN to its nearest one, so a
+   HackRF told "9600000" runs its MAX2837 at 7 MHz: the outer 1.3 MHz of each
+   side of the span is attenuated in the analogue domain, before anything here
+   can see it (4800000 -> 3.5 MHz and 2000000 -> 1.75 MHz are the same story,
+   and an sdrplay asked for 384000 gets 300 kHz).  A complex baseband stream at
+   Fs occupies the whole +-Fs/2, so the step wanted is the first one AT OR ABOVE
+   the rate, which is what is picked here out of what the driver offers.
+
+   The cost is that the extra passband beyond Nyquist folds in: with a 10 MHz
+   filter on a 9.6 MHz stream, 4.8..5 MHz lands on the top 200 kHz of the span.
+   That is the trade -- a little aliasing at the very edge instead of a real
+   analogue roll-off across a fifth of the picture.
+
+   A driver that offers no list at all (or is too old to be asked) gets the
+   request it always got. */
+#if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION >= 0x00060000)
+/* The lowest filter setting that still covers `want`, out of what the driver
+   offers.  A fixed step comes back as minimum==maximum; a continuously tunable
+   filter as a real span, where `want` itself is available if it lies inside it.
+   With every range below `want` there is nothing to pick but the widest, which
+   is what the device would have clamped to anyway.  Returns 0 when the driver
+   offers nothing, i.e. "ask for what you were going to ask for". */
+static double soapy_bandwidth_pick(const SoapySDRRange *r,size_t n,double want) {
+  if(r==NULL || n==0) return 0.0;
+  double pick=0.0,widest=0.0;
+  for(size_t i=0;i<n;i++) {
+    const double cand=(want<=r[i].minimum)?r[i].minimum:
+                      ((want<=r[i].maximum)?want:0.0);
+    if(cand>0.0 && (pick<=0.0 || cand<pick)) pick=cand;
+    if(r[i].maximum>widest) widest=r[i].maximum;
   }
+  return (pick>0.0)?pick:widest;
+}
+#endif
+
+static void soapy_set_rx_bandwidth(size_t adc,int hw_rate) {
+  double want=(double)hw_rate;
+#if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION >= 0x00060000)
+  size_t n=0;
+  SoapySDRRange *r=SoapySDRDevice_getBandwidthRange(soapy_device,SOAPY_SDR_RX,adc,&n);
+  const double pick=soapy_bandwidth_pick(r,n,want);
+  if(pick>0.0) want=pick;
+  if(r!=NULL) SoapySDR_free(r);
+#endif
+  int rc=SoapySDRDevice_setBandwidth(soapy_device,SOAPY_SDR_RX,adc,want);
+  if(rc!=0) {
+    log_info("%s: SoapySDRDevice_setBandwidth(%.0f) failed: %s\n",__FUNCTION__,want,SoapySDR_errToStr(rc));
+  }
+  /* Say what the filter ENDED UP at, not what it was asked for: the round-down
+     this function exists to defeat is invisible in the request. */
+  const double got=SoapySDRDevice_getBandwidth(soapy_device,SOAPY_SDR_RX,adc);
+  log_info("%s: hardware rate %d: asked for %.0f Hz of baseband filter, running %.0f\n",
+           __FUNCTION__,hw_rate,want,got);
 }
 
 /* Asks the device for `requested` and returns what it is ACTUALLY running at.
@@ -580,8 +630,7 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
   // receiver's own span for the two that are driven directly (soapy_hw_rate_for).
   soapy_rx_sample_rate=soapy_hw_rate_for(rx);
 
-log_info("%s: setting bandwidth=%d\n",__FUNCTION__,soapy_rx_sample_rate);
-  soapy_set_rx_bandwidth(rx->adc,soapy_rx_sample_rate);
+  soapy_set_rx_bandwidth(rx->adc,soapy_rx_sample_rate);   /* logs what the filter ended up at */
 
 log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate);
   soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);

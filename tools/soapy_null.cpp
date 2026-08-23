@@ -292,17 +292,34 @@ public:
 
   // ---- bandwidth ----
 
+  // The analogue filter is a LADDER of fixed steps and setBandwidth rounds DOWN
+  // to the nearest one -- the MAX2837's, which is what a HackRF really does
+  // (hackrf_compute_baseband_filter_bw).  It is modelled here because rounding
+  // down is the whole reason the app has to pick a step at or above the rate:
+  // ask this device for 9600000 and the filter runs at 8 MHz, so the outer
+  // 800 kHz of each side of the span is attenuated before anything downstream
+  // can see it.  A driver that reported a continuous range (as this one used to)
+  // hides that, and hides the fix with it.
+  static const std::vector<double> &bw_ladder(void) {
+    static const std::vector<double> l = {1.75e6, 2.5e6, 3.5e6, 5e6, 5.5e6, 6e6, 7e6,
+                                          8e6, 9e6, 10e6, 12e6, 14e6, 15e6, 20e6, 24e6, 28e6};
+    return l;
+  }
   void setBandwidth(const int direction, const size_t channel, const double bw) override {
-    chan(direction, channel).bandwidth = clampd(bw, 100e3, 20e6);
+    double got = bw_ladder().front();
+    for (double step : bw_ladder()) if (step <= bw) got = step;   // round DOWN, like the part
+    chan(direction, channel).bandwidth = got;
   }
   double getBandwidth(const int direction, const size_t channel) const override {
     return chan(direction, channel).bandwidth;
   }
   std::vector<double> listBandwidths(const int, const size_t) const override {
-    return {200000.0, 800000.0, 2000000.0, 8000000.0};
+    return bw_ladder();
   }
   SoapySDR::RangeList getBandwidthRange(const int, const size_t) const override {
-    return {SoapySDR::Range(100e3, 20e6, 0.0)};
+    SoapySDR::RangeList rl;
+    for (double step : bw_ladder()) rl.push_back(SoapySDR::Range(step, step));  // fixed steps
+    return rl;
   }
 
   // ---- sensors ----
