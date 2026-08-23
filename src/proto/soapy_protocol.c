@@ -628,6 +628,13 @@ log_info("%s: running\n",__FUNCTION__);
       continue;
     }
     g_atomic_int_set(&rx_parked[channel],0);
+    // flags is an OUTPUT of readStream and drivers OR into it, so it has to be
+    // cleared before every call.  It was initialised once outside this loop, so
+    // the first SOAPY_SDR_END_ABRUPT stuck for the life of the thread and every
+    // later read counted as an overrun: the "N overrun(s) in 5 s" line then
+    // reported the read RATE rather than the loss, for ever, over a stream that
+    // may have recovered seconds ago.
+    flags=0;
     elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
     // A dropped block is not a silence the DSP can see: the samples either side
     // of it are spliced, so every signal on the band has its phase randomised at

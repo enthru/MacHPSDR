@@ -1468,18 +1468,28 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
 
   long long f1;
   long long f2;
-  long long divisor1=20000;
-  long long divisor2=5000;
-  long long factor=(long long)(rx->sample_rate/48000);
-  if(factor>10LL) factor=10LL;
-  switch(rx->zoom) {
-    case 1: case 2: case 3:
-      divisor1=5000LL*factor; divisor2=1000LL*factor; break;
-    case 4: case 5: case 6:
-      divisor1=1000LL*factor; divisor2=500LL*factor; break;
-    case 7: case 8: default:
-      divisor1=1000LL*factor; divisor2=200LL*factor; break;
+  // The grid step comes from the PIXEL scale, never from the span.  It used to
+  // be (sample_rate/48000) scaled by the zoom band -- with the factor CLAMPED
+  // at 10, so every span from 480 kHz upwards drew a line every 10 kHz however
+  // wide the view was: at a 4.8 MHz span that is a line every four pixels, a
+  // picket fence over the trace, and about a thousand GskPath segments rebuilt
+  // every frame on a renderer this file otherwise avoids paths for.
+  // hz_per_pixel already carries the zoom (pixels = width*zoom), so walking a
+  // 1/2/5 ladder until a minor line is at least GRID_MIN_MINOR_PX apart covers
+  // every span and every zoom with one rule, and the labelled line stays 5x the
+  // minor one -- i.e. at least 70 px apart, which is the spacing the label
+  // thinning below was written for.
+  static const long long grid_steps[]={
+    10LL,20LL,50LL,100LL,200LL,500LL,
+    1000LL,2000LL,5000LL,10000LL,20000LL,50000LL,
+    100000LL,200000LL,500000LL,1000000LL,2000000LL,5000000LL,10000000LL};
+  const double GRID_MIN_MINOR_PX=14.0;
+  const double grid_hz_px=(rx->hz_per_pixel>0.0)?rx->hz_per_pixel:1.0;
+  long long divisor2=grid_steps[G_N_ELEMENTS(grid_steps)-1];
+  for(size_t gi=0;gi<G_N_ELEMENTS(grid_steps);gi++) {
+    if((double)grid_steps[gi]/grid_hz_px >= GRID_MIN_MINOR_PX) { divisor2=grid_steps[gi]; break; }
   }
+  long long divisor1=divisor2*5LL;
 
   f1=frequency-half+(long long)(rx->hz_per_pixel*offset);
   if (rx->mode_a==CWU)      f1 -= radio->cw_keyer_sidetone_frequency;
