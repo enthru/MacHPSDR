@@ -126,6 +126,19 @@ int rx_ring_depth(int sample_rate) {
   return 16;
 }
 
+// How much INPUT the fexchange ring must hold, in milliseconds.  A USB device
+// does not deliver a steady trickle: the HackRF hands over fixed-size transfers,
+// which at 2 MS/s is one burst every ~65 ms (and at 9.6 MS/s one every 13.6 ms --
+// the same bytes).  The ring is measured in SAMPLES, so what matters is how much
+// TIME its slots cover, and rx_ring_depth()'s rate table knew nothing about
+// either the burst or the mode.  Measured on a HackRF at a 384000 span in WFM:
+// 2 slots x 5120 samples = 27 ms against a 65 ms burst, fexchange0 answering -2
+// (input ring full, block dropped) and the audio chopped.  WFM is where it bites
+// because it is the one mode whose dsp_rate equals the input rate, which shrinks
+// dsp_insize -- and therefore the ring's slot -- to the block itself; at 48 kHz
+// DSP the same ring covers 213 ms and nothing was ever wrong.
+#define RX_RING_TARGET_MS 120.0
+
 // TRUE for the devices that hand WDSP the large span-sized I/Q block instead of
 // the original 1024: SoapySDR and the fake I/Q player (see create_receiver).
 static gboolean rx_wide_buffers(void) {
@@ -418,6 +431,33 @@ void receiver_apply_shift(RECEIVER *rx,gint64 offset,gboolean run) {
   }
 }
 
+// The ring depth for THIS channel geometry: enough slots to cover
+// RX_RING_TARGET_MS of input.  Only the wide-buffer devices (SoapySDR, the fake
+// player) go through it -- HPSDR hardware delivers on a steady 1 ms cadence with
+// no bursts to absorb, and a deeper ring there would only add latency to CW.
+static int rx_ring_depth_for(RECEIVER *rx,int dsp_rate) {
+  if(!rx_wide_buffers()) return rx_ring_depth(rx->sample_rate);
+  const int in_rate=(rx->dsp_in_rate>0)?rx->dsp_in_rate:rx->sample_rate;
+  const int in_size=(rx->dsp_in_block>0)?rx->dsp_in_block:rx->buffer_size;
+  if(in_rate<=0 || in_size<=0) return rx_ring_depth(rx->sample_rate);
+  // WDSP's own slot size: create_iobuffs sizes r1 by max(in_size, dsp_insize),
+  // and dsp_insize is dsp_size*(in_rate/dsp_rate) (wdsp/channel.c).
+  int dsp_insize=rx->dsp_size;
+  if(dsp_rate>0 && dsp_rate<=in_rate) dsp_insize=rx->dsp_size*(in_rate/dsp_rate);
+  const int slot=(in_size>dsp_insize)?in_size:dsp_insize;
+  const double slot_ms=1000.0*(double)slot/(double)in_rate;
+  if(!(slot_ms>0.0)) return rx_ring_depth(rx->sample_rate);
+  int depth=(int)ceil(RX_RING_TARGET_MS/slot_ms);
+  if(depth<2) depth=2;        // nfor/priming math needs at least 2
+  if(depth>64) depth=64;      // 64 x 25600 complex is 26 MB, and nothing needs more
+  // Only ever called when the channel geometry changes (open, span, mode), so
+  // this is three lines a session and it names the number that decides whether a
+  // bursty device overruns the ring.
+  log_info("rx_ring_depth_for: in=%d block=%d dsp_rate=%d -> slot %.1f ms, depth %d (%.0f ms)\n",
+           in_rate,in_size,dsp_rate,slot_ms,depth,slot_ms*depth);
+  return depth;
+}
+
 // Position the zoomed panadapter/waterfall pan window so the cursor (the
 // freetune/ctun listening frequency, i.e. frequency_a + ctun_offset) sits in
 // the middle of the visible area instead of the span centre. At zoom==1 there
@@ -449,9 +489,10 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   rx->audio_output_buffer=NULL;
   rx->sample_rate=sample_rate;
 
-  // Re-match the iobuff ring depth to the new span FIRST: create_iobuffs
-  // captures it, and every rebuild below (the two Buffsize setters as much as
-  // SetAllRates) goes through create_iobuffs.
+  // Re-match the iobuff ring depth FIRST: create_iobuffs captures it, and every
+  // rebuild below (the two Buffsize setters as much as SetAllRates) goes through
+  // create_iobuffs.  The geometry it is measured against is set a few lines
+  // down, so this is re-asserted after the feed is rebuilt.
   SetDSPMult(rx_ring_depth(rx->sample_rate));
 
   // Crossing into or out of the ultrawide tier changes the I/Q block and the
@@ -490,6 +531,7 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   //SetInputSamplerate(rx->channel, sample_rate);
   // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
   rx->dsp_rate=(rx->mode_a==WFM)?rx_wfm_dsp_rate(rx):48000;
+  SetDSPMult(rx_ring_depth_for(rx,rx->dsp_rate));
   SetAllRates(rx->channel,rx->dsp_in_rate,rx->dsp_rate,48000);
   // The shift lives in the feed's NCO or in WDSP's block depending on what the
   // rebuild above decided, and the NCO's step is per-sample at the NEW rate.
@@ -1819,9 +1861,10 @@ static void set_mode(RECEIVER *rx,int m) {
   int desired_dsp = (m==WFM) ? rx_wfm_dsp_rate(rx) : 48000;
   if(rx->dsp_rate != desired_dsp) {
     SetChannelState(rx->channel,0,1);
-    // WFM runs the DSP at the full span, so match the ring depth to that span
-    // before rebuilding the iobuffs (create_iobuffs captures it).
-    SetDSPMult(rx_ring_depth(rx->sample_rate));
+    // The ring depth belongs to the geometry the mode is about to impose: WFM
+    // runs the DSP at the input rate, which shrinks WDSP's ring slot to one
+    // block, and a burst-delivering device then overruns it (RX_RING_TARGET_MS).
+    SetDSPMult(rx_ring_depth_for(rx,desired_dsp));
     // dsp_in_rate, NOT the span: with a feed in front the channel is open at the
     // decimated rate and is handed decimated blocks, so re-rating it to the span
     // here left it expecting 25600 samples where 1024 arrive -- silence until
@@ -3571,13 +3614,15 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
 log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d fft_size=%d output_samples=%d\n", rx->channel, rx->buffer_size, rx->sample_rate, rx->fft_size,rx->output_samples);
 
-  // Size the iobuff ring to this receiver's span (2/4/8/16 by width); captured
-  // by create_iobuffs inside OpenChannel below.
-  SetDSPMult(rx_ring_depth(rx->sample_rate));
-
-  // Decide the channel's input geometry before opening it: above the ultrawide
-  // threshold the span is decimated in front of WDSP (see receiver_build_feed).
+  // Size the iobuff ring for this channel's geometry; captured by create_iobuffs
+  // inside OpenChannel below.  48000 because a channel opens at the 48 kHz DSP
+  // rate whatever mode is restored -- set_mode raises it for WFM and re-runs
+  // this with the rate it chose.
+  // Decide the channel's input geometry FIRST: above the ultrawide threshold the
+  // span is decimated in front of WDSP (see receiver_build_feed), and the ring
+  // depth below is measured against that geometry.
   receiver_build_feed(rx);
+  SetDSPMult(rx_ring_depth_for(rx,48000));
 
   OpenChannel(rx->channel,
               rx->dsp_in_block,
