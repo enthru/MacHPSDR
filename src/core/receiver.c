@@ -2446,6 +2446,27 @@ void analyzer_feed(int channel, double *iq, int nsamples) {
   }
 }
 
+// The same feed, through this receiver's spectrum gate.
+//
+// With the gate off (spec_period == 0) this IS analyzer_feed, which is what
+// every span below the gate's threshold gets and what MACHPSDR_SPEC_FEED=0
+// forces everywhere.  With it on, one whole frame's worth of CONTIGUOUS blocks
+// is fed per period and the rest of the stream is skipped -- see
+// rx_spectrum_gate for why the run has to be contiguous, and why feeding
+// everything is not free even though WDSP throws most of it away.
+void rx_spectrum_feed(RECEIVER *rx, double *iq, int nsamples) {
+  if(rx->spec_period <= 0) {
+    analyzer_feed(rx->channel, iq, nsamples);
+    return;
+  }
+  for(int off = 0; off + ANALYZER_FEED_BLOCK <= nsamples; off += ANALYZER_FEED_BLOCK) {
+    if(rx->spec_phase < rx->spec_run) {
+      Spectrum0(1, rx->channel, 0, 0, iq + 2 * off);
+    }
+    if(++rx->spec_phase >= rx->spec_period) rx->spec_phase = 0;
+  }
+}
+
 #define SCOPE_FIR_NTAPS 63
 
 // Tuned-path vectorscope: downmix the raw wideband I/Q by the tuned carrier's
@@ -2708,8 +2729,9 @@ static void full_rx_buffer(RECEIVER *rx) {
   rx_channel_exchange(rx,rx->iq_input_buffer);
 
   // Always the FULL span, feed or no feed: this is what the panadapter and the
-  // waterfall draw.
-  analyzer_feed(rx->channel, rx->iq_input_buffer, rx->buffer_size);
+  // waterfall draw.  Through the spectrum gate, which decides how much of the
+  // stream the analyzer needs to see to produce rx->fps frames a second.
+  rx_spectrum_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   g_mutex_unlock(&rx->mutex);
 
 }
@@ -2738,7 +2760,7 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   // extended down to.
   rx_channel_exchange(rx,rx->diviq_input_buffer);
 
-  analyzer_feed(rx->channel, rx->diviq_input_buffer, rx->buffer_size);
+  rx_spectrum_feed(rx, rx->diviq_input_buffer, rx->buffer_size);
   g_mutex_unlock(&rx->mutex);
 
 }
@@ -3022,6 +3044,56 @@ static void create_visual(RECEIVER *rx) {
   gtk_widget_set_valign(rx->table, GTK_ALIGN_FILL);
 }
 
+// How much of the stream the spectrum analyzer is fed (rx->spec_*).
+//
+// WDSP advances (fft_size - overlap) samples per spectrum frame, and the
+// `overlap` above is the canonical "one frame per 1/fps second" formula -- but
+// it clamps at zero, so it can only hold production down to fps while
+// sample_rate/fps <= fft_size, i.e. below ~205 kHz of span at 25 fps.  Above
+// that the analyzer produces sample_rate/fft_size frames a second -- 47 at
+// 384000, 234 at 1920000, 1171 at 9600000 -- of which the display consumes fps,
+// and three separate things go wrong in the same direction:
+//
+//   - Spectrum0 copies EVERY sample into the analyzer ring one at a time and
+//     the FFT worker runs flat out, both for frames nobody will read;
+//   - update_timer_cb polls at 3*fps and redraws whenever a frame is ready, so
+//     the panadapter, the waterfall scroll, the peak-hold decay and the phosphor
+//     EMA all run at the POLL rate instead of at the fps the operator set;
+//   - calculate_display_average() derives the averaging constants from rx->fps,
+//     which is the frame rate it assumes it is averaging over.
+//
+// So above that point the stream is gated to one frame per 1/fps second.  The
+// run is fft_size samples and has to be CONTIGUOUS: WDSP takes its FFT window
+// from consecutive ring samples, so a window assembled out of non-adjacent
+// blocks is spliced, and a splice inside the window is broadband smear across
+// the whole panadapter -- the very thing the spliced-stream bugs elsewhere in
+// this tree are about.  Feeding whole frames and skipping whole gaps keeps
+// every window inside one run.
+//
+// MACHPSDR_SPEC_FEED=0 turns the gate off everywhere (feed the analyzer the
+// whole stream, as before), one variable at a time when something looks wrong.
+static void rx_spectrum_gate(RECEIVER *rx, int fft_size, int overlap) {
+  static int gate_off = -1;
+  if(gate_off < 0) {
+    const char *e = g_getenv("MACHPSDR_SPEC_FEED");
+    gate_off = (e != NULL && (*e == '0' || *e == 'n' || *e == 'N')) ? 1 : 0;
+    if(gate_off) log_info("rx_spectrum_gate: MACHPSDR_SPEC_FEED=0: the analyzer is fed the whole stream\n");
+  }
+  rx->spec_run = 0;
+  rx->spec_period = 0;
+  rx->spec_phase = 0;
+  if(gate_off || overlap > 0 || rx->fps <= 0) return;    // overlap>0 already paces production
+  const int run = (fft_size + ANALYZER_FEED_BLOCK - 1) / ANALYZER_FEED_BLOCK;
+  int period = (int)llround((double)rx->sample_rate / ((double)rx->fps * (double)ANALYZER_FEED_BLOCK));
+  if(period <= run) return;   // production is already at or below fps: feed it all
+  rx->spec_run = run;
+  rx->spec_period = period;
+  log_info("rx_spectrum_gate: rate=%d fps=%d: feeding %d of every %d blocks (%.1f frames/s, was %.1f)\n",
+           rx->sample_rate, rx->fps, run, period,
+           (double)rx->sample_rate / ((double)period * ANALYZER_FEED_BLOCK),
+           (double)rx->sample_rate / (double)(fft_size - overlap));
+}
+
 void receiver_init_analyzer(RECEIVER *rx) {
     int flp[] = {0};
     double keep_time = 0.1;
@@ -3039,6 +3111,7 @@ void receiver_init_analyzer(RECEIVER *rx) {
     // so a new frame lands every 1/fps s and the waterfall scrolls smoothly.
     int overlap = (int)fmax(0.0, ceil((double)fft_size - (double)rx->sample_rate / (double)rx->fps));
     if(overlap >= fft_size) overlap = fft_size - 1;
+    rx_spectrum_gate(rx, fft_size, overlap);
     int clip = 0;
     int span_clip_l = 0;
     int span_clip_h = 0;

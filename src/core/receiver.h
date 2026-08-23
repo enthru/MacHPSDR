@@ -123,6 +123,20 @@ typedef struct _receiver {
   gint fps;
   gdouble display_average_time;
 
+  // ---- the spectrum gate --------------------------------------------------
+  // WDSP produces one spectrum frame per (fft_size - overlap) samples fed, and
+  // `overlap` can only ever SLOW that down to one frame per fft_size -- so above
+  // ~200 kHz of span the analyzer runs far faster than rx->fps and everything
+  // downstream of it is wrong in the same direction (see rx_spectrum_gate).
+  // These three say which ANALYZER_FEED_BLOCKs of the stream reach Spectrum0:
+  // spec_run blocks fed, then (spec_period - spec_run) skipped, for ever.
+  // spec_period == 0 means the gate is off and every block is fed, which is what
+  // every span whose overlap is non-zero gets and what MACHPSDR_SPEC_FEED=0
+  // forces everywhere.
+  gint spec_run;
+  gint spec_period;
+  gint spec_phase;
+
   gboolean ctun;
   gint64 ctun_frequency;
   gint64 ctun_offset;
@@ -552,6 +566,8 @@ extern int radio_default_rx_span(struct _radio *r);
 // `nsamples` must be a multiple of ANALYZER_FEED_BLOCK; a remainder is dropped
 // (and warned once) rather than risking an overrun.
 extern void analyzer_feed(int channel, double *iq, int nsamples);
+// The same feed for a RECEIVER, through the spectrum gate (see spec_period).
+extern void rx_spectrum_feed(RECEIVER *rx, double *iq, int nsamples);
 
 /* GTK4: RX panadapter pointer input comes from gesture/motion controllers
  * (see receiver.c create_visual). These are the controller signal handlers. */
