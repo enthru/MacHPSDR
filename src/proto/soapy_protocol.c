@@ -117,6 +117,11 @@ static gboolean dsp_thread_running[MAX_CHANNELS];
 static GThread *dsp_thread_id[MAX_CHANNELS];
 static gpointer dsp_thread(gpointer data);
 
+/* Defined further down with the half-duplex helpers: waits (bounded) until the
+   receive thread is out of readStream, so the stream it is reading can be torn
+   down without racing it. */
+static void wait_rx_parked(size_t channel);
+
 static void fifo_alloc(size_t channel,int samples) {
   g_mutex_lock(&fifo_mutex[channel]);
   g_free(fifo_buf[channel]);
@@ -495,11 +500,56 @@ void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
   // than pretending.
   const int hw_rate=soapy_hw_rate_for(rx);
   if(hw_rate!=soapy_rx_sample_rate) {
+    const size_t ch=rx->adc;
+    // A sample rate set UNDER A LIVE STREAM is not a clean change of clock: the
+    // transfers already in flight belong to the old rate, the driver's ring is
+    // full of them, and what comes out the other side is spliced.  Measured on a
+    // HackRF over twelve span changes: hundreds of dropped DSP blocks and up to
+    // 400 ms of chopped audio per change.  So take the stream all the way down
+    // around it, exactly as the TX over does (rx_resume_channel) -- park the
+    // reader first, so nothing is inside readStream while the stream it is
+    // reading is closed.
+    const gboolean restart=(rx_stream_active && ch<MAX_CHANNELS && rx_stream[ch]!=NULL);
+    if(restart) {
+      log_info("%s: hardware rate %d -> %d: restarting the RX stream around it\n",
+               __FUNCTION__,soapy_rx_sample_rate,hw_rate);
+      rx_stream_active=FALSE;
+      wait_rx_parked(ch);
+      SoapySDRDevice_deactivateStream(soapy_device,rx_stream[ch],0,0LL);
+      SoapySDRDevice_closeStream(soapy_device,rx_stream[ch]);
+      rx_stream[ch]=NULL;
+    }
+
     soapy_rx_sample_rate=hw_rate;
     soapy_set_rx_bandwidth(rx->adc,hw_rate);
     soapy_set_rx_rate(rx->adc,hw_rate);
+
+    if(restart) {
+      size_t setup_ch=ch;
+#if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
+      SoapySDRDevice_setupStream(soapy_device,&rx_stream[ch],SOAPY_SDR_RX,SOAPY_SDR_CF32,&setup_ch,1,NULL);
+#else
+      rx_stream[ch]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&setup_ch,1,NULL);
+#endif
+      if(rx_stream[ch]==NULL) {
+        log_error("%s: could not set the RX stream up again at %d Hz: %s\n",
+                  __FUNCTION__,hw_rate,SoapySDRDevice_lastError());
+      } else {
+        SoapySDRDevice_activateStream(soapy_device,rx_stream[ch],0,0LL,0);
+      }
+      // Whatever is queued came off the old stream at the old rate.
+      fifo_clear(ch);
+      rx_stream_active=TRUE;    // last, so the reader never sees a half-built stream
+    }
   }
   soapy_build_resampler(rx,block);
+  // Whatever queued up while the channel was being rebuilt is LATE -- the GTK
+  // thread holds the lock for the whole rebuild, and at 2 MS/s a quarter of a
+  // second of stream can pile up behind it.  Handing that to WDSP in one go is
+  // what fills its input ring and costs a burst of dropped blocks (fexchange0
+  // -2) plus the audio gap that follows; dropping it costs the same quarter
+  // second, once, and the receiver comes back in step.
+  fifo_clear(rx->adc);
 }
 
 void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
