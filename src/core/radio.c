@@ -1751,6 +1751,8 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_pskr=atoi(value);
   value=getProperty("radio.qo100_offset");
   if(value!=NULL) r->qo100_offset=atoll(value);
+  value=getProperty("radio.qo100_transponder");
+  if(value!=NULL) r->qo100_transponder=atoi(value);
   value=getProperty("radio.qo100_bandplan");
   if(value!=NULL) r->qo100_bandplan=atoi(value);
   value=getProperty("radio.qo100_beacon_lock");
@@ -3350,6 +3352,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   // QO-100: the standard transponder translation, everything else off until the
   // operator asks for it (this is a satellite most users never work).
+  r->qo100_transponder = QO100_TRANSPONDER_NB;
   r->qo100_offset = QO100_TP_OFFSET;
   r->qo100_bandplan = FALSE;
   r->qo100_beacon_lock = FALSE;

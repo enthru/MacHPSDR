@@ -181,7 +181,8 @@ typedef struct _radio {
   char ft8_log_udp_host[64]; // UDP destination host/IP (WSJT-X-compatible logger)
   gint ft8_log_udp_port;   // UDP destination port (WSJT-X default 2237)
   gboolean ft8_pskr;       // report received FT8 spots to pskreporter.info
-  // QO-100 (Es'hail-2) narrow-band transponder (see qo100.c). Persisted.
+  // QO-100 (Es'hail-2) transponders (see qo100.c). Persisted.
+  gint     qo100_transponder;  // QO100_TRANSPONDER_NB (narrow) or _WB (wideband/DATV)
   long long qo100_offset;      // downlink - uplink, Hz (0 => the standard 8089.5 MHz)
   gboolean qo100_bandplan;     // draw the transponder band plan over the spectrum
   gboolean qo100_beacon_lock;  // continuously trim the LNB's LO error against a beacon

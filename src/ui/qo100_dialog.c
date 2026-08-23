@@ -97,6 +97,12 @@ static void make_xvtr_cb(GtkWidget *w, gpointer data) {
   if(qo100_xvtr_label!=NULL) gtk_label_set_text(GTK_LABEL(qo100_xvtr_label),msg);
 }
 
+static void transponder_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
+  (void)pspec;
+  RADIO *r=(RADIO *)data;
+  r->qo100_transponder=(gint)gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
+}
+
 static void offset_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   // Entered in MHz because the number is 8089.5 and nobody wants to type nine
@@ -171,13 +177,21 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   int row=0;
 
   GtkWidget *info=gtk_label_new(
-    "The geostationary narrow-band transponder: uplink 2400.000\342\200\2232400.500 MHz,\n"
-    "downlink 10489.500\342\200\22310490.000 MHz, non-inverting.\n"
+    "The geostationary transponders, both non-inverting and both translated by the\n"
+    "same 8089.500 MHz:\n"
+    "\n"
+    "  narrow-band   uplink 2400.000\342\200\2232400.500, downlink 10489.500\342\200\22310490.000 MHz\n"
+    "  wideband      uplink 2401.000\342\200\2232410.000, downlink 10490.500\342\200\22310499.500 MHz\n"
     "\n"
     "Receive and transmit go through different converters, so the satellite needs\n"
     "two entries under Bands \342\206\222 Transverters. Give the two local oscillators\n"
-    "here and they will be written for you; VFO A then follows the receive entry\n"
-    "and VFO B the transmit one.");
+    "here and they will be written for you \342\200\224 one pair covering both transponders,\n"
+    "since it is one dish. VFO A then follows the receive entry and VFO B the\n"
+    "transmit one.\n"
+    "\n"
+    "The wideband transponder carries digital television, which this application\n"
+    "does not demodulate. What it gives you there is a truthful dial, the channel\n"
+    "plan drawn over the spectrum, and the matching uplink on VFO B.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
@@ -217,6 +231,18 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),qo100_xvtr_label,0,row++,2,1);
 
   // ---- transponder ---------------------------------------------------------
+  GtkWidget *tp_lbl=gtk_label_new("Transponder:");
+  gtk_widget_set_halign(tp_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),tp_lbl,0,row,1,1);
+  const char *tp_opts[]={"Narrow-band, 10489.500\342\200\22310490.000 MHz (SSB/CW/digi)",
+                         "Wideband, 10490.500\342\200\22310499.500 MHz (DATV)",NULL};
+  GtkWidget *tp_dd=gtk_drop_down_new_from_strings(tp_opts);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(tp_dd),
+    (r->qo100_transponder==QO100_TRANSPONDER_WB)?QO100_TRANSPONDER_WB:QO100_TRANSPONDER_NB);
+  gtk_widget_set_halign(tp_dd,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),tp_dd,1,row++,1,1);
+  g_signal_connect(tp_dd,"notify::selected",G_CALLBACK(transponder_cb),r);
+
   GtkWidget *off_lbl=gtk_label_new("Transponder offset (MHz):");
   gtk_widget_set_halign(off_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),off_lbl,0,row,1,1);
@@ -234,8 +260,9 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   g_signal_connect(setup,"clicked",G_CALLBACK(setup_cb),r);
 
   qo100_setup_label=gtk_label_new(
-    "Creates the converters if needed, tunes to the downlink, puts VFO B on the\n"
-    "matching uplink and links the two (SAT split).");
+    "Creates the converters if needed, tunes to the selected transponder's\n"
+    "downlink, puts VFO B on the matching uplink and links the two (SAT split).\n"
+    "If you are already on that transponder your own frequency is kept.");
   gtk_widget_set_halign(qo100_setup_label,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(qo100_setup_label,12);
   gtk_grid_attach(GTK_GRID(grid),qo100_setup_label,0,row++,2,1);
@@ -265,12 +292,17 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   GtkWidget *b_lbl=gtk_label_new("Reference beacon:");
   gtk_widget_set_halign(b_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),b_lbl,0,row,1,1);
-  // Only the two CW beacons: the middle one is 400 bd BPSK and has no carrier to
-  // measure (see qo100_beacon_frequency()).
-  const char *b_opts[]={"Lower, 10489.500 MHz (CW)","Upper, 10490.000 MHz (CW)",NULL};
+  // The two CW beacons plus the wideband one. The narrow transponder's MIDDLE
+  // beacon is not offered at all: it is 400 bd BPSK and has no carrier to
+  // measure. The wideband beacon has none either, being DVB-S2, and the lock
+  // says so and refuses it — it is here for the level reference line below,
+  // where it is the right choice and the only beacon within reach of the span
+  // while the operator is on that transponder (see qo100_beacon_frequency()).
+  const char *b_opts[]={"Lower, 10489.500 MHz (CW)","Upper, 10490.000 MHz (CW)",
+                        "Wideband, 10491.500 MHz (DVB-S2 \342\200\224 level reference only)",NULL};
   GtkWidget *b_dd=gtk_drop_down_new_from_strings(b_opts);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(b_dd),
-                             (r->qo100_beacon_sel>=0 && r->qo100_beacon_sel<=1)?r->qo100_beacon_sel:0);
+                             (r->qo100_beacon_sel>=0 && r->qo100_beacon_sel<=2)?r->qo100_beacon_sel:0);
   gtk_widget_set_halign(b_dd,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),b_dd,1,row++,1,1);
   g_signal_connect(b_dd,"notify::selected",G_CALLBACK(beacon_cb),r);

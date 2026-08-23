@@ -261,43 +261,120 @@ int main(int argc, char **argv) {
   }
 
   // ---- 7. the band plan and the transponder arithmetic, which are pure data.
+  //         The offset is the check that settles a disputed set of edges: every
+  //         published figure for either transponder, old or current, has to map
+  //         to its uplink through the SAME constant translation, because that is
+  //         what a non-inverting transponder is.
   {
     gboolean ok=qo100_in_transponder(10489750000LL) &&
+                qo100_in_nb_transponder(10489750000LL) &&
+                !qo100_in_wb_transponder(10489750000LL) &&
                 !qo100_in_transponder(10489400000LL) &&
-                qo100_beacon_frequency(0)==QO100_BEACON_LOWER &&
-                qo100_beacon_frequency(1)==QO100_BEACON_UPPER &&
+                // the half-megahertz between the two transponders is neither
+                !qo100_in_transponder(10490250000LL) &&
+                qo100_in_wb_transponder(10495000000LL) &&
+                !qo100_in_nb_transponder(10495000000LL) &&
+                !qo100_in_transponder(10499750000LL) &&
+                qo100_beacon_frequency(QO100_BEACON_SEL_LOWER)==QO100_BEACON_LOWER &&
+                qo100_beacon_frequency(QO100_BEACON_SEL_UPPER)==QO100_BEACON_UPPER &&
+                qo100_beacon_frequency(QO100_BEACON_SEL_WB)==QO100_WB_BEACON &&
+                qo100_beacon_has_carrier(QO100_BEACON_SEL_LOWER) &&
+                qo100_beacon_has_carrier(QO100_BEACON_SEL_UPPER) &&
+                !qo100_beacon_has_carrier(QO100_BEACON_SEL_WB) &&
                 (QO100_BEACON_LOWER-QO100_TP_OFFSET)==2400000000LL &&
-                (QO100_BEACON_UPPER-QO100_TP_OFFSET)==2400500000LL;
-    snprintf(d,sizeof(d),"uplink edges %lld / %lld",
+                (QO100_BEACON_UPPER-QO100_TP_OFFSET)==2400500000LL &&
+                // AMSAT-DL WB bandplan V3 note 5: uplink 2401.0-2410.0 MHz
+                (QO100_WB_DOWN_LOW -QO100_TP_OFFSET)==2401000000LL &&
+                (QO100_WB_DOWN_HIGH-QO100_TP_OFFSET)==2410000000LL &&
+                // ...and its beacon row: 10491.5 down against 2402.0 up
+                (QO100_WB_BEACON  -QO100_TP_OFFSET)==2402000000LL;
+    snprintf(d,sizeof(d),"NB %lld/%lld  WB %lld/%lld",
              (long long)(QO100_BEACON_LOWER-QO100_TP_OFFSET),
-             (long long)(QO100_BEACON_UPPER-QO100_TP_OFFSET));
-    check("transponder offset maps the band edges", ok, d);
+             (long long)(QO100_BEACON_UPPER-QO100_TP_OFFSET),
+             (long long)(QO100_WB_DOWN_LOW-QO100_TP_OFFSET),
+             (long long)(QO100_WB_DOWN_HIGH-QO100_TP_OFFSET));
+    check("transponder offset maps both band edges", ok, d);
   }
 
-  // ---- 8. every band-plan segment must be inside the transponder and ordered,
-  //         so the overlay cannot draw a band that does not exist.
+  // ---- 8. every band-plan entry must be inside ONE of the transponders and
+  //         ordered, so the overlay cannot draw a band that does not exist.
   {
     gboolean ok=TRUE;
     long long prev=0, prev_high=0;
+    int nb=0, wb=0, chans=0;
     for(int i=0;i<qo100_segment_count();i++) {
       const QO100_SEGMENT *s=qo100_segment(i);
       if(s->low>s->high) ok=FALSE;
-      if(s->low<QO100_NB_DOWN_LOW || s->high>QO100_NB_DOWN_HIGH) ok=FALSE;
-      if(s->low<prev) ok=FALSE;
-      // Two mode segments must never overlap — the plan assigns each slice of the
-      // transponder to exactly one use, and an overlap would draw two tinted
-      // bands over each other and tell the operator nothing. (Beacons are
-      // zero-width markers and legitimately sit inside a guard band, so they are
-      // exempt from the ordering-against-the-previous-end test.)
-      if(!s->beacon) {
+      if(qo100_in_nb_transponder(s->low) && qo100_in_nb_transponder(s->high)) nb++;
+      else if(qo100_in_wb_transponder(s->low) && qo100_in_wb_transponder(s->high)) wb++;
+      else ok=FALSE;                       // outside both, or straddling the gap
+      // Two spans must never overlap, and they must be in order — the plan
+      // assigns each slice of a transponder to exactly one use, an overlap would
+      // draw two tinted bands over each other and tell the operator nothing, and
+      // a span transcribed out of order is how a table silently grows a hole.
+      //
+      // The ordering test is over the SPANS only, deliberately. Beacons and
+      // channels are zero-width markers that sit inside a span rather than
+      // between spans, and grouping them by what they are (the three wide
+      // channels together, then the narrow grid) is worth more in a table meant
+      // to be checked against a published one than a single sorted sequence
+      // would be. Nothing reads this table in order; the panadapter asks each
+      // entry where it is. What the markers ARE is checked exhaustively by the
+      // two cases either side of this one.
+      if(s->kind==QO100_SEG_SPAN) {
+        if(s->low<prev) ok=FALSE;
         if(prev_high>s->low) ok=FALSE;
         prev_high=s->high;
+        prev=s->low;
+      } else {
+        if(s->low!=s->high) ok=FALSE;      // a marker is one frequency
+        if(s->kind==QO100_SEG_CHANNEL) chans++;
       }
-      prev=s->low;
     }
-    snprintf(d,sizeof(d),"%d segments spanning %.0f kHz",qo100_segment_count(),
-             (double)(QO100_NB_DOWN_HIGH-QO100_NB_DOWN_LOW)/1000.0);
-    check("band plan ordered, non-overlapping, in range", ok, d);
+    snprintf(d,sizeof(d),"%d entries: %d narrow, %d wideband (%d channels)",
+             qo100_segment_count(),nb,wb,chans);
+    check("band plan spans ordered, non-overlapping, in range", ok && nb>0 && wb>0, d);
+  }
+
+  // ---- 8b. the wideband channel grid, against the published table rather than
+  //          against itself. The V3 plan lists two overlapping channel sets and
+  //          they are one grid: 27 "very narrow" channels from 10492.750 in
+  //          250 kHz steps, of which the alternate members (every *.250 and
+  //          *.750, 14 of them) are also the "narrow" 333 kS channels, plus
+  //          three "wide" 1 MS channels. Transcribing 30 rows of numbers by hand
+  //          is exactly the job a machine should be checking.
+  {
+    gboolean ok=TRUE;
+    int grid=0, narrow=0, wide=0;
+    long long first_grid=0, last_grid=0;
+    static const long long wide_ch[3]={10493250000LL,10494750000LL,10496250000LL};
+    int wide_seen[3]={0,0,0};
+    for(int i=0;i<qo100_segment_count();i++) {
+      const QO100_SEGMENT *s=qo100_segment(i);
+      if(s->kind!=QO100_SEG_CHANNEL) continue;
+      if(s->rank>=2) {
+        wide++;
+        int m=0;
+        for(int k=0;k<3;k++) if(s->low==wide_ch[k]) { wide_seen[k]=1; m=1; }
+        if(!m) ok=FALSE;
+        continue;
+      }
+      // ...the 250 kHz grid, and rank 1 exactly on its alternate members.
+      long long off=s->low-10492750000LL;
+      if(off<0 || off>6500000LL || (off%250000LL)!=0) ok=FALSE;
+      int k=(int)(off/250000LL);
+      if(s->rank!=((k%2==0)?1:0)) ok=FALSE;
+      if(s->rank==1) narrow++;
+      if(grid==0) first_grid=s->low;
+      last_grid=s->low;
+      grid++;
+    }
+    for(int k=0;k<3;k++) if(!wide_seen[k]) ok=FALSE;
+    snprintf(d,sizeof(d),"%d grid (%.3f..%.3f), %d narrow, %d wide",
+             grid,(double)first_grid/1e6,(double)last_grid/1e6,narrow,wide);
+    check("wideband channels match the published table",
+          ok && grid==27 && narrow==14 && wide==3 &&
+          first_grid==10492750000LL && last_grid==10499250000LL, d);
   }
 
   // ---- 9. the two transverter entries are created correctly. These are the
@@ -317,14 +394,18 @@ int main(int argc, char **argv) {
       if(strcmp(test_bands[i].title,QO100_XVTR_RX_TITLE)==0) rb=&test_bands[i];
       if(strcmp(test_bands[i].title,QO100_XVTR_TX_TITLE)==0) tb=&test_bands[i];
     }
+    // ONE pair of rows covering BOTH transponders: bottom of the narrow one to
+    // top of the wideband one. Anything narrower and the wideband dial cannot be
+    // reached; anything split in two and the beacon lock's LNB measurement stops
+    // reaching the wideband band (see qo100_create_transverters).
     gboolean good = ok && rb!=NULL && tb!=NULL &&
-      rb->frequencyMin==QO100_NB_DOWN_LOW && rb->frequencyMax==QO100_NB_DOWN_HIGH &&
+      rb->frequencyMin==QO100_NB_DOWN_LOW && rb->frequencyMax==QO100_WB_DOWN_HIGH &&
       rb->frequencyLO==QO100_DEFAULT_LNB_LO &&
       tb->frequencyMin==QO100_NB_DOWN_LOW-QO100_TP_OFFSET &&
-      tb->frequencyMax==QO100_NB_DOWN_HIGH-QO100_TP_OFFSET &&
+      tb->frequencyMax==QO100_WB_DOWN_HIGH-QO100_TP_OFFSET &&
       tb->frequencyLO==1968000000LL &&
-      // and the uplink band must be exactly the published 2400.000-2400.500
-      tb->frequencyMin==2400000000LL && tb->frequencyMax==2400500000LL;
+      // and the uplink band must be exactly the published 2400.000-2410.000
+      tb->frequencyMin==2400000000LL && tb->frequencyMax==2410000000LL;
       // (what the band-stack is seeded with is case 14's business)
     snprintf(d,sizeof(d),"rx %lld..%lld tx %lld..%lld",
              rb?(long long)rb->frequencyMin:0, rb?(long long)rb->frequencyMax:0,
@@ -436,6 +517,7 @@ int main(int argc, char **argv) {
     for(int e=0;rb!=NULL && e<rb->bandstack->entries;e++) {
       long long f=rb->bandstack->entry[e].frequency;
       if(f==QO100_BEACON_LOWER || f==QO100_BEACON_MIDDLE || f==QO100_BEACON_UPPER) clear=FALSE;
+      if(f==QO100_WB_BEACON) clear=FALSE;
       if(!qo100_in_transponder(f)) clear=FALSE;
     }
     snprintf(d,sizeof(d),"%lld / %lld / %lld",
@@ -444,6 +526,139 @@ int main(int argc, char **argv) {
              rb?(long long)rb->bandstack->entry[2].frequency:0);
     check("band-stack lands on working spots, not beacons", clear, d);
     g_free(r);
+  }
+
+  // ---- 15. the wideband transponder: one press with it selected must land on
+  //          the wideband downlink, not the narrow one, and pair it with the
+  //          matching uplink. The two transponders share an offset, so the whole
+  //          risk here is landing on the wrong one — which reads as "it works"
+  //          on any check that only looks at the uplink arithmetic.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(14200000LL,FS);
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    r->qo100_transponder=QO100_TRANSPONDER_WB;
+    radio=r;
+    gboolean ok=qo100_transponder_setup(r);
+    snprintf(d,sizeof(d),"A=%lld B=%lld split=%d",
+             (long long)rx->frequency_a,(long long)rx->frequency_b,rx->split);
+    check("wideband: setup lands on the WB downlink",
+          ok && qo100_in_wb_transponder(rx->frequency_a) &&
+          !qo100_in_nb_transponder(rx->frequency_a) &&
+          rx->frequency_b==rx->frequency_a-QO100_TP_OFFSET &&
+          rx->frequency_b>=2401000000LL && rx->frequency_b<=2410000000LL &&
+          rx->split==SPLIT_SAT, d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 16. ...and it must not land on the wideband BEACON, which is the one
+  //          signal on that transponder nobody may sit on — the same mistake the
+  //          narrow band-stack avoids, in the place it is easiest to make again.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(14200000LL,FS);
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    r->qo100_transponder=QO100_TRANSPONDER_WB;
+    radio=r;
+    qo100_transponder_setup(r);
+    // 10490.5-10492.5 is the beacon-only section: not a place to transmit.
+    gboolean clear=rx->frequency_a>10492500000LL;
+    snprintf(d,sizeof(d),"A=%lld (beacon-only section ends 10492.500)",
+             (long long)rx->frequency_a);
+    check("wideband: lands clear of the beacon section", clear, d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 17. switching transponders moves the operator. Being parked on the
+  //          narrow transponder is NOT "already there" once wideband is asked
+  //          for, and the ±50 kHz slack that keeps an operator on their own QSO
+  //          must not be wide enough to bridge the half-megahertz between them.
+  {
+    bands_init();
+    RADIO *r0=g_new0(RADIO,1);
+    char msg[160];
+    qo100_create_transverters(r0,msg,sizeof(msg));
+    g_free(r0);
+    RECEIVER *rx=mk_rx(10489980000LL,FS);      // top of the narrow transponder
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    r->qo100_transponder=QO100_TRANSPONDER_WB;
+    radio=r;
+    qo100_transponder_setup(r);
+    snprintf(d,sizeof(d),"10489.980 -> %.3f MHz",(double)rx->frequency_a/1e6);
+    check("wideband: a narrow-band dial is moved, not kept",
+          qo100_in_wb_transponder(rx->frequency_a), d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 18. the wideband beacon must never drive the lock. It is DVB-S2 — a
+  //          suppressed carrier — so a peak search there measures the modulation
+  //          and would walk the radio off frequency at whatever rate the picture
+  //          happened to fade. Fed a strong clean carrier exactly where that
+  //          beacon is, the loop must still refuse to lock or to retune.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(QO100_WB_BEACON-20000LL,FS);
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_sel=QO100_BEACON_SEL_WB;
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    radio->qo100_beacon_sel=QO100_BEACON_SEL_WB;
+    double *iq=g_new0(double,BLOCK*2);
+    double phase=0.0; guint32 seed=4242;
+    for(int b=0;b<blocks;b++) {
+      gen_block(iq,BLOCK,20000.0,FS,1.0,0.0,&phase,&seed);   // a perfect carrier
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"locked=%d retunes=%d \342\200\224 %s",
+             qo100_beacon_locked(),retunes,st);
+    check("WB beacon refused by the lock, radio untouched",
+          !qo100_beacon_locked() && retunes==0 && rx->error_a==0, d);
+    g_free(iq); g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 19. the upgrade path. A receive row written before this application
+  //          knew about the wideband transponder stops at 10490.000 and carries
+  //          three narrow-band band-stack spots. Selecting wideband must widen it
+  //          rather than quietly landing the operator back on the narrow
+  //          transponder — and must keep the LO error, which is the beacon
+  //          lock's measurement of that LNB and not a setting.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489700000LL,FS);
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    r->qo100_transponder=QO100_TRANSPONDER_WB;
+    radio=r;
+    // an "old" row, by hand: narrow edges, narrow spots, a measured LO error
+    BAND *rb=&test_bands[BANDS];
+    g_strlcpy(rb->title,QO100_XVTR_RX_TITLE,sizeof(rb->title));
+    rb->frequencyMin=QO100_NB_DOWN_LOW;
+    rb->frequencyMax=QO100_NB_DOWN_HIGH;
+    rb->frequencyLO =QO100_DEFAULT_LNB_LO;
+    rb->errorLO=-8321;
+    for(int e=0;e<rb->bandstack->entries;e++) rb->bandstack->entry[e].frequency=10489800000LL;
+    g_strlcpy(test_bands[BANDS+1].title,QO100_XVTR_TX_TITLE,sizeof(rb->title));
+    test_bands[BANDS+1].frequencyMin=QO100_NB_DOWN_LOW-QO100_TP_OFFSET;
+    test_bands[BANDS+1].frequencyMax=QO100_NB_DOWN_HIGH-QO100_TP_OFFSET;
+
+    qo100_transponder_setup(r);
+    snprintf(d,sizeof(d),"row now %lld..%lld, errorLO %lld, A=%lld",
+             (long long)rb->frequencyMin,(long long)rb->frequencyMax,
+             (long long)rb->errorLO,(long long)rx->frequency_a);
+    check("old narrow-only converter row is widened, error kept",
+          rb->frequencyMax==QO100_WB_DOWN_HIGH && rb->errorLO==-8321 &&
+          qo100_in_wb_transponder(rx->frequency_a), d);
+    g_free(rx); g_free(r); radio=NULL;
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

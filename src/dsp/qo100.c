@@ -40,34 +40,109 @@ extern RADIO *radio;   // global application state
 // Band plan
 // ---------------------------------------------------------------------------
 //
-// AMSAT-DL's narrow-band transponder plan, transcribed from their own published
-// band plan (rev5 of 14 Feb 2020) together with the broadcast, emergency and
-// multimedia-beacon slots added to the top segment afterwards.  Checked against
-// the source on 2026-08-09; the two renderings that carry it (the PDF and the
-// AMSAT-DL page) agree on everything they share.
+// BOTH of the satellite's amateur transponders, transcribed from AMSAT-DL's own
+// published plans:
+//
+//   * the narrow-band plan (rev5 of 14 Feb 2020) together with the broadcast,
+//     emergency and multimedia-beacon slots added to the top segment afterwards.
+//     Checked against the source on 2026-08-09; the two renderings that carry it
+//     (the PDF and the AMSAT-DL page) agree on everything they share.
+//   * the wideband (DATV) plan, "QO-100 Wideband Transponder — 2021 Operating
+//     Guidelines and Bandplan", version 3 final of 6 Feb 2021, cross-checked on
+//     2026-08-23 against the BATC wiki's rendering of the same document (its
+//     channel table and its bandplan graphic, which is where the section edges
+//     are — the PDF states them only in the picture).
 //
 // This is one table and the plan lives nowhere else — if AMSAT-DL revises it,
-// edit here.  What is worth knowing before doing so: the plan HAS been revised,
-// substantially.  The transponder was 250 kHz wide at launch and was extended to
-// 500 kHz in Feb 2020, and older figures are still in wide circulation.
+// edit here.  What is worth knowing before doing so: the plans HAVE been revised,
+// substantially, and the superseded figures for both are still in wide
+// circulation.  The narrow transponder was 250 kHz wide at launch and was
+// extended to 500 kHz in Feb 2020; the wideband one is still widely quoted as
+// "8 MHz, 10491.0–10499.0", which is neither what V3 allocates nor what it names
+// as the transponder (10490.5–10499.5).  A source that disagrees is far more
+// likely to be old than right.
 //
-// Segments are drawn as tinted bands under the trace and beacons as single
-// vertical markers, so the operator can see at a glance that they are calling CQ
-// in the CW section.
+// One table for two transponders is deliberate and costs nothing: the plans
+// cannot overlap (narrow ends at 10490.000, wideband starts at 10490.500), so
+// the overlay draws whichever the dial is in front of and there is no mode to
+// get wrong.
+//
+// Spans are drawn as tinted bands under the trace, beacons as full-height
+// markers and DATV channels as ticks above the strip — so the operator can see
+// at a glance that they are calling CQ in the CW section, or that their picture
+// is sitting between two channels rather than on one.
 
 static const QO100_SEGMENT segments[] = {
-  { QO100_BEACON_LOWER,  QO100_BEACON_LOWER,  "Beacon",   1.00, 0.85, 0.20, TRUE  },
-  { 10489505000LL, 10489540000LL, "CW",        0.30, 0.75, 1.00, FALSE },
-  { 10489540000LL, 10489580000LL, "Digi 500",  0.55, 0.45, 1.00, FALSE },
-  { 10489580000LL, 10489650000LL, "Digi 2k7",  0.55, 0.45, 1.00, FALSE },
-  { 10489650000LL, 10489745000LL, "SSB",       0.30, 1.00, 0.50, FALSE },
-  { QO100_BEACON_MIDDLE, QO100_BEACON_MIDDLE, "Beacon",   1.00, 0.85, 0.20, TRUE  },
-  { 10489755000LL, 10489850000LL, "SSB",       0.30, 1.00, 0.50, FALSE },
-  { 10489850000LL, 10489858000LL, "News",      0.40, 0.80, 0.90, FALSE },
-  { 10489858000LL, 10489865000LL, "Emerg",     1.00, 0.45, 0.35, FALSE },
-  { 10489865000LL, 10489990000LL, "Mixed",     0.60, 0.60, 0.60, FALSE },
-  { 10489990000LL, 10489997000LL, "MM bcn",    1.00, 0.85, 0.20, FALSE },
-  { QO100_BEACON_UPPER,  QO100_BEACON_UPPER,  "Beacon",   1.00, 0.85, 0.20, TRUE  },
+  /* --- narrow-band transponder, 10489.500…10490.000 --- */
+  { QO100_BEACON_LOWER,  QO100_BEACON_LOWER,  "Beacon",   1.00, 0.85, 0.20, QO100_SEG_BEACON, 0 },
+  { 10489505000LL, 10489540000LL, "CW",        0.30, 0.75, 1.00, QO100_SEG_SPAN, 0 },
+  { 10489540000LL, 10489580000LL, "Digi 500",  0.55, 0.45, 1.00, QO100_SEG_SPAN, 0 },
+  { 10489580000LL, 10489650000LL, "Digi 2k7",  0.55, 0.45, 1.00, QO100_SEG_SPAN, 0 },
+  { 10489650000LL, 10489745000LL, "SSB",       0.30, 1.00, 0.50, QO100_SEG_SPAN, 0 },
+  { QO100_BEACON_MIDDLE, QO100_BEACON_MIDDLE, "Beacon",   1.00, 0.85, 0.20, QO100_SEG_BEACON, 0 },
+  { 10489755000LL, 10489850000LL, "SSB",       0.30, 1.00, 0.50, QO100_SEG_SPAN, 0 },
+  { 10489850000LL, 10489858000LL, "News",      0.40, 0.80, 0.90, QO100_SEG_SPAN, 0 },
+  { 10489858000LL, 10489865000LL, "Emerg",     1.00, 0.45, 0.35, QO100_SEG_SPAN, 0 },
+  { 10489865000LL, 10489990000LL, "Mixed",     0.60, 0.60, 0.60, QO100_SEG_SPAN, 0 },
+  { 10489990000LL, 10489997000LL, "MM bcn",    1.00, 0.85, 0.20, QO100_SEG_SPAN, 0 },
+  { QO100_BEACON_UPPER,  QO100_BEACON_UPPER,  "Beacon",   1.00, 0.85, 0.20, QO100_SEG_BEACON, 0 },
+
+  /* --- wideband (DATV) transponder, 10490.500…10499.500 ---
+     The four sections of the V3 plan, in its own words: beacon only; all DATV
+     modes and symbol rates (this is the 1.5 MHz where DVB-T and other
+     experiments are allowed); DVB-S/S2 at any symbol rate; and 333 kS and
+     lower.  10494.000…10497.000 doubles as the occasional maintenance uplink,
+     which users are asked to give absolute priority — it is not drawn
+     separately because it is not a standing allocation. */
+  { QO100_WB_BEACON,     QO100_WB_BEACON,     "WB beacon", 1.00, 0.85, 0.20, QO100_SEG_BEACON, 0 },
+  { 10490500000LL, 10492500000LL, "Beacon only", 1.00, 0.85, 0.20, QO100_SEG_SPAN, 0 },
+  { 10492500000LL, 10494000000LL, "All modes",   0.55, 0.45, 1.00, QO100_SEG_SPAN, 0 },
+  { 10494000000LL, 10497000000LL, "DVB-S/S2",    0.30, 0.70, 1.00, QO100_SEG_SPAN, 0 },
+  { 10497000000LL, 10499500000LL, "333 kS max",  0.30, 1.00, 0.50, QO100_SEG_SPAN, 0 },
+
+  /* The three wide channels: 1 MS and 1.5 MS transmissions centre here. */
+  { 10493250000LL, 10493250000LL, "1MS", 0.55, 0.80, 1.00, QO100_SEG_CHANNEL, 2 },
+  { 10494750000LL, 10494750000LL, "1MS", 0.55, 0.80, 1.00, QO100_SEG_CHANNEL, 2 },
+  { 10496250000LL, 10496250000LL, "1MS", 0.55, 0.80, 1.00, QO100_SEG_CHANNEL, 2 },
+
+  /* The narrow grid.  The V3 plan lists two overlapping channel sets and they
+     are ONE grid: the 27 "very narrow" channels (125/66/33 kS) run from
+     10492.750 in 250 kHz steps, and the 14 "narrow" channels (500/333/250 kS)
+     are its alternate members — every *.250 and *.750 — in 500 kHz steps over
+     the same range.  So they are written once, with rank 1 marking the members
+     that are also a 333 kS channel; qo100_offline checks the arithmetic against
+     the published table rather than trusting the transcription.
+
+     No labels on these: the overlay gives each rank its own row, which says what
+     a tick is without thirty pieces of text over the trace, and only the three
+     1 MS channels are named. */
+  { 10492750000LL, 10492750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10493000000LL, 10493000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10493250000LL, 10493250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10493500000LL, 10493500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10493750000LL, 10493750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10494000000LL, 10494000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10494250000LL, 10494250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10494500000LL, 10494500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10494750000LL, 10494750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10495000000LL, 10495000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10495250000LL, 10495250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10495500000LL, 10495500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10495750000LL, 10495750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10496000000LL, 10496000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10496250000LL, 10496250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10496500000LL, 10496500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10496750000LL, 10496750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10497000000LL, 10497000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10497250000LL, 10497250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10497500000LL, 10497500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10497750000LL, 10497750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10498000000LL, 10498000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10498250000LL, 10498250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10498500000LL, 10498500000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10498750000LL, 10498750000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
+  { 10499000000LL, 10499000000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 0 },
+  { 10499250000LL, 10499250000LL, NULL,  0.45, 0.65, 1.00, QO100_SEG_CHANNEL, 1 },
 };
 
 int qo100_segment_count(void) {
@@ -79,8 +154,16 @@ const QO100_SEGMENT *qo100_segment(int index) {
   return &segments[index];
 }
 
-gboolean qo100_in_transponder(long long f) {
+gboolean qo100_in_nb_transponder(long long f) {
   return f>=QO100_NB_DOWN_LOW && f<=QO100_NB_DOWN_HIGH;
+}
+
+gboolean qo100_in_wb_transponder(long long f) {
+  return f>=QO100_WB_DOWN_LOW && f<=QO100_WB_DOWN_HIGH;
+}
+
+gboolean qo100_in_transponder(long long f) {
+  return qo100_in_nb_transponder(f) || qo100_in_wb_transponder(f);
 }
 
 long long qo100_beacon_frequency(int sel) {
@@ -97,7 +180,23 @@ long long qo100_beacon_frequency(int sel) {
   // simply stops the update rather than dragging it), but whether the settled
   // reading lands on the nominal frequency or 400 Hz off it is unknown until
   // this is used on air.
-  return (sel==1) ? QO100_BEACON_UPPER : QO100_BEACON_LOWER;
+  //
+  // The WIDEBAND beacon is here for a different job entirely.  It is DVB-S2 and
+  // so has no carrier either, but it is the reference the wideband transponder's
+  // power rule is written against ("at least 1 dB below the beacon"), and while
+  // the operator is on that transponder it is the only beacon anywhere near the
+  // span — the CW beacons are one to nine megahertz below it, which no span this
+  // application can open will reach.  So it is offered for the panadapter's
+  // level line and refused by the lock; qo100_beacon_has_carrier() is the split.
+  switch(sel) {
+    case QO100_BEACON_SEL_UPPER: return QO100_BEACON_UPPER;
+    case QO100_BEACON_SEL_WB:    return QO100_WB_BEACON;
+    default:                     return QO100_BEACON_LOWER;
+  }
+}
+
+gboolean qo100_beacon_has_carrier(int sel) {
+  return sel!=QO100_BEACON_SEL_WB;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,19 +210,24 @@ long long qo100_beacon_frequency(int sel) {
 // operator's own hardware; everything else follows from the band plan.
 
 // Three working spots for the band-stack, as downlink frequencies: the narrow
-// modes near the bottom, and two in the two SSB stretches either side of the
-// middle beacon.
+// modes near the bottom, the SSB stretch below the middle beacon, and one on the
+// wideband transponder.
 //
 // This is the one place that does NOT follow save_xvtr()'s convention, and
 // deliberately: that seeds min / middle / max, which here would be the lower
 // beacon, the middle beacon and the upper beacon — the three frequencies an
 // operator must specifically NOT transmit on. Landing a band-stack recall on a
 // beacon is worse than any consistency argument for keeping the convention.
+//
+// The last entry is the wideband transponder's first wide channel, and the two
+// indices below are what qo100_transponder_setup() recalls for each transponder.
 static const long long qo100_stack_rx[3] = {
   10489560000LL,   // CW / narrow digimodes
   10489700000LL,   // SSB, below the middle beacon
-  10489800000LL,   // SSB, above it
+  10493250000LL,   // wideband: wide channel 1 (1 MS)
 };
+#define QO100_STACK_NB  1        // the entry "set up transponder mode" recalls...
+#define QO100_STACK_WB  2        // ...for each transponder
 
 // Fill one transverter band. Otherwise mirrors save_xvtr() in xvtr_dialog.c, so
 // an entry made here is indistinguishable from a hand-typed one.
@@ -191,16 +295,36 @@ gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz) {
   // thing this function could do.
   long long rx_err=rb->errorLO, tx_err=tb->errorLO;
 
-  fill_xvtr(rb,QO100_XVTR_RX_TITLE,QO100_NB_DOWN_LOW,QO100_NB_DOWN_HIGH,lnb,0);
-  fill_xvtr(tb,QO100_XVTR_TX_TITLE,
-            QO100_NB_DOWN_LOW-offset,QO100_NB_DOWN_HIGH-offset,txlo,offset);
+  // ONE pair of entries covers BOTH transponders — from the bottom of the narrow
+  // one to the top of the wideband one — rather than a pair each.  Two reasons,
+  // and the second is the load-bearing one:
+  //
+  //   * there is one dish, one LNB and one uplink converter, so there is one
+  //     conversion; splitting it into two bands would be describing the same
+  //     hardware twice, in half the transverter slots the operator has;
+  //   * the beacon lock writes its measurement into the LO error of THE BAND THE
+  //     RECEIVER IS ON.  With a separate wideband band that band would never
+  //     receive a correction — the lock cannot run there at all, the CW beacons
+  //     being megahertz outside any span this application can open — so the
+  //     wideband dial would stay as wrong as the LNB is, while the narrow one
+  //     read true.  Sharing the band shares the measurement, which is right,
+  //     because it is a measurement of the LNB and not of a band.
+  //
+  // The half-megahertz gap between the two transponders comes along with it. It
+  // is not amateur allocation, so nothing is drawn there; it is also not
+  // reachable by accident, since tuning through it is a deliberate act.
+  long long down_low =QO100_NB_DOWN_LOW;
+  long long down_high=QO100_WB_DOWN_HIGH;
+
+  fill_xvtr(rb,QO100_XVTR_RX_TITLE,down_low,down_high,lnb,0);
+  fill_xvtr(tb,QO100_XVTR_TX_TITLE,down_low-offset,down_high-offset,txlo,offset);
   rb->errorLO=rx_err;
   tb->errorLO=tx_err;
 
   if(msg!=NULL) snprintf(msg,msgsz,
     "RX %.3f\342\200\223%.3f MHz (LO %.3f) \342\200\242 TX %.3f\342\200\223%.3f MHz (LO %.3f)",
-    (double)QO100_NB_DOWN_LOW/1e6,(double)QO100_NB_DOWN_HIGH/1e6,(double)lnb/1e6,
-    (double)(QO100_NB_DOWN_LOW-offset)/1e6,(double)(QO100_NB_DOWN_HIGH-offset)/1e6,
+    (double)down_low/1e6,(double)down_high/1e6,(double)lnb/1e6,
+    (double)(down_low-offset)/1e6,(double)(down_high-offset)/1e6,
     (double)txlo/1e6);
   log_info("qo100: transverters in slots %d/%d, LNB LO %lld Hz, uplink LO %lld Hz\n",
            rxs,txs,lnb,txlo);
@@ -229,9 +353,25 @@ gboolean qo100_transponder_setup(RADIO *r) {
   //     reason doing this by hand was easy to get stuck on;
   //   * set_band() then restores the band-stack entry, which carries the right
   //     LO, mode and filter with it.
+  // Which transponder the operator is set up for. This is the ONLY thing the
+  // selection changes: the band plan on the panadapter follows the dial, and the
+  // converters cover both, so nothing else has to be switched.
+  gboolean wb=(r->qo100_transponder==QO100_TRANSPONDER_WB);
+  long long tp_low =wb?QO100_WB_DOWN_LOW :QO100_NB_DOWN_LOW;
+  long long tp_high=wb?QO100_WB_DOWN_HIGH:QO100_NB_DOWN_HIGH;
+
   int rxs=find_xvtr_slot(QO100_XVTR_RX_TITLE);
   BAND *rb=(rxs>=0)?band_get_band(rxs):NULL;
-  if(rb==NULL || strcmp(rb->title,QO100_XVTR_RX_TITLE)!=0) {
+  // Rebuild the rows when they are missing OR when they do not reach the
+  // transponder that was asked for. The second half is the upgrade path and it
+  // is not hypothetical: a receive row written before this application knew about
+  // the wideband transponder stops at 10490.000, and its band-stack entries are
+  // all narrow-band spots — so without this, selecting Wideband would quietly
+  // land the operator back on the narrow transponder and look like a dead
+  // feature. Rewriting keeps the LO error, which is the one thing in those rows
+  // that is a measurement rather than a setting.
+  if(rb==NULL || strcmp(rb->title,QO100_XVTR_RX_TITLE)!=0 ||
+     rb->frequencyMin>tp_low || rb->frequencyMax<tp_high) {
     if(!qo100_create_transverters(r,NULL,0)) return FALSE;   // no free slots
     rxs=find_xvtr_slot(QO100_XVTR_RX_TITLE);
     rb=(rxs>=0)?band_get_band(rxs):NULL;
@@ -239,13 +379,17 @@ gboolean qo100_transponder_setup(RADIO *r) {
   }
 
   // A little slack past each edge so being parked on a beacon still counts as
-  // "already there" and the operator's own frequency is not thrown away.
+  // "already there" and the operator's own frequency is not thrown away. The
+  // slack cannot make the two transponders meet: they are half a megahertz
+  // apart, ten times this.
   const long long slack=50000LL;
-  if(rx->frequency_a < QO100_NB_DOWN_LOW-slack ||
-     rx->frequency_a > QO100_NB_DOWN_HIGH+slack) {
-    // Band-stack entry 1 is the SSB stretch below the middle beacon — a place to
-    // land that is neither a beacon nor the CW section.
-    set_band(rx,rxs,1);
+  if(rx->frequency_a < tp_low-slack || rx->frequency_a > tp_high+slack) {
+    // For the narrow transponder, band-stack entry 1 is the SSB stretch below
+    // the middle beacon — a place to land that is neither a beacon nor the CW
+    // section. For the wideband one it is the first wide channel, which is where
+    // a 1 MS picture belongs; landing on the wideband BEACON would be the same
+    // mistake, since it is the one signal on that transponder nobody may sit on.
+    set_band(rx,rxs,wb?QO100_STACK_WB:QO100_STACK_NB);
   }
 
   long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
@@ -267,7 +411,8 @@ gboolean qo100_transponder_setup(RADIO *r) {
   frequency_changed(rx);
   update_frequency(rx);
 
-  log_info("qo100: transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)\n",
+  log_info("qo100: %s transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)\n",
+           wb?"wideband":"narrow-band",
            (long long)rx->frequency_a,(long long)rx->frequency_b,offset);
   return TRUE;
 }
@@ -581,6 +726,21 @@ static void beacon_frame(RECEIVER *rx) {
 void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   if(radio==NULL || !radio->qo100_beacon_lock) return;     // cheap fast path
   if(rx==NULL || rx!=radio->active_receiver) return;
+
+  // The wideband beacon is DVB-S2: a suppressed-carrier signal, so there is no
+  // spectral line to measure and peak-picking it would track the modulation.
+  // Refusing it in words matters more than refusing it quietly — the operator
+  // has selected it for the level reference line, where it is the right answer,
+  // and a lock that simply never acquired would look like a broken lock.
+  if(!qo100_beacon_has_carrier(radio->qo100_beacon_sel)) {
+    g_mutex_lock(&bmtx);
+    beacon_reset_locked();
+    g_strlcpy(b_status,
+              "The WB beacon is DVB-S2 \342\200\224 no carrier to lock to; pick a CW beacon",
+              sizeof(b_status));
+    g_mutex_unlock(&bmtx);
+    return;
+  }
 
   g_mutex_lock(&bmtx);
 

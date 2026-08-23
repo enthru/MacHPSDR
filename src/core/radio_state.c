@@ -222,6 +222,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_pskr",value);
   sprintf(value,"%d",radio->cluster_enable);
   setProperty("radio.cluster_enable",value);
+  sprintf(value,"%d",radio->qo100_transponder);
+  setProperty("radio.qo100_transponder",value);
   sprintf(value,"%lld",(long long)radio->qo100_offset);
   setProperty("radio.qo100_offset",value);
   sprintf(value,"%d",radio->qo100_bandplan);

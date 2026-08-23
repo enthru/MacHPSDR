@@ -704,8 +704,11 @@ static void receiver_draw_cluster_spots_nodes(GtkSnapshot *snapshot, GtkWidget *
 // would wash out the very thing the waterfall is for, and the level line has no
 // meaning on an axis that is time, not dB.
 //
-// The whole plan is nine segments, so this emits a handful of nodes and needs no
-// culling machinery beyond the on-screen test.
+// The plan is a few dozen entries across the two transponders and only the ones
+// on screen emit nodes, so this needs no culling machinery beyond the on-screen
+// test — and no more than a screenful of them can ever be on screen at once,
+// since the widest span this application can open (1.536 MHz) holds six of the
+// closest-spaced things in the table.
 static void receiver_draw_qo100_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
                                       RECEIVER *rx, int display_width, int display_height,
                                       double dbm_per_line) {
@@ -714,25 +717,64 @@ static void receiver_draw_qo100_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
   long long min_display=(rx->frequency_a-half)+(long long)((double)rx->pan*rx->hz_per_pixel);
   long long max_display=min_display+(long long)((double)display_width*rx->hz_per_pixel);
 
-  // Nothing to say if the operator is not looking at the transponder at all.
-  if(max_display<QO100_NB_DOWN_LOW-100000LL || min_display>QO100_NB_DOWN_HIGH+100000LL) return;
+  // Nothing to say if the operator is not looking at either transponder. The
+  // narrow one is the bottom of that range and the wideband one the top; the
+  // half-megahertz between them carries nothing to draw, which the per-entry
+  // on-screen test takes care of by itself.
+  if(max_display<QO100_NB_DOWN_LOW-100000LL || min_display>QO100_WB_DOWN_HIGH+100000LL) return;
 
   if(radio->qo100_bandplan) {
     const double band_h=8.0;                       // thickness of the plan strip
     double top=(double)display_height-band_h-16.0; // just above the frequency ruler
     if(top<0.0) top=0.0;
 
+    // The DATV channel ticks get their own strip ABOVE the plan strip, laid out
+    // the way AMSAT-DL's own graphic lays them out: the channels over the
+    // sections they belong to, in a row per width. Anywhere else and they would
+    // collide with the section labels, which are drawn just above their band;
+    // dropped entirely on a panadapter too short to hold both.
+    //
+    // A ROW PER RANK, not one row of differing heights, because the ranks are
+    // not disjoint sets of frequencies: three of the 333 kS channels are also
+    // the three 1 MS channels, exactly as the published plan draws them, and
+    // ticks growing from a shared baseline would land one on top of the other at
+    // those three — the one place the picture most needs to be readable.
+    const double chan_bot=top-14.0;                  // top of the plan strip's label zone
+    const gboolean draw_chans=(chan_bot-24.0)>0.0;
+
     for(int i=0;i<qo100_segment_count();i++) {
       const QO100_SEGMENT *sg=qo100_segment(i);
       double xl=((double)sg->low -(double)min_display)/rx->hz_per_pixel;
       double xr=((double)sg->high-(double)min_display)/rx->hz_per_pixel;
 
-      if(sg->beacon) {
+      if(sg->kind==QO100_SEG_BEACON) {
         // A beacon is one frequency, not a span: a full-height marker line so it
-        // is visible whatever the zoom, plus its name.
+        // is visible whatever the zoom.
         if(xl<0.0 || xl>(double)display_width) continue;
         GdkRGBA bc=nrgba(sg->r,sg->g,sg->b,0.75);
         lm_line(snapshot, xl, 0.0, xl, (double)display_height-16.0, 1.0, &bc);
+        continue;
+      }
+
+      if(sg->kind==QO100_SEG_CHANNEL) {
+        // A recommended DATV channel centre. Not a full-height line: there are
+        // thirty of them and a picture is meant to be looked at through this,
+        // not across a picket fence. The row says what it is — the 125 kS grid
+        // lowest and shortest, the 333 kS channels above it, the 1 MS channels
+        // above those and the only ones labelled, there being no room for three
+        // rows of text and no need for it once the rows are distinct.
+        if(!draw_chans) continue;
+        if(xl<0.0 || xl>(double)display_width) continue;
+        double y0, y1, a;
+        if(sg->rank>=2)      { y0=chan_bot-14.0; y1=chan_bot-24.0; a=0.80; }
+        else if(sg->rank>=1) { y0=chan_bot;      y1=chan_bot-8.0;  a=0.60; }
+        else                 { y0=chan_bot;      y1=chan_bot-4.0;  a=0.35; }
+        GdkRGBA cc=nrgba(sg->r,sg->g,sg->b,a);
+        lm_line(snapshot, xl, y0, xl, y1, 1.0, &cc);
+        if(sg->rank>=2 && sg->label!=NULL) {
+          double tw=lm_measure(widget, 10.0, sg->label);
+          lm_text(snapshot, widget, xl-tw/2.0, y1-2.0, 10.0, &cc, sg->label, FALSE);
+        }
         continue;
       }
 

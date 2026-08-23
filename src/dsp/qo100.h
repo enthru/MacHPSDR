@@ -36,6 +36,8 @@
  * Everything here is downlink frequencies unless the name says uplink.
  */
 
+/* ---------------- narrow-band transponder ---------------- */
+
 /* Transponder edges and the three beacons, from AMSAT-DL's own band plan
    (rev5, 14 Feb 2020, plus the later broadcast/emergency/multimedia additions).
    The lower and upper beacons ARE the transponder edges; the middle beacon sits
@@ -53,25 +55,77 @@
 #define QO100_BEACON_MIDDLE  10489750000LL   /* 400 bd BPSK */
 #define QO100_BEACON_UPPER   10490000000LL   /* CW and other modulations */
 
+/* ---------------- wideband (DATV) transponder ---------------- */
+
+/* The satellite's second amateur transponder, half a megahertz above the narrow
+   one and eighteen times as wide. Figures from AMSAT-DL/BATC "QO-100 Wideband
+   Transponder — 2021 Operating Guidelines and Bandplan", version 3 final,
+   6 February 2021, whose note 5 gives the transponder itself as
+   "Uplink 2401.0 – 2410.0 MHz RHCP, Downlink 10490.5 – 10499.5 MHz Horizontal".
+
+   TRAP, the same shape as the narrow transponder's 2020 extension: the figure in
+   wide circulation for this transponder is "8 MHz, 2401.5–2409.5 / 10491.0–
+   10499.0", which is its nominal bandwidth rather than the range the published
+   plan allocates — and the plan's own sections and channels run from 10490.5 to
+   10499.25, i.e. outside those numbers at BOTH ends. The V3 figures are what is
+   used here, and the consistency check that settles any source is the offset:
+   both edges must differ from their uplink by exactly QO100_TP_OFFSET, which the
+   8 MHz figures also satisfy — so the offset agreeing is NOT evidence that a set
+   of edges is the current one.
+
+   What this application can and cannot do with it, because it changes what the
+   support is for: MacHPSDR does not demodulate DVB-S2 and never will — the
+   wideband transponder carries digital television. What it gives the operator is
+   a truthful dial through the same LNB, the channel plan drawn over the
+   spectrum, and VFO B tracking the matching uplink for a separate DATV
+   transmitter. It is a spectrum-monitoring aid, not a receiver. */
+#define QO100_WB_DOWN_LOW    10490500000LL
+#define QO100_WB_DOWN_HIGH   10499500000LL
+#define QO100_WB_BEACON      10491500000LL   /* DVB-S2, 1500 kS, FEC 4/5, from Qatar */
+
+/* Which transponder the operator is set up for (radio->qo100_transponder). It
+   selects what "Set up transponder mode" tunes to and nothing else — the band
+   plan drawn on the panadapter follows the frequency on the dial, since the two
+   transponders cannot overlap. */
+#define QO100_TRANSPONDER_NB  0
+#define QO100_TRANSPONDER_WB  1
+
 /* Uplink 2400.000…2400.500 MHz against downlink 10489.500…10490.000 MHz, so the
-   transponder is non-inverting with a constant translation of exactly this — and
-   the extension did NOT change it, both edges still differ by this figure. */
+   narrow transponder is non-inverting with a constant translation of exactly
+   this — and the 2020 extension did NOT change it, both edges still differ by
+   this figure. The wideband transponder is translated by the same amount
+   (2401.000 → 10490.500, 2410.000 → 10499.500), which is why one pair of
+   converters serves both. */
 #define QO100_TP_OFFSET       8089500000LL   /* downlink - uplink */
 
 /* ---------------- band plan ---------------- */
 
+/* Both transponders' plans live in one table, drawn by frequency: the operator
+   sees whichever applies to where the dial is, with no mode to get wrong.
+   They cannot collide — the narrow transponder ends at 10490.000 and the
+   wideband one starts at 10490.500. */
+typedef enum {
+  QO100_SEG_SPAN = 0,   /* a stretch of the transponder with one use: tinted band */
+  QO100_SEG_BEACON,     /* one frequency: full-height marker */
+  QO100_SEG_CHANNEL,    /* a recommended DATV channel centre: tick above the strip */
+} QO100_SEG_KIND;
+
 typedef struct _QO100_SEGMENT {
   long long low;        /* downlink Hz, inclusive */
-  long long high;
+  long long high;       /* == low for BEACON and CHANNEL */
   const char *label;
   double r, g, b;       /* overlay tint */
-  gboolean beacon;      /* a single-frequency marker rather than a span */
+  QO100_SEG_KIND kind;
+  int rank;             /* CHANNEL only: 0 = 125 kS grid, 1 = also 333 kS, 2 = 1 MS */
 } QO100_SEGMENT;
 
 extern int  qo100_segment_count(void);
 extern const QO100_SEGMENT *qo100_segment(int index);
 
-/* TRUE when f (absolute downlink Hz) is inside the narrow-band transponder. */
+/* TRUE when f (absolute downlink Hz) is inside the named transponder;
+   qo100_in_transponder() is either of them. */
+extern gboolean qo100_in_nb_transponder(long long f);
+extern gboolean qo100_in_wb_transponder(long long f);
 extern gboolean qo100_in_transponder(long long f);
 
 /* ---------------- converters ---------------- */
@@ -99,7 +153,9 @@ extern gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz);
 
 /* Put VFO B on the uplink that matches VFO A's downlink and link the two with the
    non-inverting SAT split, so tuning the receiver drags the transmitter along.
-   Returns FALSE (and changes nothing) if VFO A is not on the downlink. */
+   Creates the converters first if they are missing and moves the dial onto
+   radio->qo100_transponder's downlink unless it is already there. Returns FALSE
+   (and changes nothing) only when there are no transverter slots to be had. */
 extern gboolean qo100_transponder_setup(RADIO *r);
 
 /* ---------------- beacon lock (LNB drift correction) ---------------- */
@@ -126,7 +182,17 @@ extern void qo100_beacon_reset(void);
    other receiver. */
 extern void qo100_beacon_forget_receiver(RECEIVER *rx);
 
-/* Which beacon radio->qo100_beacon_sel selects, as an absolute downlink Hz. */
+/* Which beacon radio->qo100_beacon_sel selects, as an absolute downlink Hz, and
+   whether that beacon has a carrier a frequency lock can be run against. The
+   wideband beacon has NOT: it is DVB-S2, a suppressed-carrier signal. It is
+   still offered, because the panadapter's level reference line wants it (the
+   wideband transponder's power rule is written against that beacon), and it is
+   the only beacon in the span while the operator is on the wideband transponder. */
 extern long long qo100_beacon_frequency(int sel);
+extern gboolean  qo100_beacon_has_carrier(int sel);
+
+#define QO100_BEACON_SEL_LOWER 0
+#define QO100_BEACON_SEL_UPPER 1
+#define QO100_BEACON_SEL_WB    2
 
 #endif
