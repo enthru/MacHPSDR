@@ -92,6 +92,117 @@ static GThread *receive_thread_id[MAX_CHANNELS];
 static gboolean rx_thread_running[MAX_CHANNELS];
 static gpointer receive_thread(gpointer data);
 
+/* ---- the raw-stream FIFO -------------------------------------------------
+   The receive thread used to do everything: read the device, decimate, run the
+   whole DSP chain, feed the panadapter and the decoders, and hand the audio on.
+   So any hesitation anywhere in that chain -- a span change rebuilding the
+   channel, a decoder, the GUI -- was time not spent draining the device, and
+   the driver answered with an overrun, which is not late data but SPLICED data:
+   the samples either side of the gap are joined and every signal on the band has
+   its phase stepped.  Measured on a HackRF: one or two per span change.
+
+   Now the reader does nothing but read and push, and a per-ADC DSP thread pops
+   and does the rest.  The FIFO absorbs a whole delivery burst (the device's real
+   MTU, before it is clamped for the read size) several times over, so a stall in
+   the DSP costs latency instead of samples.  Keyed per ADC, like the stream and
+   the receive thread. */
+static float *fifo_buf[MAX_CHANNELS];
+static int fifo_cap[MAX_CHANNELS];      /* in SAMPLES */
+static int fifo_rd[MAX_CHANNELS];
+static int fifo_n[MAX_CHANNELS];
+static long long fifo_dropped[MAX_CHANNELS];
+static GMutex fifo_mutex[MAX_CHANNELS];
+static GCond fifo_cond[MAX_CHANNELS];
+static gboolean dsp_thread_running[MAX_CHANNELS];
+static GThread *dsp_thread_id[MAX_CHANNELS];
+static gpointer dsp_thread(gpointer data);
+
+static void fifo_alloc(size_t channel,int samples) {
+  g_mutex_lock(&fifo_mutex[channel]);
+  g_free(fifo_buf[channel]);
+  fifo_buf[channel]=g_new(float,2*samples);
+  fifo_cap[channel]=samples;
+  fifo_rd[channel]=0;
+  fifo_n[channel]=0;
+  fifo_dropped[channel]=0;
+  g_mutex_unlock(&fifo_mutex[channel]);
+  log_info("fifo_alloc: adc %ld: %d samples of raw stream\n",(long)channel,samples);
+}
+
+/* Drop whatever is queued.  Used when the stream underneath is rebuilt: after a
+   TX over the samples in here are from before the transmission and belong to a
+   stream that no longer exists. */
+static void fifo_clear(size_t channel) {
+  g_mutex_lock(&fifo_mutex[channel]);
+  fifo_rd[channel]=0;
+  fifo_n[channel]=0;
+  g_mutex_unlock(&fifo_mutex[channel]);
+}
+
+/* Both teardown paths (a receiver going away, and a reconnect) must stop this
+   thread: it holds the RECEIVER, its buffers and its WDSP channel.  Call it
+   AFTER the reader is joined, so nothing is still pushing. */
+static void stop_dsp_thread(size_t channel) {
+  if(channel>=MAX_CHANNELS || dsp_thread_id[channel]==NULL) return;
+  g_mutex_lock(&fifo_mutex[channel]);
+  dsp_thread_running[channel]=FALSE;
+  g_cond_broadcast(&fifo_cond[channel]);
+  g_mutex_unlock(&fifo_mutex[channel]);
+  g_thread_join(dsp_thread_id[channel]);
+  dsp_thread_id[channel]=NULL;
+}
+
+static void fifo_free(size_t channel) {
+  g_mutex_lock(&fifo_mutex[channel]);
+  g_free(fifo_buf[channel]);
+  fifo_buf[channel]=NULL;
+  fifo_cap[channel]=0;
+  fifo_rd[channel]=0;
+  fifo_n[channel]=0;
+  g_mutex_unlock(&fifo_mutex[channel]);
+}
+
+/* Reader side.  A full FIFO means the DSP has been behind for a whole burst, so
+   the block is dropped and counted -- the alternative, blocking here, is exactly
+   the coupling this FIFO exists to remove. */
+static void fifo_push(size_t channel,const float *iq,int n) {
+  g_mutex_lock(&fifo_mutex[channel]);
+  if(fifo_buf[channel]==NULL || n<=0) { g_mutex_unlock(&fifo_mutex[channel]); return; }
+  if(n>fifo_cap[channel]-fifo_n[channel]) {
+    fifo_dropped[channel]+=n;
+    g_mutex_unlock(&fifo_mutex[channel]);
+    return;
+  }
+  int wr=(fifo_rd[channel]+fifo_n[channel])%fifo_cap[channel];
+  int first=fifo_cap[channel]-wr; if(first>n) first=n;
+  memcpy(fifo_buf[channel]+2*wr,iq,(size_t)(2*first)*sizeof(float));
+  if(n>first) memcpy(fifo_buf[channel],iq+2*first,(size_t)(2*(n-first))*sizeof(float));
+  fifo_n[channel]+=n;
+  g_cond_signal(&fifo_cond[channel]);
+  g_mutex_unlock(&fifo_mutex[channel]);
+}
+
+/* DSP side.  Blocks until there is something or the thread is being stopped;
+   returns a CONTIGUOUS run, so the caller sees the stream in order without the
+   ring's wrap ever showing. */
+static int fifo_pop(size_t channel,float *out,int want) {
+  g_mutex_lock(&fifo_mutex[channel]);
+  while(dsp_thread_running[channel] && fifo_n[channel]==0) {
+    gint64 until=g_get_monotonic_time()+100000;   /* 100 ms, so a stop is prompt */
+    g_cond_wait_until(&fifo_cond[channel],&fifo_mutex[channel],until);
+  }
+  int n=fifo_n[channel]; if(n>want) n=want;
+  if(n>0) {
+    int first=fifo_cap[channel]-fifo_rd[channel]; if(first>n) first=n;
+    memcpy(out,fifo_buf[channel]+2*fifo_rd[channel],(size_t)(2*first)*sizeof(float));
+    if(n>first) memcpy(out+2*first,fifo_buf[channel],(size_t)(2*(n-first))*sizeof(float));
+    fifo_rd[channel]=(fifo_rd[channel]+n)%fifo_cap[channel];
+    fifo_n[channel]-=n;
+  }
+  g_mutex_unlock(&fifo_mutex[channel]);
+  return n;
+}
+
 // The rate the RX stream is REALLY running at, as the device reports it after
 // being asked for radio->sample_rate.  Those are not always the same number and
 // a driver owes us no error when it substitutes: SoapyPlutoSDR answers a request
@@ -459,11 +570,23 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
 #endif
 
 
-  max_samples=SoapySDRDevice_getStreamMTU(soapy_device,rx_stream[channel]);
+  const int mtu=(int)SoapySDRDevice_getStreamMTU(soapy_device,rx_stream[channel]);
+  max_samples=mtu;
   if(max_samples>(2*rx->fft_size)) {
     max_samples=2*rx->fft_size;
   }
   rx_block[channel]=max_samples;
+  // The FIFO has to swallow a whole delivery burst several times over, and the
+  // burst is the device's REAL MTU -- 131072 samples on a HackRF, i.e. 65 ms at
+  // 2 MS/s -- not the read size above, which is clamped to what one DSP block
+  // wants.  Four of them, bounded so a driver claiming an enormous MTU cannot
+  // ask for hundreds of megabytes.
+  {
+    long long cap=4LL*(long long)((mtu>max_samples)?mtu:max_samples);
+    if(cap<4LL*max_samples) cap=4LL*max_samples;
+    if(cap>(1LL<<20)) cap=(1LL<<20);
+    fifo_alloc(channel,(int)cap);
+  }
   rx->buffer=g_new(double,max_samples*2);
   // The freeing above cleared it; the builder allocates it to the size the real
   // stream rate calls for.
@@ -507,7 +630,16 @@ log_info("%s: activate_stream\n",__FUNCTION__);
     _exit(-1);
   }
 
-log_info("%s: create receive_thread\n",__FUNCTION__);
+log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
+  // The DSP thread first: it must be waiting on the FIFO before the reader
+  // starts filling it, or the first burst is dropped for want of a consumer.
+  dsp_thread_running[channel]=TRUE;
+  dsp_thread_id[channel]=g_thread_new("soapy_dsp",dsp_thread,rx);
+  if(dsp_thread_id[channel]==NULL) {
+    log_error("%s: g_thread_new failed for dsp_thread\n",__FUNCTION__);
+    dsp_thread_running[channel]=FALSE;
+    _exit(-1);
+  }
   rx_thread_running[channel]=TRUE;
   running=TRUE;
   receive_thread_id[channel] = g_thread_new( "rx_thread", receive_thread, rx);
@@ -675,69 +807,41 @@ log_info("soapy_protocol_init: SoapySDRDevice_make\n");
   SoapySDRKwargs_clear(&args);
 }
 
-static gpointer receive_thread(gpointer data) {
+
+/* Everything the receive thread used to do after the read.  One block at a time,
+   in order, on its own thread: the reader is never blocked by it.
+   This thread was handed its RECEIVER at start-up and holds it for its whole
+   life, so unlike the protocol1/2 paths there is no slot to re-read -- the check
+   is whether that receiver is still one of the radio's.  Everything that touches
+   it (rx->buffer, the resampler, add_iq_samples) is inside delete_rx_mutex,
+   because delete_receiver frees all three. */
+static gpointer dsp_thread(gpointer data) {
   double isample;
   double qsample;
-  int elements;
-  int flags=0;
-  long long timeNs=0;
-  long timeoutUs=100000L;
   int i;
   RECEIVER *rx=(RECEIVER *)data;
-  // Capture max_samples once: it is a global that the NEXT receiver's
-  // create_receiver rewrites, and readStream() must never be asked for more
-  // than this thread's own buffer holds.
-  const int block=max_samples;
-  float *buffer=g_new(float,block*2);
-  void *buffs[]={buffer};
-  int overruns=0;
-  gint64 overrun_reported=g_get_monotonic_time();
-
-log_info("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
-  while(rx_thread_running[channel]) {
-    // Paused while transmitting (half-duplex): the RX stream is deactivated,
-    // so don't read from it - just idle until it is resumed.  The stream is
-    // torn down and rebuilt fresh in soapy_protocol_rx_resume() (see there),
-    // so no backlog reaches us here.
-    if(!rx_stream_active) {
-      g_atomic_int_set(&rx_parked[channel],1);
-      g_usleep(1000);
-      continue;
-    }
-    g_atomic_int_set(&rx_parked[channel],0);
-    // flags is an OUTPUT of readStream and drivers OR into it, so it has to be
-    // cleared before every call.  It was initialised once outside this loop, so
-    // the first SOAPY_SDR_END_ABRUPT stuck for the life of the thread and every
-    // later read counted as an overrun: the "N overrun(s) in 5 s" line then
-    // reported the read RATE rather than the loss, for ever, over a stream that
-    // may have recovered seconds ago.
-    flags=0;
-    elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
-    // A dropped block is not a silence the DSP can see: the samples either side
-    // of it are spliced, so every signal on the band has its phase randomised at
-    // the seam and the receiver's clock quietly runs fast.  Nothing looked at
-    // this before, which is why a stream arriving faster than the app consumes
-    // it presented as smearing rather than as loss.
-    if(elements==SOAPY_SDR_OVERFLOW || (flags&SOAPY_SDR_END_ABRUPT)) {
-      overruns++;
+  const int block=rx_block[channel]>0?rx_block[channel]:2048;
+  float *buffer=g_new(float,block*2);
+  gint64 dropped_reported=g_get_monotonic_time();
+log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,block);
+  while(dsp_thread_running[channel]) {
+    int elements=fifo_pop(channel,buffer,block);
+    if(elements<=0) continue;
+    {
       const gint64 now=g_get_monotonic_time();
-      if(now-overrun_reported>=5000000) {
-        log_error("%s: %d overrun(s) in %.0f s on adc %ld -- the stream is arriving faster than it is consumed; signals will be smeared\n",
-                  __FUNCTION__,overruns,(double)(now-overrun_reported)/1.0e6,(long)channel);
-        overrun_reported=now;
-        overruns=0;
+      if(now-dropped_reported>=5000000) {
+        long long d;
+        g_mutex_lock(&fifo_mutex[channel]);
+        d=fifo_dropped[channel]; fifo_dropped[channel]=0;
+        g_mutex_unlock(&fifo_mutex[channel]);
+        if(d>0) {
+          log_error("%s: the DSP fell behind the stream by %lld samples in the last 5 s on adc %ld\n",
+                    __FUNCTION__,d,(long)channel);
+        }
+        dropped_reported=now;
       }
     }
-    if(elements<0) continue;
-    if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
-    // This thread was handed its RECEIVER at start-up and holds it for its whole
-    // life, so unlike the protocol1/2 paths there is no slot to re-read -- the
-    // check is whether that receiver is still one of the radio's.  Everything
-    // that touches it (rx->buffer, the resampler, add_iq_samples) is inside the
-    // lock, because delete_receiver frees all three.  The lock is held for the
-    // whole block rather than per sample; protocol1 takes and drops it once per
-    // sample, so this is the cheaper end of what the codebase already does.
     g_mutex_lock(&radio->delete_rx_mutex);
     if(!receiver_is_live(rx)) {
       g_mutex_unlock(&radio->delete_rx_mutex);
@@ -798,6 +902,71 @@ log_info("%s: running\n",__FUNCTION__);
     }
     g_mutex_unlock(&radio->delete_rx_mutex);
   }
+log_info("%s: exit (adc %ld)\n",__FUNCTION__,(long)channel);
+  g_free(buffer);
+  return NULL;
+}
+
+static gpointer receive_thread(gpointer data) {
+  double isample;
+  double qsample;
+  int elements;
+  int flags=0;
+  long long timeNs=0;
+  long timeoutUs=100000L;
+  int i;
+  RECEIVER *rx=(RECEIVER *)data;
+  // Capture max_samples once: it is a global that the NEXT receiver's
+  // create_receiver rewrites, and readStream() must never be asked for more
+  // than this thread's own buffer holds.
+  const int block=max_samples;
+  float *buffer=g_new(float,block*2);
+  void *buffs[]={buffer};
+  int overruns=0;
+  gint64 overrun_reported=g_get_monotonic_time();
+
+log_info("%s: running\n",__FUNCTION__);
+  size_t channel=rx->adc;
+  while(rx_thread_running[channel]) {
+    // Paused while transmitting (half-duplex): the RX stream is deactivated,
+    // so don't read from it - just idle until it is resumed.  The stream is
+    // torn down and rebuilt fresh in soapy_protocol_rx_resume() (see there),
+    // so no backlog reaches us here.
+    if(!rx_stream_active) {
+      g_atomic_int_set(&rx_parked[channel],1);
+      g_usleep(1000);
+      continue;
+    }
+    g_atomic_int_set(&rx_parked[channel],0);
+    // flags is an OUTPUT of readStream and drivers OR into it, so it has to be
+    // cleared before every call.  It was initialised once outside this loop, so
+    // the first SOAPY_SDR_END_ABRUPT stuck for the life of the thread and every
+    // later read counted as an overrun: the "N overrun(s) in 5 s" line then
+    // reported the read RATE rather than the loss, for ever, over a stream that
+    // may have recovered seconds ago.
+    flags=0;
+    elements=SoapySDRDevice_readStream(soapy_device,rx_stream[channel],buffs,block,&flags,&timeNs,timeoutUs);
+    // A dropped block is not a silence the DSP can see: the samples either side
+    // of it are spliced, so every signal on the band has its phase randomised at
+    // the seam and the receiver's clock quietly runs fast.  Nothing looked at
+    // this before, which is why a stream arriving faster than the app consumes
+    // it presented as smearing rather than as loss.
+    if(elements==SOAPY_SDR_OVERFLOW || (flags&SOAPY_SDR_END_ABRUPT)) {
+      overruns++;
+      const gint64 now=g_get_monotonic_time();
+      if(now-overrun_reported>=5000000) {
+        log_error("%s: %d overrun(s) in %.0f s on adc %ld -- the stream is arriving faster than it is consumed; signals will be smeared\n",
+                  __FUNCTION__,overruns,(double)(now-overrun_reported)/1.0e6,(long)channel);
+        overrun_reported=now;
+        overruns=0;
+      }
+    }
+    if(elements<0) continue;
+    if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
+    // Read and hand over, nothing else: everything that costs time now happens
+    // on dsp_thread, so a slow DSP frame cannot turn into a driver overrun.
+    fifo_push(channel,buffer,elements);
+  }
   // The stream is NOT touched here.  Whoever stopped this thread joins it and
   // then deactivates/closes the stream; doing it from both ends would race a
   // close against a readStream that has not returned yet.
@@ -826,6 +995,12 @@ log_info("%s: stopping receive thread for channel %ld\n",__FUNCTION__,(long)chan
   rx_thread_running[channel]=FALSE;
   g_thread_join(receive_thread_id[channel]);
   receive_thread_id[channel]=NULL;
+
+  // The reader is gone, so nothing is pushing any more: stop the DSP thread
+  // BEFORE the stream is closed and before the caller frees the receiver -- it
+  // touches rx->buffer, the resampler and the WDSP channel on every block.
+  stop_dsp_thread(channel);
+  fifo_free(channel);
 
   if(soapy_device!=NULL && rx_stream[channel]!=NULL) {
     SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
@@ -947,6 +1122,10 @@ static void rx_resume_channel(size_t channel) {
   rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
 #endif
   SoapySDRDevice_activateStream(soapy_device,rx_stream[channel],0,0LL,0);
+  // The queue belongs to the stream that was just closed: what is in it is from
+  // before the transmission, and playing it now would put a stale half-second of
+  // band on the air-side of the DSP.
+  fifo_clear(channel);
 }
 
 void soapy_protocol_rx_resume(void) {
@@ -1175,6 +1354,12 @@ log_info("%s: tearing down old device/streams\n",__FUNCTION__);
     rx_thread_running[channel]=FALSE;
     g_thread_join(receive_thread_id[channel]);
     receive_thread_id[channel]=NULL;
+  }
+  // ...and its DSP thread with it, or the reconnect below starts a second one
+  // over a receiver the first is still processing into.
+  if(channel<MAX_CHANNELS) {
+    stop_dsp_thread(channel);
+    fifo_free(channel);
   }
   running=FALSE;
   for(int i=0;i<MAX_CHANNELS;i++) {
