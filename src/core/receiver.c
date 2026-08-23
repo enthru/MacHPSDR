@@ -531,6 +531,33 @@ static void center_pan_on_cursor(RECEIVER *rx) {
   if(rx->pan>(rx->pixels-rx->panadapter_width)) rx->pan=rx->pixels-rx->panadapter_width;
 }
 
+// The noise blankers run at the CHANNEL's input geometry, not at the span.
+// With no feed those are the same thing and this is what the code always did;
+// with one (every span above 384000) the blankers move behind the decimation,
+// so with NB on at 9600000 they see 384 kS/s instead of 9.6 MS/s.  That is
+// where WDSP puts them -- they are the first block of the channel's own chain --
+// and it is the only place a single instance can be right, since a channel
+// opened at a decimated rate is handed decimated blocks.
+//
+// What it costs, stated rather than discovered later: above 384000 the blanker
+// only sees the +-192 kHz the receiver is actually listening to, and the
+// panadapter (fed the full span, always) therefore draws the UNBLANKED band.
+// Below 384000 -- every HF span -- there is no feed and nothing changes at all.
+static void rx_nb_rematch(RECEIVER *rx) {
+  SetEXTANBBuffsize(rx->channel,rx->dsp_in_block);
+  SetEXTNOBBuffsize(rx->channel,rx->dsp_in_block);
+  SetEXTANBSamplerate(rx->channel,rx->dsp_in_rate);
+  SetEXTNOBSamplerate(rx->channel,rx->dsp_in_rate);
+}
+
+// In place on one channel-input block.  Gated on the operator's switch here and
+// on WDSP's own Run flag inside (which is what update_noise's bypass rule
+// clears), exactly as the two call sites in full_rx_buffer did.
+static void rx_nb_apply(RECEIVER *rx,gdouble *iq) {
+  if(rx->nb)  xanbEXT(rx->channel,iq,iq);
+  if(rx->nb2) xnobEXT(rx->channel,iq,iq);
+}
+
 void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
 log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
   // delete_rx_mutex FIRST, then rx->mutex: the SoapySDR receive thread takes
@@ -568,8 +595,6 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
       rx->scope_iq=g_new0(gfloat,2*block);
       rx->scope_iq_n=0;
       rx->samples=0;
-      SetEXTANBBuffsize(rx->channel,block);
-      SetEXTNOBBuffsize(rx->channel,block);
     }
   }
 
@@ -595,8 +620,7 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   if(rx->subrx_enable && rx->subrx!=NULL) subrx_change_sample_rate(rx);
 
   receiver_init_analyzer(rx);
-  SetEXTANBSamplerate (rx->channel, sample_rate);
-  SetEXTNOBSamplerate (rx->channel, sample_rate);
+  rx_nb_rematch(rx);      // the blankers follow the CHANNEL, not the span
 log_info("receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_samples=%d\n",rx->channel, rx->sample_rate, rx->buffer_size, rx->output_samples);
 
   /* Recentre the freetune span on the current listening frequency (the cursor)
@@ -668,6 +692,11 @@ void update_noise(RECEIVER *rx) {
   gboolean bypass = bypass_stream_dsp(rx);
   SetEXTANBRun(rx->channel, bypass ? 0 : rx->nb);
   SetEXTNOBRun(rx->channel, bypass ? 0 : rx->nb2);
+  // The sub-channel has blankers of its own and they are applied now (see
+  // subrx_iq_take), so its Run flags have to follow the switch instead of
+  // keeping whatever they were given when SUBRX was turned on.  No bypass gate:
+  // SUBRX is the listening path, like its NR/ANF (see subrx.c).
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_noise(rx);
   SetRXAANRRun(rx->channel, bypass ? 0 : rx->nr);
   SetRXAEMNRRun(rx->channel, bypass ? 0 : rx->nr2);
   SetRXARNNRRun(rx->channel, bypass ? 0 : rx->nr3);
@@ -2625,6 +2654,7 @@ static void rx_channel_exchange(RECEIVER *rx,gdouble *iq) {
     rx_feed_push(rx->dsp_feed,iq,rx->buffer_size);
     if(rx->subrx_enable) subrx_iq_push(rx);
     while(rx_feed_take(rx->dsp_feed,&blk)) {
+      rx_nb_apply(rx,blk);
       fexchange0(rx->channel, blk, rx->audio_output_buffer, &error);
       if(error!=0) {
         log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
@@ -2633,6 +2663,11 @@ static void rx_channel_exchange(RECEIVER *rx,gdouble *iq) {
       process_rx_buffer(rx);
     }
   } else {
+    // No feed: this block IS the span, so blanking it in place is what the two
+    // call sites in full_rx_buffer/full_diviqrx_buffer used to do -- and it
+    // still happens before SUBRX reads the same buffer and before the analyzer
+    // is fed from it, so the picture and VFO-B are unchanged.
+    rx_nb_apply(rx,iq);
     fexchange0(rx->channel, iq, rx->audio_output_buffer, &error);
     if(error!=0) {
       log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
@@ -2646,7 +2681,9 @@ static void full_rx_buffer(RECEIVER *rx) {
 
   if(isTransmitting(radio) && (!rx->duplex)) return;
 
-  // Tap the genuine off-air I/Q before the noise blanker mutates it in place.
+  // Tap the genuine off-air I/Q first: with no feed the exchange below still
+  // blanks this very buffer in place (rx_nb_apply), so the order is load-bearing
+  // at every span up to 384000.
   recorder_iq(rx, rx->iq_input_buffer, rx->buffer_size);
   ppm_cal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   // QO-100 beacon lock: measures the LNB's LO drift off the raw spectrum, so it
@@ -2717,14 +2754,9 @@ static void full_rx_buffer(RECEIVER *rx) {
   }
 #endif
 
-  // noise blanker works on origianl IQ samples
-  if(rx->nb) {
-     xanbEXT (rx->channel, rx->iq_input_buffer, rx->iq_input_buffer);
-  }
-  if(rx->nb2) {
-     xnobEXT (rx->channel, rx->iq_input_buffer, rx->iq_input_buffer);
-  }
-
+  // The noise blankers are NOT here any more: they belong to the WDSP channel's
+  // input, which is this buffer only when there is no feed (rx_nb_apply, reached
+  // from rx_channel_exchange below).
   g_mutex_lock(&rx->mutex);
   rx_channel_exchange(rx,rx->iq_input_buffer);
 
@@ -2743,14 +2775,7 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   recorder_iq(rx, rx->diviq_input_buffer, rx->buffer_size);
   ppm_cal_iq_feed(rx, rx->diviq_input_buffer, rx->buffer_size);
 
-  // noise blanker works on origianl IQ samples
-  if(rx->nb) {
-     xanbEXT (rx->channel, rx->diviq_input_buffer, rx->diviq_input_buffer);
-  }
-  if(rx->nb2) {
-     xnobEXT (rx->channel, rx->diviq_input_buffer, rx->diviq_input_buffer);
-  }
-
+  // Blanked with the off-air path, inside the exchange (rx_nb_apply).
   g_mutex_lock(&rx->mutex);
   // The SAME exchange as the off-air path, and it has to be: the mixer's output
   // is this channel's input, so a channel opened at a decimated rate would
@@ -3770,8 +3795,10 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
   rx->dsp_rate=48000;
 
   // Modified per pihpsdr commit d9af51206087959083feddcb325443d9368dad8c
-  create_anbEXT(rx->channel, 1, rx->buffer_size, rx->sample_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
-  create_nobEXT(rx->channel,1, 0, rx->buffer_size, rx->sample_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
+  // The channel's input geometry, not the span's -- receiver_build_feed above
+  // has already decided which they are (rx_nb_rematch).
+  create_anbEXT(rx->channel, 1, rx->dsp_in_block, rx->dsp_in_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
+  create_nobEXT(rx->channel,1, 0, rx->dsp_in_block, rx->dsp_in_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
   RXASetNC(rx->channel, rx->fft_size);
   RXASetMP(rx->channel, rx->low_latency);
 #ifdef SOAPYSDR

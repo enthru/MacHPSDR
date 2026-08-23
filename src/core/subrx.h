@@ -50,5 +50,8 @@ extern void subrx_mode_changed(RECEIVER *rx);
 extern void subrx_filter_changed(RECEIVER *rx);
 extern void subrx_volume_changed(RECEIVER *rx);
 extern void subrx_set_apf(RECEIVER *rx);
+// Mirror the main receiver's NB/NB2 switches onto the sub-channel's own
+// blankers, which subrx_iq_take applies (see update_noise).
+extern void subrx_update_noise(RECEIVER *rx);
 
 #endif

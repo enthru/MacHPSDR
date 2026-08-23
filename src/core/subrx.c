@@ -166,8 +166,13 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
               1, // run
               0.010, 0.025, 0.0, 0.010, 0);
 
-  create_anbEXT(subrx->channel,1,rx->buffer_size,rx->sample_rate,0.0001,0.0001,0.0001,0.05,20);
-  create_nobEXT(subrx->channel,1,0,rx->buffer_size,rx->sample_rate,0.0001,0.0001,0.0001,0.05,20);
+  // The blankers belong to this channel's INPUT, which is the feed's output
+  // when there is one and the span when there is not -- the same rule as the
+  // main receiver's (rx_nb_apply/rx_nb_rematch in receiver.c).  They were
+  // created at the span and never applied at all, so VFO-B was blanked only as
+  // a side effect of the main path mutating the shared buffer in place.
+  create_anbEXT(subrx->channel,1,rx->dsp_in_block,rx->dsp_in_rate,0.0001,0.0001,0.0001,0.05,20);
+  create_nobEXT(subrx->channel,1,0,rx->dsp_in_block,rx->dsp_in_rate,0.0001,0.0001,0.0001,0.05,20);
   RXASetNC(subrx->channel, rx->fft_size);
   RXASetMP(subrx->channel, rx->low_latency);
 
@@ -241,8 +246,20 @@ void subrx_iq_take(RECEIVER *rx) {
     return;
   }
   if(rx_feed_take(subrx->feed,&blk)) {
+    // VFO-B's own blankers, on VFO-B's own block: the main path no longer
+    // mutates the shared full-span buffer, so this is the only thing left that
+    // blanks the sub-receiver.
+    if(rx->nb)  xanbEXT(subrx->channel,blk,blk);
+    if(rx->nb2) xnobEXT(subrx->channel,blk,blk);
     fexchange0(subrx->channel, blk, subrx->audio_output_buffer, &error);
   }
+}
+
+void subrx_update_noise(RECEIVER *rx) {
+  SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL) return;
+  SetEXTANBRun(subrx->channel, rx->nb);
+  SetEXTNOBRun(subrx->channel, rx->nb2);
 }
 
 void subrx_volume_changed(RECEIVER *rx) {
@@ -268,6 +285,10 @@ void subrx_change_sample_rate(RECEIVER *rx) {
   SetInputBuffsize(subrx->channel,rx->dsp_in_block);
   SetDSPBuffsize(subrx->channel,(subrx->feed!=NULL)?rx->dsp_size:rx->fft_size);
   SetAllRates(subrx->channel,rx->dsp_in_rate,48000,48000);
+  SetEXTANBBuffsize(subrx->channel,rx->dsp_in_block);
+  SetEXTNOBBuffsize(subrx->channel,rx->dsp_in_block);
+  SetEXTANBSamplerate(subrx->channel,rx->dsp_in_rate);
+  SetEXTNOBSamplerate(subrx->channel,rx->dsp_in_rate);
   subrx_frequency_changed(rx);
 }
 
