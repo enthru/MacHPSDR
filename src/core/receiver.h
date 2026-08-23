@@ -83,21 +83,23 @@ typedef struct _receiver {
   gint output_rate;
 
   // ---- the DSP feed -------------------------------------------------------
-  // Above RX_ULTRAWIDE_SPAN the WDSP channel is NOT opened at the span: WDSP
+  // Above RX_FEED_MAX_RATE the WDSP channel is NOT opened at the span: WDSP
   // would then decimate span->48k in one FIR stage of 140 taps per unit of
-  // ratio (28 000 taps per output sample at 9.6 MHz), so the span is mixed to
-  // the cursor and decimated here first -- an NCO plus a liquid cascade -- and
-  // the channel is opened at dsp_in_rate with blocks of dsp_in_block.  NULL
-  // feed means the channel is opened at the span, exactly as it always was.
+  // ratio (28 000 taps per output sample at 9.6 MHz, 5600 at 1920000), so the
+  // span is mixed to the cursor and decimated here first -- an NCO plus a
+  // liquid cascade -- and the channel is opened at dsp_in_rate with blocks of
+  // dsp_in_block.  NULL feed means the channel is opened at the span, exactly
+  // as it always was: every span up to 384000, and any build without
+  // liquid-dsp (see rx_feed_decim in receiver.c).
   void *dsp_feed;
   gint dsp_in_rate;    // the WDSP channel's input rate  (== sample_rate with no feed)
   gint dsp_in_block;   // the WDSP channel's in_size     (== buffer_size  with no feed)
 
   gint fft_size;
-  // OpenChannel's dsp_size: how much WDSP chews per DSP pass.  Equal to
-  // fft_size everywhere except the ultrawide SoapySDR spans, where the I/Q
-  // block grows and this shrinks to keep the iobuff ring the size it is at
-  // 1920000 (see rx_dsp_block in receiver.c).
+  // OpenChannel's dsp_size: how much WDSP chews per DSP pass.  Owned by
+  // receiver_build_feed: fft_size (or rx_dsp_block on the ultrawide SoapySDR
+  // spans, where the I/Q block grows and this shrinks to keep the iobuff ring
+  // the size it is at 1920000) with no feed, the feed's own in_block with one.
   gint dsp_size;
   gboolean low_latency;
 

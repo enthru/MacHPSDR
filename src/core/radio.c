@@ -2073,7 +2073,12 @@ static void diversity_test_init(RADIO *r) {
 // cannot offer is skipped.  Quits through g_application_quit(), so like
 // MACHPSDR_RX_CHURN it does NOT save state.  Zero cost when unset.
 // ---------------------------------------------------------------------------
-static const int span_cycle_rates[]={192000,9600000,384000,1920000,4800000,768000};
+// Every decimation the feed can pick appears here at least once and the list
+// crosses BOTH boundaries in both directions: the I/Q block tier at 1920000
+// (rx_iq_block) and the fed/unfed one at 384000 (rx_feed_decim) -- 9600000 and
+// 4800000 are D=25, 1920000 D=5, 1536000 D=4, 768000 D=2, and 192000/384000 go
+// to WDSP at the span.
+static const int span_cycle_rates[]={192000,9600000,384000,1920000,4800000,768000,1536000};
 static int span_cycles_left;
 static unsigned span_cycle_idx;
 

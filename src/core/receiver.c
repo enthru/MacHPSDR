@@ -216,11 +216,10 @@ static int rx_dsp_block(int sample_rate) {
 // same single-stage resampler the SoapySDR front end used to use, sized at 140
 // taps per unit of ratio (wdsp/resample.c): at a 9.6 MHz span that is 200:1,
 // i.e. 28 000 taps per output sample -- 1.34 G complex multiply-accumulates a
-// second for the audio of one receiver.  So above the ultrawide threshold the
-// channel is not opened at the span at all.  The span is mixed so that the
-// CURSOR sits at DC and decimated by RX_FEED_DECIM here, in a liquid cascade,
-// and WDSP is opened at the rate that leaves (384 kHz at 9600000, 192 kHz at
-// 4800000 -- both rates this app already offers as spans of their own).
+// second for the audio of one receiver.  So a span wide enough for that to
+// matter does not reach the channel at all: it is mixed so that the CURSOR sits
+// at DC, decimated here in a liquid cascade, and WDSP is opened at what is
+// left -- a rate this app already offers as a span of its own.
 //
 // Two things move with it, and both are why this is not just an optimisation:
 //   - the digital tuning shift is now OURS.  WDSP's shift block is switched off
@@ -232,10 +231,64 @@ static int rx_dsp_block(int sample_rate) {
 // Everything else -- the panadapter, the recorder, every raw-I/Q decoder tap --
 // keeps reading the full-span buffer, which is untouched.
 //
+// The window the fed channel's input rate must land in.  The bottom of it is
+// WFM, which runs the whole chain at this rate and needs the ~180 kHz signal,
+// its 19/38 kHz pilot and the 57 kHz RDS subcarrier to fit -- 192000 is the
+// narrowest rate this app is willing to demodulate WFM at, and it is why
+// 2400000 is not offered as a span (a twenty-fifth of it is 96 kHz).  The top
+// is where WDSP's own decimation stops being worth replacing.
+//
+// What that top is worth was MEASURED, and it is not what the arithmetic
+// suggests.  WDSP's one stage is 140 taps per unit of ratio, i.e. 5600 taps per
+// output sample at a 1920000 span against 1120 at 384000 -- and against a
+// HackRF, 20 s windows, both binaries, spans 384000 (control) through 1920000,
+// in WFM and in USB, the CPU differences all sat inside the +-4.5 points the
+// CONTROL span moves by itself.  270 M MAC/s is a few per cent of one core
+// here.  Every cell read 48000 frames/s with dropped 0 and no fexchange0 error,
+// so nothing regressed either.  What the feed does buy is granularity: WDSP's
+// DSP pass stops being a 106.7 ms lump of input (dsp_size/48000, the same at
+// every span) and becomes 21.3 ms at 1920000, 26.7 at 1536000, 53.3 at 768000.
+#define RX_FEED_MAX_RATE 384000
+#define RX_FEED_MIN_RATE 192000
+
 // 25 is the one decimation that suits both ultrawide spans: it takes 9600000 to
 // 384000 and 4800000 to 192000, both multiples of 48000, and it divides the
 // 25600-sample block into exactly 1024.
-#define RX_FEED_DECIM 25
+#define RX_ULTRAWIDE_DECIM 25
+
+// The decimation THIS span is fed through; 1 means "hand WDSP the span", which
+// is what every span up to RX_FEED_MAX_RATE gets -- there the single stage is
+// already cheap and a cascade in front of it would only add its own taps.
+// Three constraints, in the order they bite:
+//   - span/D must land in [RX_FEED_MIN_RATE, RX_FEED_MAX_RATE] and be a
+//     multiple of 48000, because that is the rate the channel is opened at and
+//     the rate WFM demodulates at;
+//   - D must divide the I/Q block, because the block is pushed whole and the
+//     channel is handed span/D of it; a fractional count leaves a remainder in
+//     the accumulator that grows for ever;
+//   - the SMALLEST such D wins, i.e. the widest channel rate in range: the less
+//     that is thrown away here the more of the span a WFM listener keeps, and
+//     the cascade is cheap either way.
+// It comes out at 768000/2, 1536000/4 and 1920000/5 -- all three at 384000 --
+// for the wide-buffer devices (block 5120, drained in 2560/1280/1024) and for
+// HPSDR alike (block 1024, drained in 512 and 256, its widest span being
+// 1536000).  The ultrawide tier is NOT searched but stated: the
+// search would pick D=20 for 4800000 (240000, which is arithmetically fine),
+// and that tier's geometry is the one that has been measured.
+static int rx_feed_decim(int sample_rate,int block) {
+  if(sample_rate<=RX_FEED_MAX_RATE || block<=0) return 1;
+  if(sample_rate>RX_ULTRAWIDE_SPAN) {
+    return ((sample_rate%(48000*RX_ULTRAWIDE_DECIM))==0 && (block%RX_ULTRAWIDE_DECIM)==0)
+             ? RX_ULTRAWIDE_DECIM : 1;
+  }
+  for(int d=2;(sample_rate/d)>=RX_FEED_MIN_RATE;d++) {
+    if((sample_rate%d)!=0 || (block%d)!=0) continue;
+    const int out=sample_rate/d;
+    if(out>RX_FEED_MAX_RATE || (out%48000)!=0) continue;
+    return d;
+  }
+  return 1;
+}
 
 typedef struct {
 #ifdef LIQUID
@@ -375,10 +428,13 @@ static int rx_wfm_dsp_rate(RECEIVER *rx) {
 }
 
 // (Re)decide whether this receiver's channel is fed the span or a decimated
-// stream, and build the feed if it is the latter.  Sets dsp_in_rate/dsp_in_block
-// to what the channel must be opened (or re-rated) with; leaves them at the span
-// when there is no feed, which is every span up to RX_ULTRAWIDE_SPAN and every
-// build without liquid-dsp.
+// stream, and build the feed if it is the latter.  This function owns the
+// channel's whole input geometry -- dsp_in_rate, dsp_in_block and dsp_size --
+// because a span change can REMOVE a feed as easily as add one, and the fed
+// geometry must not survive that.  With no feed they are the span, the whole
+// I/Q block and this tier's DSP block, which is what the code did before the
+// feed existed and is still what every span up to RX_FEED_MAX_RATE and every
+// build without liquid-dsp gets.
 static void receiver_build_feed(RECEIVER *rx) {
   if(rx->dsp_feed!=NULL) {
     rx_feed_destroy(rx->dsp_feed);
@@ -386,6 +442,7 @@ static void receiver_build_feed(RECEIVER *rx) {
   }
   rx->dsp_in_rate=rx->sample_rate;
   rx->dsp_in_block=rx->buffer_size;
+  rx->dsp_size=rx_wide_buffers()?rx_dsp_block(rx->sample_rate):rx->fft_size;
   // MACHPSDR_DSP_FEED=0 keeps the WDSP channel at the span, i.e. the behaviour
   // before the feed existed.  Same reason as MACHPSDR_FRONTEND: one variable at
   // a time when the operator reports that something sounds wrong.
@@ -395,12 +452,10 @@ static void receiver_build_feed(RECEIVER *rx) {
     feed_off=(e!=NULL && (*e=='0' || *e=='n' || *e=='N'))?1:0;
     if(feed_off) log_info("receiver_build_feed: MACHPSDR_DSP_FEED=0: the channel stays at the span\n");
   }
-  if(!feed_off &&
-     rx->sample_rate>RX_ULTRAWIDE_SPAN &&
-     (rx->sample_rate%(48000*RX_FEED_DECIM))==0 &&
-     (rx->buffer_size%RX_FEED_DECIM)==0) {
-    const int in_rate=rx->sample_rate/RX_FEED_DECIM;
-    const int in_block=rx->buffer_size/RX_FEED_DECIM;
+  const int decim=feed_off?1:rx_feed_decim(rx->sample_rate,rx->buffer_size);
+  if(decim>1) {
+    const int in_rate=rx->sample_rate/decim;
+    const int in_block=rx->buffer_size/decim;
     void *f=rx_feed_create(rx->sample_rate,in_rate,in_block);
     if(f!=NULL) {
       rx->dsp_feed=f;
@@ -495,11 +550,11 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   // down, so this is re-asserted after the feed is rebuilt.
   SetDSPMult(rx_ring_depth(rx->sample_rate));
 
-  // Crossing into or out of the ultrawide tier changes the I/Q block and the
-  // DSP block with it (see rx_iq_block).  The channel is stopped and both locks
-  // are held here, so this is where the buffers the receive thread writes into
-  // may be replaced -- and rx->samples is reset with them, because it indexes
-  // the buffer that is going away.
+  // Crossing into or out of the ultrawide tier changes the I/Q block (see
+  // rx_iq_block); the DSP block follows from it in receiver_build_feed below.
+  // The channel is stopped and both locks are held here, so this is where the
+  // buffers the receive thread writes into may be replaced -- and rx->samples is
+  // reset with them, because it indexes the buffer that is going away.
   if(rx_wide_buffers()) {
     const int block=rx_iq_block(rx->sample_rate);
     if(block!=rx->buffer_size) {
@@ -516,7 +571,6 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
       SetEXTANBBuffsize(rx->channel,block);
       SetEXTNOBBuffsize(rx->channel,block);
     }
-    rx->dsp_size=rx_dsp_block(rx->sample_rate);
   }
 
   // The feed (and with it the channel's input rate and in_size) belongs to the
@@ -2531,8 +2585,43 @@ static void scope_iq_feed(RECEIVER *rx, double *iq, int nsamples) {
   g_mutex_unlock(&rx->scope_mutex);
 }
 
-static void full_rx_buffer(RECEIVER *rx) {
+// Hand one I/Q block to this receiver's WDSP channel, whatever the block's
+// source: straight through when the channel is open at the span, through the
+// feed when it is not.  rx->mutex is held by the caller.
+//
+// The feed path mixes the cursor to DC, decimates, and hands WDSP WHOLE in_size
+// blocks -- fexchange0 consumes exactly the count the channel was opened with,
+// while the cascade's last stage lands one either side of the nominal one, so
+// the feed accumulates and this drains.  Usually one block per pass;
+// occasionally none or two.
+//
+// SUBRX is fed rx->iq_input_buffer either way: it listens somewhere else in the
+// same span off the raw stream, which is what it did before the mixer existed.
+static void rx_channel_exchange(RECEIVER *rx,gdouble *iq) {
   int error;
+  if(rx->dsp_feed!=NULL) {
+    gdouble *blk;
+    rx_feed_push(rx->dsp_feed,iq,rx->buffer_size);
+    if(rx->subrx_enable) subrx_iq_push(rx);
+    while(rx_feed_take(rx->dsp_feed,&blk)) {
+      fexchange0(rx->channel, blk, rx->audio_output_buffer, &error);
+      if(error!=0) {
+        log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+      }
+      if(rx->subrx_enable) subrx_iq_take(rx);
+      process_rx_buffer(rx);
+    }
+  } else {
+    fexchange0(rx->channel, iq, rx->audio_output_buffer, &error);
+    if(error!=0) {
+      log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
+    }
+    if(rx->subrx_enable) subrx_iq_buffer(rx);
+    process_rx_buffer(rx);
+  }
+}
+
+static void full_rx_buffer(RECEIVER *rx) {
 
   if(isTransmitting(radio) && (!rx->duplex)) return;
 
@@ -2616,35 +2705,7 @@ static void full_rx_buffer(RECEIVER *rx) {
   }
 
   g_mutex_lock(&rx->mutex);
-  if(rx->dsp_feed!=NULL) {
-    // The channel is open at a decimated rate: mix the cursor to DC, decimate,
-    // and hand WDSP WHOLE in_size blocks -- fexchange0 consumes exactly the
-    // count the channel was opened with, while the cascade's last stage lands
-    // one either side of the nominal one, so the feed accumulates and this
-    // drains.  Usually one block per pass; occasionally none or two.
-    gdouble *blk;
-    rx_feed_push(rx->dsp_feed,rx->iq_input_buffer,rx->buffer_size);
-    if(rx->subrx_enable) subrx_iq_push(rx);
-    while(rx_feed_take(rx->dsp_feed,&blk)) {
-      fexchange0(rx->channel, blk, rx->audio_output_buffer, &error);
-      if(error!=0) {
-        log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
-      }
-      if(rx->subrx_enable) subrx_iq_take(rx);
-      process_rx_buffer(rx);
-    }
-  } else {
-    fexchange0(rx->channel, rx->iq_input_buffer, rx->audio_output_buffer, &error);
-    //if(error!=0 && error!=-2) {
-    if(error!=0) {
-      log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
-    }
-
-    if(rx->subrx_enable) {
-      subrx_iq_buffer(rx);
-    }
-    process_rx_buffer(rx);
-  }
+  rx_channel_exchange(rx,rx->iq_input_buffer);
 
   // Always the FULL span, feed or no feed: this is what the panadapter and the
   // waterfall draw.
@@ -2654,7 +2715,6 @@ static void full_rx_buffer(RECEIVER *rx) {
 }
 
 void full_diviqrx_buffer(RECEIVER *rx) {
-  int error;
 
   if(isTransmitting(radio) && (!rx->duplex)) return;
 
@@ -2670,18 +2730,15 @@ void full_diviqrx_buffer(RECEIVER *rx) {
   }
 
   g_mutex_lock(&rx->mutex);
-  fexchange0(rx->channel, rx->diviq_input_buffer, rx->audio_output_buffer, &error);
-  //if(error!=0 && error!=-2) {
-  if(error!=0) {
-    log_error("full_rx_buffer: channel=%d fexchange0: error=%d\n",rx->channel,error);
-  }
-
-  if(rx->subrx_enable) {
-    subrx_iq_buffer(rx);
-  }
+  // The SAME exchange as the off-air path, and it has to be: the mixer's output
+  // is this channel's input, so a channel opened at a decimated rate would
+  // otherwise be handed full-span blocks by whichever of the two was written
+  // without the feed in mind.  Diversity is Protocol-1/fake only, where the
+  // widest span is 1920000 -- which is exactly the span the feed has just been
+  // extended down to.
+  rx_channel_exchange(rx,rx->diviq_input_buffer);
 
   analyzer_feed(rx->channel, rx->diviq_input_buffer, rx->buffer_size);
-  process_rx_buffer(rx);
   g_mutex_unlock(&rx->mutex);
 
 }
@@ -3398,8 +3455,9 @@ log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   // boundary glitch.
   rx->fft_size = wide_buffers ? RX_BLOCK_WIDE : 2048;
   // OpenChannel's dsp_size starts equal to fft_size, which is what this file
-  // passed before the two were separated; only the ultrawide tier moves it
-  // (rx_dsp_block, applied with the block below).
+  // passed before the two were separated.  receiver_build_feed owns it from
+  // here on: the ultrawide tier shrinks it (rx_dsp_block) and a fed channel
+  // takes the feed's own block.
   rx->dsp_size = rx->fft_size;
 log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->low_latency=FALSE;
@@ -3583,7 +3641,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 #endif
 
   // The block geometry depends on the span, and the span is only final now that
-  // receiver_restore_state and the clamps above have run.  Re-take both; for
+  // receiver_restore_state and the clamps above have run.  Re-take it; for
   // every span up to RX_ULTRAWIDE_SPAN this changes nothing.
   if(wide_buffers) {
     // A span whose audio block is fractional is not a slightly-wrong number: it
@@ -3606,7 +3664,6 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
       rx->scope_iq_cap=block;
       rx->scope_iq=g_new0(gfloat,2*block);
     }
-    rx->dsp_size=rx_dsp_block(rx->sample_rate);
   }
 
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
