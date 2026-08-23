@@ -118,6 +118,92 @@ int rx_ring_depth(int sample_rate) {
   return 16;
 }
 
+// TRUE for the devices that hand WDSP the large span-sized I/Q block instead of
+// the original 1024: SoapySDR and the fake I/Q player (see create_receiver).
+static gboolean rx_wide_buffers(void) {
+  if(radio->discovered->protocol==PROTOCOL_FAKE) return TRUE;
+#ifdef SOAPYSDR
+  if(radio->discovered->device==DEVICE_SOAPYSDR) return TRUE;
+#endif
+  return FALSE;
+}
+
+// ---- block geometry, by span --------------------------------------------
+//
+// A wide-buffer device hands WDSP rx->buffer_size samples at a time and gets
+// buffer_size/(sample_rate/48000) audio samples back, so that division has to
+// come out EXACT and not too small: 5120 gives 1280..128 over the 192000..
+// 1920000 spans (the reasoning is in create_receiver).  It cannot stretch past
+// that -- 4800000 and 9600000 are 100x and 200x 48000, and 5120/100 is not an
+// integer at all.  Five times the block restores both properties (25600/100 =
+// 256, 25600/200 = 128).  The same factor of five comes back in rx_dsp_block
+// and rx_wfm_dsp_rate below; it is the one number this tier is built on.
+#define RX_BLOCK_WIDE       5120
+#define RX_BLOCK_ULTRAWIDE  (5*RX_BLOCK_WIDE)
+#define RX_ULTRAWIDE_SPAN   1920000      // spans ABOVE this take the big block
+
+// The span a receiver OPENS at when the props file has nothing to say.  It was
+// the device's own rate, which is right while that number is also a span the
+// operator would choose -- and stopped being right the moment a device offered
+// 9600000: a first run would come up 9.6 MHz wide, where nothing narrower than
+// a broadcast station is visible and the DSP does 200x the decimation for the
+// privilege.  It also quietly fixed two devices whose rate is not a span at
+// all: 2000000 (HackRF) and 2304000 (Pluto) are not multiples of 48000 by a
+// factor that divides the I/Q block, so a receiver opened at either of them ran
+// its audio on a fractional block count.
+int radio_default_rx_span(RADIO *r) {
+  return (r->sample_rate>RX_ULTRAWIDE_SPAN)?RX_ULTRAWIDE_SPAN:r->sample_rate;
+}
+
+static int rx_iq_block(int sample_rate) {
+  return (sample_rate>RX_ULTRAWIDE_SPAN)?RX_BLOCK_ULTRAWIDE:RX_BLOCK_WIDE;
+}
+
+// The smallest audio block that does not click on WDSP's output-ring boundary:
+// 64 at 1536000 did, and 128 is what every span the wide-buffer devices offer
+// comes out at or above.
+#define RX_MIN_AUDIO_BLOCK  128
+
+// Is this span one a wide-buffer device can actually run?  WDSP is handed
+// buffer_size samples and gives back buffer_size/(sample_rate/48000) of audio,
+// so a span that does not divide out exactly runs the audio on a fractional
+// block count -- it does not fail, it drifts, for ever.  Worth asking because a
+// props file is an input: HackRF's old default span was 2000000 (not even a
+// multiple of 48000) and Pluto's is 2304000 (48x, and 5120/48 is not an
+// integer), and both were written into props files by earlier versions.
+static gboolean rx_span_is_exact(int sample_rate) {
+  if(sample_rate<48000 || (sample_rate%48000)!=0) return FALSE;
+  const int ratio=sample_rate/48000;
+  const int block=rx_iq_block(sample_rate);
+  return (block%ratio)==0 && (block/ratio)>=RX_MIN_AUDIO_BLOCK;
+}
+
+// OpenChannel's dsp_size -- NOT the filter length (that is RXASetNC(fft_size)).
+// It is how much the DSP chews per pass, and WDSP turns it into
+// dsp_insize = dsp_size*(sample_rate/dsp_rate) INPUT samples, which the iobuff
+// ring then holds rx_ring_depth() times over.  Left at 5120, a 9.6 MHz span
+// would ask create_iobuffs for a 268 MB ring per receiver; a fifth of the block
+// puts the memory and the per-pass latency back where the 1920000 span already
+// has them (52 MB, 21 ms).
+static int rx_dsp_block(int sample_rate) {
+  return (sample_rate>RX_ULTRAWIDE_SPAN)?(RX_BLOCK_WIDE/5):RX_BLOCK_WIDE;
+}
+
+// The DSP rate WFM runs at.  WFM is the one mode that runs the whole chain at
+// the span, and it is only glitch-free while WDSP's dsp_insize equals the block
+// we hand it (in_size): otherwise the DSP thread fills the output ring only
+// every N-th fexchange while fexchange drains it every call -> a periodic
+// boundary click.  dsp_insize is dsp_size*(sample_rate/dsp_rate), so the rate
+// that keeps the equality is sample_rate*dsp_size/buffer_size.  Where the two
+// blocks are equal -- every span up to 1920000, and every HPSDR receiver --
+// this is exactly sample_rate, i.e. what the code did before the ultrawide tier
+// existed.  Above it, it is a fifth of a fifth: 384 kHz at 9600000, 192 kHz at
+// 4800000, both still wide enough for broadcast FM.
+static int rx_wfm_dsp_rate(RECEIVER *rx) {
+  if(rx->buffer_size<=0 || rx->dsp_size<=0) return rx->sample_rate;
+  return (int)(((long long)rx->sample_rate*(long long)rx->dsp_size)/(long long)rx->buffer_size);
+}
+
 // Position the zoomed panadapter/waterfall pan window so the cursor (the
 // freetune/ctun listening frequency, i.e. frequency_a + ctun_offset) sits in
 // the middle of the visible area instead of the span centre. At zoom==1 there
@@ -148,14 +234,47 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   g_free(rx->audio_output_buffer);
   rx->audio_output_buffer=NULL;
   rx->sample_rate=sample_rate;
+
+  // Re-match the iobuff ring depth to the new span FIRST: create_iobuffs
+  // captures it, and every rebuild below (the two Buffsize setters as much as
+  // SetAllRates) goes through create_iobuffs.
+  SetDSPMult(rx_ring_depth(rx->sample_rate));
+
+  // Crossing into or out of the ultrawide tier changes the I/Q block and the
+  // DSP block with it (see rx_iq_block).  The channel is stopped and both locks
+  // are held here, so this is where the buffers the receive thread writes into
+  // may be replaced -- and rx->samples is reset with them, because it indexes
+  // the buffer that is going away.
+  if(rx_wide_buffers()) {
+    const int block=rx_iq_block(rx->sample_rate);
+    if(block!=rx->buffer_size) {
+      rx->buffer_size=block;
+      g_free(rx->iq_input_buffer);
+      rx->iq_input_buffer=g_new0(gdouble,2*block);
+      g_free(rx->diviq_input_buffer);
+      rx->diviq_input_buffer=g_new0(gdouble,2*block);
+      g_free(rx->scope_iq);
+      rx->scope_iq_cap=block;
+      rx->scope_iq=g_new0(gfloat,2*block);
+      rx->scope_iq_n=0;
+      rx->samples=0;
+      SetInputBuffsize(rx->channel,block);
+      SetEXTANBBuffsize(rx->channel,block);
+      SetEXTNOBBuffsize(rx->channel,block);
+    }
+    const int dsp=rx_dsp_block(rx->sample_rate);
+    if(dsp!=rx->dsp_size) {
+      rx->dsp_size=dsp;
+      SetDSPBuffsize(rx->channel,dsp);
+    }
+  }
+
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
   rx->hz_per_pixel=(double)rx->sample_rate/(double)rx->samples;
   //SetInputSamplerate(rx->channel, sample_rate);
   // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
-  rx->dsp_rate=(rx->mode_a==WFM)?rx->sample_rate:48000;
-  // Re-match the iobuff ring depth to the new span before the rebuild below.
-  SetDSPMult(rx_ring_depth(rx->sample_rate));
+  rx->dsp_rate=(rx->mode_a==WFM)?rx_wfm_dsp_rate(rx):48000;
   SetAllRates(rx->channel,rx->sample_rate,rx->dsp_rate,48000);
 
   receiver_init_analyzer(rx);
@@ -1471,7 +1590,7 @@ static void set_mode(RECEIVER *rx,int m) {
   // the channel is opened at 48 kHz (see OpenChannel) and must still be raised.
   // rx->dsp_rate tracks the channel's real DSP rate so we only rebuild when it
   // actually changes.
-  int desired_dsp = (m==WFM) ? rx->sample_rate : 48000;
+  int desired_dsp = (m==WFM) ? rx_wfm_dsp_rate(rx) : 48000;
   if(rx->dsp_rate != desired_dsp) {
     SetChannelState(rx->channel,0,1);
     // WFM runs the DSP at the full span, so match the ring depth to that span
@@ -2954,11 +3073,10 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
   // (A pure power of two like 4096 cannot support the 1920k span, whose ratio 40
   // has a factor of 5.)  The fake test device shares this so it too can offer the
   // wide spans (its 1024-sample block breaks 1920k: 1024/40 is not an integer).
-  gboolean wide_buffers = (radio->discovered->protocol==PROTOCOL_FAKE);
-#ifdef SOAPYSDR
-  if(radio->discovered->device==DEVICE_SOAPYSDR) wide_buffers=TRUE;
-#endif
-  rx->buffer_size = wide_buffers ? 5120 : 1024;
+  // (The span-dependent part of this is re-taken below, once
+  // receiver_restore_state has settled rx->sample_rate -- see rx_iq_block.)
+  gboolean wide_buffers = rx_wide_buffers();
+  rx->buffer_size = wide_buffers ? RX_BLOCK_WIDE : 1024;
 log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   rx->iq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
   rx->diviq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
@@ -2984,7 +3102,11 @@ log_info("create_receiver: buffer_size=%d\n",rx->buffer_size);
   // Must equal buffer_size for wideband receivers so in_size==dsp_insize for the
   // WFM chain (see the buffer_size comment above): avoids the WDSP output-ring
   // boundary glitch.
-  rx->fft_size = wide_buffers ? 5120 : 2048;
+  rx->fft_size = wide_buffers ? RX_BLOCK_WIDE : 2048;
+  // OpenChannel's dsp_size starts equal to fft_size, which is what this file
+  // passed before the two were separated; only the ultrawide tier moves it
+  // (rx_dsp_block, applied with the block below).
+  rx->dsp_size = rx->fft_size;
 log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->low_latency=FALSE;
 
@@ -3154,6 +3276,45 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
     rx->sample_rate=sample_rate;
   }
 
+#ifdef SOAPYSDR
+  // A span out of a props file is not trusted: radio.sample_rate comes from the
+  // per-model table (radio_state.c skips the persisted one for these devices),
+  // so a file written against a wider device would otherwise ask this one for a
+  // span its hardware never delivers.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR && rx->sample_rate>radio->sample_rate) {
+    log_info("create_receiver: persisted span %d is wider than the device's %d; clamping\n",
+             rx->sample_rate,radio->sample_rate);
+    rx->sample_rate=radio->sample_rate;
+  }
+#endif
+
+  // The block geometry depends on the span, and the span is only final now that
+  // receiver_restore_state and the clamps above have run.  Re-take both; for
+  // every span up to RX_ULTRAWIDE_SPAN this changes nothing.
+  if(wide_buffers) {
+    // A span whose audio block is fractional is not a slightly-wrong number: it
+    // drifts for ever.  Older props files carry two of them (see
+    // rx_span_is_exact), so this is a real input, not a defensive gesture.
+    if(!rx_span_is_exact(rx->sample_rate)) {
+      const int fallback=radio_default_rx_span(radio);
+      log_error("create_receiver: span %d has no exact 48 kHz audio block; using %d\n",
+                rx->sample_rate,fallback);
+      rx->sample_rate=fallback;
+    }
+    const int block=rx_iq_block(rx->sample_rate);
+    if(block!=rx->buffer_size) {
+      rx->buffer_size=block;
+      g_free(rx->iq_input_buffer);
+      rx->iq_input_buffer=g_new0(gdouble,2*block);
+      g_free(rx->diviq_input_buffer);
+      rx->diviq_input_buffer=g_new0(gdouble,2*block);
+      g_free(rx->scope_iq);
+      rx->scope_iq_cap=block;
+      rx->scope_iq=g_new0(gfloat,2*block);
+    }
+    rx->dsp_size=rx_dsp_block(rx->sample_rate);
+  }
+
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
 
@@ -3165,7 +3326,7 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
 
   OpenChannel(rx->channel,
               rx->buffer_size,
-              rx->fft_size,
+              rx->dsp_size,
               rx->sample_rate,
               48000, // dsp rate
               48000, // output rate

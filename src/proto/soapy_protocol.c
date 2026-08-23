@@ -153,6 +153,42 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
   mic_sample_divisor=rate/48000;
 }
 
+/* HackRF's practical floor: below ~2 MHz its 1.75 MHz baseband filter is the
+   limit, so a narrower span is taken at 2 MHz and resampled, exactly as it was
+   before the wide spans existed. */
+#define HACKRF_MIN_HW_RATE 2000000
+
+/* The rate to program the HARDWARE with for this receiver.
+   The default is radio->sample_rate: a fixed ADC rate the device is known to
+   support, with the per-receiver resampler bridging it down to the span (asking
+   the hardware straight for the span is what once handed HackRF a rate it does
+   not have, which it clamped internally while the app went on reading the
+   stream as the span -> garbage waterfall).  Two devices are driven at the
+   receiver's own span instead:
+     - sdrplay, as it always has been;
+     - hackrf, but only while the span is above its 2 MHz floor.  Its widest
+       spans (4800000, 9600000) are rates the hardware really has, and taking
+       them directly means no resampler at all -- where the alternative, a fixed
+       9.6 MHz ADC rate, would run the resampler at 9.6 MS/s for someone
+       listening to SSB in a 192 kHz window.  The readback in soapy_set_rx_rate
+       still has the last word if the device substitutes. */
+static int soapy_hw_rate_for(RECEIVER *rx) {
+  if(strcmp(radio->discovered->name,"sdrplay")==0) return rx->sample_rate;
+  if(strcmp(radio->discovered->name,"hackrf")==0)
+    return (rx->sample_rate>HACKRF_MIN_HW_RATE)?rx->sample_rate:HACKRF_MIN_HW_RATE;
+  return radio->sample_rate;
+}
+
+/* The analog baseband filter has to follow the rate the hardware is running at,
+   or the widest spans are a picture of a 2 MHz hole in the middle of the
+   screen: this was a hardcoded 2000000 for every device and every rate. */
+static void soapy_set_rx_bandwidth(size_t adc,int hw_rate) {
+  int rc=SoapySDRDevice_setBandwidth(soapy_device,SOAPY_SDR_RX,adc,(double)hw_rate);
+  if(rc!=0) {
+    log_info("%s: SoapySDRDevice_setBandwidth(%d) failed: %s\n",__FUNCTION__,hw_rate,SoapySDR_errToStr(rc));
+  }
+}
+
 /* Asks the device for `requested` and returns what it is ACTUALLY running at.
    A driver may substitute silently and still return success (see
    soapy_rx_actual_rate), so the readback -- never the request -- is what the
@@ -263,12 +299,16 @@ log_info("%s: created resampler: block=%d stream=%d -> rx=%d resampled_buffer=%d
 void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
   const int block=rx_block[rx->adc<MAX_CHANNELS?rx->adc:0];
 
-  // sdrplay is the one device driven straight at the receiver's rate instead of
-  // at the ADC rate.  It still goes through the readback: if the hardware lands
-  // somewhere else, the builder below puts a resampler in rather than pretending.
-  if(strcmp(radio->discovered->name,"sdrplay")==0) {
-    soapy_rx_sample_rate=rx->sample_rate;
-    soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
+  // Devices driven at the receiver's own rate (see soapy_hw_rate_for) have to be
+  // re-programmed here; for the rest the hardware rate does not move and only
+  // the resampler is rebuilt.  Either way it goes through the readback: if the
+  // hardware lands somewhere else, the builder below puts a resampler in rather
+  // than pretending.
+  const int hw_rate=soapy_hw_rate_for(rx);
+  if(hw_rate!=soapy_rx_sample_rate) {
+    soapy_rx_sample_rate=hw_rate;
+    soapy_set_rx_bandwidth(rx->adc,hw_rate);
+    soapy_set_rx_rate(rx->adc,hw_rate);
   }
   soapy_build_resampler(rx,block);
 }
@@ -297,18 +337,12 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
     rx->resampled_buffer=NULL;
   }
 
-  // Drive the hardware at the radio (ADC) sample rate — a rate the device
-  // actually supports — and let the per-receiver resampler take it down to
-  // rx->sample_rate.  Setting the hardware straight to rx->sample_rate asked
-  // e.g. HackRF for an unsupported rate; it clamped internally while the app
-  // still read the stream as rx->sample_rate -> garbage waterfall.
-  soapy_rx_sample_rate=radio->sample_rate;
+  // What the hardware is told to run at -- the ADC rate for most devices, this
+  // receiver's own span for the two that are driven directly (soapy_hw_rate_for).
+  soapy_rx_sample_rate=soapy_hw_rate_for(rx);
 
-log_info("%s: setting bandwidth=%f\n",__FUNCTION__,bandwidth);
-  rc=SoapySDRDevice_setBandwidth(soapy_device,SOAPY_SDR_RX,rx->adc,bandwidth);
-  if(rc!=0) {
-    log_info("%s: SoapySDRDevice_setBandwidth(%f) failed: %s\n",__FUNCTION__,(double)soapy_rx_sample_rate,SoapySDR_errToStr(rc));
-  }
+log_info("%s: setting bandwidth=%d\n",__FUNCTION__,soapy_rx_sample_rate);
+  soapy_set_rx_bandwidth(rx->adc,soapy_rx_sample_rate);
 
 log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate);
   soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
@@ -338,7 +372,10 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
 #else
   rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
   if(rx_stream[channel]==NULL) {
-    log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
+    // This branch has no return code to report -- setupStream answers with the
+    // pointer -- so the reason comes from the device.  It used to print
+    // SoapySDR_errToStr(rc) on whatever rc the previous call happened to leave.
+    log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     _exit(-1);
   }
 #endif

@@ -838,14 +838,18 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   if(radio->discovered->device==DEVICE_SOAPYSDR &&
      strcmp(radio->discovered->name,"sdrplay")!=0) {
     GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
-    // All are exact multiples of 48000 by a factor that divides buffer_size(5120)
-    // so the 48k audio output rate stays exact (no drift/clicks).  1920000 is the
-    // widest; 2000000 (HackRF ADC) is deliberately NOT offered because 2000000/48000
-    // is not an integer -> the audio pipeline would drift.
-    const int rates[]={192000,384000,768000,1536000,1920000};
+    // All are exact multiples of 48000 by a factor that divides the I/Q block
+    // rx_iq_block() picks for them, so the 48k audio output rate stays exact (no
+    // drift/clicks): 5120 up to 1920000, 25600 above it.  2000000 (the old
+    // HackRF ADC rate) is deliberately NOT offered because 2000000/48000 is not
+    // an integer -> the audio pipeline would drift.  2400000 is left out for a
+    // second reason: it is in the ultrawide tier, where WFM runs at a
+    // twenty-fifth of the span (rx_wfm_dsp_rate), and 96 kHz is too narrow for
+    // broadcast FM -- 4800000 and 9600000 give 192 and 384 kHz.
+    const int rates[]={192000,384000,768000,1536000,1920000,4800000,9600000};
     int rxrate=(radio->receiver[0]!=NULL)?radio->receiver[0]->sample_rate:radio->sample_rate;
     int active=-1,idx=0;
-    for(int r=0;r<5;r++) {
+    for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
       if(rates[r]<=radio->sample_rate) {
         char buf[16];
         snprintf(buf,sizeof(buf),"%d",rates[r]);

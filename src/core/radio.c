@@ -884,9 +884,9 @@ log_info("add_receiver: using receiver %d\n",i);
 
     if (!show_rx) {
       log_info("add_receiver: no visuals %d\n",i);
-      r->receiver[i]=create_receiver(i,r->sample_rate, FALSE);
+      r->receiver[i]=create_receiver(i,radio_default_rx_span(r), FALSE);
     } else {
-      r->receiver[i]=create_receiver(i,r->sample_rate, TRUE);
+      r->receiver[i]=create_receiver(i,radio_default_rx_span(r), TRUE);
     }
     r->receivers++;
 log_info("add_receiver: receivers now %d\n",r->receivers);
@@ -1810,7 +1810,7 @@ void add_receivers(RADIO *r) {
 
   // always add receiver 0
   if(receivers==0) {
-    r->receiver[0]=create_receiver(0,r->sample_rate, TRUE);
+    r->receiver[0]=create_receiver(0,radio_default_rx_span(r), TRUE);
     r->receivers++;
     switch(r->discovered->protocol) {
       case PROTOCOL_2:
@@ -1834,7 +1834,7 @@ void add_receivers(RADIO *r) {
         sprintf(name,"receiver[%d].active",i);
         value=getProperty(name);
         if(i!=0 && value!=NULL && atoi(value)==0) continue;
-        r->receiver[i]=create_receiver(i,r->sample_rate, TRUE);
+        r->receiver[i]=create_receiver(i,radio_default_rx_span(r), TRUE);
         r->receivers++;
         switch(r->discovered->protocol) {
           case PROTOCOL_2:
@@ -2046,6 +2046,61 @@ static void diversity_test_init(RADIO *r) {
   // 1300 ms, like the churn timer, so each mixer streams real blocks first.
   div_toggles_left=atoi(e);
   if(div_toggles_left>1) g_timeout_add(1300,diversity_test_tick,(gpointer)r);
+}
+
+// ---------------------------------------------------------------------------
+// MACHPSDR_SPAN_CYCLE=<n> -- step receiver 0 through the offered spans n times
+// over, then quit.
+//
+// The span is reachable only from the Sample Rate drop-down on the Configure ->
+// Radio page, and above 1920000 changing it does more than change a number:
+// receiver_change_sample_rate() FREES and re-allocates the I/Q buffers the
+// receive thread is writing into and re-runs WDSP's Buffsize setters, because
+// those spans need a bigger I/Q block (rx_iq_block).  Nothing headless could
+// reach that path, so this hook drives it from a timer, calling exactly what
+// soapy_rx_rate_cb() calls:
+//
+//   SOAPY_SDR_PLUGIN_PATH=$PWD/build/soapy-null HOME=$(mktemp -d) \
+//   MACHPSDR_NULL_ADC=9600000 MACHPSDR_SPAN_CYCLE=3 ./machpsdr --open machpsdrnull
+//
+// built with SANITIZE=1.  The list deliberately crosses the block boundary in
+// both directions and lands on both tiers more than once; anything the device
+// cannot offer is skipped.  Quits through g_application_quit(), so like
+// MACHPSDR_RX_CHURN it does NOT save state.  Zero cost when unset.
+// ---------------------------------------------------------------------------
+static const int span_cycle_rates[]={192000,9600000,384000,1920000,4800000,768000};
+static int span_cycles_left;
+static unsigned span_cycle_idx;
+
+static gboolean span_cycle_tick(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  RECEIVER *rx=r->receiver[0];
+  if(rx==NULL || !receiver_is_live(rx)) return TRUE;
+  // One pass over the list is one cycle; the wrap is where it is counted.
+  if(span_cycle_idx>=G_N_ELEMENTS(span_cycle_rates)) {
+    span_cycle_idx=0;
+    if(--span_cycles_left<=0) {
+      log_info("span-cycle: done, quitting\n");
+      g_application_quit(g_application_get_default());
+      return FALSE;
+    }
+  }
+  const int rate=span_cycle_rates[span_cycle_idx++];
+  if(rate>r->sample_rate) return TRUE;      // not offered on this device
+  log_info("span-cycle: %d cycles left, changing rx 0 to %d\n",span_cycles_left,rate);
+  receiver_change_sample_rate(rx,rate);
+  return TRUE;
+}
+
+static void span_cycle_init(RADIO *r) {
+  const char *e=g_getenv("MACHPSDR_SPAN_CYCLE");
+  if(e==NULL || *e=='\0') return;
+  span_cycles_left=atoi(e);
+  if(span_cycles_left<=0) return;
+  log_info("span-cycle: %d passes over the span list requested\n",span_cycles_left);
+  // 1200 ms, for the same reason the churn timer is slow: each span has to
+  // stream real blocks through the rebuilt buffers before the next change.
+  g_timeout_add(1200,span_cycle_tick,(gpointer)r);
 }
 
 static void rx_churn_init(RADIO *r) {
@@ -3092,12 +3147,32 @@ log_info("create_radio for %s %d\n",d->name,d->device);
         // rate that also lets the receiver offer the widest 1920000 span.
         r->sample_rate=1920000;
       } else if(strcmp(r->discovered->name,"hackrf")==0) {
-        // HackRF only supports integer-MHz sample rates (1..20 MHz; practical
-        // minimum 2 MHz for its 1.75 MHz baseband filter).  768 kHz is not
-        // achievable, so SoapyHackRF ran the hardware at a different real rate
-        // than the app assumed -> garbage waterfall.  The per-receiver
-        // resampler brings this ADC rate down to rx->sample_rate.
-        r->sample_rate=2000000;
+        // HackRF's practical range is 2..20 MHz (below ~2 MHz its 1.75 MHz
+        // baseband filter is the limit).  768 kHz is not achievable, so
+        // SoapyHackRF ran the hardware at a different real rate than the app
+        // assumed -> garbage waterfall.
+        //
+        // For this device radio->sample_rate is the WIDEST SPAN OFFERED rather
+        // than a fixed ADC rate: soapy_hw_rate_for() drives the hardware at the
+        // receiver's own span once that span is above the 2 MHz floor, and at
+        // 2 MHz (with the per-receiver resampler, exactly as before) below it.
+        // 9600000 is 200x48000, so the audio block stays exact, and it is the
+        // first such rate wide enough to show the QO-100 wideband transponder
+        // (10490.5..10499.5 MHz) in one view.
+        r->sample_rate=9600000;
+      } else if(strcmp(r->discovered->name,"machpsdrnull")==0) {
+        // tools/soapy_null.cpp streams whatever it is asked for, up to 20 MHz.
+        // Default to the 768000 every other unknown driver gets so existing
+        // null runs are unchanged, and let MACHPSDR_NULL_ADC raise it: that is
+        // how the ultrawide spans are exercised with no radio in the room.  It
+        // is the one device whose ADC rate may be typed in, precisely because
+        // there is no hardware to disagree with the number.
+        const char *nullrate=getenv("MACHPSDR_NULL_ADC");
+        if(nullrate!=NULL) {
+          long v=atol(nullrate);
+          if(v>=48000 && v<=20000000) r->sample_rate=(int)v;
+          else log_error("create_radio: MACHPSDR_NULL_ADC=%s out of range, ignored\n",nullrate);
+        }
       } else if(strcmp(r->discovered->name,"plutosdr")==0) {
         // Same trap as HackRF, and worse because SoapyPlutoSDR reports SUCCESS:
         // the AD9361 cannot deliver a stream below ~2.083 MHz, so a request for
@@ -3418,13 +3493,14 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   }
 
 #ifdef SOAPYSDR
-  // HackRF only supports integer-MHz ADC rates; force 2 MHz regardless of any
-  // persisted radio.sample_rate (e.g. a stale 768000), so the hardware always
-  // gets a valid rate and the per-receiver resampler provides the (narrower)
-  // waterfall span.  Without this a restored 768000 hit the hardware directly.
+  // Force the value the table in create_radio picked, regardless of any
+  // persisted radio.sample_rate (e.g. a stale 768000, which used to reach the
+  // hardware directly).  For HackRF this number is the widest span offered
+  // rather than a fixed ADC rate -- soapy_hw_rate_for() decides what the
+  // hardware is actually told, and the per-receiver resampler covers the rest.
   if(r->discovered->device==DEVICE_SOAPYSDR &&
      strcmp(r->discovered->name,"hackrf")==0) {
-    r->sample_rate=2000000;
+    r->sample_rate=9600000;
   }
 #endif
 
@@ -3587,6 +3663,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   diversity_test_init(r);
 
   rx_churn_init(r);
+
+  // MACHPSDR_SPAN_CYCLE: walk the Sample Rate drop-down headlessly.
+  span_cycle_init(r);
 
   // MACHPSDR_WIDEBAND: open/close the wideband window headlessly.  Armed here
   // rather than in wideband.c because add_wideband() lives in this file and

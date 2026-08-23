@@ -176,6 +176,7 @@ extern void create_anbEXT( int id, int run, int buffsize, double samplerate, dou
 extern void destroy_anbEXT (int id);
 extern void flush_anbEXT (int id);
 extern void xanbEXT (int id, double* in, double* out);
+extern void SetEXTANBBuffsize (int id, int size);
 extern void SetEXTANBRun (int id, int run);
 extern void SetEXTANBSamplerate (int id, int rate);
 extern void SetEXTANBTau (int id, double tau);

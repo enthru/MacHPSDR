@@ -83,6 +83,11 @@ typedef struct _receiver {
   gint output_rate;
 
   gint fft_size;
+  // OpenChannel's dsp_size: how much WDSP chews per DSP pass.  Equal to
+  // fft_size everywhere except the ultrawide SoapySDR spans, where the I/Q
+  // block grows and this shrinks to keep the iobuff ring the size it is at
+  // 1920000 (see rx_dsp_block in receiver.c).
+  gint dsp_size;
   gboolean low_latency;
 
   gdouble *buffer;
@@ -510,6 +515,12 @@ extern void full_diviqrx_buffer(RECEIVER *rx);
 
 // Feed `nsamples` complex I/Q samples (interleaved doubles, Q at [2i], I at
 // [2i+1] as Spectrum0 expects) into WDSP's analyzer for `channel`, split into
+// The span a receiver opens at when nothing is persisted for it (see the
+// definition in receiver.c).  radio.h includes this header, not the other way
+// round, so the type is named by its tag here.
+struct _radio;
+extern int radio_default_rx_span(struct _radio *r);
+
 // ANALYZER_FEED_BLOCK-sized chunks so the write never overruns the input ring.
 // `nsamples` must be a multiple of ANALYZER_FEED_BLOCK; a remainder is dropped
 // (and warned once) rather than risking an overrun.
