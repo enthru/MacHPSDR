@@ -1822,7 +1822,12 @@ static void set_mode(RECEIVER *rx,int m) {
     // WFM runs the DSP at the full span, so match the ring depth to that span
     // before rebuilding the iobuffs (create_iobuffs captures it).
     SetDSPMult(rx_ring_depth(rx->sample_rate));
-    SetAllRates(rx->channel, rx->sample_rate, desired_dsp, 48000);
+    // dsp_in_rate, NOT the span: with a feed in front the channel is open at the
+    // decimated rate and is handed decimated blocks, so re-rating it to the span
+    // here left it expecting 25600 samples where 1024 arrive -- silence until
+    // something else re-rated it (a span change did, which is why the fault
+    // looked like "no audio until you touch the Sample Rate menu").
+    SetAllRates(rx->channel, rx->dsp_in_rate, desired_dsp, 48000);
     SetChannelState(rx->channel,1,0);
     rx->dsp_rate = desired_dsp;
   }
