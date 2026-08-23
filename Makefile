@@ -176,7 +176,13 @@ endif
 HFDL_INCLUDE=HFDL
 
 ifeq ($(HFDL_INCLUDE),HFDL)
-HFDL_OPTIONS=-D HFDL
+# -D LIQUID rides along because liquid-dsp is linked by this flag and nothing
+# else: the SoapySDR front-end decimator uses its multistage resampler when it
+# is there and falls back to WDSP's single-stage one when it is not (see
+# soapy_build_resampler).  That fallback is correct but far more expensive, so a
+# build without HFDL is a build with a slower wide-span receiver, not a broken
+# one.
+HFDL_OPTIONS=-D HFDL -D LIQUID
 # Vendored libfec (Phil Karn KA9Q, LGPL) under hfdl_lib/libfec — the r=1/2 K=7
 # Viterbi decoder the HFDL FEC needs (built straight from its raw .c like
 # ft8_lib/, no autotools).

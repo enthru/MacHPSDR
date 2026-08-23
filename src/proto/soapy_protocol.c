@@ -22,6 +22,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <wdsp.h>
+#ifdef LIQUID
+// The SoapySDR front-end decimator (see ms_resamp below).  Defined by the same
+// Makefile switch that links liquid-dsp; without it the WDSP resampler is used.
+#include <complex.h>
+#include <liquid/liquid.h>
+#endif
 
 #include "SoapySDR/Constants.h"
 #include "SoapySDR/Device.h"
@@ -153,6 +159,42 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
   mic_sample_divisor=rate/48000;
 }
 
+#ifdef LIQUID
+/* ---- front-end decimator (liquid-dsp) -------------------------------------
+   WDSP's create_resample() does the whole ratio in ONE FIR stage, sized at
+   140 taps per unit of ratio (wdsp/resample.c, calc_resample): taking 9.6 MS/s
+   down to a 1 920 000 span is 700 taps per OUTPUT sample -- 1.34 G complex
+   multiply-accumulates per second, in scalar double, on the receive thread,
+   which also has to drain the device.  Measured against tools/soapy_null.cpp
+   that thread could not keep up: the driver discarded its backlog and a quarter
+   of the audio came out as zero-fill, while the same span taken directly (no
+   resampler at all) ran clean.  liquid's msresamp does the same job as a
+   CASCADE -- halfband stages first, an arbitrary resampler last -- in float,
+   which is the shape every SDR of this class uses.
+
+   One per ADC, the key everything else in this file already uses (the stream,
+   its block size and its receive thread are all per ADC, and a receiver holds
+   its ADC for its whole life).  Freed by the same two paths that free the
+   stream: soapy_protocol_stop_receiver() and a re-entry into
+   soapy_protocol_create_receiver(). */
+static msresamp_crcf ms_resamp[MAX_CHANNELS];
+static liquid_float_complex *ms_out[MAX_CHANNELS];
+static int ms_out_cap[MAX_CHANNELS];
+
+/* Stop-band suppression of the cascade.  The panadapter draws about 100 dB of
+   range, so an alias folded in at -60 dB would be a visible carrier that is not
+   on the band; 100 dB puts it under the noise floor and still costs an order of
+   magnitude less than the single-stage filter it replaces. */
+#define MS_RESAMP_STOPBAND_DB 100.0f
+
+static void ms_resamp_free(int adc) {
+  if(adc<0 || adc>=MAX_CHANNELS) return;
+  if(ms_resamp[adc]!=NULL) { msresamp_crcf_destroy(ms_resamp[adc]); ms_resamp[adc]=NULL; }
+  if(ms_out[adc]!=NULL)    { g_free(ms_out[adc]); ms_out[adc]=NULL; }
+  ms_out_cap[adc]=0;
+}
+#endif
+
 /* HackRF's practical floor: below ~2 MHz its 1.75 MHz baseband filter is the
    limit, so a narrower span is taken at 2 MHz and resampled, exactly as it was
    before the wide spans existed. */
@@ -223,6 +265,9 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
     destroy_resample(rx->resampler);
     rx->resampler=NULL;
   }
+#ifdef LIQUID
+  ms_resamp_free(rx->adc);
+#endif
   int in_rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
 
   /* A device that lands a hair off the rate it was asked for is not substituting
@@ -269,6 +314,30 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
     log_info("%s: no resampler needed: stream and receiver are both at %d\n",__FUNCTION__,in_rate);
     return;
   }
+
+#ifdef LIQUID
+  /* The multistage cascade takes the ratio as a float, so the gcd of the two
+     rates does not enter into it -- the arithmetic trap the WDSP path below has
+     to warn about simply is not there. */
+  {
+    const int adc=(rx->adc>=0 && rx->adc<MAX_CHANNELS)?rx->adc:0;
+    const float rate=(float)((double)rx->sample_rate/(double)in_rate);
+    ms_out_cap[adc]=(int)((double)block*(double)rate)+16;
+    ms_out[adc]=g_new(liquid_float_complex,ms_out_cap[adc]);
+    ms_resamp[adc]=msresamp_crcf_create(rate,MS_RESAMP_STOPBAND_DB);
+    if(ms_resamp[adc]!=NULL) {
+      log_info("%s: multistage decimator: block=%d stream=%d -> rx=%d (rate %.6f, %.0f dB, delay %.1f samples)\n",
+               __FUNCTION__,block,in_rate,rx->sample_rate,(double)rate,
+               (double)MS_RESAMP_STOPBAND_DB,(double)msresamp_crcf_get_delay(ms_resamp[adc]));
+      return;
+    }
+    /* Never silently: falling through here means the expensive path, and the
+       operator is entitled to know why their wide span costs what it does. */
+    log_error("%s: msresamp_crcf_create(%.6f) failed; falling back to WDSP's single-stage resampler\n",
+              __FUNCTION__,(double)rate);
+    ms_resamp_free(adc);
+  }
+#endif
 
   /* create_resample() reduces in:out by their gcd and interpolates by the L that
      falls out, so a substituted rate that shares no factor with rx->sample_rate
@@ -665,11 +734,30 @@ log_info("%s: running\n",__FUNCTION__);
       g_mutex_unlock(&radio->delete_rx_mutex);
       continue;
     }
-    for(i=0;i<elements;i++) {
-      rx->buffer[i*2]=(double)buffer[i*2];
-      rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
+#ifdef LIQUID
+    if(ms_resamp[channel]!=NULL) {
+      /* The stream is CF32 and liquid_float_complex is (re,im) floats, so the
+         block goes in as it arrived: no float->double copy of 9.6 MS/s, and no
+         second buffer. */
+      unsigned int ny=0;
+      msresamp_crcf_execute(ms_resamp[channel],(liquid_float_complex *)buffer,
+                            (unsigned int)elements,ms_out[channel],&ny);
+      if((int)ny>ms_out_cap[channel]) ny=(unsigned int)ms_out_cap[channel];  // cannot happen; not a thing to find out the hard way
+      for(i=0;i<(int)ny;i++) {
+        isample=(double)crealf(ms_out[channel][i]);
+        qsample=(double)cimagf(ms_out[channel][i]);
+        if(radio->iqswap) add_iq_samples(rx,qsample,isample);
+        else              add_iq_samples(rx,isample,qsample);
+      }
+      g_mutex_unlock(&radio->delete_rx_mutex);
+      continue;
     }
+#endif
     if(rx->resampler!=NULL) {
+      for(i=0;i<elements;i++) {
+        rx->buffer[i*2]=(double)buffer[i*2];
+        rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
+      }
       // xresampleV, not xresample: the latter always consumes the count the
       // resampler was CREATED with, while readStream returns "up to" block --
       // so a short read re-resampled the tail of the previous one, and the
@@ -687,9 +775,11 @@ log_info("%s: running\n",__FUNCTION__);
         add_iq_samples(rx,isample,qsample);
       }
     } else {
+      /* No resampler: the stream is already at the span, so it goes straight
+         from the CF32 block the driver filled. */
       for(i=0;i<elements;i++) {
-        isample=rx->buffer[i*2];
-        qsample=rx->buffer[(i*2)+1];
+        isample=(double)buffer[i*2];
+        qsample=(double)buffer[(i*2)+1];
         if(radio->iqswap) {
           add_iq_samples(rx,qsample,isample);
         } else {
@@ -733,6 +823,10 @@ log_info("%s: stopping receive thread for channel %ld\n",__FUNCTION__,(long)chan
     SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
     rx_stream[channel]=NULL;
   }
+#ifdef LIQUID
+  // After the join, never before: the thread reads this object every block.
+  ms_resamp_free((int)channel);
+#endif
 
   running=FALSE;
   for(int i=0;i<MAX_CHANNELS;i++) {
