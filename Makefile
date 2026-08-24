@@ -28,6 +28,12 @@ AUDIO_HEADERS=portaudio.h
 # Homebrew prefix: /opt/homebrew on Apple Silicon, /usr/local on Intel.
 # Used by the `app` target to locate GTK resources for bundling.
 BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
+
+# Where `make app` looks for SoapySDR drivers that Homebrew does not carry.
+# tools/build-soapy-plutosdr.sh builds the PlutoSDR driver (and libiio and
+# libad9361 under it) into exactly this prefix; if it has never been run the
+# directory is absent and the bundle simply ships the Homebrew drivers.
+SOAPY_EXTRA_PREFIX ?= build/soapy-plutosdr
 # ...and to COMPILE. SoapySDR and libsoundio are reached as <SoapySDR/Device.h>
 # and -lsoundio, with no pkg-config and no -I/-L of their own, and neither Apple
 # clang nor the linker searches the Homebrew prefix by default. This built for
@@ -1159,9 +1165,12 @@ app: $(PROGRAM)
 
 	@# Copy SoapySDR device-driver modules (dlopen'd at runtime, so dylibbundler
 	@# on the main binary does not pull them in). They in turn drag in libhackrf /
-	@# librtlsdr / libusb, which dylibbundler then bundles + relinks into
-	@# Frameworks. SOAPY_SDR_PLUGIN_PATH (set in the launcher) points Soapy here,
-	@# so HackRF/RTL-SDR work without a Homebrew SoapySDR install on the target.
+	@# librtlsdr / libiio / libad9361 / libusb, which dylibbundler then bundles +
+	@# relinks into Frameworks. SOAPY_SDR_PLUGIN_PATH (set in the launcher) points
+	@# Soapy here, so HackRF, RTL-SDR and PlutoSDR all work with no SoapySDR
+	@# install on the target machine at all. Two sources, one destination
+	@# directory: Homebrew's prefix for the drivers it packages, and
+	@# SOAPY_EXTRA_PREFIX for the Pluto driver it does not.
 	@#
 	@# NOTHING TO COPY IS THE FAILURE MODE THAT SHIPPED: a machine with
 	@# `soapysdr` but no driver formula produces a bundle with libSoapySDR and
@@ -1171,13 +1180,14 @@ app: $(PROGRAM)
 	@# has no use for them -- so it warns loudly and CI asserts (see the
 	@# "Check the bundle carries its SoapySDR drivers" step in ci.yml).
 	@echo "Copying SoapySDR modules..."
-	@if ! ls $(BREW_PREFIX)/lib/SoapySDR/modules*/*.so >/dev/null 2>&1; then \
-		echo "  WARNING: no SoapySDR driver modules under $(BREW_PREFIX)/lib/SoapySDR/"; \
+	@if ! ls $(BREW_PREFIX)/lib/SoapySDR/modules*/*.so $(SOAPY_EXTRA_PREFIX)/lib/SoapySDR/modules*/*.so >/dev/null 2>&1; then \
+		echo "  WARNING: no SoapySDR driver modules found"; \
 		echo "           this bundle will find NO SoapySDR device on a machine that"; \
 		echo "           does not have them installed itself.  Fix with:"; \
 		echo "             brew install soapyhackrf soapyrtlsdr soapyremote"; \
+		echo "             tools/build-soapy-plutosdr.sh   # PlutoSDR, not in Homebrew"; \
 	fi
-	@for moddir in $(BREW_PREFIX)/lib/SoapySDR/modules*; do \
+	@for moddir in $(BREW_PREFIX)/lib/SoapySDR/modules* $(SOAPY_EXTRA_PREFIX)/lib/SoapySDR/modules*; do \
 		if [ -d "$$moddir" ]; then \
 			dest=$(APP_BUNDLE)/Contents/Resources/lib/SoapySDR/`basename $$moddir`; \
 			mkdir -p "$$dest"; \
@@ -1185,7 +1195,8 @@ app: $(PROGRAM)
 			for lib in "$$dest"/*.so; do \
 				[ -f "$$lib" ] || continue; \
 				dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
-					-s $(BREW_PREFIX)/lib -p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
+					-s $(BREW_PREFIX)/lib -s $(SOAPY_EXTRA_PREFIX)/lib \
+					-p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
 			done; \
 		fi; \
 	done

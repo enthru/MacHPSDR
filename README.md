@@ -871,18 +871,25 @@ See [MacOS.md](./MacOS.md) for more detail.
 (or anything else) on the target machine** — all GTK/GLib libraries, gdk-pixbuf
 loaders, themes and the in-tree WDSP are bundled and relinked into the app.
 
-It also bundles the **SoapySDR device-driver modules** that are installed at build
-time: every `.so` under `$(brew --prefix)/lib/SoapySDR/modules*` is copied into the
-app and relinked (its `libhackrf` / `librtlsdr` / `libusb` dependencies are pulled
-into `Frameworks`), and the launcher points `SOAPY_SDR_PLUGIN_PATH` at them. The
-modules bundled and tested so far:
+It also bundles the **SoapySDR device-driver modules** available at build time.
+SoapySDR loads its drivers with `dlopen`, so nothing links against them and they
+have to be copied by hand: every `.so` under `$(brew --prefix)/lib/SoapySDR/modules*`
+and under `build/soapy-plutosdr/lib/SoapySDR/modules*` goes into the app and is
+relinked (its `libhackrf` / `librtlsdr` / `libiio` / `libad9361` / `libusb`
+dependencies are pulled into `Frameworks`), and the launcher points
+`SOAPY_SDR_PLUGIN_PATH` at them.
 
-| SoapySDR module | Devices | Install |
+| SoapySDR module | Devices | Install before `make app` |
 |---|---|---|
 | SoapyHackRF | HackRF | `brew install soapyhackrf` |
 | SoapyRTLSDR | RTL-SDR | `brew install soapyrtlsdr` |
+| SoapyPlutoSDR | ADALM-Pluto | `tools/build-soapy-plutosdr.sh` (not in Homebrew) |
+| SoapyRemote | any SDR served by `SoapySDRServer` | `brew install soapyremote` |
 
-Install whichever you need **before** running `make app`.
+**The release bundles carry all four**, so a downloaded `.app` sees a HackRF, an
+RTL-SDR or a Pluto on a machine with no Homebrew at all. A bundle you build
+yourself carries whatever was installed when you ran `make app`, and says so:
+with none of them present the target prints a warning naming the commands above.
 
 > **Gatekeeper.** The bundle is ad-hoc signed, not notarized. If the `.app` is
 > *downloaded* (and thus quarantined), first launch needs a right-click → **Open**,
@@ -892,32 +899,20 @@ Install whichever you need **before** running `make app`.
 #### Adding other SoapySDR devices (optional, untested)
 
 The bundling mechanism is generic — any SoapySDR module present under
-`$(brew --prefix)/lib/SoapySDR/modules*` at `make app` time is packaged. The two
-below aren't in Homebrew and haven't been tested with MacHPSDR yet, but if you
-have the hardware you can build the module, then re-run `make app` to bundle it.
-Build each with `-DCMAKE_INSTALL_PREFIX=$(brew --prefix)` so the `.so` lands in the
+`$(brew --prefix)/lib/SoapySDR/modules*` at `make app` time is packaged. The one
+below isn't in Homebrew and hasn't been tested with MacHPSDR yet, but if you have
+the hardware you can build the module, then re-run `make app` to bundle it. Build
+it with `-DCMAKE_INSTALL_PREFIX=$(brew --prefix)` so the `.so` lands in the
 directory `make app` scans, and verify with `SoapySDRUtil --info` (the new driver
 should appear under *Available factories*).
 
-**ADALM-Pluto (SoapyPlutoSDR)** — needs `libiio` + `libad9361-iio`, both built
-from source (Analog Devices):
-
-```bash
-git clone https://github.com/analogdevicesinc/libiio.git
-cmake -S libiio -B libiio/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix) -DHAVE_DNS_SD=OFF
-cmake --build libiio/build -j$(sysctl -n hw.ncpu) && cmake --install libiio/build
-
-git clone https://github.com/analogdevicesinc/libad9361-iio.git
-cmake -S libad9361-iio -B libad9361-iio/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix)
-cmake --build libad9361-iio/build -j$(sysctl -n hw.ncpu) && cmake --install libad9361-iio/build
-
-git clone https://github.com/pothosware/SoapyPlutoSDR.git
-cmake -S SoapyPlutoSDR -B SoapyPlutoSDR/build -DCMAKE_INSTALL_PREFIX=$(brew --prefix)
-cmake --build SoapyPlutoSDR/build -j$(sysctl -n hw.ncpu) && cmake --install SoapyPlutoSDR/build
-```
-
-> If SoapyPlutoSDR fails against libiio's API, check out libiio `v0.25`
-> (`git -C libiio checkout v0.25`) and rebuild — libiio 1.x can be incompatible.
+For ADALM-Pluto there is nothing to work out: `tools/build-soapy-plutosdr.sh`
+builds libiio, libad9361-iio and SoapyPlutoSDR from pinned upstream tags into
+`build/soapy-plutosdr`, which `make app` scans alongside the Homebrew prefix.
+The pins matter — libiio's 1.x line is a different API and SoapyPlutoSDR is
+written against 0.x — and the script refuses to finish if the driver came out
+without libad9361, since that is the library that programmes the AD9361's FIR
+and therefore the only way a Pluto reaches a sample rate below ~2.08 MHz.
 
 **SDRplay RSP1/RSP1A/RSP1B/RSP2/RSPduo/RSPdx (SoapySDRPlay3)** — first install the
 proprietary **SDRplay API v3** (macOS installer from

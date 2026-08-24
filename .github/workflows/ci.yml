@@ -192,6 +192,14 @@ jobs:
       # why the file says so in its name on a release as well as here.  Both
       # were true of the bundles built by hand for every release up to 4.0; what
       # is new is that the file now says which it is.
+      # PlutoSDR is not in Homebrew -- neither the driver nor libiio -- so it is
+      # built from pinned upstream tags here, the same way windows.yml builds
+      # liquid-dsp for the same reason.  About a minute, three shallow clones.
+      # `make app` copies whatever this leaves in build/soapy-plutosdr.
+      - name: Build the PlutoSDR SoapySDR driver
+        if: runner.os == 'macOS'
+        run: tools/build-soapy-plutosdr.sh
+
       - name: Bundle the .app (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -204,21 +212,42 @@ jobs:
       # Homebrew's drivers installed itself.  Nothing in `make app` can fail on
       # it, because a bundle with no drivers is legitimate for an HPSDR-only
       # build -- so the assertion belongs here, where the artifact is a release.
+      #
+      # Three things are checked, and each of them has already been wrong once:
+      # the three drivers are present BY NAME (a step that quietly stopped
+      # producing one would otherwise pass on the other two); no module refers
+      # to anything outside the bundle (a reference into /opt/homebrew or into
+      # the Pluto build prefix loads on this runner and nowhere else); and the
+      # modules actually LOAD and register their factories, which is the only
+      # one of the three that a broken library graph cannot survive.
       - name: Check the bundle carries its SoapySDR drivers
         if: runner.os == 'macOS'
         run: |
           set -e
-          mods=$(find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' 2>/dev/null | wc -l | tr -d ' ')
-          [ "$mods" -gt 0 ] || { echo "no SoapySDR driver modules in the bundle"; exit 1; }
-          find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec basename {} \;
-          # The drivers drag libhackrf and libusb in behind them; a module left
-          # pointing at /opt/homebrew is a module that will not load anywhere
-          # else, which is invisible until someone else runs the bundle.
-          if find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec otool -L {} \; \
-             | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' ; then
-            echo "a driver module still links outside the bundle"; exit 1
+          MODS=MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules0.8
+          for m in libHackRFSupport.so librtlsdrSupport.so libPlutoSDRSupport.so; do
+            [ -f "$MODS/$m" ] || { echo "missing driver: $m"; exit 1; }
+          done
+          # Anything not inside the bundle, not in /usr/lib and not in /System
+          # is a path that exists on this runner only.
+          if otool -L "$MODS"/*.so | grep -E '^[[:space:]]' | awk '{print $1}' | sort -u \
+             | grep -vE '^(@executable_path|@loader_path|@rpath|/usr/lib/|/System/)'; then
+            echo "a driver module links outside the bundle"; exit 1
           fi
-          echo "SoapySDR drivers: $mods, all self-contained"
+          # And they load.  @executable_path resolves against SoapySDRUtil here
+          # rather than against the app, so the bundle's Frameworks go in as the
+          # fallback path; what is being proved is that the library graph is
+          # complete and the factories register, not where dyld found them.
+          out=$(DYLD_FALLBACK_LIBRARY_PATH="$PWD/MacHPSDR.app/Contents/Frameworks" \
+                SOAPY_SDR_PLUGIN_PATH="$PWD/$MODS" SoapySDRUtil --info)
+          echo "$out" | grep -F "$PWD/$MODS" || { echo "the bundled modules did not load"; exit 1; }
+          # grep -w, not \b: BSD grep spells a word boundary differently and the
+          # GNU form silently matches nothing here.
+          facs=$(echo "$out" | grep -E '^Available factories')
+          for f in hackrf rtlsdr plutosdr; do
+            echo "$facs" | grep -qw "$f" || { echo "factory not registered: $f"; exit 1; }
+          done
+          echo "SoapySDR drivers: hackrf, rtlsdr, plutosdr -- self-contained and loading"
 
       - name: Upload the .app (macOS)
         if: runner.os == 'macOS'
@@ -323,6 +352,13 @@ jobs:
       - name: Self-tests
         run: make check
 
+      # PlutoSDR is not in Homebrew -- neither the driver nor libiio -- so it is
+      # built from pinned upstream tags here, the same way windows.yml builds
+      # liquid-dsp for the same reason.  About a minute, three shallow clones.
+      # `make app` copies whatever this leaves in build/soapy-plutosdr.
+      - name: Build the PlutoSDR SoapySDR driver
+        run: tools/build-soapy-plutosdr.sh
+
       - name: Bundle the .app
         run: |
           make app
@@ -334,20 +370,41 @@ jobs:
       # Homebrew's drivers installed itself.  Nothing in `make app` can fail on
       # it, because a bundle with no drivers is legitimate for an HPSDR-only
       # build -- so the assertion belongs here, where the artifact is a release.
+      #
+      # Three things are checked, and each of them has already been wrong once:
+      # the three drivers are present BY NAME (a step that quietly stopped
+      # producing one would otherwise pass on the other two); no module refers
+      # to anything outside the bundle (a reference into /opt/homebrew or into
+      # the Pluto build prefix loads on this runner and nowhere else); and the
+      # modules actually LOAD and register their factories, which is the only
+      # one of the three that a broken library graph cannot survive.
       - name: Check the bundle carries its SoapySDR drivers
         run: |
           set -e
-          mods=$(find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' 2>/dev/null | wc -l | tr -d ' ')
-          [ "$mods" -gt 0 ] || { echo "no SoapySDR driver modules in the bundle"; exit 1; }
-          find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec basename {} \;
-          # The drivers drag libhackrf and libusb in behind them; a module left
-          # pointing at /opt/homebrew is a module that will not load anywhere
-          # else, which is invisible until someone else runs the bundle.
-          if find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec otool -L {} \; \
-             | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' ; then
-            echo "a driver module still links outside the bundle"; exit 1
+          MODS=MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules0.8
+          for m in libHackRFSupport.so librtlsdrSupport.so libPlutoSDRSupport.so; do
+            [ -f "$MODS/$m" ] || { echo "missing driver: $m"; exit 1; }
+          done
+          # Anything not inside the bundle, not in /usr/lib and not in /System
+          # is a path that exists on this runner only.
+          if otool -L "$MODS"/*.so | grep -E '^[[:space:]]' | awk '{print $1}' | sort -u \
+             | grep -vE '^(@executable_path|@loader_path|@rpath|/usr/lib/|/System/)'; then
+            echo "a driver module links outside the bundle"; exit 1
           fi
-          echo "SoapySDR drivers: $mods, all self-contained"
+          # And they load.  @executable_path resolves against SoapySDRUtil here
+          # rather than against the app, so the bundle's Frameworks go in as the
+          # fallback path; what is being proved is that the library graph is
+          # complete and the factories register, not where dyld found them.
+          out=$(DYLD_FALLBACK_LIBRARY_PATH="$PWD/MacHPSDR.app/Contents/Frameworks" \
+                SOAPY_SDR_PLUGIN_PATH="$PWD/$MODS" SoapySDRUtil --info)
+          echo "$out" | grep -F "$PWD/$MODS" || { echo "the bundled modules did not load"; exit 1; }
+          # grep -w, not \b: BSD grep spells a word boundary differently and the
+          # GNU form silently matches nothing here.
+          facs=$(echo "$out" | grep -E '^Available factories')
+          for f in hackrf rtlsdr plutosdr; do
+            echo "$facs" | grep -qw "$f" || { echo "factory not registered: $f"; exit 1; }
+          done
+          echo "SoapySDR drivers: hackrf, rtlsdr, plutosdr -- self-contained and loading"
 
       - name: Upload the .app
         uses: actions/upload-artifact@v7
