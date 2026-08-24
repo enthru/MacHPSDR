@@ -21,6 +21,10 @@ name: Windows (MSYS2)
 on:
   push:
     branches: [master, windows-port]
+    # A tag is a release: the same build and self-tests, with the package
+    # attached to the release instead of only to the run.  Glob, not regex --
+    # it matches 4.1 and 3.8.1 and nothing that does not start with a digit.
+    tags: ['[0-9]*']
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -28,6 +32,10 @@ on:
 jobs:
   mingw64:
     runs-on: windows-latest
+    # Only so the tag build can create the release and attach the package to
+    # it; nothing else in this job writes back to the repository.
+    permissions:
+      contents: write
     defaults:
       run:
         shell: msys2 {0}
@@ -164,3 +172,38 @@ jobs:
           name: machpsdr-win64
           path: machpsdr-win64/
           if-no-files-found: error
+
+      # The release asset, from the same job that just ran the self-tests -- so
+      # a package is attached only to a tag whose `make check` passed here.
+      #
+      # pwsh rather than the msys2 shell this job defaults to: `gh` is on the
+      # runner's PATH, not inside MSYS2, and Compress-Archive is the zip this
+      # image has.  The archive keeps the top-level machpsdr-win64/ folder, so
+      # extracting it anywhere gives one directory rather than scattering a
+      # hundred DLLs into Downloads.
+      #
+      # The body is left EMPTY on purpose: every release so far has carried its
+      # notes in the annotated tag's own message, which GitHub renders when the
+      # release has none of its own.  This job and the macOS one race to be
+      # first, and being separate workflows neither can wait for the other, so
+      # this is create-or-find: whichever arrives first makes the release, the
+      # other uploads beside it.
+      - name: Attach to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          Compress-Archive -Path machpsdr-win64 -DestinationPath machpsdr-win64.zip -Force
+          $found = $false
+          for ($i = 1; $i -le 5; $i++) {
+            gh release view $env:TAG *> $null
+            if ($LASTEXITCODE -eq 0) { $found = $true; break }
+            gh release create $env:TAG --verify-tag --title "" --notes ""
+            if ($LASTEXITCODE -eq 0) { $found = $true; break }
+            Start-Sleep -Seconds ($i * 5)
+          }
+          if (-not $found) { throw "release $env:TAG could not be created or found" }
+          gh release upload $env:TAG machpsdr-win64.zip --clobber
+          if ($LASTEXITCODE -ne 0) { throw "uploading machpsdr-win64.zip failed" }

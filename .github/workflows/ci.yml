@@ -32,6 +32,11 @@ name: Build + self-tests (macOS, Linux)
 on:
   push:
     branches: [master]
+    # A tag is a release: the same build, with its .app attached to the release
+    # instead of only to the run.  See "Attach to the release" at the end of the
+    # build job -- the pattern is a glob, not a regex, so it matches 4.1 and
+    # 3.8.1 alike and nothing that does not start with a digit.
+    tags: ['[0-9]*']
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -40,6 +45,10 @@ jobs:
   build:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Only so the tag build can create the release and attach the bundle to it;
+    # nothing else in this job writes anything back to the repository.
+    permissions:
+      contents: write
     strategy:
       # Not fail-fast: "broken on both" and "broken on one" are different bugs,
       # and cancelling the sibling job throws away exactly that distinction.
@@ -151,10 +160,13 @@ jobs:
       # and executable bits, and the zip actions/upload-artifact makes keeps
       # neither.  Zipping it here means what you download is the bundle.
       #
-      # It is UNSIGNED and NOT NOTARIZED, so Gatekeeper refuses it on any other
-      # machine until it is opened once from the context menu (or the quarantine
-      # attribute is stripped).  It is also arm64 only, because macos-latest is:
-      # this is not a release artifact and must not be described as one.
+      # It is ad-hoc signed (`codesign --sign -`, what `make app` does) and NOT
+      # NOTARIZED, so Gatekeeper refuses it on any other machine until it is
+      # opened once from the context menu, or the quarantine attribute is
+      # stripped.  It is also arm64 only, because macos-latest is -- which is
+      # why the file says so in its name on a release as well as here.  Both
+      # were true of the bundles built by hand for every release up to 4.0; what
+      # is new is that the file now says which it is.
       - name: Bundle the .app (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -168,6 +180,35 @@ jobs:
           name: MacHPSDR-app-arm64
           path: MacHPSDR-arm64.zip
           if-no-files-found: error
+
+      # The release, built by the same job that just ran `make check` -- so an
+      # asset exists only for a tag whose self-tests passed on this platform.
+      #
+      # The body is left EMPTY on purpose: every release so far has carried its
+      # notes in the annotated tag's own message, which GitHub renders when the
+      # release has no body of its own.  So the notes are written once, in
+      # `git tag -a`, and travel with the repository rather than living only in
+      # a web form.
+      #
+      # This job and the Windows one race to be the first here, and neither can
+      # wait for the other (they are separate workflows).  Hence create-or-find
+      # rather than create: whichever arrives first makes the release, the other
+      # finds it and uploads beside it.  --clobber so a re-run replaces its own
+      # asset instead of failing on the name.
+      - name: Attach to the release (tag builds only)
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          for i in 1 2 3 4 5; do
+            gh release view "$TAG" >/dev/null 2>&1 && break
+            gh release create "$TAG" --verify-tag --title "" --notes "" && break
+            sleep $((i * 5))
+          done
+          gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" MacHPSDR-arm64.zip --clobber
 
   # ===========================================================================
   # ASan + UBSan + LeakSanitizer, Linux only.
