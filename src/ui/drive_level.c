@@ -113,6 +113,8 @@ static gboolean drive_level_scroll_cb(GtkEventControllerScroll *controller,doubl
 GtkWidget *create_drive_level(TRANSMITTER *tx) {
 
   radio->drive_level=pana_view_new(drive_level_build,(gpointer)tx);
+  gtk_widget_set_tooltip_text(radio->drive_level,
+      "Transmit drive, 0…100% — click or scroll to set");
   gtk_widget_set_size_request(radio->drive_level, 170, 34);
   gtk_widget_set_cursor_from_name(radio->drive_level,"ew-resize");
 

@@ -1800,16 +1800,22 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->a2b=gtk_button_new_with_label("A>B");
   gtk_widget_set_name(v->a2b,"vfo-button");
+  gtk_widget_set_tooltip_text(v->a2b,
+      "Copy VFO A to VFO B — frequency, mode and filter");
   g_signal_connect(v->a2b, "clicked", G_CALLBACK(a2b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->a2b);
 
   v->b2a=gtk_button_new_with_label("A<B");
   gtk_widget_set_name(v->b2a,"vfo-button");
+  gtk_widget_set_tooltip_text(v->b2a,
+      "Copy VFO B to VFO A — frequency, mode and filter");
   g_signal_connect(v->b2a, "clicked", G_CALLBACK(b2a_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->b2a);
 
   v->aswapb=gtk_button_new_with_label("A<>B");
   gtk_widget_set_name(v->aswapb,"vfo-button");
+  gtk_widget_set_tooltip_text(v->aswapb,
+      "Swap VFO A and VFO B");
   g_signal_connect(v->aswapb, "clicked", G_CALLBACK(aswapb_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->aswapb);
 
@@ -1827,6 +1833,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->split_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->split_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->split_b,
+      "Split: receive on VFO A, transmit on VFO B\n"
+      "Right-click for SPLIT / SAT / RSAT");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->split_b),rx->split!=SPLIT_OFF);
   g_signal_connect(v->split_b, "toggled", G_CALLBACK(split_b_cb),rx);
   // Right-click opens the SPLIT/SAT/RSAT menu (left-click is the "toggled"
@@ -1843,12 +1852,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   sprintf(temp,"ZOOM x%d",rx->zoom);
   v->zoom_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->zoom_b,"vfo-button");
+  gtk_widget_set_tooltip_text(v->zoom_b,
+      "Panadapter zoom — click to choose x1…x8");
   g_signal_connect(v->zoom_b, "clicked",G_CALLBACK(zoom_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->zoom_b);
 
   sprintf(temp,"STEP %s",step_labels[get_step(rx->step)]);
   v->step_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->step_b,"vfo-button");
+  gtk_widget_set_tooltip_text(v->step_b,
+      "Tuning step of the VFO — click to choose");
   g_signal_connect(v->step_b, "clicked",G_CALLBACK(step_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->step_b);
 
@@ -1871,6 +1884,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   v->frequency_a_text=gtk_label_new(temp);
   rx->vfo_a_digits=strlen(temp);
   gtk_widget_set_name(v->frequency_a_text,"frequency-a-text");
+  gtk_widget_set_tooltip_text(v->frequency_a_text,
+      "VFO A — click to type a frequency, right-click for the band stack,\n"
+      "scroll over a digit to tune by that digit");
   gtk_label_set_width_chars(GTK_LABEL(v->frequency_a_text),rx->vfo_a_digits);
 
   gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_a_text);
@@ -1885,6 +1901,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   v->frequency_b_text=gtk_label_new(temp);
   rx->vfo_b_digits=strlen(temp);
   gtk_widget_set_name(v->frequency_b_text,"frequency-b-text");
+  gtk_widget_set_tooltip_text(v->frequency_b_text,
+      "VFO B — click to type a frequency, scroll over a digit to tune by\n"
+      "that digit");
   gtk_label_set_width_chars(GTK_LABEL(v->frequency_b_text),rx->vfo_b_digits);
 
   gtk_box_append(GTK_BOX(vfo_row_freq),v->frequency_b_text);
@@ -1896,6 +1915,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->subrx_b=gtk_toggle_button_new_with_label("SUBRX");
   gtk_widget_set_name(v->subrx_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->subrx_b,
+      "SUBRX: a second demodulator on VFO B, mixed into the other ear");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->subrx_b),FALSE);
   g_signal_connect(v->subrx_b, "toggled", G_CALLBACK(subrx_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_freq),v->subrx_b);
@@ -1909,6 +1930,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->afgain_scale),GTK_LEVEL_BAR_OFFSET_HIGH);
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->afgain_scale),GTK_LEVEL_BAR_OFFSET_FULL);
   gtk_widget_set_name(v->afgain_scale,"afgain-scale");
+  gtk_widget_set_tooltip_text(v->afgain_scale,
+      "AF gain — click or drag to set, scroll to trim");
   gtk_widget_set_size_request(v->afgain_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->afgain_scale),rx->volume);
 
@@ -1933,6 +1956,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->squelch_scale),GTK_LEVEL_BAR_OFFSET_HIGH);
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->squelch_scale),GTK_LEVEL_BAR_OFFSET_FULL);
   gtk_widget_set_name(v->squelch_scale,"squelch-scale");
+  gtk_widget_set_tooltip_text(v->squelch_scale,
+      "Squelch threshold — click or drag to set, scroll to trim\n"
+      "Suppressed in DIGU/DIGL and while a decoder is running");
   gtk_widget_set_size_request(v->squelch_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
 
@@ -1949,6 +1975,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->agcgain_scale),GTK_LEVEL_BAR_OFFSET_HIGH);
   gtk_level_bar_remove_offset_value(GTK_LEVEL_BAR(v->agcgain_scale),GTK_LEVEL_BAR_OFFSET_FULL);
   gtk_widget_set_name(v->agcgain_scale,"agcgain-scale");
+  gtk_widget_set_tooltip_text(v->agcgain_scale,
+      "AGC gain — click or drag to set, scroll to trim");
   gtk_widget_set_size_request(v->agcgain_scale,100,15);
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->agcgain_scale),rx->agc_gain+20.0);
 
@@ -1958,12 +1986,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->lock_b=gtk_toggle_button_new_with_label("LOCK");
   gtk_widget_set_name(v->lock_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->lock_b,
+      "Lock the VFO: tuning, band changes and frequency entry are ignored");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
   g_signal_connect(v->lock_b, "toggled", G_CALLBACK(lock_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->lock_b);
 
   v->mode_b=gtk_button_new_with_label(mode_string[rx->mode_a]);
   gtk_widget_set_name(v->mode_b,"vfo-mode-filter-button");
+  gtk_widget_set_tooltip_text(v->mode_b,
+      "Demodulation mode — click to choose");
   g_signal_connect(v->mode_b, "clicked", G_CALLBACK(mode_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->mode_b);
 
@@ -1981,6 +2013,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->filter_b=gtk_button_new_with_label(temp);
   gtk_widget_set_name(v->filter_b,"vfo-mode-filter-button");
+  gtk_widget_set_tooltip_text(v->filter_b,
+      "Receive filter width — click to choose (FM: deviation)");
   g_signal_connect(v->filter_b, "clicked", G_CALLBACK(filter_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->filter_b);
 
@@ -1990,24 +2024,36 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->nb_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->nb_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->nb_b,
+      "Noise blanker for impulse noise — click for OFF / NB / NB2\n"
+      "Suppressed in DIGU/DIGL and while a decoder is running");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nb_b),rx->nb|rx->nb2);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(nb_b_pressed_cb),rx); gtk_widget_add_controller(v->nb_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->nb_b);
 
   v->nr_b=gtk_toggle_button_new_with_label("NR");
   gtk_widget_set_name(v->nr_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->nr_b,
+      "Noise reduction — click for OFF / NR / NR2 / NR3 / NR4\n"
+      "Suppressed in DIGU/DIGL and while a decoder is running");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->nr_b),rx->nr|rx->nr2|rx->nr3|rx->nr4);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(nr_b_pressed_cb),rx); gtk_widget_add_controller(v->nr_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->nr_b);
 
   v->snb_b=gtk_toggle_button_new_with_label("SNB");
   gtk_widget_set_name(v->snb_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->snb_b,
+      "Spectral noise blanker\n"
+      "Suppressed in DIGU/DIGL and while a decoder is running");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->snb_b),rx->snb);
   g_signal_connect(v->snb_b, "toggled", G_CALLBACK(snb_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->snb_b);
 
   v->anf_b=gtk_toggle_button_new_with_label("ANF");
   gtk_widget_set_name(v->anf_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->anf_b,
+      "Automatic notch filter: nulls steady carriers in the passband\n"
+      "Suppressed in DIGU/DIGL and while a decoder is running");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->anf_b),rx->anf);
   g_signal_connect(v->anf_b, "toggled", G_CALLBACK(anf_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->anf_b);
@@ -2031,6 +2077,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->agc_b=gtk_toggle_button_new_with_label(temp);
   gtk_widget_set_name(v->agc_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->agc_b,
+      "AGC decay — click for OFF / LONG / SLOW / MEDIUM / FAST");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->agc_b),rx->agc!=AGC_OFF);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(agc_b_pressed_cb),rx); gtk_widget_add_controller(v->agc_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->agc_b);
@@ -2044,6 +2092,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->rit_b=gtk_toggle_button_new_with_label("RIT");
   gtk_widget_set_name(v->rit_b,"vfo-toggle-seg");
+  gtk_widget_set_tooltip_text(v->rit_b,
+      "RIT: offset the receive frequency only\n"
+      "Right-click to choose the step");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->rit_b),rx->rit_enabled);
   g_signal_connect(v->rit_b, "toggled", G_CALLBACK(rit_b_cb),rx);
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(rit_b_press_cb),rx); gtk_widget_add_controller(v->rit_b,GTK_EVENT_CONTROLLER(_g)); }
@@ -2052,6 +2103,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   sprintf(temp,"%+05lld",rx->rit);
   v->rit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->rit_value,"rit-value");
+  gtk_widget_set_tooltip_text(v->rit_value,
+      "RIT offset in Hz — scroll to change it");
 
   gtk_box_append(GTK_BOX(rit_group),v->rit_value);
   vfo_attach_ctl(v->rit_value, rx, NULL, NULL, NULL, G_CALLBACK(rit_b_scroll_event_cb));
@@ -2062,6 +2115,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->xit_b=gtk_toggle_button_new_with_label("XIT");
   gtk_widget_set_name(v->xit_b,"vfo-toggle-seg");
+  gtk_widget_set_tooltip_text(v->xit_b,
+      "XIT: offset the transmit frequency only\n"
+      "Right-click to choose the step");
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->xit_b),radio->transmitter->xit_enabled);
   }
@@ -2077,12 +2133,16 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   }
   v->xit_value=gtk_label_new(temp);
   gtk_widget_set_name(v->xit_value,"xit-value");
+  gtk_widget_set_tooltip_text(v->xit_value,
+      "XIT offset in Hz — scroll to change it");
 
   gtk_box_append(GTK_BOX(xit_group),v->xit_value);
   vfo_attach_ctl(v->xit_value, rx, NULL, NULL, NULL, G_CALLBACK(xit_b_scroll_event_cb));
 
   v->ctun_b=gtk_toggle_button_new_with_label("CTUN");
   gtk_widget_set_name(v->ctun_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->ctun_b,
+      "Click tuning: tune inside the span without moving the hardware dial");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ctun_b),rx->ctun);
   g_signal_connect(v->ctun_b, "toggled", G_CALLBACK(ctun_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->ctun_b);
@@ -2090,6 +2150,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->dup_b=gtk_toggle_button_new_with_label("DUP");
   gtk_widget_set_name(v->dup_b,"vfo-toggle");
+  gtk_widget_set_tooltip_text(v->dup_b,
+      "Duplex: keep this receiver running while transmitting");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->dup_b),rx->duplex);
   g_signal_connect(v->dup_b, "toggled", G_CALLBACK(dup_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->dup_b);
@@ -2102,12 +2164,22 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->link_b),rx->vfo_linked);
   gtk_widget_set_sensitive(v->link_b,rx->split==SPLIT_SAT || rx->split==SPLIT_RSAT);
   g_signal_connect(v->link_b, "toggled", G_CALLBACK(link_b_cb),rx);
-  gtk_box_append(GTK_BOX(vfo_row_ctl),v->link_b);
+  // The tooltip hangs off a wrapper box, not off the button: GTK4 does not pick
+  // an insensitive widget, so a tooltip on link_b itself would be invisible in
+  // the one state that needs explaining -- greyed outside SAT/RSAT.
+  { GtkWidget *link_wrap=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+    gtk_widget_set_tooltip_text(link_wrap,
+        "Move both VFOs together, keeping their offset (SAT/RSAT only)\n"
+        "Switch it off to set the offset up in the first place");
+    gtk_box_append(GTK_BOX(link_wrap),v->link_b);
+    gtk_box_append(GTK_BOX(vfo_row_ctl),link_wrap); }
 
 
   if(radio->discovered->device==DEVICE_HERMES_LITE2) {
     v->ant_b=gtk_toggle_button_new_with_label("RXANT");
     gtk_widget_set_name(v->ant_b,"vfo-toggle");
+    gtk_widget_set_tooltip_text(v->ant_b,
+        "Hermes Lite 2: receive on the auxiliary input (EXT1)");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ant_b),radio->adc[0].antenna!=0);
     g_signal_connect(v->ant_b, "toggled", G_CALLBACK(ant_b_cb),rx);
     gtk_box_append(GTK_BOX(vfo_row_ctl),v->ant_b);
@@ -2115,6 +2187,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   else {
     v->bpsk_b=gtk_toggle_button_new_with_label("BPSK");
     gtk_widget_set_name(v->bpsk_b,"vfo-toggle");
+    gtk_widget_set_tooltip_text(v->bpsk_b,
+        "Track a centred BPSK beacon and correct this band's LO error");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->bpsk_b),rx->bpsk_enable);
     g_signal_connect(v->bpsk_b, "toggled", G_CALLBACK(bpsk_b_cb),rx);
     gtk_box_append(GTK_BOX(vfo_row_ctl),v->bpsk_b);
@@ -2122,6 +2196,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->bmk_b=gtk_button_new_with_label("BMK");
   gtk_widget_set_name(v->bmk_b,"vfo-button");
+  gtk_widget_set_tooltip_text(v->bmk_b,
+      "Bookmarks — click for the list, right-click to store this frequency");
   { GtkGesture *_g=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(_g),0); g_signal_connect(_g,"pressed",G_CALLBACK(bmk_b_pressed_cb),rx); gtk_widget_add_controller(v->bmk_b,GTK_EVENT_CONTROLLER(_g)); }
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->bmk_b);
 

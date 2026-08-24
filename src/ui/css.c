@@ -1117,6 +1117,22 @@ static const char css_body[]=
 "  #config-dialog label:disabled {\n"
 "    opacity: 0.4;\n"
 "    }\n"
+/* Tooltips are a stock GTK widget drawn in a window of their own, so they take
+   the platform theme rather than the skin unless they are styled here — a pale
+   bubble over a dark console, or the reverse. The node is `tooltip.background`
+   with a label inside it; both are named so neither the frame nor the text can
+   fall back. */
+"  tooltip.background {\n"
+"    background-color: @SURFACE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 6px;\n"
+"    }\n"
+"  tooltip label {\n"
+"    font-family: @UIFONT@;\n"
+"    font-size: 12px;\n"
+"    color: @OFF_WHITE;\n"
+"    padding: 2px 4px;\n"
+"    }\n"
 ;
 
 // ---- Runtime ----

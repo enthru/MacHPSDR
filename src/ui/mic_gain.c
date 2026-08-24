@@ -94,6 +94,8 @@ static gboolean mic_gain_scroll_cb(GtkEventControllerScroll *controller,double d
 GtkWidget *create_mic_gain(TRANSMITTER *tx) {
 
   radio->mic_gain=pana_view_new(mic_gain_build,(gpointer)tx);
+  gtk_widget_set_tooltip_text(radio->mic_gain,
+      "Microphone gain, -10…+50 dB — click or scroll to set");
   gtk_widget_set_size_request(radio->mic_gain, 170, 34);
   // GTK4: a persistent resize cursor replaces the GTK3 enter/leave dance.
   gtk_widget_set_cursor_from_name(radio->mic_gain,"ew-resize");

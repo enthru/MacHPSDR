@@ -108,6 +108,8 @@ static void meter_pressed_cb(GtkGestureClick *gesture,int n_press,double x,doubl
 GtkWidget *create_meter_visual(RECEIVER *rx) {
 
   GtkWidget *meter = pana_view_new(meter_build,(gpointer)rx);
+  gtk_widget_set_tooltip_text(meter,
+      "Signal strength — click to switch between peak and average");
 
   GtkGesture *click=gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),1);

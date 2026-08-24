@@ -2876,16 +2876,23 @@ static void create_visual(RADIO *r) {
     GtkWidget *tx_btn_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
     r->mox_button=gtk_toggle_button_new_with_label("MOX");
     gtk_widget_set_name(r->mox_button,"transmit-warning");
+    gtk_widget_set_tooltip_text(r->mox_button,
+        "MOX: key the transmitter by hand");
     g_signal_connect(r->mox_button,"toggled",G_CALLBACK(mox_cb),(gpointer)r);
     gtk_box_append(GTK_BOX(tx_btn_col),r->mox_button);
 
     r->vox_button=gtk_toggle_button_new_with_label("VOX");
     gtk_widget_set_name(r->vox_button,"transmit-warning");
+    gtk_widget_set_tooltip_text(r->vox_button,
+        "VOX: key the transmitter from the microphone level\n"
+        "Threshold is the marker on the MIC meter");
     g_signal_connect(r->vox_button,"toggled",G_CALLBACK(vox_cb),(gpointer)r);
     gtk_box_append(GTK_BOX(tx_btn_col),r->vox_button);
 
     r->tune_button=gtk_toggle_button_new_with_label("Tune");
     gtk_widget_set_name(r->tune_button,"transmit-warning");
+    gtk_widget_set_tooltip_text(r->tune_button,
+        "Tune: transmit a steady carrier at the tune power (for an ATU)");
     g_signal_connect(r->tune_button,"toggled",G_CALLBACK(tune_cb),(gpointer)r);
     gtk_box_append(GTK_BOX(tx_btn_col),r->tune_button);
 
@@ -2899,12 +2906,16 @@ static void create_visual(RADIO *r) {
 
   GtkWidget *preamp_button=gtk_toggle_button_new_with_label("Preamp");
   gtk_widget_set_name(preamp_button,"toolbar-button");
+  gtk_widget_set_tooltip_text(preamp_button,
+      "ADC 0 preamp (LT2208 gain)");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(preamp_button),radio->adc[0].preamp);
   g_signal_connect(preamp_button,"toggled",G_CALLBACK(adc_preamp_cb),&radio->adc[0]);
   gtk_box_append(GTK_BOX(adc_col),preamp_button);
 
   GtkWidget *att10_button=gtk_toggle_button_new_with_label(r->att10_label);
   gtk_widget_set_name(att10_button,"toolbar-button");
+  gtk_widget_set_tooltip_text(att10_button,
+      "ALEX 10 dB attenuator on ADC 0");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att10_button),radio->adc[0].att10);
   g_signal_connect(att10_button,"toggled",G_CALLBACK(adc_att10_cb),&radio->adc[0]);
   gtk_box_append(GTK_BOX(adc_col),att10_button);
@@ -2912,6 +2923,8 @@ static void create_visual(RADIO *r) {
 
   GtkWidget *att20_button=gtk_toggle_button_new_with_label(r->att20_label);
   gtk_widget_set_name(att20_button,"toolbar-button");
+  gtk_widget_set_tooltip_text(att20_button,
+      "ALEX 20 dB attenuator on ADC 0");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(att20_button),radio->adc[0].att20);
   g_signal_connect(att20_button,"toggled",G_CALLBACK(adc_att20_cb),&radio->adc[0]);
   gtk_box_append(GTK_BOX(adc_col),att20_button);
@@ -2968,6 +2981,9 @@ static void create_visual(RADIO *r) {
   // DIGU/DIGL/FMN.
   r->decode_sel=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
   gtk_widget_set_name(r->decode_sel,"decode-combo");   // flat themed combo (css.c)
+  gtk_widget_set_tooltip_text(r->decode_sel,
+      "Decoder fed by the active receiver — only the decoders the current\n"
+      "mode can run are listed");
   g_signal_connect(r->decode_sel,"notify::selected",G_CALLBACK(decode_sel_changed),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->decode_sel);
   decode_sel_sync(r);   // initial rows for the current mode
@@ -2978,6 +2994,8 @@ static void create_visual(RADIO *r) {
   // sync by rds_update_cb.
   r->ft8_expand_btn=gtk_button_new_with_label("Show FT8 Panel");
   gtk_widget_set_name(r->ft8_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->ft8_expand_btn,
+      "Open the FT8 QSO panel, in place of a second receiver");
   gtk_widget_set_valign(r->ft8_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->ft8_expand_btn,"clicked",G_CALLBACK(ft8_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->ft8_expand_btn);
@@ -2987,6 +3005,8 @@ static void create_visual(RADIO *r) {
   // Shown only in DIGU/DIGL with the SSTV decoder selected (see rds_update_cb).
   r->sstv_expand_btn=gtk_button_new_with_label("Show SSTV");
   gtk_widget_set_name(r->sstv_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->sstv_expand_btn,
+      "Open the SSTV picture panel, in place of a second receiver");
   gtk_widget_set_valign(r->sstv_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->sstv_expand_btn,"clicked",G_CALLBACK(sstv_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->sstv_expand_btn);
@@ -2995,6 +3015,8 @@ static void create_visual(RADIO *r) {
   // Shown only in DIGU/DIGL with the WEFAX decoder selected (see rds_update_cb).
   r->wefax_expand_btn=gtk_button_new_with_label("Show WEFAX");
   gtk_widget_set_name(r->wefax_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->wefax_expand_btn,
+      "Open the WEFAX chart panel, in place of a second receiver");
   gtk_widget_set_valign(r->wefax_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->wefax_expand_btn,"clicked",G_CALLBACK(wefax_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->wefax_expand_btn);
@@ -3003,6 +3025,8 @@ static void create_visual(RADIO *r) {
   // Shown only in CWL/CWU with the CW decoder selected (see rds_update_cb).
   r->cw_expand_btn=gtk_button_new_with_label("Show CW");
   gtk_widget_set_name(r->cw_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->cw_expand_btn,
+      "Open the CW text panel, in place of a second receiver");
   gtk_widget_set_valign(r->cw_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->cw_expand_btn,"clicked",G_CALLBACK(cw_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->cw_expand_btn);
@@ -3011,6 +3035,8 @@ static void create_visual(RADIO *r) {
   // Shown only in FMN with the APT decoder selected (see rds_update_cb).
   r->apt_expand_btn=gtk_button_new_with_label("Show APT");
   gtk_widget_set_name(r->apt_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->apt_expand_btn,
+      "Open the APT satellite-image panel, in place of a second receiver");
   gtk_widget_set_valign(r->apt_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->apt_expand_btn,"clicked",G_CALLBACK(apt_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->apt_expand_btn);
@@ -3020,12 +3046,16 @@ static void create_visual(RADIO *r) {
   // Shown only in DIGU with the HFDL decoder selected (see rds_update_cb).
   r->hfdl_expand_btn=gtk_button_new_with_label("Show HFDL");
   gtk_widget_set_name(r->hfdl_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->hfdl_expand_btn,
+      "Open the HFDL message panel, in place of a second receiver");
   gtk_widget_set_valign(r->hfdl_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->hfdl_expand_btn,"clicked",G_CALLBACK(hfdl_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->hfdl_expand_btn);
 
   r->acars_expand_btn=gtk_button_new_with_label("Show ACARS");
   gtk_widget_set_name(r->acars_expand_btn,"toolbar-button");
+  gtk_widget_set_tooltip_text(r->acars_expand_btn,
+      "Open the ACARS message panel, in place of a second receiver");
   gtk_widget_set_valign(r->acars_expand_btn,GTK_ALIGN_START);
   g_signal_connect(r->acars_expand_btn,"clicked",G_CALLBACK(acars_expand_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(dec_ctl),r->acars_expand_btn);
@@ -3056,11 +3086,15 @@ static void create_visual(RADIO *r) {
 
   GtkWidget *configure=gtk_button_new_with_label("Configure");
   gtk_widget_set_name(configure,"toolbar-button");
+  gtk_widget_set_tooltip_text(configure,
+      "Open the settings window");
   g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(tool_col),configure);
 
   record_b=gtk_button_new_with_label(recorder_active()?"Stop":"Record");
   gtk_widget_set_name(record_b,"toolbar-button");
+  gtk_widget_set_tooltip_text(record_b,
+      "Record off-air I/Q and demodulated audio to WAV files");
   g_signal_connect(record_b,"clicked",G_CALLBACK(record_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(tool_col),record_b);
 
@@ -3068,7 +3102,24 @@ static void create_visual(RADIO *r) {
     add_receiver_b=gtk_button_new_with_label("Add Receiver");
     gtk_widget_set_name(add_receiver_b,"toolbar-button");
     g_signal_connect(add_receiver_b,"clicked",G_CALLBACK(add_receiver_cb),(gpointer)r);
-    gtk_box_append(GTK_BOX(tool_col),add_receiver_b);
+    // Tooltip on a wrapper box rather than on the button, for the reason given
+    // at LINK in vfo.c: GTK4 does not pick an insensitive widget, and this
+    // button spends most of its life greyed -- which is exactly when the
+    // operator wants to be told why.
+    { GtkWidget *addrx_wrap=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+      gtk_widget_set_tooltip_text(addrx_wrap,
+          "Open another receiver\n"
+          "Greyed while a decoder panel holds the second slot, or when every "
+          "receiver this radio supports is already open");
+      // The button has to expand or the wrapper leaves it at its natural width
+      // while its three siblings fill the column. hexpand is then set FALSE on
+      // the wrapper ITSELF -- an explicit flag beats the value propagated up
+      // from a child, so the SETUP module does not start claiming the bottom
+      // bar's slack, which belongs to the Decode block.
+      gtk_widget_set_hexpand(add_receiver_b,TRUE);
+      gtk_widget_set_hexpand(addrx_wrap,FALSE);
+      gtk_box_append(GTK_BOX(addrx_wrap),add_receiver_b);
+      gtk_box_append(GTK_BOX(tool_col),addrx_wrap); }
 
     if (radio->hl2 != NULL) {
       if (radio->hl2->xvtr == FALSE) {
@@ -3085,6 +3136,8 @@ static void create_visual(RADIO *r) {
 #endif
     add_wideband_b=gtk_button_new_with_label("Add Wideband");
     gtk_widget_set_name(add_wideband_b,"toolbar-button");
+    gtk_widget_set_tooltip_text(add_wideband_b,
+        "Open the wideband window — the whole ADC span, undecimated");
     g_signal_connect(add_wideband_b,"clicked",G_CALLBACK(add_wideband_cb),(gpointer)r);
     gtk_box_append(GTK_BOX(tool_col),add_wideband_b);
 #ifdef SOAPYSDR

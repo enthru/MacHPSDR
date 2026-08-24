@@ -90,6 +90,9 @@ GtkWidget *create_mic_level(TRANSMITTER *tx) {
 
   radio->mic_level_surface=NULL;
   radio->mic_level=pana_view_new(mic_level_build,(gpointer)tx);
+  gtk_widget_set_tooltip_text(radio->mic_level,
+      "Microphone level; the marker is the VOX threshold — click or\n"
+      "scroll to move it");
   gtk_widget_set_size_request(radio->mic_level, 170, 34);
   gtk_widget_set_cursor_from_name(radio->mic_level,"ew-resize");
 
