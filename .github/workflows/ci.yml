@@ -45,6 +45,16 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# A run whose ref has moved on is answering a question nobody is asking any
+# more: a second commit pushed to master, or a tag re-pointed at a different
+# commit, makes the run in flight obsolete the moment it happens.  Cancel it
+# rather than let it spend twenty minutes reporting on a commit that is no
+# longer what the ref means.  Keyed on the ref, so master, a tag and a pull
+# request never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: ${{ matrix.os }}
@@ -380,6 +390,14 @@ jobs:
   sanitize:
     name: ubuntu-latest (ASan + UBSan + LeakSanitizer)
     runs-on: ubuntu-latest
+    # NOT on a tag.  This job is twenty minutes of instrumented GUI runs, and a
+    # tag points at a commit that has already been through it on master -- the
+    # same tree, the same four leak checks, the same answer.  Re-running it
+    # because a ref was created delays the release and tells nobody anything.
+    # The gap, stated: a tag placed on a commit that never sat on master gets
+    # its release without the leak check.  Nothing in this repository is
+    # released that way, and if it ever is, `workflow_dispatch` runs this job.
+    if: "!startsWith(github.ref, 'refs/tags/')"
 
     # A SEPARATE JOB, not another matrix leg of `build`, and it has to be:
     # SANITIZE=1 rides in OPTIONS, .build-flags compares OPTIONS, and objects

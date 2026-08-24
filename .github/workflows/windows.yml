@@ -29,6 +29,12 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Same reasoning as ci.yml: a run whose ref has moved on is reporting on a
+# commit that is no longer what the ref means.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mingw64:
     runs-on: windows-latest
