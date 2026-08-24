@@ -12,6 +12,10 @@
 # harnesses still LINK (half the value — that is the failure that went unseen),
 # and the DSP/decoder layers they cover still produce the expected answers.
 #
+# There is a third job, `macos-intel`, which does the same for x86_64 macOS and
+# runs ONLY on a tag or a manual dispatch, because GitHub has no free Intel
+# runner left.  Its own comment block says why that is where the line was drawn.
+#
 # What it does NOT prove, and must never be written up as proving:
 #   - anything about radio hardware.  No HPSDR, no SoapySDR device, no TX.  The
 #     self-tests synthesise their own signal; a passing run says the decoder
@@ -209,6 +213,94 @@ jobs:
           done
           gh release view "$TAG" >/dev/null
           gh release upload "$TAG" MacHPSDR-arm64.zip --clobber
+
+  # ===========================================================================
+  # The Intel bundle, for the Macs that are not Apple silicon.
+  #
+  # A JOB OF ITS OWN, AND NOT A THIRD ENTRY IN THE MATRIX ABOVE, for two
+  # reasons that both come down to money.  GitHub has no free Intel macOS
+  # runner any more: macos-13 is gone and x86_64 survives only as the
+  # `-intel` (formerly `-large`) images, which are billed at $0.077/minute
+  # EVEN FOR A PUBLIC REPOSITORY.  So this must not run on every push, and a
+  # matrix entry cannot be gated -- `jobs.<id>.if` has no access to the matrix
+  # context, so the condition has nowhere to live but a separate job.
+  #
+  # It therefore runs on a tag or when someone asks for it by hand, which puts
+  # the cost at roughly half a dollar per release.  The price of that: an Intel
+  # break is invisible until release day.  It is a compile of the same sources
+  # the arm64 job just built and self-tested, so what it can catch alone is
+  # narrow -- a pointer-size or endianness assumption would show on neither,
+  # both being 64-bit little-endian, and what is left is x86-only compiler
+  # behaviour and a Homebrew formula that exists for one architecture and not
+  # the other.  Worth a tag, not worth a commit.
+  #
+  # macos-15-intel rather than macos-26-intel deliberately: it is the older of
+  # the two GA Intel images, so the bundle it produces will load on the older
+  # systems an Intel Mac is likely to still be running.
+  # ===========================================================================
+  macos-intel:
+    name: macos-15-intel
+    runs-on: macos-15-intel
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The Makefile stamps the build from `git describe`, which needs tags.
+          fetch-depth: 0
+
+      # The same list as the arm64 job, and it must stay the same list: an
+      # Intel-only formula quietly appearing here is exactly the drift this
+      # job exists to catch.
+      - name: Install dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+
+      - name: Build
+        run: |
+          make -j"$(getconf _NPROCESSORS_ONLN)" && exit 0
+          echo "::group::parallel build failed - rebuilding serially for a readable error"
+          make -j1
+
+      # Not a formality on this job: these are the x86_64 binaries, run on
+      # x86_64, so a shipped Intel bundle whose DSP or decoders disagree with
+      # the arm64 one fails here rather than in an operator's shack.
+      - name: Self-tests
+        run: make check
+
+      - name: Bundle the .app
+        run: |
+          make app
+          ditto -c -k --keepParent MacHPSDR.app MacHPSDR-x86_64.zip
+
+      - name: Upload the .app
+        uses: actions/upload-artifact@v7
+        with:
+          name: MacHPSDR-app-x86_64
+          path: MacHPSDR-x86_64.zip
+          if-no-files-found: error
+
+      # Same create-or-find as the arm64 job: three jobs across two workflows
+      # race for the release and none of them can wait for the others.
+      - name: Attach to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          for i in 1 2 3 4 5; do
+            gh release view "$TAG" >/dev/null 2>&1 && break
+            gh release create "$TAG" --verify-tag --title "" --notes "" && break
+            sleep $((i * 5))
+          done
+          gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" MacHPSDR-x86_64.zip --clobber
 
   # ===========================================================================
   # ASan + UBSan + LeakSanitizer, Linux only.
