@@ -160,6 +160,9 @@ you've dialled in.
   exiting keeps the frequency you were on, and the radio retunes automatically
   when the cursor reaches a span edge. Changing the bandwidth re-centres the span
   on the frequency you are listening to, and zooming keeps that frequency centred.
+  Since the left button belongs to the cursor here, **dragging with the right
+  button moves the whole span** — the same gesture a plain drag performs in normal
+  mode. A right click that does not move still opens Configure for that receiver.
 
 - **VFO tuning.** Several ways to set the frequency on the VFO display:
   - **Mouse wheel** over a digit tunes by that digit's place value — wheel up

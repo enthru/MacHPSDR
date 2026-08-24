@@ -1038,6 +1038,18 @@ static gboolean receiver_click_leaked_from_dialog(void) {
 }
 #endif
 
+// Right-click action of the panadapter/waterfall: Configure, focused on this
+// RX's page (by name -- page merges no longer shift the integer index this used
+// to compute from rx_base).  Reached from the press in every mode but freetune,
+// where it waits for a release that did not drag the span.
+static void receiver_open_configure(RECEIVER *rx) {
+  if(radio->dialog!=NULL) return;
+  char page[16];
+  snprintf(page,sizeof(page),"RX-%d",rx->channel);
+  configure_dialog_open(radio,page);
+  update_receiver_dialog(rx);
+}
+
 void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
 #ifdef __APPLE__
@@ -1098,14 +1110,19 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
       //}
       break;
     case 3: // right button
-      if(radio->dialog==NULL) {
-        // Open Configure focused on this RX's page (by name — page merges no
-        // longer shift the integer index this used to compute from rx_base).
-        char page[16];
-        snprintf(page,sizeof(page),"RX-%d",rx->channel);
-        configure_dialog_open(radio,page);
-        update_receiver_dialog(rx);
+      // Freetune: a right DRAG retunes the whole span (receiver_move_span) --
+      // the plain-VFO gesture, which the left button cannot perform in this mode
+      // because there it moves the cursor inside the frozen span instead.  The
+      // Configure dialog still opens on a right click that does not move, so it
+      // is not lost; it just moves from the press to the release.
+      if(rx->freetune) {
+        rx->span_pressed=TRUE;
+        rx->span_moved=FALSE;
+        rx->span_last_x=(int)ex;
+        rx->span_press_x=(int)ex;
+        break;
       }
+      receiver_open_configure(rx);
       break;
   }
 }
@@ -1422,6 +1439,56 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
   }
 }
 
+/* Move the WHOLE span -- what a plain drag does with no ctun/freetune: the
+   hardware VFO moves and the band scrolls past.  Freetune freezes the centre
+   under the left button (which moves the cursor inside the span instead), so
+   this is the gesture that gets the operator off the visible slice of band; it
+   is bound to the right-button drag on the panadapter/waterfall.
+
+   `hz` carries receiver_move()'s sign convention: a drag to the right is
+   positive and tunes DOWN.
+
+   The cursor rides along -- ctun_frequency moves with frequency_a -- so
+   ctun_offset, and with it the WDSP/NCO shift, is unchanged.  That is what makes
+   this the same gesture as ordinary VFO tuning: everything on the screen keeps
+   its place while the frequencies under it change, and the only work left is the
+   LO retune, which frequency_changed() already does for freetune when the centre
+   moves. */
+void receiver_move_span(RECEIVER *rx,long long hz) {
+  if(rx==NULL || rx->locked || hz==0) return;
+
+  long long fmax=receiver_max_frequency(rx);
+  long long nf=rx->frequency_a-hz;
+  /* Same directional guard as receiver_move_a: reject only a move pushing
+     FURTHER out of range, or a frequency restored above the device maximum
+     could never be brought back. */
+  if((nf<0    && nf<rx->frequency_a) ||
+     (nf>fmax && nf>rx->frequency_a)) return;
+
+  long long delta=nf-rx->frequency_a;
+  rx->frequency_a=nf;
+  rx->ctun_frequency+=delta;
+
+  long long span_half=(long long)(rx->sample_rate/2);
+  rx->ctun_min=rx->frequency_a-span_half;
+  rx->ctun_max=rx->frequency_a+span_half;
+
+  /* A linked SAT/RSAT pair follows the same way it does under receiver_move();
+     no rounding, since the span itself is not being rounded to the tuning step
+     either (a drag is not a step). */
+  switch(rx->split) {
+    case SPLIT_SAT:
+    case SPLIT_RSAT:
+      if(rx->vfo_linked) receiver_move_b(rx,delta,TRUE,FALSE);
+      break;
+    default:
+      break;
+  }
+
+  frequency_changed(rx);
+  update_frequency(rx);
+}
+
 /*
  * receiver_set_freetune:
  *   Enable or disable freetune mode.
@@ -1567,6 +1634,17 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
   GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
   int x=(int)ex;
   int moved=x-rx->last_x;
+  if(button==3) {
+    // Freetune right-drag (see receiver_pressed_cb): a press that never moved
+    // the span is an ordinary right click and opens Configure here instead.
+    if(rx->span_pressed) {
+      gboolean dragged=rx->span_moved;
+      rx->span_pressed=FALSE;
+      rx->span_moved=FALSE;
+      if(!dragged) receiver_open_configure(rx);
+    }
+    return;
+  }
   if(button==1) {
       rx->pointer_pressed=FALSE;
 #ifdef FT8
@@ -1651,6 +1729,22 @@ void receiver_motion_cb(GtkEventControllerMotion *controller, double ex, double 
   gboolean button1=(state & GDK_BUTTON1_MASK)==GDK_BUTTON1_MASK;
   if(!button1) { rx->pointer_pressed=FALSE; rx->is_panning=FALSE; }
   gboolean dragging=button1 && rx->pointer_pressed;
+  // Freetune right-drag: retune the whole span. Gated on our own press for the
+  // same reason as button 1, and self-healing the same way -- a motion with the
+  // button up clears a press whose release we never saw.
+  gboolean button3=(state & GDK_BUTTON3_MASK)==GDK_BUTTON3_MASK;
+  if(!button3) rx->span_pressed=FALSE;
+  if(rx->span_pressed) {
+    int span_dx=x-rx->span_last_x;
+    if(span_dx!=0) {
+      receiver_move_span(rx,(long long)((double)span_dx*rx->hz_per_pixel));
+      rx->span_last_x=x;
+      // Drag-vs-click from the cumulative distance since the press, not this
+      // event's delta -- a slow drag never trips a per-event test.
+      if(x-rx->span_press_x>2 || x-rx->span_press_x<-2) rx->span_moved=TRUE;
+    }
+    return;
+  }
 #ifdef FT8
   // Shift+drag in DIGU slides the FT8 TX offset live, without tuning the RX.
   if(ft8_tx_offset_gesture(rx,state) && dragging) {

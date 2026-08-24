@@ -124,7 +124,12 @@ own VFO, panadapter and waterfall.
   to ×10/×12/×16/×32 from the VFO zoom menu). The practical maximum depends on
   the panadapter width (WDSP's analyzer has a fixed internal buffer, so a very
   wide window caps the zoom automatically).
-- **Freetune** — a smooth continuous-tuning mode added in this fork.
+- **Freetune** — a smooth continuous-tuning mode added in this fork. The cursor
+  moves freely inside the visible span while the waterfall stays where it is, so
+  the left button no longer drags the band around: **drag with the right button**
+  to move the whole span, exactly the way a plain drag tunes the VFO in normal
+  mode. A right click that does *not* move still opens Configure for that
+  receiver.
 - **PPM correction & auto-calibration** — corrects the reference-oscillator
   error (fractional ppm; applied on Protocol 1, Protocol 2 and SoapySDR alike).
   It can be measured automatically from a time-signal station's carrier — see

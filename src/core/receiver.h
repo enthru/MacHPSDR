@@ -402,6 +402,14 @@ typedef struct _receiver {
   // held down by another process (a Cmd-Shift-4 screenshot area selection)
   // makes every motion event we receive look like a drag.
   gboolean pointer_pressed;
+  // The same idea, for the button-3 drag that moves the whole span in freetune
+  // (receiver_move_span).  Separate from the button-1 set above because the two
+  // gestures do different things and must not share a press position, and gated
+  // on our own press for the same macOS reason as pointer_pressed.
+  gboolean span_pressed;
+  gboolean span_moved;
+  gint span_last_x;
+  gint span_press_x;
   // GTK4: the scroll controller's "scroll" signal carries no pointer position,
   // so the motion controller stashes the latest cursor coords here for it.
   gint cursor_x;
@@ -647,5 +655,6 @@ extern void receiver_set_volume(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);
 extern void receiver_set_freetune(RECEIVER *rx, gboolean enable);
+extern void receiver_move_span(RECEIVER *rx, long long hz);
 extern void set_band(RECEIVER *rx,int band,int entry);
 #endif
