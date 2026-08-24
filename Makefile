@@ -1162,7 +1162,21 @@ app: $(PROGRAM)
 	@# librtlsdr / libusb, which dylibbundler then bundles + relinks into
 	@# Frameworks. SOAPY_SDR_PLUGIN_PATH (set in the launcher) points Soapy here,
 	@# so HackRF/RTL-SDR work without a Homebrew SoapySDR install on the target.
+	@#
+	@# NOTHING TO COPY IS THE FAILURE MODE THAT SHIPPED: a machine with
+	@# `soapysdr` but no driver formula produces a bundle with libSoapySDR and
+	@# no drivers, which enumerates zero devices on the target and looks like a
+	@# broken receiver rather than a missing file.  That is exactly what release
+	@# 4.1's macOS bundle was.  It is not an error here -- an HPSDR-only build
+	@# has no use for them -- so it warns loudly and CI asserts (see the
+	@# "Check the bundle carries its SoapySDR drivers" step in ci.yml).
 	@echo "Copying SoapySDR modules..."
+	@if ! ls $(BREW_PREFIX)/lib/SoapySDR/modules*/*.so >/dev/null 2>&1; then \
+		echo "  WARNING: no SoapySDR driver modules under $(BREW_PREFIX)/lib/SoapySDR/"; \
+		echo "           this bundle will find NO SoapySDR device on a machine that"; \
+		echo "           does not have them installed itself.  Fix with:"; \
+		echo "             brew install soapyhackrf soapyrtlsdr soapyremote"; \
+	fi
 	@for moddir in $(BREW_PREFIX)/lib/SoapySDR/modules*; do \
 		if [ -d "$$moddir" ]; then \
 			dest=$(APP_BUNDLE)/Contents/Resources/lib/SoapySDR/`basename $$moddir`; \
@@ -1257,8 +1271,17 @@ app: $(PROGRAM)
 	@echo '# Icon theme' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'export GSETTINGS_SCHEMA_DIR="$$RES/share/glib-2.0/schemas"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@echo '# SoapySDR device-driver modules (HackRF / RTL-SDR)' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@echo 'export SOAPY_SDR_PLUGIN_PATH="$$(echo "$$RES"/lib/SoapySDR/modules* | tr " " ":")"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# SoapySDR device-driver modules (HackRF / RTL-SDR / Remote).' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# Guarded: with no modules directory the glob does not expand and the' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# variable would be exported as the pattern itself.  Unset, SoapySDR' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# still searches its own install root, which is what lets a Homebrew' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '# driver on the target machine rescue a bundle that carries none.' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'for _soapydir in "$$RES"/lib/SoapySDR/modules*; do' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '  [ -d "$$_soapydir" ] || continue' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo '  SOAPY_SDR_PLUGIN_PATH="$${SOAPY_SDR_PLUGIN_PATH:+$$SOAPY_SDR_PLUGIN_PATH:}$$_soapydir"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'done' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'if [ -n "$${SOAPY_SDR_PLUGIN_PATH:-}" ]; then export SOAPY_SDR_PLUGIN_PATH; fi' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+	@echo 'unset _soapydir' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo '# Launch application' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	@echo 'cd "$$RES"' >> $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)

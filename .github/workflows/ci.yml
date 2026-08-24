@@ -115,6 +115,15 @@ jobs:
       # dependency, but it is kept so this list stays the one CLAUDE.md
       # documents — a CI environment that has quietly drifted from the
       # documented one is worse than a slightly over-broad install.
+      #
+      # soapyhackrf / soapyrtlsdr / soapyremote are NOT build dependencies --
+      # nothing links against them and `make` does not care.  They are here for
+      # `make app`, which copies the SoapySDR driver modules it finds under the
+      # Homebrew prefix into the bundle, because SoapySDR dlopens them and
+      # dylibbundler therefore cannot see them.  Without them installed the
+      # bundle ships libSoapySDR and no drivers, enumerates nothing, and looks
+      # to its user like a receiver that cannot see their radio.  That is what
+      # 4.1's macOS bundle did.  Homebrew core carries exactly these three.
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         env:
@@ -124,6 +133,7 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+          brew install soapyhackrf soapyrtlsdr soapyremote
 
       # `getconf`, not `nproc`: macOS has no nproc.  This also builds the
       # vendored trees (wdsp/, ft8_lib/, sgp4sdp4/, hfdl_lib/asn1/) through
@@ -187,6 +197,28 @@ jobs:
         run: |
           make app
           ditto -c -k --keepParent MacHPSDR.app MacHPSDR-arm64.zip
+
+      # A bundle with libSoapySDR and no driver modules is the failure this
+      # release process has already shipped once: it builds, it signs, it
+      # launches, and it finds no SDR on any machine that does not have
+      # Homebrew's drivers installed itself.  Nothing in `make app` can fail on
+      # it, because a bundle with no drivers is legitimate for an HPSDR-only
+      # build -- so the assertion belongs here, where the artifact is a release.
+      - name: Check the bundle carries its SoapySDR drivers
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          mods=$(find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' 2>/dev/null | wc -l | tr -d ' ')
+          [ "$mods" -gt 0 ] || { echo "no SoapySDR driver modules in the bundle"; exit 1; }
+          find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec basename {} \;
+          # The drivers drag libhackrf and libusb in behind them; a module left
+          # pointing at /opt/homebrew is a module that will not load anywhere
+          # else, which is invisible until someone else runs the bundle.
+          if find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec otool -L {} \; \
+             | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' ; then
+            echo "a driver module still links outside the bundle"; exit 1
+          fi
+          echo "SoapySDR drivers: $mods, all self-contained"
 
       - name: Upload the .app (macOS)
         if: runner.os == 'macOS'
@@ -277,6 +309,7 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+          brew install soapyhackrf soapyrtlsdr soapyremote
 
       - name: Build
         run: |
@@ -294,6 +327,27 @@ jobs:
         run: |
           make app
           ditto -c -k --keepParent MacHPSDR.app MacHPSDR-x86_64.zip
+
+      # A bundle with libSoapySDR and no driver modules is the failure this
+      # release process has already shipped once: it builds, it signs, it
+      # launches, and it finds no SDR on any machine that does not have
+      # Homebrew's drivers installed itself.  Nothing in `make app` can fail on
+      # it, because a bundle with no drivers is legitimate for an HPSDR-only
+      # build -- so the assertion belongs here, where the artifact is a release.
+      - name: Check the bundle carries its SoapySDR drivers
+        run: |
+          set -e
+          mods=$(find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' 2>/dev/null | wc -l | tr -d ' ')
+          [ "$mods" -gt 0 ] || { echo "no SoapySDR driver modules in the bundle"; exit 1; }
+          find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec basename {} \;
+          # The drivers drag libhackrf and libusb in behind them; a module left
+          # pointing at /opt/homebrew is a module that will not load anywhere
+          # else, which is invisible until someone else runs the bundle.
+          if find MacHPSDR.app/Contents/Resources/lib/SoapySDR -name '*.so' -exec otool -L {} \; \
+             | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' ; then
+            echo "a driver module still links outside the bundle"; exit 1
+          fi
+          echo "SoapySDR drivers: $mods, all self-contained"
 
       - name: Upload the .app
         uses: actions/upload-artifact@v7
