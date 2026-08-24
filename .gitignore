@@ -64,6 +64,8 @@ tci_offline
 tci_offline.dSYM/
 props_offline
 props_offline.dSYM/
+agc_offline
+agc_offline.dSYM/
 metis_emu
 metis_emu.dSYM/
 p2_emu

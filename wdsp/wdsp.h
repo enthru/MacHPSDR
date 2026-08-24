@@ -123,6 +123,8 @@ extern void SetRXAAMDSBMode(int channel, int sbmode);
 extern void SetRXAANRVals (int channel, int taps, int delay, double gain, double leakage);
 
 extern void SetRXAAGCMode (int channel, int mode);
+extern void SetRXAAGCRun (int channel, int run);
+extern void GetRXAAGCRun (int channel, int *run);
 extern void SetRXAAGCFixed (int channel, double fixed_agc);
 extern void SetRXAAGCAttack (int channel, int attack);
 extern void SetRXAAGCDecay (int channel, int decay);

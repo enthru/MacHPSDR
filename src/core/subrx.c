@@ -104,10 +104,18 @@ void subrx_mode_changed(RECEIVER *rx) {
   subrx_set_mode(rx);
   subrx_filter_changed(rx);
   subrx_set_apf(rx);
+  // ...and re-push the AGC, because subrx_set_mode() went through SetRXAMode(),
+  // which owns the AGC run flag on the way into FM. Same reason
+  // receiver_mode_changed() calls set_agc() after set_mode().
+  subrx_set_agc(rx);
 }
 
 void subrx_set_agc(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
+  // Same FM rule as set_agc() on the main channel, keyed on VFO-B's mode: the
+  // sub-channel is a full RXA and subrx_set_mode() runs the same SetRXAMode()
+  // that clears the AGC run flag for FM/WFM. See set_agc() in receiver.c.
+  SetRXAAGCRun(subrx->channel, agc_run_for(rx->mode_b, rx->agc));
   SetRXAAGCMode(subrx->channel, rx->agc);
   SetRXAAGCSlope(subrx->channel,rx->agc_slope);
   SetRXAAGCTop(subrx->channel,rx->agc_gain);

@@ -28,4 +28,22 @@
 
 #define AGC_LAST AGC_FAST
 
+#include "mode.h"
+
+// Should WDSP's AGC block be IN the chain for this (mode, agc speed) pair?
+//
+// SetRXAMode() owns that run flag and clears it for FM and WFM (wdsp/RXA.c);
+// nothing else in WDSP ever writes it, so until set_agc() started pushing this
+// the AGC menu and the AGC-G slider did nothing at all on FM. AGC_OFF stays
+// genuinely off there rather than becoming run=1/mode=0, which is wcpagc's
+// fixed-gain path -- create_wcpagc opens it at fixed_gain=1000, i.e. +60 dB.
+// Every other mode keeps the 1 SetRXAMode() already gives it.
+//
+// An inline in the header rather than a function in receiver.c because
+// tools/agc_offline.c has to exercise THIS rule and cannot link receiver.o
+// (which drags in the whole application).
+static inline int agc_run_for(int mode, int agc) {
+  return ((mode != FMN && mode != WFM) || agc != AGC_OFF) ? 1 : 0;
+}
+
 #endif

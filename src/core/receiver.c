@@ -2941,6 +2941,26 @@ int receiver_histogram_cells(int width,int height) {
 
 void set_agc(RECEIVER *rx) {
 
+  // WDSP's SetRXAMode() switches the AGC block OFF for FM and WFM (RXA.c) and
+  // nothing else ever writes that run flag -- SetRXAAGCMode() only loads the
+  // speed constants into a block that is not in the chain. So on FM the AGC
+  // menu and the AGC-G slider pushed their settings faithfully and NOTHING
+  // happened: every control worked, none of them did anything. The flag belongs
+  // here, which every path reaches AFTER set_mode() (receiver_mode_changed
+  // calls set_mode() then set_agc(); create_receiver goes through
+  // receiver_mode_changed first), so a mode change cannot undo it.
+  //
+  // AGC_OFF stays genuinely off on FM instead of becoming "run with mode 0":
+  // in that mode wcpagc is a plain fixed gain, and create_wcpagc opens it at
+  // fixed_gain=1000, i.e. +60 dB of it. Outside FM the flag keeps the value
+  // SetRXAMode already gives it (1), so no other mode's audio moves.
+  //
+  // What the operator gets on FM is an AUDIO leveller, not an RF one: the chain
+  // is fmd -> fmsq -> ... -> wcpagc, so the limiter has already removed the
+  // dependence on signal strength and what is left to even out is DEVIATION --
+  // stations that talk quietly into their microphones, and broadcast WFM.
+  SetRXAAGCRun(rx->channel, agc_run_for(rx->mode_a, rx->agc));
+
   SetRXAAGCMode(rx->channel, rx->agc);
   SetRXAAGCSlope(rx->channel,rx->agc_slope);
   SetRXAAGCTop(rx->channel,rx->agc_gain);

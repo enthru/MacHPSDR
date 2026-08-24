@@ -949,6 +949,23 @@ p2-emu: p2_emu
 p2_emu: tools/p2_emu.c
 	$(CC) $(CFLAGS) -o $@ tools/p2_emu.c -lm
 
+# The AGC-on-FM harness: tools/agc_offline.c.  The only harness that opens a
+# WDSP channel, because the thing it pins lives inside one -- SetRXAMode() owns
+# the AGC block's run flag and clears it for FM/WFM, so set_agc() only works
+# while it runs AFTER set_mode().  Nothing about that fault is visible from the
+# UI (every control still moves) or from any other test here.  Links no
+# application object at all: the rule is the agc_run_for() inline in agc.h, so
+# the harness exercises the same one receiver.c and subrx.c call.  It does NOT
+# call WDSPwisdom() -- the exhaustive FFT sweep costs minutes and buys nothing
+# at one channel, which is what keeps this a ~1 s addition to `make check`.
+#   make agc-offline && ./agc_offline --selftest
+.PHONY: agc-offline
+agc-offline: agc_offline$(EXE)
+agc_offline$(EXE): | wdsp-local
+agc_offline$(EXE): tools/agc_offline.c
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) $(WDSP_INCLUDE) \
+	  -o $@ tools/agc_offline.c -L$(WDSP_DIR) -lwdsp -lm $(RPATH_FLAGS)
+
 qo100-offline: qo100_offline$(EXE)
 # The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
 # to be provable off air. Links qo100.o alone; the handful of application
@@ -969,10 +986,10 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # is unconditionally in OBJS), so it is always in.
 #
 # qo100_offline is the odd one out at the command line: it takes no argument at
-# all (the binary is nothing but the self-test), the other three want --selftest,
-# which is their mode that needs no recording.  All four already exit non-zero on
-# a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE)
+# all (the binary is nothing but the self-test), every other harness wants
+# --selftest, which is its mode that needs no recording.  All of them exit
+# non-zero on a failed assertion, so the loop below stops at the first one.
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE)
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
@@ -1041,9 +1058,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

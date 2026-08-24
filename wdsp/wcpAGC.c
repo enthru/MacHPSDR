@@ -368,6 +368,22 @@ void setSize_wcpagc (WCPAGC a, int size)
 ********************************************************************************************************/
 
 PORT void
+GetRXAAGCRun (int channel, int *run)
+{
+	EnterCriticalSection (&ch[channel].csDSP);
+	*run = rxa[channel].agc.p->run;
+	LeaveCriticalSection (&ch[channel].csDSP);
+}
+
+PORT void
+SetRXAAGCRun (int channel, int run)
+{
+	EnterCriticalSection (&ch[channel].csDSP);
+	rxa[channel].agc.p->run = run;
+	LeaveCriticalSection (&ch[channel].csDSP);
+}
+
+PORT void
 SetRXAAGCMode (int channel, int mode)
 {
 	EnterCriticalSection (&ch[channel].csDSP);

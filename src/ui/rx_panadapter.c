@@ -1551,7 +1551,12 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   }
 
   // ---- AGC lines ----------------------------------------------------------
-  if(rx->agc!=AGC_OFF && rx->panadapter_agc_line) {
+  // Not in FM: there the AGC acts on the DEMODULATED audio (WDSP keeps its block
+  // out of the chain for FM/WFM until set_agc puts it back), so its knee and
+  // hang levels are audio-domain numbers with no dBm meaning to plot against an
+  // RF trace -- drawing them would put two confident, wrong lines on the band.
+  if(rx->agc!=AGC_OFF && rx->panadapter_agc_line
+     && rx->mode_a!=FMN && rx->mode_a!=WFM) {
     double ax=80.0;
     double hang=rx->agc_hang_level;
     double thresh=rx->agc_thresh_level;
