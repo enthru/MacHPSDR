@@ -122,7 +122,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   for(i=0; i <= stop_at; i++) {
     BAND *band=band_get_band(i);
 
-    GtkWidget *band_label=gtk_label_new(band->title);
+    GtkWidget *band_label=gtk_label_new(band_display_name(i));
     gtk_widget_set_visible(band_label, TRUE);
     gtk_grid_attach(GTK_GRID(pa_grid),band_label,(i%3)*3,i/3,1,1);
 

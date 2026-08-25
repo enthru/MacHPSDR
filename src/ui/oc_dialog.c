@@ -176,7 +176,7 @@ GtkWidget *create_oc_dialog(RADIO *radio) {
   for(i=0; i <= stop_at/*+XVTRS*/; i++) {
     BAND *band=band_get_band(i);
     if(strlen(band->title)>0) {
-      GtkWidget *band_label=gtk_label_new(band->title);
+      GtkWidget *band_label=gtk_label_new(band_display_name(i));
       gtk_widget_set_visible(band_label, TRUE);
       gtk_grid_attach(GTK_GRID(grid),band_label,0,dr,1,1);
 

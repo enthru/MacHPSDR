@@ -107,6 +107,9 @@ extern BANDSTACK_ENTRY bandstack_entries60_UK[];
 extern int band_get_current(void);
 extern BAND *band_get_current_band(void);
 extern BAND *band_get_band(int b);
+/* The name to SHOW for a band -- see band.c. `title` is the identity: the props
+   value, the QO-100 rows' key, the operator's own transverter name. */
+extern const char *band_display_name(int b);
 extern BAND *band_set_current(int b);
 extern int get_band_from_frequency(gint64 f);
 

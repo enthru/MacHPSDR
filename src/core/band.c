@@ -286,11 +286,18 @@ BAND bands[BANDS+XVTRS] =
      {"GEN",&bandstackGEN,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,0LL,0LL,0LL,0LL,1,-140,-60,20,-145,-65,1},
      {"WWV",&bandstackWWV,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,0LL,0LL,0LL,0LL,1,-140,-60,20,-145,-65,1},     
 #ifdef SOAPYSDR
-     {"70",&bandstack70,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,0LL,0LL,0,-140,-60,20,-145,-65,1},
+     /* This row was two initialisers short of the twenty a BAND takes, and
+        -Wno-missing-field-initializers is on, so nothing said a word: every
+        value from errorLO down was reading the one meant for the field before
+        it. The 4 m band came up with errorLO -140 Hz, disablePA -60 (i.e. the
+        PA off), and a panadapter scale running from +20 dBm down to -145 --
+        inverted, which draws nothing. Written out in full, with the Region 1
+        allocation its band stack already sits in. */
+     {"70",&bandstack70,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,70000000LL,70500000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"144",&bandstack144,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,144000000LL,148000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
-     {"220",&bandstack144,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,222000000LL,224980000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
+     {"220",&bandstack220,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,222000000LL,224980000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"430",&bandstack430,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,420000000LL,450000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
-     {"902",&bandstack430,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,902000000LL,928000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
+     {"902",&bandstack902,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,902000000LL,928000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"1240",&bandstack1240,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,1240000000LL,1300000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"2300",&bandstack2300,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,2300000000LL,2450000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"3400",&bandstack3400,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,3400000000LL,3410000000LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
@@ -306,6 +313,36 @@ BAND bands[BANDS+XVTRS] =
      {"",&bandstack_xvtr_6,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,0LL,0LL,0LL,0LL,0,-140,-60,20,-145,-65,1},
      {"",&bandstack_xvtr_7,0,0,0,0,0,ALEX_ATTENUATION_0dB,53.0,0LL,0LL,0LL,0LL,0,-140,-60,20,-145,-65,1}
     };
+
+/* The stored `title` is the band's IDENTITY, not a name to show a person: it is
+   the value that goes into the props file, the string the QO-100 page finds its
+   two transverter rows by, and -- on an XVTR row -- whatever the operator typed
+   into Bands -> Transverters. It is also this table's own numbering, which
+   carries no unit and changes what it measures halfway down the list: 2200
+   through 6 are metres, 70 through 3400 are megahertz. So the band menu read
+   "... 10, 6, 70, 144, 220, 430 ...", in which "70" -- the reading every
+   operator on earth gives as 70 cm -- is the 4 m band at 70 MHz, sitting two
+   rows above the one that really is 70 cm.
+   band_display_name() is the single place a stored title becomes the name the
+   band is called by. A row with no entry here (every XVTR slot, QO-100 RX and
+   QO-100 TX among them) is its own name and comes back unchanged. */
+static const char *const band_display_names[BANDS] =
+    {"2200 m","630 m","160 m","80 m","60 m","40 m","30 m","20 m","17 m",
+     "15 m","12 m","10 m","6 m","GEN","WWV",
+#ifdef SOAPYSDR
+     "4 m","2 m","1.25 m","70 cm","33 cm","23 cm","13 cm","9 cm","AIR",
+#endif
+    };
+/* Adding a band without naming it would silently shift every later name onto
+   the wrong row -- the same class of mistake as the short initialiser above. */
+_Static_assert(sizeof(band_display_names)/sizeof(band_display_names[0])==BANDS,
+               "band_display_names must carry one name per band");
+
+const char *band_display_name(int b) {
+    if(b<0 || b>=BANDS+XVTRS) return "";
+    if(b<BANDS) return band_display_names[b];
+    return bands[b].title;
+}
 
 CHANNEL band_channels_60m_UK[UK_CHANNEL_ENTRIES] =
      {{5261250LL,5500LL},
