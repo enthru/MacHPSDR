@@ -352,6 +352,9 @@ static void on_destroy(GtkWidget *w, gpointer data) {
 GtkWidget *ft8_panel_create(void) {
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   gtk_widget_set_name(box, "ft8-panel");
+  // The panel is stock GTK widgets, which paint themselves from the platform
+  // theme rather than the skin -- see the .decode-panel block in css.c.
+  gtk_widget_add_css_class(box, "decode-panel");
   // Breathing room so the rows don't sit flush against the panel edges.
   gtk_widget_set_margin_start(box, 8);
   gtk_widget_set_margin_end(box, 6);

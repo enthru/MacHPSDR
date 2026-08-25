@@ -956,6 +956,187 @@ static const char css_body[]=
 "        transparent 2px, alpha(@ACCENT_A,0.55) 2px,\n"
 "        alpha(@ACCENT_A,0.55) 5px, transparent 5px);\n"
 "    }\n"
+/* ---- Decoder panels (FT8/SSTV/WEFAX/CW/HFDL/ACARS/APT) ----
+   Every widget in the main window above is named and painted from the palette,
+   which is why none of them ever showed this: a panel is built from STOCK GTK
+   widgets, and a stock widget paints itself from the PLATFORM theme.  So the
+   FT8 decode list came out white on a light platform theme -- a white slab in
+   the middle of a Solarized Light window -- and Adwaita's near-black on a dark
+   one, in neither case the colour the skin had painted around it.  Scoped to
+   the .decode-panel class each panel root carries, so the rest of the window
+   keeps whatever the named rules above give it. */
+"  .decode-panel {\n"
+"    background-color: @BACKGROUND;\n"
+"    color: @OFF_WHITE;\n"
+"    }\n"
+"  .decode-panel label {\n"
+"    color: @OFF_WHITE;\n"
+"    font-family: @UIFONT@;\n"
+"    font-size: 12px;\n"
+"    }\n"
+/* The reading surfaces -- the FT8 decode list, the CW/HFDL/ACARS text views --
+   sit on @SURFACE inside a hairline @BORDER, the same recess #tx-monitor-frame
+   gives the TX panadapter, rather than being a hole cut in the skin. */
+"  .decode-panel scrolledwindow {\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 5px;\n"
+"    }\n"
+"  .decode-panel scrolledwindow,\n"
+"  .decode-panel columnview,\n"
+"  .decode-panel columnview > listview,\n"
+"  .decode-panel listview,\n"
+"  .decode-panel textview,\n"
+"  .decode-panel textview > text {\n"
+"    background-color: @SURFACE;\n"
+"    color: @OFF_WHITE;\n"
+"    }\n"
+/* Rows stay transparent so the FT8 new-DXCC highlight (.ft8-gold/.ft8-blue,
+   installed by ft8_panel.c) still shows through. */
+"  .decode-panel columnview > listview > row,\n"
+"  .decode-panel listview > row {\n"
+"    background-color: transparent;\n"
+"    }\n"
+"  .decode-panel columnview > listview > row:hover,\n"
+"  .decode-panel listview > row:hover {\n"
+"    background-color: @SURFACE_HOVER;\n"
+"    }\n"
+"  .decode-panel columnview > header > button {\n"
+"    background-image: none;\n"
+"    background-color: @SURFACE_HOVER;\n"
+"    border-style: none;\n"
+"    border-radius: 0px;\n"
+"    box-shadow: none;\n"
+"    padding: 1px 6px;\n"
+"    }\n"
+"  .decode-panel columnview > header > button label {\n"
+"    color: @DARK_TEXT;\n"
+"    font-size: 11px;\n"
+"    font-weight: bold;\n"
+"    }\n"
+"  .decode-panel button {\n"
+"    background-image: none;\n"
+"    background-color: @SURFACE;\n"
+"    color: @OFF_WHITE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 5px;\n"
+"    box-shadow: none;\n"
+"    padding: 3px 8px;\n"
+"    }\n"
+"  .decode-panel button:hover {\n"
+"    background-color: @SURFACE_HOVER;\n"
+"    }\n"
+"  .decode-panel button:checked, .decode-panel button:active {\n"
+"    background-color: @ACCENT_ON;\n"
+"    color: @ON_ACCENT;\n"
+"    border-color: @ACCENT_ON;\n"
+"    }\n"
+/* The FT8 panel arms and steers its transmitter with GTK's OWN .destructive-
+   action / .suggested-action classes, and those live in the theme provider --
+   lower priority than this sheet, so the plain `button` rule above would quietly
+   take the red off "Enable Tx" while the transmitter is armed and the highlight
+   off the active Tx1..Tx6 message. Restate both from the palette. */
+"  .decode-panel button.destructive-action {\n"
+"    background-color: @WARNING;\n"
+"    color: @ON_ACCENT;\n"
+"    border-color: @WARNING;\n"
+"    }\n"
+"  .decode-panel button.suggested-action {\n"
+"    background-color: @ACCENT_A;\n"
+"    color: @BACKGROUND;\n"
+"    border-color: @ACCENT_A;\n"
+"    }\n"
+"  .decode-panel entry, .decode-panel spinbutton {\n"
+"    background-image: none;\n"
+"    background-color: @SURFACE;\n"
+"    color: @OFF_WHITE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 5px;\n"
+"    box-shadow: none;\n"
+"    }\n"
+"  .decode-panel entry > text > placeholder {\n"
+"    color: @DARK_TEXT;\n"
+"    }\n"
+"  .decode-panel spinbutton > button {\n"
+"    background-color: transparent;\n"
+"    border-style: none;\n"
+"    border-radius: 0px;\n"
+"    }\n"
+"  .decode-panel dropdown > button {\n"
+"    background-image: none;\n"
+"    background-color: @SURFACE;\n"
+"    color: @OFF_WHITE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 5px;\n"
+"    box-shadow: none;\n"
+"    }\n"
+"  .decode-panel check, .decode-panel radio {\n"
+"    background-image: none;\n"
+"    background-color: @SURFACE;\n"
+"    border-color: @BORDER;\n"
+"    }\n"
+"  .decode-panel check:checked, .decode-panel radio:checked {\n"
+"    background-image: none;\n"
+"    background-color: @ACCENT_A;\n"
+"    border-color: @ACCENT_A;\n"
+"    color: @BACKGROUND;\n"
+"    }\n"
+/* A GtkPopover is a surface of its own but still a child node of the widget it
+   hangs off, so the drop-down lists inside a panel (FT8/FT4, Even/Odd, the SSTV
+   and WEFAX mode pickers) are reachable from here -- unlike a tooltip, which
+   has to be styled globally further down. */
+"  .decode-panel popover > contents {\n"
+"    background-color: @SURFACE;\n"
+"    color: @OFF_WHITE;\n"
+"    border: 1px solid @BORDER;\n"
+"    border-radius: 6px;\n"
+"    }\n"
+"  .decode-panel popover > arrow {\n"
+"    background-color: @SURFACE;\n"
+"    border: 1px solid @BORDER;\n"
+"    }\n"
+"  .decode-panel popover row:selected {\n"
+"    background-color: @ACCENT_ON;\n"
+"    color: @ON_ACCENT;\n"
+"    }\n"
+/* HFDL and ACARS put their message list and their station/aircraft tables in a
+   notebook. */
+"  .decode-panel notebook > header {\n"
+"    background-color: @BACKGROUND;\n"
+"    border-color: @BORDER;\n"
+"    }\n"
+"  .decode-panel notebook > header tab {\n"
+"    color: @DARK_TEXT;\n"
+"    }\n"
+"  .decode-panel notebook > header tab:checked {\n"
+"    color: @OFF_WHITE;\n"
+"    box-shadow: inset 0 -3px @ACCENT_A;\n"
+"    }\n"
+"  .decode-panel notebook > stack {\n"
+"    background-color: @BACKGROUND;\n"
+"    }\n"
+"  .decode-panel scrollbar {\n"
+"    background-color: @SURFACE;\n"
+"    border-style: none;\n"
+"    }\n"
+"  .decode-panel scrollbar slider {\n"
+"    background-color: @BORDER;\n"
+"    }\n"
+"  .decode-panel scrollbar slider:hover {\n"
+"    background-color: @DARK_TEXT;\n"
+"    }\n"
+"  .decode-panel separator {\n"
+"    background-color: @BORDER;\n"
+"    }\n"
+/* Same reason as the #config-dialog block below: the colours above apply in
+   every state, so without this an insensitive control looks fully active. */
+"  .decode-panel button:disabled,\n"
+"  .decode-panel entry:disabled,\n"
+"  .decode-panel spinbutton:disabled,\n"
+"  .decode-panel dropdown:disabled,\n"
+"  .decode-panel checkbutton:disabled,\n"
+"  .decode-panel label:disabled {\n"
+"    opacity: 0.4;\n"
+"    }\n"
 /* ---- Configuration dialog: flat-dark, scoped under #config-dialog so the ----
    ---- main window (which paints its own named widgets) is never touched. ---- */
 "  #config-dialog {\n"
@@ -1224,8 +1405,23 @@ void css_set_theme(int idx) {
 
   // Ask GTK for the light/dark variant of stock widgets (combobox popups, menus,
   // scrollbars, tooltips) so they match the skin.
+  //
+  // Both spellings, because 4.20 replaced the first with the second and the two
+  // do not coexist gracefully: measured on 4.22, once gtk-interface-color-scheme
+  // has been written at all — to ANY value, UNSUPPORTED included — a later
+  // gtk-application-prefer-dark-theme=TRUE has no effect whatever. So a desktop
+  // that reports its own colour scheme silently takes the stock widgets away
+  // from the skin, and the deprecated flag cannot take them back. Never leave
+  // the new setting at DEFAULT/UNSUPPORTED for the same reason: that IS the
+  // "follow the desktop" state.
   g_object_set(gtk_settings_get_default(),
                "gtk-application-prefer-dark-theme",themes[idx].dark,NULL);
+#if GTK_CHECK_VERSION(4,20,0)
+  g_object_set(gtk_settings_get_default(),
+               "gtk-interface-color-scheme",
+               themes[idx].dark ? GTK_INTERFACE_COLOR_SCHEME_DARK
+                                : GTK_INTERFACE_COLOR_SCHEME_LIGHT,NULL);
+#endif
 
   // The two font families are substituted rather than written into css_body:
   // they are an operator setting (see css_set_fonts) because no single family

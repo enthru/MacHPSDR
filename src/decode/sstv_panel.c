@@ -311,6 +311,9 @@ GtkWidget *sstv_panel_create(void) {
   SstvPanel *p = g_new0(SstvPanel, 1);
 
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  // The panel is stock GTK widgets, which paint themselves from the platform
+  // theme rather than the skin -- see the .decode-panel block in css.c.
+  gtk_widget_add_css_class(box, "decode-panel");
   // Breathing room so the rows don't sit flush against the panel edges (as in
   // the FT8 panel).
   gtk_widget_set_margin_start(box, 8);
