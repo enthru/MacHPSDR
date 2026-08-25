@@ -58,12 +58,48 @@ typedef struct _choice {
 // flat button, gtk_menu_shell_append() adds it (and wires popdown-on-click), and
 // gtk_menu_popup_at_pointer() shows it.  Menu-item callbacks are connected to
 // "clicked" (see the "activate"->"clicked" migration).
+/* GTK4 neither scrolls nor clamps an over-tall popover: if the popup does not
+   fit on the monitor, gdk_popup_present() fails, the widget is never mapped and
+   NOTHING appears -- no menu, no warning, no log line. The band stack is one
+   flat list of every band's title followed by its stack entries: 69 rows for an
+   HPSDR radio, 111 once a SoapySDR device brings in the VHF/UHF bands, roughly
+   34 px each. So the whole band menu had simply stopped being drawn. Measured
+   on a 982 px display with the popover anchored at the VFO row: 20 rows
+   (704 px) mapped, 25 rows (866 px) did not. Every menu built here therefore
+   hangs its rows in a GtkScrolledWindow capped at two thirds of the monitor --
+   short menus keep their natural height and look exactly as before
+   (propagate-natural-height), a long one scrolls instead of vanishing. */
+static int vfo_menu_max_height(GtkWidget *relto) {
+  int h=400;
+  GtkNative *nat=gtk_widget_get_native(relto);
+  GdkSurface *surface=(nat!=NULL)?gtk_native_get_surface(nat):NULL;
+  GdkDisplay *display=gtk_widget_get_display(relto);
+  GdkMonitor *monitor=(surface!=NULL && display!=NULL)
+                        ?gdk_display_get_monitor_at_surface(display,surface):NULL;
+  if(monitor!=NULL) {
+    GdkRectangle geometry;
+    gdk_monitor_get_geometry(monitor,&geometry);
+    h=(geometry.height*2)/3;
+  }
+  if(h<300) h=300;   // a monitor too short for that is still owed a usable menu
+  return h;
+}
+
 static GtkWidget *vfo_pop_new(GtkWidget *relto) {
   GtkWidget *pop=gtk_popover_new();
   gtk_widget_set_parent(pop,relto);
   gtk_popover_set_has_arrow(GTK_POPOVER(pop),FALSE);
   GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
-  gtk_popover_set_child(GTK_POPOVER(pop),box);
+  GtkWidget *sw=gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(sw),TRUE);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(sw),TRUE);
+  gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(sw),vfo_menu_max_height(relto));
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw),box);
+  gtk_popover_set_child(GTK_POPOVER(pop),sw);
+  /* The rows now live one level below the popover's child, so remember the box
+     rather than making every append site know the internal shape. */
+  g_object_set_data(G_OBJECT(pop),"vfo-menu-box",box);
   g_signal_connect_swapped(pop,"closed",G_CALLBACK(gtk_widget_unparent),pop);
   return pop;
 }
@@ -91,7 +127,7 @@ static GtkWidget *vfo_menu_button(const char *label) {
   return b;
 }
 static void vfo_menu_append(GtkWidget *pop, GtkWidget *item) {
-  GtkWidget *box=gtk_popover_get_child(GTK_POPOVER(pop));
+  GtkWidget *box=(GtkWidget *)g_object_get_data(G_OBJECT(pop),"vfo-menu-box");
   gtk_box_append(GTK_BOX(box),item);
   g_signal_connect_swapped(item,"clicked",G_CALLBACK(gtk_popover_popdown),pop);
 }
@@ -1563,7 +1599,7 @@ static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double
         // GTK4: no submenus in this flat popover — the band title is a
         // non-clickable header and its entries follow it in the same popover.
         GtkWidget *band_menu=menu;
-        menu_item=gtk_menu_item_new_with_label(band->title);
+        menu_item=gtk_menu_item_new_with_label(band_display_name(i));
         gtk_widget_set_sensitive(menu_item,FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu),menu_item);
 
