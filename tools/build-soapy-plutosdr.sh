@@ -86,10 +86,21 @@ build() {  # build <dir> <extra cmake args...>
   # directory as its install name, and dylibbundler then cannot rewrite what it
   # cannot resolve.  With it the reference is an absolute path in this prefix,
   # which resolves, gets copied into the bundle and gets relinked.
+  #
+  # CMAKE_INSTALL_RPATH is the ELF half of exactly the same problem, and it is
+  # needed for the same reason and by the same kind of tool.  A Linux .so has no
+  # install name; CMake strips the build rpath at install time, so the PlutoSDR
+  # module ships a bare DT_NEEDED of libiio.so.0 and nothing that says where
+  # that lives -- and libiio lives in THIS PREFIX, not on the system path.
+  # linuxdeploy then stops with "Could not find dependency: libiio.so.0".  The
+  # absolute path baked in here does not survive into the bundle: linuxdeploy
+  # rewrites it to $ORIGIN when it copies the library in, exactly as
+  # dylibbundler rewrites the install name.
   cmake -S "$WORK/$dir" -B "$WORK/$dir/build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
         -DCMAKE_INSTALL_NAME_DIR="$PREFIX/lib" \
+        -DCMAKE_INSTALL_RPATH="$PREFIX/lib" \
         -DCMAKE_PREFIX_PATH="$PREFIX;$EXTRA_PREFIX" \
         "$@" >/dev/null
   # TARGET=<name> builds that target instead of everything, which is how a
