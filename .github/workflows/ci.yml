@@ -12,6 +12,12 @@
 # harnesses still LINK (half the value — that is the failure that went unseen),
 # and the DSP/decoder layers they cover still produce the expected answers.
 #
+# Each platform also produces the bundle its users install: `make app` ->
+# MacHPSDR-arm64.zip on macOS, `make appimage` -> a single .AppImage on Linux.
+# Both are asserted to carry their dlopen'd SoapySDR drivers, because that is
+# the one defect no build step can notice (release 4.1 shipped it).  NEITHER IS
+# STARTED: what CI settles is that the bundle is complete, never that it runs.
+#
 # There is a third job, `macos-intel`, which does the same for x86_64 macOS and
 # runs only on a tag or a manual dispatch.  Its own comment block says why that
 # is where the line was drawn -- and it is NOT money, whatever an earlier
@@ -175,6 +181,133 @@ jobs:
           name: selftest-images-${{ matrix.os }}
           path: selftest-images/
           if-no-files-found: error
+
+      # =====================================================================
+      # The Linux bundle: an AppImage, the counterpart of the .app below and of
+      # windows.yml's package.  Same justification as the .app -- it is
+      # buildable locally, but a per-commit artifact is what lets a second
+      # machine run the change with no toolchain on it.
+      #
+      # THE GLIBC FLOOR IS THIS RUNNER'S, and that is not a detail to leave
+      # implicit on a release asset: nothing here bundles glibc (nothing can --
+      # it is the loader), so an AppImage built on ubuntu-24.04 needs glibc
+      # >= 2.39 and will not start on Debian 12, Ubuntu 22.04 or Mint 21.  It
+      # cannot be built on those either: the tree needs GtkFileDialog, which is
+      # GTK 4.10+, and they ship 4.6/4.8.  Moving the floor means building GTK
+      # from source in an old container, which is a project of its own.
+      #
+      # These packages are NOT build dependencies and deliberately do not go in
+      # the step above, which is CLAUDE.md's documented apt line verbatim.
+      # soapysdr-module-* are the dlopen'd device drivers -- nothing links
+      # against them and `make` does not care, but an AppImage without them
+      # enumerates nothing and reads to its user as a broken receiver, which is
+      # exactly what release 4.1's macOS bundle did.  librsvg2-common is the
+      # pixbuf SVG loader the icon theme needs; patchelf is how linuxdeploy
+      # rewrites rpaths.
+      #
+      # The package that carries gdk-pixbuf-query-loaders has been renamed
+      # twice, so it is asked for by whichever name this release actually has
+      # rather than by one that will be wrong on the next -- finding none of
+      # them is still an error.
+      - name: Install AppImage bundling dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          sudo apt-get install -y --no-install-recommends \
+            librsvg2-common desktop-file-utils patchelf file soapysdr-tools
+          for p in libgdk-pixbuf-2.0-bin libgdk-pixbuf-2.0-dev libgdk-pixbuf2.0-dev; do
+            if apt-cache show "$p" >/dev/null 2>&1; then
+              sudo apt-get install -y --no-install-recommends "$p"; pixbuf=$p; break
+            fi
+          done
+          [ -n "${pixbuf:-}" ] || { echo "no gdk-pixbuf query-loaders package on this release"; exit 1; }
+          if apt-cache show soapysdr-module-all >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends soapysdr-module-all
+          else
+            sudo apt-get install -y --no-install-recommends \
+              soapysdr-module-hackrf soapysdr-module-rtlsdr soapysdr-module-remote \
+              soapysdr-module-plutosdr
+          fi
+
+      - name: Build the AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: make appimage
+
+      # WHAT IS BUNDLED, checked by name -- and what this does NOT check.
+      #
+      # The obvious test, "extract it into a bare container and let ldd find
+      # anything missing", produces FALSE FAILURES here and was written and
+      # thrown away: an AppImage deliberately does not carry libGL, libEGL,
+      # libdrm, libX11, libwayland or libxkbcommon (the AppImage excludelist,
+      # which linuxdeploy applies by default), because GTK4's GSK renderer has
+      # to talk to the host's own graphics driver.  In a container without a
+      # desktop those all read `not found` and the check fails on a bundle that
+      # is correct.  Re-creating the excludelist here to filter them would be
+      # encoding a guess at someone else's list.
+      #
+      # So: assert that the libraries that MUST travel are physically inside,
+      # by name.  That is the failure release 4.1 shipped on macOS -- a bundle
+      # missing a dlopen'd driver, or one that quietly picked the host's copy of
+      # a library at build time and carried none.  Then load the drivers with
+      # the bundle's own libraries ahead of the runner's, which is the one check
+      # a broken library graph cannot survive.
+      #
+      # What is left over, and what the operator's machine is for: that it
+      # STARTS on a distribution that is not this runner.  Nothing in CI can
+      # settle that -- no display, no sound card, no radio.
+      - name: What the AppImage carries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          LIB=AppDir/usr/lib
+          for want in libgtk-4 libwdsp libliquid libSoapySDR libsoundio libfftw3; do
+            ls "$LIB" "$LIB"/../bin/wdsp 2>/dev/null | grep -q "^$want" || {
+              echo "not bundled: $want"; ls "$LIB"; exit 1; }
+          done
+          echo "bundled: $(ls "$LIB" | wc -l) libraries, $(du -sh AppDir | cut -f1) AppDir"
+
+          # The drivers load and register their factories, with the BUNDLE's
+          # libraries first on the search path.  SoapySDRUtil is the runner's,
+          # so this proves the graph is complete, not where it was resolved
+          # from -- exactly the claim the macOS job's load test makes.
+          # The three drivers BY NAME: a packaging change that quietly stops
+          # producing one of them would otherwise pass on the other two.
+          MODS=$(ls -d "$LIB"/SoapySDR/modules* | head -1)
+          for m in HackRF rtlsdr PlutoSDR; do
+            ls "$MODS" | grep -qi "$m" || { echo "missing driver: $m"; ls "$MODS"; exit 1; }
+          done
+          out=$(LD_LIBRARY_PATH="$PWD/$LIB" SOAPY_SDR_PLUGIN_PATH="$PWD/$MODS" SoapySDRUtil --info)
+          echo "$out" | grep -F "$PWD/$MODS" || { echo "the bundled modules did not load"; exit 1; }
+          facs=$(echo "$out" | grep -E '^Available factories')
+          for f in hackrf rtlsdr plutosdr; do
+            echo "$facs" | grep -qw "$f" || { echo "factory not registered: $f"; exit 1; }
+          done
+          echo "SoapySDR drivers: hackrf, rtlsdr, plutosdr -- loading from the bundle"
+
+      - name: Upload the AppImage (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: MacHPSDR-AppImage-x86_64
+          path: ./*.AppImage
+          if-no-files-found: error
+
+      # Same create-or-find race as the macOS and Windows jobs: three workflows
+      # can arrive here first and none can wait for the others.
+      - name: Attach the AppImage to the release (tag builds only)
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          for i in 1 2 3 4 5; do
+            gh release view "$TAG" >/dev/null 2>&1 && break
+            gh release create "$TAG" --verify-tag --title "" --notes "" && break
+            sleep $((i * 5))
+          done
+          gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" ./*.AppImage --clobber
 
       # The .app, for the platform this fork exists for.  windows.yml uploads a
       # package because nobody here can build one; this one is uploaded for the

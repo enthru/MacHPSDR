@@ -1064,6 +1064,8 @@ clean:
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
+	-rm -rf AppDir build/appimage-tools
+	-rm -f *.AppImage
 
 # Windows counterpart of the `app` target: a self-contained folder built around
 # the .exe.  Only useful from MSYS2 — the loader cache it has to generate is made
@@ -1073,6 +1075,18 @@ WIN_PKG_DIR=machpsdr-win64
 .PHONY: win-package
 win-package: $(PROGRAM)
 	bash tools/win-package.sh $(WIN_PKG_DIR)
+
+# Linux counterpart of `app`/`win-package`: a single self-contained AppImage.
+# Linux only, and it needs linuxdeploy + its GTK plugin, which the script
+# downloads.  The glibc floor of the result is the BUILD machine's -- the script
+# says so at length, and it is the one property of an AppImage people assume
+# away.  Two apt packages beyond the build dependencies are wanted for a bundle
+# that is any use: soapysdr-module-all (the dlopen'd device drivers, which
+# nothing links against and no dependency walker can find) and librsvg2-common
+# (the pixbuf SVG loader GTK's icon theme needs).
+.PHONY: appimage
+appimage: $(PROGRAM)
+	bash tools/build-appimage.sh
 
 APP_NAME=MacHPSDR
 APP_BUNDLE=$(APP_NAME).app
