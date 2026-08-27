@@ -37,13 +37,16 @@ through to what it did before.
 
 #include <stdio.h>
 #include <string.h>
+/* access()/F_OK, and readlink() on Linux.  UNCONDITIONAL, including on Windows:
+   the exe-dir probe below returns early there, but the code still has to
+   COMPILE, and MinGW-w64 provides this header with both.  Guarding the include
+   on !_WIN32 and leaving the call site is how the first version of this file
+   broke the MSYS2 build while macOS and Linux stayed green. */
+#include <unistd.h>
 #include <glib.h>
 
 #if defined(__APPLE__)
   #include <mach-o/dyld.h>
-  #include <unistd.h>
-#elif !defined(_WIN32)
-  #include <unistd.h>
 #endif
 
 /* The directory holding this process's executable, or NULL if it cannot be
