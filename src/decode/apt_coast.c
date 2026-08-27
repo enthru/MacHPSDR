@@ -27,6 +27,7 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "resource_path.h"
 #include "apt_coast.h"
 #include "log.h"
 
@@ -52,17 +53,9 @@ static FILE *open_coast(void) {
   if (env && env[0]) { FILE *f = try_open(env); if (f) return f; }
 
   char path[1024];
-#ifdef __APPLE__
-  char exe[1024]; uint32_t sz = sizeof(exe);
-  if (_NSGetExecutablePath(exe, &sz) == 0) {
-    char *slash = strrchr(exe, '/');
-    if (slash) {
-      *slash = '\0';
-      snprintf(path, sizeof(path), "%s/../Resources/coastline.bin", exe);
-      FILE *f = try_open(path); if (f) return f;
-    }
+  if (machpsdr_resource_path("coastline.bin", path, sizeof(path))) {
+    FILE *f = try_open(path); if (f) return f;
   }
-#endif
   { FILE *f = try_open("assets/coastline.bin"); if (f) return f; }
   { FILE *f = try_open("coastline.bin"); if (f) return f; }
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/coastline.bin", g_get_home_dir());

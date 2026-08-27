@@ -29,6 +29,7 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "resource_path.h"
 #include "ft8_dxcc.h"
 
 // ---- parsed entity table ---------------------------------------------------
@@ -142,18 +143,11 @@ static FILE *open_cty(void) {
 
   char path[1024];
 
-#ifdef __APPLE__
-  // Next to the executable, inside the .app bundle (Contents/Resources).
-  char exe[1024]; uint32_t sz = sizeof(exe);
-  if (_NSGetExecutablePath(exe, &sz) == 0) {
-    char *slash = strrchr(exe, '/');
-    if (slash) {
-      *slash = '\0';
-      snprintf(path, sizeof(path), "%s/../Resources/cty.dat", exe);
-      FILE *f = try_open(path); if (f) return f;
-    }
+  // Next to the executable: the .app bundle's Contents/Resources, an AppImage's
+  // or a prefix install's share/machpsdr, or assets/ beside the binary.
+  if (machpsdr_resource_path("cty.dat", path, sizeof(path))) {
+    FILE *f = try_open(path); if (f) return f;
   }
-#endif
 
   // Repo/cwd (running straight from the source tree): assets/ first, then a
   // bare cwd copy for older layouts.

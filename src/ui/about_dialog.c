@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <wdsp.h>
+#include "resource_path.h"
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -90,20 +91,10 @@ static GtkWidget *about_group(GtkWidget *page, int *page_row, const char *title)
 static GtkWidget *about_logo(void) {
   char path[1024];
 
-  path[0]='\0';
-#ifdef __APPLE__
-  char exe_path[1024];
-  uint32_t size=sizeof(exe_path);
-  if(_NSGetExecutablePath(exe_path,&size)==0) {
-    char *last_slash=strrchr(exe_path,'/');
-    if(last_slash) {
-      *last_slash='\0';
-      snprintf(path,sizeof(path),"%s/../Resources/machpsdr.png",exe_path);
-      if(access(path,F_OK)!=0) path[0]='\0';
-    }
-  }
-#endif
-  if(path[0]=='\0') {
+  // Beside the executable first (the .app's Resources, an AppImage's or a
+  // prefix install's share/machpsdr, assets/ next to the binary), then the cwd
+  // probes that make a run straight out of the repo work.
+  if(!machpsdr_resource_path("machpsdr.png",path,sizeof(path))) {
     if(access("assets/machpsdr.png",F_OK)==0) {
       strcpy(path,"assets/machpsdr.png");
     } else if(access("machpsdr.png",F_OK)==0) {

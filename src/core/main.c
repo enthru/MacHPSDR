@@ -57,6 +57,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "resource_path.h"
 #include "main.h"
 #include "audio.h"
 #include "protocol1.h"
@@ -726,40 +727,29 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
 #endif
   log_info("opengl: %d\n",opengl);
 
-#ifdef __APPLE__
-  // Load the window icon from the .app bundle (Contents/Resources), or from
-  // the current directory when running ./machpsdr straight from the repo.
-  // Never read it from a system-wide location on macOS.
-  char exe_path[1024];
-  uint32_t size = sizeof(exe_path);
-  png_path[0] = '\0';
-  if (_NSGetExecutablePath(exe_path, &size) == 0) {
-    char *last_slash = strrchr(exe_path, '/');
-    if (last_slash) {
-      *last_slash = '\0';
-      snprintf(png_path, sizeof(png_path), "%s/../Resources/machpsdr.png", exe_path);
+  // Beside the executable first -- the .app's Contents/Resources, an AppImage's
+  // or a prefix install's share/machpsdr, assets/ next to the binary -- because
+  // that is the copy that SHIPPED with this build.  Only then the working
+  // directory, which is what makes ./machpsdr work straight out of the repo.
+  //
+  // The absolute /usr/share fallback stays for a system install and stays LAST:
+  // inside an AppImage it names a path on the host, not in the bundle, and the
+  // probe above is what finds the bundled one.
+  if (!machpsdr_resource_path("machpsdr.png", png_path, sizeof(png_path))) {
+    if (access("assets/machpsdr.png", F_OK) == 0) {
+      strcpy(png_path, "assets/machpsdr.png");
+    } else if (access("machpsdr.png", F_OK) == 0) {
+      strcpy(png_path, "machpsdr.png");
+#ifndef __APPLE__
+    } else if (access("/usr/share/machpsdr/machpsdr.png", F_OK) == 0) {
+      strcpy(png_path, "/usr/share/machpsdr/machpsdr.png");
+#endif
+    } else {
+      // Nothing found; GtkPicture renders an empty widget rather than failing.
+      strcpy(png_path, "machpsdr.png");
     }
   }
-  if (png_path[0] == '\0' || access(png_path, F_OK) != 0) {
-    // Local fallback when running ./machpsdr straight from the repo: the icon
-    // lives in assets/. Keep the bare cwd name too for older layouts.
-    if (access("assets/machpsdr.png", F_OK) == 0)
-      strcpy(png_path, "assets/machpsdr.png");
-    else
-      strcpy(png_path, "machpsdr.png");
-  }
-  log_info("PNG path (macOS): %s\n", png_path);
-#else
-  // Prefer an icon next to the binary / in the working directory; fall back to
-  // an installed copy under /usr/share only if there is no local one.
-  if (access("assets/machpsdr.png", F_OK) == 0) {
-    strcpy(png_path, "assets/machpsdr.png");
-  } else if (access("machpsdr.png", F_OK) == 0) {
-    strcpy(png_path, "machpsdr.png");
-  } else {
-    strcpy(png_path, "/usr/share/machpsdr/machpsdr.png");
-  }
-#endif
+  log_info("splash PNG: %s\n", png_path);
 
   main_window = gtk_application_window_new (app);
   snprintf(title,sizeof(title),"MacHPSDR (%s, %s)",version,build_date);
