@@ -209,13 +209,24 @@ jobs:
       # twice, so it is asked for by whichever name this release actually has
       # rather than by one that will be wrong on the next -- finding none of
       # them is still an error.
+      #
+      # cmake/libusb/libxml2/avahi are libiio's, for the PlutoSDR step below.
+      # AVAHI IS NOT OPTIONAL HERE even though it looks like trimming: libiio's
+      # CMake refuses to configure without it unless DNS-SD is turned off, and
+      # turning it off is a behaviour change, not a build tweak.  DNS-SD is how
+      # SoapyPlutoSDR's find() locates a Pluto on the network when it is given
+      # no arguments -- which is exactly how this app calls enumerate.  macOS
+      # gets the same capability from Bonjour, built in, which is why that
+      # platform never had to name a package for it; switching it off on Linux
+      # alone would mean a networked Pluto that a Mac discovers and a Linux box
+      # silently does not.
       - name: Install AppImage bundling dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           set -e
           sudo apt-get install -y --no-install-recommends \
             librsvg2-common desktop-file-utils patchelf file soapysdr-tools \
-            cmake libusb-1.0-0-dev libxml2-dev
+            cmake libusb-1.0-0-dev libxml2-dev libavahi-client-dev
           for p in libgdk-pixbuf-2.0-bin libgdk-pixbuf-2.0-dev libgdk-pixbuf2.0-dev; do
             if apt-cache show "$p" >/dev/null 2>&1; then
               sudo apt-get install -y --no-install-recommends "$p"; pixbuf=$p; break
