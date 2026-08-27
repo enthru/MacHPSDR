@@ -42,6 +42,19 @@ void SetDSPMult (int mult)
 	dsp_mult_global = mult;
 }
 
+// The depth THIS channel's ring was actually built with.  SetDSPMult only moves a
+// global; create_iobuffs is what reads it, and that runs only when something
+// rebuilds the ring (a size or a rate that genuinely changed).  A caller that sets
+// the depth and then does not rebuild gets the previous one and no complaint from
+// anywhere, so the number has to be readable back.
+PORT
+int GetDSPMult (int channel)
+{
+	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
+	if (ch[channel].iob.pc == 0) return 0;
+	return ch[channel].iob.pc->dsp_mult;
+}
+
 /********************************************************************************************************
 *																										*
 *										    Begin Slew Code												*

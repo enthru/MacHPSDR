@@ -81,6 +81,7 @@ extern void flush_slews (IOB a);
 
 PORT
 void SetDSPMult (int mult);						// set ring depth for channels created AFTER this call
+int  GetDSPMult (int channel);					// the depth this channel's ring was actually built with
 
 extern void create_iobuffs (int channel);
 

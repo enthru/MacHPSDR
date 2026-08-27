@@ -513,6 +513,25 @@ static int rx_ring_depth_for(RECEIVER *rx,int dsp_rate) {
   return depth;
 }
 
+// Did the ring actually come out at the depth we asked for?  SetDSPMult moves a
+// global that create_iobuffs reads, and create_iobuffs runs only when something
+// REBUILDS the ring -- SetInputBuffsize/SetDSPBuffsize when their size moves,
+// SetAllRates when one of the three rates moves.  Set the depth after the last
+// rebuild, or in a hop where none of those numbers moves, and the channel keeps
+// the previous span's depth while every log line says otherwise.  That failure
+// is inaudible as a fault and audible as a symptom -- a shallow ring against a
+// bursty USB device drops a block per burst, i.e. a buzz at the audio-block rate
+// -- so the number is read back out of the channel and the disagreement is
+// named.  One integer compare, on a path taken a few times a session.
+static void rx_ring_depth_check(RECEIVER *rx,int want) {
+  const int got=GetDSPMult(rx->channel);
+  if(got!=want) {
+    log_error("rx_ring_depth_check: channel %d asked for a ring %d slots deep and got %d -- "
+              "nothing rebuilt it after SetDSPMult, so this receiver is running on the "
+              "previous geometry's depth\n",rx->channel,want,got);
+  }
+}
+
 // Position the zoomed panadapter/waterfall pan window so the cursor (the
 // freetune/ctun listening frequency, i.e. frequency_a + ctun_offset) sits in
 // the middle of the visible area instead of the span centre. At zoom==1 there
@@ -571,12 +590,6 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   rx->audio_output_buffer=NULL;
   rx->sample_rate=sample_rate;
 
-  // Re-match the iobuff ring depth FIRST: create_iobuffs captures it, and every
-  // rebuild below (the two Buffsize setters as much as SetAllRates) goes through
-  // create_iobuffs.  The geometry it is measured against is set a few lines
-  // down, so this is re-asserted after the feed is rebuilt.
-  SetDSPMult(rx_ring_depth(rx->sample_rate));
-
   // Crossing into or out of the ultrawide tier changes the I/Q block (see
   // rx_iq_block); the DSP block follows from it in receiver_build_feed below.
   // The channel is stopped and both locks are held here, so this is where the
@@ -601,6 +614,28 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   // The feed (and with it the channel's input rate and in_size) belongs to the
   // span, so it is rebuilt here -- before the channel is re-rated below.
   receiver_build_feed(rx);
+
+  // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
+  rx->dsp_rate=(rx->mode_a==WFM)?rx_wfm_dsp_rate(rx):48000;
+
+  // The ring depth must be the FINAL one BEFORE the first rebuild, never after
+  // the last.  create_iobuffs captures the global wherever it stands, and every
+  // setter below rebuilds through it -- but SetAllRates rebuilds ONLY when one
+  // of the three rates actually moves, and across the fed spans none of them
+  // does: 768000, 1536000 and 1920000 all decimate to a 384000 channel, and in
+  // WFM the DSP runs at that same 384000, so a hop between any two of those (or
+  // to the unfed 384000 span) leaves in_rate/dsp_rate/out_rate all unchanged and
+  // SetAllRates is a no-op.  Asserting the depth after it therefore wrote a
+  // number no rebuild ever read, and the ring kept the placeholder this function
+  // used to set at its head -- 2 slots, i.e. 27 ms of input against the ~65 ms
+  // burst a USB device delivers in.  fexchange0 then answered -2 on every burst
+  // and the audio was chopped once per block, which at these spans is a hum
+  // (37.5 Hz on a 1280-sample audio block) rather than an audible click.  It
+  // cleared on restart because create_receiver and set_mode reach the same
+  // geometry through a dsp_rate that DID change, so their SetDSPMult was read.
+  const int ring_depth=rx_ring_depth_for(rx,rx->dsp_rate);
+  SetDSPMult(ring_depth);
+
   SetInputBuffsize(rx->channel,rx->dsp_in_block);
   SetDSPBuffsize(rx->channel,rx->dsp_size);
 
@@ -608,10 +643,8 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
   rx->hz_per_pixel=(double)rx->sample_rate/(double)rx->samples;
   //SetInputSamplerate(rx->channel, sample_rate);
-  // Keep the wide DSP rate while in WFM (see set_mode); 48 kHz otherwise.
-  rx->dsp_rate=(rx->mode_a==WFM)?rx_wfm_dsp_rate(rx):48000;
-  SetDSPMult(rx_ring_depth_for(rx,rx->dsp_rate));
   SetAllRates(rx->channel,rx->dsp_in_rate,rx->dsp_rate,48000);
+  rx_ring_depth_check(rx,ring_depth);
   // The shift lives in the feed's NCO or in WDSP's block depending on what the
   // rebuild above decided, and the NCO's step is per-sample at the NEW rate.
   receiver_apply_shift(rx,rx->ctun_offset,rx->ctun||rx->freetune);
@@ -2041,13 +2074,15 @@ static void set_mode(RECEIVER *rx,int m) {
     // The ring depth belongs to the geometry the mode is about to impose: WFM
     // runs the DSP at the input rate, which shrinks WDSP's ring slot to one
     // block, and a burst-delivering device then overruns it (RX_RING_TARGET_MS).
-    SetDSPMult(rx_ring_depth_for(rx,desired_dsp));
+    const int ring_depth=rx_ring_depth_for(rx,desired_dsp);
+    SetDSPMult(ring_depth);
     // dsp_in_rate, NOT the span: with a feed in front the channel is open at the
     // decimated rate and is handed decimated blocks, so re-rating it to the span
     // here left it expecting 25600 samples where 1024 arrive -- silence until
     // something else re-rated it (a span change did, which is why the fault
     // looked like "no audio until you touch the Sample Rate menu").
     SetAllRates(rx->channel, rx->dsp_in_rate, desired_dsp, 48000);
+    rx_ring_depth_check(rx,ring_depth);
     SetChannelState(rx->channel,1,0);
     rx->dsp_rate = desired_dsp;
   }
