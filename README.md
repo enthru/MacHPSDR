@@ -48,7 +48,7 @@ feature additions.
 | Feature | Summary |
 |---|---|
 | **SoapySDR RX + TX** | Receive *and* transmit on SoapySDR devices — HackRF, RTL-SDR, LimeSDR, PlutoSDR (including one on another subnet, added by hand), SoapyRemote. Transmit is half-duplex on the HackRF/SoapySDR path, keyed from the mic or the built-in encoders, with the Drive slider setting output power *(keys up on real hardware without crashing; on-air signal quality still needs more testing — CW and PureSignal are not available on this path)*. |
-| **macOS, Linux and Windows** | One tree, three platforms: `make app` for a self-contained `MacHPSDR.app`, a plain `make` on Linux, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes both the macOS `.zip` and `machpsdr-win64.zip` *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
+| **macOS, Linux and Windows** | One tree, three platforms, each with a package that needs nothing installed on the target: `make app` for a self-contained `MacHPSDR.app`, `make appimage` for a single-file Linux **AppImage**, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes all three *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
 | **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
@@ -954,6 +954,31 @@ git clone https://github.com/enthru/MacHPSDR.git machpsdr
 cd machpsdr
 make
 ```
+
+```bash
+make appimage   # optional: a single-file, self-contained MacHPSDR-<ver>-x86_64.AppImage
+```
+
+`make appimage` bundles GTK4, the in-tree WDSP, liquid-dsp, SoapySDR and its
+**device drivers** into one file that needs nothing installed on the target:
+`chmod +x` it and run it. Two things it is worth knowing before handing one to
+somebody:
+
+- **The glibc floor is the machine that built it.** glibc is the loader and can
+  never be bundled, so the AppImage published from CI (Ubuntu 24.04) needs
+  **glibc 2.39 or newer** — Ubuntu 24.04+, Fedora 40+, Debian 13. It will not
+  start on Debian 12, Ubuntu 22.04 or Mint 21, and it cannot be *built* on those
+  either: the tree uses `GtkFileDialog`, which is GTK 4.10+, and they ship
+  4.6/4.8.
+- **The graphics stack deliberately comes from the host** (libGL, libEGL, libdrm,
+  libX11, libwayland, libxkbcommon are excluded on purpose): GTK4's GSK renderer
+  has to talk to the driver your kernel is actually running.
+
+The SoapySDR drivers are copied in by hand for the same reason as on macOS —
+they are `dlopen`'d, so nothing links against them and no dependency walker can
+see them. Install `soapysdr-module-all` (and run
+`tools/build-soapy-plutosdr.sh` for the Pluto, which Ubuntu does not package)
+before `make appimage`, or the bundle will enumerate no device at all.
 
 > **Do not** `git clone .../wdsp` and `sudo make install` it. This fork links the
 > **vendored, patched** WDSP under `wdsp/`; a system-wide upstream WDSP would
