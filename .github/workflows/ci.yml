@@ -214,7 +214,8 @@ jobs:
         run: |
           set -e
           sudo apt-get install -y --no-install-recommends \
-            librsvg2-common desktop-file-utils patchelf file soapysdr-tools
+            librsvg2-common desktop-file-utils patchelf file soapysdr-tools \
+            cmake libusb-1.0-0-dev libxml2-dev
           for p in libgdk-pixbuf-2.0-bin libgdk-pixbuf-2.0-dev libgdk-pixbuf2.0-dev; do
             if apt-cache show "$p" >/dev/null 2>&1; then
               sudo apt-get install -y --no-install-recommends "$p"; pixbuf=$p; break
@@ -228,6 +229,21 @@ jobs:
               soapysdr-module-hackrf soapysdr-module-rtlsdr soapysdr-module-remote \
               soapysdr-module-plutosdr
           fi
+
+      # PlutoSDR, on BOTH platforms and from pinned upstream tags, because
+      # neither packages it: Homebrew has neither the driver nor libiio, and
+      # Ubuntu's soapysdr-module-all turns out to carry twelve drivers and not
+      # that one (measured on this runner -- HackRF, rtlsdr, remote, Lime,
+      # airspy, bladeRF, uhd and five more, no Pluto).  It is the SDR this fork
+      # has done the most work for: every rate-substitution and coprime-resampler
+      # rule in CLAUDE.md came off a Pluto.  About a minute, three shallow
+      # clones, and the script REFUSES to finish if the module came out without
+      # libad9361 -- that library programmes the AD9361 FIR, i.e. it is the only
+      # way a Pluto reaches a rate below ~2.08 MHz instead of silently running
+      # eight times faster than it was asked to.  Both bundlers copy whatever it
+      # leaves in build/soapy-plutosdr.
+      - name: Build the PlutoSDR SoapySDR driver
+        run: tools/build-soapy-plutosdr.sh
 
       - name: Build the AppImage (Linux)
         if: runner.os == 'Linux'
@@ -325,14 +341,6 @@ jobs:
       # why the file says so in its name on a release as well as here.  Both
       # were true of the bundles built by hand for every release up to 4.0; what
       # is new is that the file now says which it is.
-      # PlutoSDR is not in Homebrew -- neither the driver nor libiio -- so it is
-      # built from pinned upstream tags here, the same way windows.yml builds
-      # liquid-dsp for the same reason.  About a minute, three shallow clones.
-      # `make app` copies whatever this leaves in build/soapy-plutosdr.
-      - name: Build the PlutoSDR SoapySDR driver
-        if: runner.os == 'macOS'
-        run: tools/build-soapy-plutosdr.sh
-
       - name: Bundle the .app (macOS)
         if: runner.os == 'macOS'
         run: |

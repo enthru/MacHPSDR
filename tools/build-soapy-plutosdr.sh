@@ -43,7 +43,7 @@ PREFIX="${1:-$ROOT/build/soapy-plutosdr}"
 WORK="$PREFIX/src"
 
 command -v cmake >/dev/null 2>&1 || {
-  echo "error: cmake not found (brew install cmake)" >&2; exit 1; }
+  echo "error: cmake not found (brew install cmake / apt-get install cmake)" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || {
   echo "error: git not found" >&2; exit 1; }
 
@@ -185,13 +185,29 @@ MODULE="$(find "$PREFIX/lib/SoapySDR" -name 'libPlutoSDRSupport.so' 2>/dev/null 
 # driver built without libad9361 answers such a request by running eight times
 # faster and saying nothing.  A silent downgrade is exactly the failure this
 # script exists to prevent, so it is an error here rather than a surprise later.
-if ! otool -L "$MODULE" 2>/dev/null | grep -q "libad9361"; then
+# It is asked of whichever tool this platform has: `otool -L` on macOS, the
+# dynamic section on Linux.  Written with otool alone it was a check that ran on
+# ONE platform and silently passed on the other -- and the Linux AppImage is
+# exactly where a Pluto operator would meet the substituted rate.
+deps_of() {
   if command -v otool >/dev/null 2>&1; then
-    echo "error: the driver was built WITHOUT libad9361 -- it cannot programme" >&2
-    echo "       the AD9361 FIR, so every rate below ~2.08 MHz will be" >&2
-    echo "       substituted by the hardware.  Check the unwrap step above." >&2
-    exit 1
+    otool -L "$1" 2>/dev/null
+  elif command -v objdump >/dev/null 2>&1; then
+    objdump -p "$1" 2>/dev/null | grep NEEDED
+  elif command -v readelf >/dev/null 2>&1; then
+    readelf -d "$1" 2>/dev/null | grep NEEDED
+  else
+    echo "__no_tool__"
   fi
+}
+DEPS="$(deps_of "$MODULE")"
+if [ "$DEPS" = "__no_tool__" ]; then
+  echo "warning: no otool/objdump/readelf here -- cannot check for libad9361" >&2
+elif ! echo "$DEPS" | grep -q "libad9361"; then
+  echo "error: the driver was built WITHOUT libad9361 -- it cannot programme" >&2
+  echo "       the AD9361 FIR, so every rate below ~2.08 MHz will be" >&2
+  echo "       substituted by the hardware, silently." >&2
+  exit 1
 fi
 
 echo "==> built $MODULE"

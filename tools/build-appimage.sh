@@ -29,8 +29,11 @@
 #     talks to a driver that does not match the running kernel/GPU.  linuxdeploy
 #     excludes them by default (the AppImage "excludelist"); do not override it.
 #
-#   * Nothing here says the result RUNS.  That is what the smoke test in ci.yml
-#     is for, and even that only starts it under Xvfb with the fake device.
+#   * Nothing here says the result RUNS.  Nothing in CI does either -- a runner
+#     has no display, no sound card and no radio, and this bundle is never
+#     started.  What CI settles is that it is COMPLETE (see ci.yml).  That it
+#     comes up on a distribution that is not the build one is the operator's
+#     machine to answer.
 # ---------------------------------------------------------------------------
 #
 # Usage:  tools/build-appimage.sh [output.AppImage]
@@ -88,11 +91,23 @@ install -m644 assets/machpsdr_icon.png \
 # drivers installed.  Copy them by hand, point SOAPY_SDR_PLUGIN_PATH at the copy
 # (the hook below), and let linuxdeploy resolve THEIR dependencies -- libhackrf,
 # librtlsdr, libusb, libiio, libad9361 -- with --deploy-deps-only.
+# TWO sources, one destination, exactly as `make app` has: the distribution's
+# own modules, and build/soapy-plutosdr for the driver no distribution here
+# packages (soapysdr-module-all on noble carries twelve drivers and not that
+# one).  tools/build-soapy-plutosdr.sh builds it against the pinned libiio 0.x
+# and refuses to finish without libad9361, which is what lets a Pluto run below
+# ~2.08 MHz instead of being silently given eight times the rate it asked for.
 SOAPY_MODS=$(ls -d /usr/lib/"$ARCH"-linux-gnu/SoapySDR/modules* /usr/lib/SoapySDR/modules* 2>/dev/null | head -1 || true)
+PLUTO_MODS=$(ls -d "$ROOT"/build/soapy-plutosdr/lib/SoapySDR/modules* 2>/dev/null | head -1 || true)
 if [ -n "$SOAPY_MODS" ] && ls "$SOAPY_MODS"/*.so >/dev/null 2>&1; then
     DEST=$APPDIR/usr/lib/SoapySDR/$(basename "$SOAPY_MODS")
     mkdir -p "$DEST"
     cp "$SOAPY_MODS"/*.so "$DEST"/
+    if [ -n "$PLUTO_MODS" ] && ls "$PLUTO_MODS"/*.so >/dev/null 2>&1; then
+        cp "$PLUTO_MODS"/*.so "$DEST"/
+    else
+        echo "==> note: no PlutoSDR module (run tools/build-soapy-plutosdr.sh first)"
+    fi
     echo "==> SoapySDR modules: $(ls "$DEST" | tr '\n' ' ')"
 else
     # Not fatal: an HPSDR-only build has no use for them, exactly as on macOS.

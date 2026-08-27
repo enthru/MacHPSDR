@@ -1,10 +1,10 @@
 [Desktop Entry]
-Version=0.1
+Version=1.0
 Type=Application
 Terminal=false
 Name[en_GB]=MacHPSDR
 Exec=machpsdr
 Icon=machpsdr
 Name=MacHPSDR
-Categories=HamRadio;Audio;Science;
+Categories=AudioVideo;Audio;HamRadio;
 Comment=SDR control application for HPSDR and SoapySDR hardware
