@@ -115,7 +115,22 @@ clone https://github.com/pothosware/SoapyPlutoSDR.git       "$PLUTO_TAG"  SoapyP
 # application, so the daemon, the command-line tools, the tests, the bindings
 # and the man pages are all things that would only be copied into a .app to sit
 # there unused.
+# INSTALL_UDEV_RULE=OFF is not trimming, it is the difference between building
+# and not: on Linux libiio's install rule writes 90-libiio.rules to an ABSOLUTE
+# /lib/udev/rules.d (UDEV_RULES_INSTALL_DIR, line 659 of its CMakeLists at this
+# tag), ignoring CMAKE_INSTALL_PREFIX entirely -- so the install step fails with
+# "Permission denied" as any non-root build must.  macOS has no udev and never
+# reached it.
+#
+# What that rule does, and therefore what a bundle without it does not do: it
+# grants a non-root user access to a Pluto attached over USB.  That is a
+# property of the HOST, not of a relocatable bundle -- an AppImage cannot
+# install into /lib and should not want to.  An operator using the Pluto over
+# its USB-Ethernet address (ip:192.168.2.1, the usual way) needs nothing; one
+# using a usb: context needs their distribution's libiio package, or the rule
+# by hand.
 build libiio \
+  -DINSTALL_UDEV_RULE=OFF \
   -DOSX_FRAMEWORK=OFF \
   -DWITH_TESTS=OFF \
   -DWITH_DOC=OFF \
