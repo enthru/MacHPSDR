@@ -178,6 +178,7 @@ jobs:
           name: machpsdr-win64
           path: machpsdr-win64/
           if-no-files-found: error
+          retention-days: 14
 
       # The release asset, from the same job that just ran the self-tests -- so
       # a package is attached only to a tag whose `make check` passed here.

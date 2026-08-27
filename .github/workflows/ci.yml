@@ -175,12 +175,24 @@ jobs:
           mkdir -p selftest-images
           ./sstv_offline --selftest -o selftest-images/sstv
 
+      # retention-days, on every artifact that is produced on EVERY push.  The
+      # default is 90 days, which for a repository that builds three bundles per
+      # commit is a gigabyte and a half of copies nobody will open again.  It
+      # costs nothing here (Actions storage is free on a public repository), so
+      # this is tidiness -- but a short window is also what makes the Actions tab
+      # readable.
+      #
+      # SAFE BECAUSE A RELEASE IS NOT AN ARTIFACT: a tag build uploads its bundle
+      # to the release with `gh release upload` (below), which is permanent
+      # storage that artifact retention does not touch.  Shortening this loses
+      # per-commit copies and nothing a release needs.
       - name: Upload decoded images
         uses: actions/upload-artifact@v7
         with:
           name: selftest-images-${{ matrix.os }}
           path: selftest-images/
           if-no-files-found: error
+          retention-days: 7
 
       # =====================================================================
       # The Linux bundle: an AppImage, the counterpart of the .app below and of
@@ -318,6 +330,7 @@ jobs:
           name: MacHPSDR-AppImage-x86_64
           path: ./*.AppImage
           if-no-files-found: error
+          retention-days: 14
 
       # Same create-or-find race as the macOS and Windows jobs: three workflows
       # can arrive here first and none can wait for the others.
@@ -408,6 +421,7 @@ jobs:
           name: MacHPSDR-app-arm64
           path: MacHPSDR-arm64.zip
           if-no-files-found: error
+          retention-days: 14
 
       # The release, built by the same job that just ran `make check` -- so an
       # asset exists only for a tag whose self-tests passed on this platform.
@@ -564,6 +578,7 @@ jobs:
           name: MacHPSDR-app-x86_64
           path: MacHPSDR-x86_64.zip
           if-no-files-found: error
+          retention-days: 14
 
       # Same create-or-find as the arm64 job: three jobs across two workflows
       # race for the release and none of them can wait for the others.
@@ -1053,6 +1068,10 @@ jobs:
       # is a hundred lines of stack that the step summary truncates.  Uploaded
       # only on failure — a green run's logs are 40 MB of DSP chatter nobody
       # will ever open.
+      # No retention-days here, unlike every other upload in these workflows:
+      # this one exists only when something FAILED, it is a few kilobytes, and a
+      # sanitiser failure is exactly the kind of thing that gets picked up weeks
+      # later.  The default 90 days is the right number for it.
       - name: Upload churn logs
         if: failure()
         uses: actions/upload-artifact@v7
