@@ -4,10 +4,10 @@
 
 **A GTK4 SDR control application for HPSDR hardware — a macOS-focused fork of [LinHPSDR](https://github.com/g0orx/linhpsdr).**
 
-*Single-window UI · colour skins · Broadcast FM + RDS · FT8/FT4 decode & QSO · SoapySDR RX/TX · I/Q recorder*
+*SoapySDR RX/TX · macOS · Linux · Windows · Single-window UI · colour skins · Broadcast FM + RDS · FT8/FT4 decode & QSO · I/Q recorder*
 
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 [![Language](https://img.shields.io/badge/language-C-orange.svg)]()
 
 </div>
@@ -47,6 +47,8 @@ feature additions.
 
 | Feature | Summary |
 |---|---|
+| **SoapySDR RX + TX** | Receive *and* transmit on SoapySDR devices — HackRF, RTL-SDR, LimeSDR, PlutoSDR (including one on another subnet, added by hand), SoapyRemote. Transmit is half-duplex on the HackRF/SoapySDR path, keyed from the mic or the built-in encoders, with the Drive slider setting output power *(keys up on real hardware without crashing; on-air signal quality still needs more testing — CW and PureSignal are not available on this path)*. |
+| **macOS, Linux and Windows** | One tree, three platforms: `make app` for a self-contained `MacHPSDR.app`, a plain `make` on Linux, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes both the macOS `.zip` and `machpsdr-win64.zip` *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
 | **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
@@ -65,7 +67,6 @@ feature additions.
 | **APF + variable squelch** | A CW **audio peak filter** (per-RX enable, bandwidth and gain in Configure → CW) that peaks the beat-note to lift weak CW out of the noise — on the sub-receiver too — plus a **mode-aware squelch**: the SQL bar gates FM (noise squelch) *and* SSB/AM/CW (amplitude/voice squelch), is remembered **per mode**, and its dB range and tail are settable in Configure → RX *(faker-tested; on-air threshold calibration pending hardware)*. |
 | **Spectrum display modes** | **Panadapter Automatic** fits the dB scale to the band by itself (noise floor at the bottom, strongest signal just under the top) so a quiet band and a loud one both fill the window without touching High/Low. Plus a **peak-hold** overlay trace with adjustable decay, a **histogram / persistence** (virtual-phosphor) heat display with adjustable fade, and selectable WDSP **detector** (Peak/Rosenfell/Average/Sample) and **averaging** (None/Recursive/Time Window/Log Recursive) modes — all per receiver and remembered between sessions. |
 | **TX speech processing** | Full transmit speech chain — CESSB, multiband CFC, phase rotator, a 10-band EQ (TX+RX) and per-stage Leveler/CFC/Compressor meters *(built + fake-tested, not yet verified on air)*. |
-| **SoapySDR TX** | Half-duplex transmit on HackRF / SoapySDR. |
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
 | **I/Q Player** | Play back a recorded I/Q WAV with no hardware — pick **"I/Q Player"** in the device list (always offered, last), then choose the file in **Configure → Radio** (live-swappable while it runs; empty ⇒ synthetic test signal), with a **frequency offset** for captures whose signal is not at the centre. Also `--faker <file>` from the CLI. |
