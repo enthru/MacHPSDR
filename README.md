@@ -20,8 +20,8 @@ feature additions.
 
 ## Table of contents
 
-- [Highlights](#highlights)
 - [Screenshots](#screenshots)
+- [Highlights](#highlights)
 - [Features](#features)
   - [Interface & appearance](#interface--appearance)
   - [Modes & decoding](#modes--decoding)
@@ -40,6 +40,35 @@ feature additions.
 - [Running](#running)
 - [User manual](#user-manual)
 - [License](#license)
+
+---
+
+## Screenshots
+
+**Main window** — all receivers in a single resizable window: panadapter and
+waterfall, S-meter and frequency display, and the bottom toolbar (TX Monitor,
+Mic & Drive, Transmit, RX Front-end, decoder block, Setup).
+
+![Main window](./doc/main.jpg)
+
+**FT8 panel** — the opt-in QSO panel with the rolling band-activity list (CQ rows
+in green), Tx1–Tx6 messages, FT8/FT4 protocol selector and TX offset, alongside
+the dedicated FT8 band waterfall on the right.
+
+![FT8 panel](./doc/ft8.jpg)
+
+**SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: the mode is
+auto-detected and the picture is painted line-by-line beside the receiver.
+
+![SSTV image panel](./doc/sstv.jpg)
+
+**Settings** — Configure → Display: colour-skin selection (applied immediately and
+remembered per radio), custom attenuator-button labels, and Broadcast FM
+de-emphasis / RDS options. Every slider in the settings dialogs shows its
+current numeric value beside the control, so you can read off the exact figure
+you've dialled in.
+
+![Settings — appearance & skin selection](./doc/settings.jpg)
 
 ---
 
@@ -70,35 +99,6 @@ feature additions.
 | **I/Q recorder** | Record off-air I/Q + demodulated audio to WAV; the I/Q file replays through the fake device. |
 | **PPM auto-calibration** | Set the oscillator correction automatically from a time-signal station's carrier (WWV/RWM/CHU/BPM…); fractional ppm, all device types. |
 | **I/Q Player** | Play back a recorded I/Q WAV with no hardware — pick **"I/Q Player"** in the device list (always offered, last), then choose the file in **Configure → Radio** (live-swappable while it runs; empty ⇒ synthetic test signal), with a **frequency offset** for captures whose signal is not at the centre. Also `--faker <file>` from the CLI. |
-
----
-
-## Screenshots
-
-**Main window** — all receivers in a single resizable window: panadapter and
-waterfall, S-meter and frequency display, and the bottom toolbar (TX Monitor,
-Mic & Drive, Transmit, RX Front-end, decoder block, Setup).
-
-![Main window](./doc/main.jpg)
-
-**FT8 panel** — the opt-in QSO panel with the rolling band-activity list (CQ rows
-in green), Tx1–Tx6 messages, FT8/FT4 protocol selector and TX offset, alongside
-the dedicated FT8 band waterfall on the right.
-
-![FT8 panel](./doc/ft8.jpg)
-
-**SSTV** — a live ISS (ARISS) **PD120** image decoded off-air: the mode is
-auto-detected and the picture is painted line-by-line beside the receiver.
-
-![SSTV image panel](./doc/sstv.jpg)
-
-**Settings** — Configure → Display: colour-skin selection (applied immediately and
-remembered per radio), custom attenuator-button labels, and Broadcast FM
-de-emphasis / RDS options. Every slider in the settings dialogs shows its
-current numeric value beside the control, so you can read off the exact figure
-you've dialled in.
-
-![Settings — appearance & skin selection](./doc/settings.jpg)
 
 ---
 
