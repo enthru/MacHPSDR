@@ -762,6 +762,40 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // ---- 22b. ...but a strong station well outside any LNB's error must NOT be
+  //           taken for the beacon. Measured on a real dish: with the beacon
+  //           64.8 kHz out, a carrier 398 kHz from the expectation was STRONGER
+  //           (1353x the window mean against 900x), and a sweep of the whole
+  //           span picked it often enough to reset the agreement run for ever.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,1920000);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double phase=0.0; guint32 seed=99;
+    long long beacon=qo100_beacon_frequency(0);
+    // Only the interloper: 398 kHz from where the beacon is expected, and the
+    // strongest thing in the span. Nothing may lock to it.
+    double interloper=(double)(beacon-rx->frequency_a)+398000.0;
+    for(int b=0;b<blocks*2;b++) {
+      gen_block(iq,BLOCK,interloper,1920000,1.0,0.05,&phase,&seed);
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    snprintf(d,sizeof(d),"locked=%d retunes=%d error_a=%lld",
+             qo100_beacon_locked(),retunes,(long long)rx->error_a);
+    check("a strong station 398 kHz away is not the beacon",
+          !qo100_beacon_locked() && retunes==0 && rx->error_a==0, d);
+    g_free(iq); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB

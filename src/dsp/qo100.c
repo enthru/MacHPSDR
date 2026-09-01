@@ -472,13 +472,23 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // condition for the dial to be telling the truth.
 
 #define QO100_FFT_N        32768     // ~5.9 Hz/bin at 192 kHz, ~170 ms per frame
-#define QO100_ACQ_MIN_HZ   60000.0   // ...and never search a narrower one than this
+// How far off a converter may plausibly be, and therefore how far acquisition
+// looks: an LNB's error is its crystal's tolerance times 9750 MHz, so 30 ppm --
+// worse than any consumer part has a right to be -- is 292 kHz. Sweeping the
+// WHOLE span instead was tried and is worse: on a real dish it found a station
+// 398 kHz from the expectation, stronger than the beacon (1353x the window mean
+// against 900x), and every frame that picked it reset the agreement run.
+#define QO100_ACQ_HZ      300000.0   // acquisition half-width around the expectation
 #define QO100_TRACK_HZ      2000.0   // ...and once locked
 #define QO100_DC_GUARD_HZ    300.0   // the I/Q DC-offset spike lives here
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
 #define QO100_LOCK_RUN           3   // agreeing frames to declare a lock -- AND...
 #define QO100_AGREE_MS      1000.0   // ...that much STREAM TIME of them (see below)
-#define QO100_LOCK_TOL_HZ    200.0   // how closely they must agree while acquiring
+// Acquisition tolerates the beacon's OWN keying shift: the lower one is F1A and
+// its carrier hops 400 Hz, so demanding 200 Hz of agreement to declare a lock
+// asks the beacon to stop identing. Corrections still wait for the tight
+// tracking tolerance below, so tolerating it here buys a lock, not a wrong dial.
+#define QO100_LOCK_TOL_HZ    500.0   // how closely they must agree while acquiring
 #define QO100_TRACK_TOL_HZ    20.0   // ...and once locked, which is what sees the ident
 #define QO100_DEADBAND_HZ      1.0   // below this, leave the radio alone
 #define QO100_COARSE_HZ      100.0   // above this the reading is a real offset, not jitter
@@ -746,14 +756,12 @@ static void beacon_frame(RECEIVER *rx) {
   // window. A wide search is only safe because of the agreement rule above: a
   // strong SSB or CW station in the span is not a steady line for a whole
   // second, so it cannot be mistaken for a beacon.
-  double lo_hz,hi_hz;
-  if(b_locked && b_settled) {
-    lo_hz=expected-QO100_TRACK_HZ;
-    hi_hz=expected+QO100_TRACK_HZ;
-  } else {
-    lo_hz=-span_half;                  // the whole band the receiver can hear
-    hi_hz= span_half;
-  }
+  // Explicit bounds, and each end is clipped to the span SEPARATELY: the old
+  // code shrank a symmetric window until both ends fitted, so with the beacon
+  // expected 40 kHz below centre it searched -86..+6 kHz and an LNB erring the
+  // other way was invisible.
+  double half=(b_locked && b_settled)?QO100_TRACK_HZ:QO100_ACQ_HZ;
+  double lo_hz=expected-half, hi_hz=expected+half;
   if(lo_hz<-span_half) lo_hz=-span_half;
   if(hi_hz> span_half) hi_hz= span_half;
 
@@ -793,13 +801,15 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
   b_dry_samples=0.0;
-  if(say)
-    log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
-             "(residual %+.1f Hz, %.1f x mean, %s)\n",
-             found,expected,found-expected,snr,
-             b_locked?"locked":"acquiring");
 
   double residual=found-expected;
+  // Per frame, at DEBUG: the only way to tell a beacon whose line MOVES (the
+  // lower one is F1A and hops 400 Hz while it keys) from one that is steady but
+  // competing with another carrier. The INFO summary below is five seconds
+  // apart and cannot show either.
+  log_debug("qo100: frame carrier %+.1f Hz residual %+.1f Hz snr %.0f "
+            "(previous residual %+.1f Hz, delta %+.1f Hz, run %d)\n",
+            found,residual,snr,b_last,residual-b_last,b_run);
 
   // Agreement, and it is measured in STREAM TIME rather than in frames. The
   // search takes a maximum over hundreds of trial positions, so noise alone
@@ -828,9 +838,21 @@ static void beacon_frame(RECEIVER *rx) {
     b_run=1;
     b_run_samples=(double)QO100_FFT_N;
   }
+  double delta=residual-b_last;
   b_last=residual;
   gboolean agreed=(b_run>=QO100_LOCK_RUN &&
                    b_run_samples>=(double)track_fs*(QO100_AGREE_MS/1000.0));
+
+  // Five-second summary, and it has to carry the AGREEMENT state: a loop that
+  // finds a strong carrier every frame and never locks is one whose readings
+  // disagree, and nothing else in the log says by how much.
+  if(say)
+    log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
+             "(residual %+.1f Hz, %.0f x mean, %s; agreed on %d frames / "
+             "%.0f ms of %.0f, last step %+.1f Hz, tolerance %.0f Hz)\n",
+             found,expected,residual,snr,b_locked?"locked":"acquiring",
+             b_run,b_run_samples*1000.0/(double)track_fs,QO100_AGREE_MS,
+             delta,tol);
 
   if(!b_locked) {
     if(!agreed) {
