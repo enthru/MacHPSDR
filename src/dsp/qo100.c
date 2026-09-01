@@ -496,7 +496,12 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // asks the beacon to stop identing. Corrections still wait for the tight
 // tracking tolerance below, so tolerating it here buys a lock, not a wrong dial.
 #define QO100_LOCK_TOL_HZ    500.0   // how closely they must agree while acquiring
-#define QO100_TRACK_TOL_HZ    20.0   // ...and once locked, which is what sees the ident
+#define QO100_TRACK_TOL_HZ   40.0  // ...and once locked, which is what sees the ident.
+                                   // It has to sit between the two: a warming LNB
+                                   // moves 10-15 Hz between measurements and the
+                                   // ident jumps 400, and 20 Hz sat on top of the
+                                   // drift -- half a fast converter's readings were
+                                   // thrown away as "unsteady" and never corrected
 #define QO100_DEADBAND_HZ      1.0   // below this, leave the radio alone
 #define QO100_COARSE_HZ      100.0   // above this the reading is a real offset, not jitter
 #define QO100_GAIN             0.5   // fraction of a SMALL error applied per step
@@ -511,8 +516,17 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_LOST_MS       10000.0  // locked, but nothing found for this long => let go
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
 #define QO100_SLEW_HZ          50.0  // most a LOCKED reading may move in one of those
+#define QO100_SLEW_RATE_HZ_S   20.0  // ...and how fast that allowance then AGES
+#define QO100_SLEW_MAX_HZ     250.0  // ...to, staying clear of the 400 Hz ident
 #define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
-#define QO100_MED_N              5   // fine readings are acted on through this many
+#define QO100_MED_N             7  // fine readings are acted on through this many
+                                   // (seconds, one each). Five is too few to tell a
+                                   // drift from a wobble: four differences agreeing
+                                   // in sign happens to white noise once in eight
+                                   // windows, and the loop then fed a made-up drift
+                                   // forward -- 18 Hz of dial movement, measured
+#define QO100_FF_S             2.0   // drift fed forward this far, being about
+                                     // how long until the next trim
 #define QO100_SCATTER          0.5   // ...and only if the median beats this much
                                      // of the spread of the window behind it
 // A retune is NOT free. Measured on a Pluto with a live 768 kHz stream:
@@ -577,6 +591,7 @@ static double   b_say_samples;        // ...and since the last spoken diagnosis
 static double   b_dry_samples;        // ...and since anything at all was found
 static double   b_gone_samples;       // ...and since a LOCKED loop last saw its beacon
 static double   b_expect;             // where the next measurement should land
+static double   b_expect_samples;     // ...and how much stream ago that was decided
 static int      b_reject;             // consecutive measurements refused as impossible
 static double   b_med[QO100_MED_N];   // recent fine residuals, for the median
 static int      b_med_n;
@@ -888,6 +903,7 @@ static void beacon_reset_locked(void) {
   b_dry_samples=0.0;
   b_gone_samples=0.0;
   b_expect=0.0;
+  b_expect_samples=0.0;
   b_reject=0;
   b_med_n=0;
   b_since_apply=1.0e12;                 // a fresh lock may trim at once
@@ -996,6 +1012,7 @@ static void beacon_frame(RECEIVER *rx) {
   double found, snr=0.0;
   int bins=0, cands=0;
   b_say_samples+=avg_samples;
+  b_expect_samples+=avg_samples;
   gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
   if(say) b_say_samples=0.0;
 
@@ -1138,6 +1155,7 @@ static void beacon_frame(RECEIVER *rx) {
     }
     b_locked=TRUE;
     b_expect=residual;                  // the lock starts believing from here
+    b_expect_samples=0.0;
   } else if(!agreed) {
     snprintf(b_status,sizeof(b_status),
              "Locked  (beacon unsteady %+.0f Hz -- ident?)",residual);
@@ -1170,7 +1188,30 @@ static void beacon_frame(RECEIVER *rx) {
   // hertz of noise; and the second stops believing after QO100_SLEW_LOST
   // measurements, at which point the beacon really has moved and the lock goes,
   // putting the wide search and the 500 kHz pairing back in front of it.
-  if(b_locked && fabs(residual-b_expect)>QO100_SLEW_HZ) {
+  // The allowance is a RATE, not a fixed offset, and that distinction is the
+  // whole of "прыгает как горный козёл". An LNB warming on its dish moves
+  // several hertz a second -- measured on the operator's at 5-7 -- so what a
+  // reading may not do is jump further than the converter can have MOVED since
+  // the loop last believed anything. Frozen at 50 Hz it worked only while every
+  // second produced a reading: F1A is two frequencies 400 Hz apart and neither
+  // is an idle carrier, so whole integrated seconds hold the other line alone,
+  // and each of those is refused (rightly) while the converter keeps going. Ten
+  // seconds of that put the real beacon 60 Hz from an anchor that had not moved
+  // since, so it was refused too -- and then everything was, for ever, until 30
+  // refusals dropped the lock and the re-acquisition applied the whole
+  // accumulated error as one step. Measured on air: 25 s with no correction at
+  // all while the residual walked 114 -> 240 Hz, then a +691.9 Hz retune; in
+  // the harness the loop falls off this cliff between 6 and 8 Hz/s of drift and
+  // lands a 1098 Hz step at 10.
+  //
+  // The cap stays well clear of the 400 Hz ident, so no amount of waiting ever
+  // makes the beacon's OTHER line acceptable. A converter that really has run
+  // further than that while the loop was blind is what QO100_SLEW_LOST is for:
+  // the lock goes, and the wide search and the 500 kHz pairing get it back.
+  double slew_allow=QO100_SLEW_HZ+
+                    QO100_SLEW_RATE_HZ_S*(b_expect_samples/(double)track_fs);
+  if(slew_allow>QO100_SLEW_MAX_HZ) slew_allow=QO100_SLEW_MAX_HZ;
+  if(b_locked && fabs(residual-b_expect)>slew_allow) {
     if(fabs(b_step_prev)>QO100_COARSE_HZ &&
        fabs(residual-b_res_prev)<0.25*fabs(b_step_prev)) {
       b_stuck++;
@@ -1225,7 +1266,7 @@ static void beacon_frame(RECEIVER *rx) {
   // the median as the measurement is immune to a single wild reading by
   // construction and lags a drift by two seconds, which at any rate an LNB can
   // manage is a few hertz.
-  double act;
+  double act, ff=0.0;                   // ...and the drift to feed forward
   if(fabs(residual)>QO100_COARSE_HZ) {
     act=residual;
     b_med_n=0;                          // a real offset invalidates the history
@@ -1249,7 +1290,25 @@ static void beacon_frame(RECEIVER *rx) {
                residual,b_med_n,QO100_MED_N);
       return;
     }
-    act=median_of(b_med,b_med_n);
+    // The window's own SLOPE first, robustly: the median of its consecutive
+    // differences, and one entry is one second of stream, so it is Hz per
+    // second. It is believed only when every difference agrees with it in sign
+    // -- a converter drifting is a run of readings all moving the same way, and
+    // jitter, however wide, is not. Nothing here needs a bare gradient, and
+    // that is deliberate: a slope taken off two endpoints is one wild reading
+    // away from claiming any rate you like.
+    double diff[QO100_MED_N-1];
+    for(int i=1;i<b_med_n;i++) diff[i-1]=b_med[i]-b_med[i-1];
+    double slope=median_of(diff,b_med_n-1);
+    for(int i=0;i<b_med_n-1;i++) if(diff[i]*slope<=0.0) { slope=0.0; break; }
+
+    // The median is the middle of the window, so under a drift it is already
+    // two seconds stale by the time it is computed, and the correction lands
+    // later still. Both are known now, so both are taken out: what is acted on
+    // is where the error will BE, not where it was.
+    double med=median_of(b_med,b_med_n);
+    act=med+slope*0.5*(double)(QO100_MED_N-1);
+    ff=slope*QO100_FF_S;
 
     // ...and it is only acted on when it stands out of the window's OWN
     // scatter. A median is an estimate and the spread of the readings behind it
@@ -1262,13 +1321,19 @@ static void beacon_frame(RECEIVER *rx) {
     // 8 Hz of dial movement and 14 retunes a minute without this test, 0 Hz and
     // 2 with it -- and a drift of 2 Hz/s is tracked either way, because a drift
     // biases the median far more than it widens the window.
-    double lo_m=b_med[0], hi_m=b_med[0];
-    for(int i=1;i<b_med_n;i++) {
-      if(b_med[i]<lo_m) lo_m=b_med[i];
-      if(b_med[i]>hi_m) hi_m=b_med[i];
+    // The spread is measured with the trend taken out, or a drift would widen
+    // the very gate it has to pass: at 10 Hz/s the window spans 40 Hz, and half
+    // of that is a threshold no honest reading can beat until the error is
+    // already 20 Hz.
+    double lo_m=1e18, hi_m=-1e18;
+    for(int i=0;i<b_med_n;i++) {
+      double dt=b_med[i]-slope*(double)i;
+      if(dt<lo_m) lo_m=dt;
+      if(dt>hi_m) hi_m=dt;
     }
-    if(fabs(act)<QO100_SCATTER*(hi_m-lo_m)) {
+    if(fabs(act)+fabs(ff)<QO100_SCATTER*(hi_m-lo_m)) {
       b_expect=residual;
+      b_expect_samples=0.0;
       snprintf(b_status,sizeof(b_status),
                "Locked  %+.1f Hz  (inside the %.1f Hz the readings scatter by)",
                act,hi_m-lo_m);
@@ -1278,6 +1343,7 @@ static void beacon_frame(RECEIVER *rx) {
 
   if(fabs(act)<QO100_DEADBAND_HZ) {
     b_expect=residual;                  // nothing moves, so nothing should change
+    b_expect_samples=0.0;
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
              act,b_applied);
     return;
@@ -1287,6 +1353,7 @@ static void beacon_frame(RECEIVER *rx) {
   // cares: see qo100_may_retune_now().
   if(!qo100_may_retune_now(rx)) {
     b_expect=residual;
+    b_expect_samples=0.0;
     snprintf(b_status,sizeof(b_status),
              "Locked  %+.1f Hz  (holding for the decoder's slot)",act);
     return;
@@ -1300,13 +1367,19 @@ static void beacon_frame(RECEIVER *rx) {
     if(need<QO100_MIN_APPLY_S) need=QO100_MIN_APPLY_S;
     if(since<need) {
       b_expect=residual;
+      b_expect_samples=0.0;
       snprintf(b_status,sizeof(b_status),
                "Locked  %+.1f Hz  (trim in %.0f s)",act,need-since);
       return;
     }
   }
 
-  double step=(fabs(act)>QO100_COARSE_HZ)?act:act*QO100_GAIN;
+  // The damping gain is on the ERROR only. The drift term is not an error to
+  // approach carefully, it is the converter's known rate multiplied by the time
+  // until the next trim -- feeding it forward is what stops the loop running a
+  // standing lag proportional to how fast the LNB is warming, and it costs no
+  // extra retunes because it rides on one that was going to happen anyway.
+  double step=(fabs(act)>QO100_COARSE_HZ)?act:(act*QO100_GAIN+ff);
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
 
@@ -1343,12 +1416,14 @@ static void beacon_frame(RECEIVER *rx) {
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
     b_expect=residual-step;             // where the next measurement must land
+    b_expect_samples=0.0;
     b_since_apply=0.0;
     b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
     spectrum_clear();                   // ...and it must not be averaged with this
     g_idle_add(apply_idle,NULL);
   } else {
     b_expect=residual;                  // nothing was applied, so nothing moves
+    b_expect_samples=0.0;
   }
 }
 

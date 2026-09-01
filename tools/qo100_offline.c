@@ -60,6 +60,9 @@ static gboolean f1a_ident;
 // documented ambiguity, and a test that turns on the ident before there is a
 // lock measures that instead of what it means to.
 static double   f1a_from_s;
+// The ident shaped as the log reads it: whole seconds on one line, whole
+// seconds on the other, keying in between (see the hop expression).
+static gboolean f1a_shape;
 // An LNB warms up and drifts while it does it: Hz per minute normally, and the
 // loop's own guards are written around a "fast 10 Hz/s". The ident test needs
 // it, because a loop that cannot measure during the ident is only visible as
@@ -85,6 +88,9 @@ static double   worst_track;
 // ...and the most it ever moved inside ONE FT8 slot, which is the number that
 // decides whether a decode survives: ft8_lib does no drift tracking at all.
 static double   worst_slot;
+// ...and the biggest single step it ever applied, which is what "it jumps about"
+// means when an operator says it.
+static double   worst_step;
 
 #define test_band test_bands[0]
 
@@ -199,7 +205,9 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   worst_pull=0.0;
   worst_track=0.0;
   worst_slot=0.0;
+  worst_step=0.0;
   double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
+  long long last_err=0;
   double pull_lo=1e18, pull_hi=-1e18;
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)fs;
@@ -216,7 +224,10 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       if(e<pull_lo) pull_lo=e;
       if(e>pull_hi) pull_hi=e;
       worst_pull=pull_hi-pull_lo;
+      double st=fabs((double)(rx->error_a-last_err));
+      if(st>worst_step) worst_step=st;
     }
+    last_err=rx->error_a;
     // The ident as a beacon actually sends it: bursts of keying with idle
     // carrier between them. A carrier that hops for ever is not a beacon, it is
     // a loop-breaker -- and asserting against it would only pin the loop's
@@ -229,6 +240,16 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // That is the "jumps forward and comes back" reported from air.
     double hop=(f1a_ident && t>=f1a_from_s &&
                 fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?400.0:0.0;
+    // ...and the way it really reads on air, which the burst model above does
+    // not produce: F1A is two frequencies and NEITHER is idle, so a whole
+    // integrated second lands inside one element often enough that the loop's
+    // own line is simply absent -- "nearest of 1 lines", with the only
+    // candidate 400 Hz away. Three seconds at the shifted line, three keying,
+    // three at the other, over and over.
+    if(f1a_shape && t>=f1a_from_s) {
+      double ph=fmod(t,9.0);
+      hop=(ph<3.0)?400.0:((ph<6.0)?((fmod(t,0.2)<0.1)?400.0:0.0):0.0);
+    }
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
     double applied=(double)rx->error_a;
@@ -926,6 +947,35 @@ int main(int argc, char **argv) {
              worst_pull,res,retunes,locked);
     check("a wobbling reading is not chased",
           locked && worst_pull<4.0 && fabs(res)<15.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21f. the two together, which is the case reported from air: an LNB
+  //           warming fast under a beacon whose own line is absent for whole
+  //           seconds at a time. F1A is two frequencies 400 Hz apart and
+  //           neither is an idle carrier, so an integrated second often holds
+  //           only the OTHER one -- "nearest of 1 lines" in the log, 400 Hz
+  //           out. Refusing those is right; what must not happen is what did:
+  //           each refusal froze the slew anchor while the converter kept
+  //           moving, so when the beacon came back it was already further from
+  //           that stale anchor than the guard allows, every later reading was
+  //           refused too, and 30 refusals later the lock was dropped and
+  //           re-acquired -- which applies the whole accumulated error as one
+  //           coarse step. Measured on air: 25 s with no correction at all
+  //           while the residual walked 114 -> 240 Hz, then a +691.9 Hz retune.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    f1a_ident=TRUE; f1a_shape=TRUE;
+    f1a_from_s=20.0;
+    lo_drift_hz_s=6.0;                     // measured on the operator's LNB
+    double res=run_loop(3000.0,0.0,blocks*18,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    f1a_from_s=0.0; f1a_shape=FALSE; f1a_ident=FALSE;
+    snprintf(d,sizeof(d),"biggest step %.0f Hz, %.0f Hz of wander, %d retunes, "
+             "locked=%d",worst_step,worst_track,retunes,locked);
+    check("a fast-drifting LNB survives the ident",
+          locked && worst_step<60.0 && worst_track<80.0, d);
     qo100_beacon_reset();
   }
 
