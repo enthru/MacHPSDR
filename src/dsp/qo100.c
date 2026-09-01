@@ -579,8 +579,19 @@ static void fft_radix2(double *re, double *im, int n) {
   }
 }
 
-// Locate the strongest line within [expected-win, expected+win] and return its
-// position in Hz. Destroys re/im. Caller holds bmtx.
+// Locate the beacon within [lo_hz, hi_hz] and return its position in Hz.
+// Destroys re/im. Caller holds bmtx.
+//
+// NOT the strongest line -- the line CLOSEST TO WHERE THE BEACON SHOULD BE,
+// among those standing far enough out of the window's mean to be a carrier at
+// all. The transponder is busy by definition, and on a real dish the loudest
+// thing in a +/-300 kHz window was somebody's QSO: measured on the operator's
+// screen, carriers at 10489.336, 10489.432 and 10489.440 MHz, all louder than
+// the beacon at 10489.500, picked in turn frame after frame so that the
+// agreement run never lasted more than a fifth of a second. Which of them is
+// loudest is not information about the beacon; how far each is from the
+// expectation is. Speech and keyed CW are then thrown out by the agreement rule
+// upstairs, since neither holds one frequency for a second.
 //
 // snr_out and bins_out are for the operator, not for the loop: "Searching for
 // the beacon" is the one status that says nothing about WHY, and the difference
@@ -594,8 +605,9 @@ static void fft_radix2(double *re, double *im, int n) {
 // LNB erring the other way put the beacon inside the SPAN and outside the
 // SEARCH. Acquisition therefore sweeps the whole sampled band.
 static gboolean find_carrier(double *re, double *im, int fs,
-                             double lo_hz, double hi_hz, double *found,
-                             double *snr_out, int *bins_out) {
+                             double lo_hz, double hi_hz, double expected,
+                             double *found, double *snr_out, int *bins_out,
+                             int *cand_out) {
   const int N=QO100_FFT_N;
   for(int i=0;i<N;i++) {
     double w=0.5-0.5*cos(2.0*M_PI*(double)i/(double)(N-1));   // Hann
@@ -606,6 +618,8 @@ static gboolean find_carrier(double *re, double *im, int fs,
   const double bin_hz=(double)fs/(double)N;
   double sum=0.0, peak=-1.0;
   int pk=-1, count=0;
+  // First pass: the window's mean power, and its loudest bin -- the latter only
+  // so the diagnostics can say how strong the strongest thing was.
   for(int m=0;m<N;m++) {
     double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;   // signed baseband Hz
     if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
@@ -618,7 +632,31 @@ static gboolean find_carrier(double *re, double *im, int fs,
   if(pk<1 || pk>=N-1 || count<8) return FALSE;
   double mean=sum/(double)count;
   if(snr_out!=NULL && mean>0.0) *snr_out=peak/mean;
-  if(mean<=0.0 || peak/mean<QO100_MIN_SNR) return FALSE;
+  if(mean<=0.0) return FALSE;
+
+  // Second pass: every LOCAL maximum that stands QO100_MIN_SNR out of that mean
+  // is a candidate carrier, and the one nearest the expectation wins.
+  double best=1e18;
+  int cands=0;
+  int sel=-1;
+  for(int m=1;m<N-1;m++) {
+    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
+    if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
+    if(sf<lo_hz || sf>hi_hz) continue;
+    double p=re[m]*re[m]+im[m]*im[m];
+    if(p/mean<QO100_MIN_SNR) continue;
+    double pm=re[m-1]*re[m-1]+im[m-1]*im[m-1];
+    double pp=re[m+1]*re[m+1]+im[m+1]*im[m+1];
+    if(p<pm || p<pp) continue;                 // a shoulder, not a line
+    cands++;
+    double d=fabs(sf-expected);
+    if(d<best) { best=d; sel=m; }
+  }
+  if(cand_out!=NULL) *cand_out=cands;
+  if(sel<1 || sel>=N-1) return FALSE;
+  pk=sel;
+  peak=re[pk]*re[pk]+im[pk]*im[pk];
+  if(snr_out!=NULL) *snr_out=peak/mean;
 
   double y0=sqrt(re[pk-1]*re[pk-1]+im[pk-1]*im[pk-1]);
   double y1=sqrt(peak);
@@ -766,12 +804,12 @@ static void beacon_frame(RECEIVER *rx) {
   if(hi_hz> span_half) hi_hz= span_half;
 
   double found, snr=0.0;
-  int bins=0;
+  int bins=0, cands=0;
   b_say_samples+=(double)QO100_FFT_N;
   gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
   if(say) b_say_samples=0.0;
 
-  if(!find_carrier(bre,bim,track_fs,lo_hz,hi_hz,&found,&snr,&bins)) {
+  if(!find_carrier(bre,bim,track_fs,lo_hz,hi_hz,expected,&found,&snr,&bins,&cands)) {
     b_run=0;
     b_run_samples=0.0;
     b_dry_samples+=(double)QO100_FFT_N;
@@ -794,10 +832,11 @@ static void beacon_frame(RECEIVER *rx) {
     // it is the one that explains nothing by itself.
     if(say)
       log_info("qo100: no carrier — beacon expected %+.1f kHz from centre, "
-               "searched %+.1f..%+.1f kHz (%d bins of %.1f Hz), best peak %.1f x "
-               "mean (needs %.0f), span %d Hz\n",
+               "searched %+.1f..%+.1f kHz (%d bins of %.1f Hz), %d candidate "
+               "lines, best peak %.1f x mean (needs %.0f), span %d Hz\n",
                expected/1000.0,lo_hz/1000.0,hi_hz/1000.0,bins,
-               (double)track_fs/(double)QO100_FFT_N,snr,QO100_MIN_SNR,track_fs);
+               (double)track_fs/(double)QO100_FFT_N,cands,snr,QO100_MIN_SNR,
+               track_fs);
     return;
   }
   b_dry_samples=0.0;
@@ -848,9 +887,10 @@ static void beacon_frame(RECEIVER *rx) {
   // disagree, and nothing else in the log says by how much.
   if(say)
     log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
-             "(residual %+.1f Hz, %.0f x mean, %s; agreed on %d frames / "
-             "%.0f ms of %.0f, last step %+.1f Hz, tolerance %.0f Hz)\n",
-             found,expected,residual,snr,b_locked?"locked":"acquiring",
+             "(residual %+.1f Hz, %.0f x mean, nearest of %d lines, %s; "
+             "agreed on %d frames / %.0f ms of %.0f, last step %+.1f Hz, "
+             "tolerance %.0f Hz)\n",
+             found,expected,residual,snr,cands,b_locked?"locked":"acquiring",
              b_run,b_run_samples*1000.0/(double)track_fs,QO100_AGREE_MS,
              delta,tol);
 

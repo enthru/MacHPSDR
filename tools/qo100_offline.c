@@ -796,6 +796,45 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // ---- 22c. the transponder is BUSY -- that is what it is for -- so the beacon
+  //           is routinely not the loudest thing in the window. Measured on the
+  //           operator's dish: carriers at 10489.336, .432 and .440 MHz all
+  //           louder than the beacon at .500, picked in turn frame after frame,
+  //           so the agreement run never lasted a fifth of a second. The line
+  //           NEAREST the expectation is the beacon; which is loudest says
+  //           nothing about it.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,768000);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double *hog=g_new0(double,BLOCK*2);
+    double ph1=0.0, ph2=0.0; guint32 s1=7, s2=8;
+    long long beacon=qo100_beacon_frequency(0);
+    const double lo_err=3000.0;                       // a sane LNB, 3 kHz out
+    for(int b=0;b<blocks*3;b++) {
+      double base=(double)(beacon-rx->frequency_a)-lo_err-(double)rx->error_a;
+      gen_block(iq,BLOCK,base,768000,1.0,0.05,&ph1,&s1);          // the beacon
+      gen_block(hog,BLOCK,base-50000.0,768000,3.0,0.0,&ph2,&s2);  // 9.5 dB louder
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=hog[k];
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    double left=lo_err+(double)rx->error_a;
+    snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d (a 9.5 dB louder station sat "
+             "50 kHz away)",left,qo100_beacon_locked());
+    check("the loudest line is not the beacon",
+          qo100_beacon_locked() && fabs(left)<10.0, d);
+    g_free(iq); g_free(hog); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
