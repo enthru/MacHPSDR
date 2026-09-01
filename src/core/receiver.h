@@ -58,6 +58,12 @@ _Static_assert((WDSP_ANALYZER_MAX_SIZE * 2) % ANALYZER_FEED_BLOCK == 0,
 #define NOTCH_DEFAULT_WIDTH 100.0
 #define NOTCH_MIN_WIDTH      10.0
 #define NOTCH_MAX_WIDTH    5000.0
+
+// Height of the panadapter's bottom frequency-scale strip -- the strip
+// rx_panadapter.c paints (and draws the zoom pan indicator into), and the only
+// place a left drag pans a zoomed view instead of moving the cursor.  Keep the
+// two in step: the drawing there still spells it 20.
+#define PAN_HANDLE_HEIGHT 20
 typedef struct _notch {
   gdouble  fcenter;   // absolute RF Hz (recomputed each sync when af is set)
   gdouble  fwidth;    // Hz

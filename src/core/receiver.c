@@ -1137,25 +1137,38 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
         rx->last_x=(int)ex;
         rx->press_x=(int)ex;
         rx->has_moved=FALSE;
-        if(rx->zoom>1 && ey>=rx->panadapter_height-20) {
-          rx->is_panning=TRUE;
+        // The pan handle of a zoomed view is the panadapter's bottom strip --
+        // the frequency scale, where the pan indicator is drawn.  Everywhere
+        // else a left drag moves the cursor/dial, at every zoom.  The test has
+        // to be against the widget the press actually arrived on: it used to
+        // compare the press y against rx->panadapter_height whatever the
+        // widget, and the waterfall is a DIFFERENT widget of a different
+        // height, so on the usual split (waterfall taller than the panadapter)
+        // every press in its lower part panned instead of dragging the cursor,
+        // and with the panadapter hidden -- where panadapter_height keeps a
+        // stale value entirely -- the whole waterfall did.
+        if(rx->zoom>1) {
+          GtkWidget *w=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+          if(w!=NULL && w==rx->panadapter &&
+             ey>=(double)(gtk_widget_get_height(w)-PAN_HANDLE_HEIGHT)) {
+            rx->is_panning=TRUE;
+          }
         }
       //}
       break;
     case 3: // right button
-      // Freetune: a right DRAG retunes the whole span (receiver_move_span) --
-      // the plain-VFO gesture, which the left button cannot perform in this mode
-      // because there it moves the cursor inside the frozen span instead.  The
-      // Configure dialog still opens on a right click that does not move, so it
-      // is not lost; it just moves from the press to the release.
-      if(rx->freetune) {
-        rx->span_pressed=TRUE;
-        rx->span_moved=FALSE;
-        rx->span_last_x=(int)ex;
-        rx->span_press_x=(int)ex;
-        break;
-      }
-      receiver_open_configure(rx);
+      // A right DRAG retunes the whole span (receiver_move_span) -- the
+      // plain-VFO gesture, which in freetune the left button cannot perform
+      // (there it moves the cursor inside the frozen span instead).  The same
+      // gesture in every mode: the operator does not switch pointer habits with
+      // freetune, and outside it the drag is simply another way of doing what a
+      // left drag does.  The Configure dialog is not lost -- it opens on a right
+      // click that did not move the span, i.e. on the release instead of the
+      // press (receiver_released_cb).
+      rx->span_pressed=TRUE;
+      rx->span_moved=FALSE;
+      rx->span_last_x=(int)ex;
+      rx->span_press_x=(int)ex;
       break;
   }
 }
