@@ -478,12 +478,19 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // WHOLE span instead was tried and is worse: on a real dish it found a station
 // 398 kHz from the expectation, stronger than the beacon (1353x the window mean
 // against 900x), and every frame that picked it reset the agreement run.
-#define QO100_ACQ_HZ      300000.0   // acquisition half-width around the expectation
+#define QO100_ACQ_HZ      500000.0   // acquisition half-width around the expectation
+#define QO100_PAIR_TOL_HZ   1000.0   // how exactly the two CW beacons must be 500 kHz apart
+#define QO100_PAIR_MAX        512    // candidate lines considered for the pairing
 #define QO100_TRACK_HZ      2000.0   // ...and once locked
 #define QO100_DC_GUARD_HZ    300.0   // the I/Q DC-offset spike lives here
+#define QO100_CLUSTER_HZ     600.0   // lines this close belong to one signal
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
-#define QO100_LOCK_RUN           3   // agreeing frames to declare a lock -- AND...
-#define QO100_AGREE_MS      1000.0   // ...that much STREAM TIME of them (see below)
+// Agreement is counted in MEASUREMENTS now, and each already integrates a second
+// of stream: two of them agreeing is two seconds of evidence, which is what the
+// old "three frames" was trying and failing to be (three frames is 512 ms at a
+// 192 kHz span and 43 ms at 2 304 000).
+#define QO100_LOCK_RUN           2   // agreeing measurements to declare a lock, AND
+#define QO100_AGREE_MS      2000.0   // ...that much stream time between them
 // Acquisition tolerates the beacon's OWN keying shift: the lower one is F1A and
 // its carrier hops 400 Hz, so demanding 200 Hz of agreement to declare a lock
 // asks the beacon to stop identing. Corrections still wait for the tight
@@ -502,6 +509,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
 #define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
 #define QO100_LOST_MS       10000.0  // locked, but nothing found for this long => let go
+#define QO100_AVG_MS         1000.0  // stream integrated into one measurement
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
@@ -512,6 +520,8 @@ static long long track_beacon;
 
 static double   bre[QO100_FFT_N];
 static double   bim[QO100_FFT_N];
+static double   bpow[QO100_FFT_N];   // |X|^2 summed over QO100_AVG_MS of stream
+static double   b_avg_samples;       // ...how much stream is in it
 static int      bacc;
 
 static gboolean b_locked;
@@ -581,42 +591,61 @@ static void fft_radix2(double *re, double *im, int n) {
   }
 }
 
-// Locate the beacon within [lo_hz, hi_hz] and return its position in Hz.
-// Destroys re/im. Caller holds bmtx.
-//
-// NOT the strongest line -- the line CLOSEST TO WHERE THE BEACON SHOULD BE,
-// among those standing far enough out of the window's mean to be a carrier at
-// all. The transponder is busy by definition, and on a real dish the loudest
-// thing in a +/-300 kHz window was somebody's QSO: measured on the operator's
-// screen, carriers at 10489.336, 10489.432 and 10489.440 MHz, all louder than
-// the beacon at 10489.500, picked in turn frame after frame so that the
-// agreement run never lasted more than a fifth of a second. Which of them is
-// loudest is not information about the beacon; how far each is from the
-// expectation is. Speech and keyed CW are then thrown out by the agreement rule
-// upstairs, since neither holds one frequency for a second.
-//
-// snr_out and bins_out are for the operator, not for the loop: "Searching for
-// the beacon" is the one status that says nothing about WHY, and the difference
-// between "the strongest thing in the window is 3 dB out of the noise" and "the
-// window holds four bins" is the difference between a dish problem and a
-// settings problem. Both are filled in even when the search fails.
-// The bounds are explicit rather than "expected +/- win" because a symmetric
-// window around the expectation is NOT the same as the band the receiver can
-// hear: with the beacon expected 40 kHz below centre in a 192 kHz span, a
-// symmetric window reaches -86 kHz on one side and +6 kHz on the other, so an
-// LNB erring the other way put the beacon inside the SPAN and outside the
-// SEARCH. Acquisition therefore sweeps the whole sampled band.
-static gboolean find_carrier(double *re, double *im, int fs,
-                             double lo_hz, double hi_hz, double expected,
-                             double *found, double *snr_out, int *bins_out,
-                             int *cand_out) {
+// One frame's contribution to the accumulated power spectrum. Window, transform,
+// add |X|^2. Destroys re/im. Caller holds bmtx.
+static void spectrum_add(double *re, double *im, double *pow_acc) {
   const int N=QO100_FFT_N;
   for(int i=0;i<N;i++) {
     double w=0.5-0.5*cos(2.0*M_PI*(double)i/(double)(N-1));   // Hann
     re[i]*=w; im[i]*=w;
   }
   fft_radix2(re,im,N);
+  for(int m=0;m<N;m++) pow_acc[m]+=re[m]*re[m]+im[m]*im[m];
+}
 
+// Locate the beacon within [lo_hz, hi_hz] of an ACCUMULATED power spectrum and
+// return its position in Hz. Caller holds bmtx.
+//
+// Two rules, and each was paid for on air.
+//
+// The spectrum is integrated over about a second before this is called, because
+// the discriminator that separates a beacon from everything else on the
+// transponder is TIME, not level: the beacon is continuous, a QSO is not. A
+// single 43 ms frame of the operator's dish read the beacon's own line at -22,
+// -295, -336 and -667 Hz in successive reports -- 644 Hz of wander against a
+// 20 Hz tracking tolerance -- because the lower beacon is F1A and its carrier
+// hops 400 Hz while it keys, and one frame is shorter than one element. Summed
+// over a second, the line the beacon spends most of its time on is simply the
+// tallest, and it stands still.
+//
+// And it is NOT the strongest line that is taken but the one CLOSEST TO WHERE
+// THE BEACON SHOULD BE, among those standing far enough out of the window mean
+// to be a carrier at all. The transponder is busy by definition: on that same
+// dish the loudest things in a +/-300 kHz window were carriers at 10489.336,
+// 10489.432 and 10489.440 MHz, every one of them somebody else's, picked in turn
+// frame after frame. Which is loudest is not information about the beacon; how
+// far each is from where the beacon must be, is.
+//
+// snr_out, bins_out and cand_out are for the operator: "Searching for the
+// beacon" is the one status that explains nothing by itself, and the difference
+// between "the strongest thing here is 3 dB out of the noise" and "the window
+// holds four bins" is the difference between a dish problem and a settings
+// problem. All are filled in even when the search fails.
+// partner_hz: where the OTHER CW beacon would be relative to this one, or 0 to
+// skip the pairing. The two CW beacons ARE the transponder's edges, exactly
+// 500.000 kHz apart and both continuous, and no pair of QSO carriers holds that
+// spacing over an integrated second. It is the one thing on this band that
+// identifies a beacon absolutely, rather than by being near where the operator's
+// settings say it should be -- which is what a converter 350 kHz out makes
+// worthless. (Measured on the operator's dish: the whole transponder drawn
+// 350 kHz low, and everything the loop had been locking to was somebody's QSO
+// sitting where the beacon was expected.)
+static gboolean find_carrier(const double *pow_acc, int fs,
+                             double lo_hz, double hi_hz, double expected,
+                             double partner_hz,
+                             double *found, double *snr_out, int *bins_out,
+                             int *cand_out) {
+  const int N=QO100_FFT_N;
   const double bin_hz=(double)fs/(double)N;
   double sum=0.0, peak=-1.0;
   int pk=-1, count=0;
@@ -626,7 +655,7 @@ static gboolean find_carrier(double *re, double *im, int fs,
     double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;   // signed baseband Hz
     if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
     if(sf<lo_hz || sf>hi_hz) continue;
-    double p=re[m]*re[m]+im[m]*im[m];
+    double p=pow_acc[m];
     sum+=p; count++;
     if(p>peak) { peak=p; pk=m; }
   }
@@ -637,32 +666,77 @@ static gboolean find_carrier(double *re, double *im, int fs,
   if(mean<=0.0) return FALSE;
 
   // Second pass: every LOCAL maximum that stands QO100_MIN_SNR out of that mean
-  // is a candidate carrier, and the one nearest the expectation wins.
-  double best=1e18;
-  int cands=0;
-  int sel=-1;
+  // is a candidate carrier. Collect them, then choose.
+  static int cand_bin[QO100_PAIR_MAX];
+  static double cand_sf[QO100_PAIR_MAX];
+  int cands=0, held=0;
   for(int m=1;m<N-1;m++) {
     double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
     if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
     if(sf<lo_hz || sf>hi_hz) continue;
-    double p=re[m]*re[m]+im[m]*im[m];
+    double p=pow_acc[m];
     if(p/mean<QO100_MIN_SNR) continue;
-    double pm=re[m-1]*re[m-1]+im[m-1]*im[m-1];
-    double pp=re[m+1]*re[m+1]+im[m+1]*im[m+1];
-    if(p<pm || p<pp) continue;                 // a shoulder, not a line
+    if(p<pow_acc[m-1] || p<pow_acc[m+1]) continue;   // a shoulder, not a line
     cands++;
-    double d=fabs(sf-expected);
-    if(d<best) { best=d; sel=m; }
+    if(held<QO100_PAIR_MAX) { cand_bin[held]=m; cand_sf[held]=sf; held++; }
   }
   if(cand_out!=NULL) *cand_out=cands;
-  if(sel<1 || sel>=N-1) return FALSE;
-  pk=sel;
-  peak=re[pk]*re[pk]+im[pk]*im[pk];
-  if(snr_out!=NULL) *snr_out=peak/mean;
+  if(held<1) return FALSE;
 
-  double y0=sqrt(re[pk-1]*re[pk-1]+im[pk-1]*im[pk-1]);
-  double y1=sqrt(peak);
-  double y2=sqrt(re[pk+1]*re[pk+1]+im[pk+1]*im[pk+1]);
+  int sel=-1;
+  double best=1e18;
+
+  // The pairing first, when both edges could be in the window: a candidate with
+  // a partner exactly 500 kHz away IS a beacon, however far the operator's
+  // settings say it should not be. Among such candidates -- there is normally
+  // exactly one pair -- take the nearest to the expectation.
+  if(partner_hz!=0.0) {
+    for(int i=0;i<held;i++) {
+      double want=cand_sf[i]+partner_hz;
+      if(want<lo_hz || want>hi_hz) continue;         // the partner is out of view
+      gboolean paired=FALSE;
+      for(int j=0;j<held && !paired;j++)
+        if(fabs(cand_sf[j]-want)<QO100_PAIR_TOL_HZ) paired=TRUE;
+      if(!paired) continue;
+      double d=fabs(cand_sf[i]-expected);
+      if(d<best) { best=d; sel=cand_bin[i]; }
+    }
+  }
+
+  // Failing that -- one edge out of the span, one beacon off the air -- the
+  // nearest candidate to the expectation, which is right whenever the converter
+  // is roughly believed.
+  if(sel<0) {
+    for(int i=0;i<held;i++) {
+      double d=fabs(cand_sf[i]-expected);
+      if(d<best) { best=d; sel=cand_bin[i]; }
+    }
+  }
+  if(sel<1 || sel>=N-1) return FALSE;
+
+  // Third pass, and it is what makes an F1A beacon measurable. The nearest
+  // candidate locates the SIGNAL; within one signal's width the line to measure
+  // is the one it spends most of its time on, which in an integrated spectrum is
+  // simply the tallest. Nearest alone is bistable on a keyed beacon: the two
+  // lines are 400 Hz apart, whichever is nearer changes as the correction
+  // proceeds, and the loop ends up hopping between them 400 Hz at a time --
+  // measured, before this pass existed.
+  double sel_sf=((sel<=N/2)?(double)sel:(double)(sel-N))*bin_hz;
+  for(int m=1;m<N-1;m++) {
+    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
+    if(fabs(sf-sel_sf)>QO100_CLUSTER_HZ) continue;
+    if(sf<lo_hz || sf>hi_hz) continue;
+    double pw=pow_acc[m];
+    if(pw/mean<QO100_MIN_SNR) continue;
+    if(pw<pow_acc[m-1] || pw<pow_acc[m+1]) continue;
+    if(pw>pow_acc[sel]) sel=m;
+  }
+  pk=sel;
+  if(snr_out!=NULL) *snr_out=pow_acc[pk]/mean;
+
+  double y0=sqrt(pow_acc[pk-1]);
+  double y1=sqrt(pow_acc[pk]);
+  double y2=sqrt(pow_acc[pk+1]);
   double denom=y0-2.0*y1+y2;
   double delta=(denom!=0.0)?0.5*(y0-y2)/denom:0.0;
   if(delta> 0.5) delta= 0.5;
@@ -699,8 +773,14 @@ static gboolean apply_idle(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
+static void spectrum_clear(void) {
+  memset(bpow,0,sizeof(bpow));
+  b_avg_samples=0.0;
+}
+
 static void beacon_reset_locked(void) {
   bacc=0;
+  spectrum_clear();
   b_run=0;
   b_last=0.0;
   b_locked=FALSE;
@@ -806,16 +886,34 @@ static void beacon_frame(RECEIVER *rx) {
   if(lo_hz<-span_half) lo_hz=-span_half;
   if(hi_hz> span_half) hi_hz= span_half;
 
+  // Integrate this frame and stop here unless a full averaging window has been
+  // collected: the measurement is made on a second of stream, not on 43 ms of
+  // it. Everything downstream therefore runs about once a second.
+  spectrum_add(bre,bim,bpow);
+  b_avg_samples+=(double)QO100_FFT_N;
+  if(b_avg_samples<(double)track_fs*(QO100_AVG_MS/1000.0)) return;
+  double avg_samples=b_avg_samples;
+
   double found, snr=0.0;
   int bins=0, cands=0;
-  b_say_samples+=(double)QO100_FFT_N;
+  b_say_samples+=avg_samples;
   gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
   if(say) b_say_samples=0.0;
 
-  if(!find_carrier(bre,bim,track_fs,lo_hz,hi_hz,expected,&found,&snr,&bins,&cands)) {
+  // While acquiring, let the pairing work; once locked the window is narrow and
+  // the partner is not in it.
+  double partner=0.0;
+  if(!(b_locked && b_settled)) {
+    if(radio->qo100_beacon_sel==QO100_BEACON_SEL_LOWER)
+      partner=(double)(QO100_BEACON_UPPER-QO100_BEACON_LOWER);
+    else if(radio->qo100_beacon_sel==QO100_BEACON_SEL_UPPER)
+      partner=-(double)(QO100_BEACON_UPPER-QO100_BEACON_LOWER);
+  }
+  if(!find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,&found,&snr,&bins,&cands)) {
+    spectrum_clear();
     b_run=0;
     b_run_samples=0.0;
-    b_dry_samples+=(double)QO100_FFT_N;
+    b_dry_samples+=avg_samples;
     if(!b_locked) {
       // After ten seconds of finding nothing, stop repeating "Searching" and
       // name the limit the operator can actually act on. An LNB's error is its
@@ -838,7 +936,7 @@ static void beacon_frame(RECEIVER *rx) {
       // the operator's radio, TWO MINUTES of "0 candidate lines" in a row while
       // the real beacon sat 14 kHz away, because nothing ever let the lock go.
       // Ten seconds of stream without a carrier is enough to stop believing it.
-      b_gone_samples+=(double)QO100_FFT_N;
+      b_gone_samples+=avg_samples;
       if(b_gone_samples>=(double)track_fs*(QO100_LOST_MS/1000.0)) {
         beacon_reset_locked();
         g_strlcpy(b_status,
@@ -863,6 +961,7 @@ static void beacon_frame(RECEIVER *rx) {
                track_fs);
     return;
   }
+  spectrum_clear();
   b_dry_samples=0.0;
   b_gone_samples=0.0;
 
@@ -897,10 +996,10 @@ static void beacon_frame(RECEIVER *rx) {
   double tol=b_locked?QO100_TRACK_TOL_HZ:QO100_LOCK_TOL_HZ;
   if(b_run>0 && fabs(residual-b_last)<tol) {
     b_run++;
-    b_run_samples+=(double)QO100_FFT_N;
+    b_run_samples+=avg_samples;
   } else {
     b_run=1;
-    b_run_samples=(double)QO100_FFT_N;
+    b_run_samples=avg_samples;
   }
   double delta=residual-b_last;
   b_last=residual;
@@ -1005,6 +1104,7 @@ static void beacon_frame(RECEIVER *rx) {
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
     b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
+    spectrum_clear();                   // ...and it must not be averaged with this
     g_idle_add(apply_idle,NULL);
   }
 }

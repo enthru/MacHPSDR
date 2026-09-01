@@ -717,7 +717,10 @@ int main(int argc, char **argv) {
     bands_init();
     gboolean locked=FALSE;
     deaf_radio=TRUE;
-    double res=run_loop(3000.0,0.0,blocks,&locked,FS,10489540000LL);
+    // Long enough for the loop to lock (two measurements) and then be caught
+    // out three times: each measurement integrates a second of stream and each
+    // correction discards half a second after it.
+    double res=run_loop(3000.0,0.0,blocks*6,&locked,FS,10489540000LL);
     deaf_radio=FALSE;
     double err=res-3000.0;                 // what the loop pushed into error_a
     char st[128];
@@ -832,6 +835,50 @@ int main(int argc, char **argv) {
     check("the loudest line is not the beacon",
           qo100_beacon_locked() && fabs(left)<10.0, d);
     g_free(iq); g_free(hog); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
+  // ---- 22e. the operator's own dish, reproduced: a converter 350 kHz out, so
+  //           the whole transponder is drawn 350 kHz low and the frequency the
+  //           settings call "the beacon" holds somebody's QSO instead -- louder
+  //           than the beacon, and the loop locked onto it every time. What
+  //           identifies a beacon absolutely is that the two CW ones ARE the
+  //           transponder's edges, exactly 500.000 kHz apart and both
+  //           continuous. Nothing else on the band holds that spacing.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489313792LL,768000);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double *t2=g_new0(double,BLOCK*2);
+    double p1=0.0,p2=0.0,p3=0.0; guint32 s1=11,s2=12,s3=13;
+    long long beacon=qo100_beacon_frequency(0);
+    const double lo_err=350000.0;
+    const double expected=(double)(beacon-rx->frequency_a);
+    for(int b=0;b<blocks*12;b++) {
+      double low=expected-lo_err-(double)rx->error_a;      // the lower beacon
+      gen_block(iq,BLOCK,low,768000,1.0,0.05,&p1,&s1);
+      gen_block(t2,BLOCK,low+500000.0,768000,1.0,0.0,&p2,&s2);   // the upper one
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=t2[k];
+      // ...and a QSO sitting exactly where the settings say the beacon is,
+      // 9.5 dB louder than it.
+      gen_block(t2,BLOCK,expected-(double)rx->error_a,768000,3.0,0.0,&p3,&s3);
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=t2[k];
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    double left=lo_err+(double)rx->error_a;
+    snprintf(d,sizeof(d),"350 kHz out, a louder QSO on the expectation -> "
+             "%+.1f Hz left, locked=%d",left,qo100_beacon_locked());
+    check("the two CW beacons are 500 kHz apart, and that is the tell",
+          qo100_beacon_locked() && fabs(left)<50.0, d);
+    g_free(iq); g_free(t2); g_free(rx); g_free(r); radio=NULL;
     qo100_beacon_reset();
   }
 
