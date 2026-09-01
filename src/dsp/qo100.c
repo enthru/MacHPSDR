@@ -512,6 +512,17 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
 #define QO100_SLEW_HZ          50.0  // most a LOCKED reading may move in one of those
 #define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
+#define QO100_MED_N              5   // fine readings are checked against this many
+#define QO100_MED_TOL_HZ         3.0 // ...and one this far off the median is noise
+// A retune is a step in the audio, and ft8_lib demodulates each candidate at a
+// FIXED frequency -- it does no drift tracking at all -- so a step inside a
+// transmission smears it. FT8 sends from ~0.5 s to ~13.4 s of its 15 s UTC slot
+// and FT4 from ~0.5 s to ~5.5 s of its 7.5 s one, so there is a quiet tail in
+// each, and that is when the loop is allowed to move the radio.
+#define QO100_FT8_SLOT_S      15.0
+#define QO100_FT8_QUIET_S     13.4
+#define QO100_FT4_SLOT_S       7.5
+#define QO100_FT4_QUIET_S      5.6
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
@@ -548,6 +559,8 @@ static double   b_dry_samples;        // ...and since anything at all was found
 static double   b_gone_samples;       // ...and since a LOCKED loop last saw its beacon
 static double   b_expect;             // where the next measurement should land
 static int      b_reject;             // consecutive measurements refused as impossible
+static double   b_med[QO100_MED_N];   // recent fine residuals, for the median
+static int      b_med_n;
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -751,6 +764,40 @@ static gboolean find_carrier(const double *pow_acc, int fs,
   return TRUE;
 }
 
+// May the radio be moved right now? Only outside an FT8/FT4 transmission when
+// one of those decoders is running on this receiver: a correction is a step in
+// the audio, and ft8_lib demodulates at a fixed frequency, so a step inside a
+// transmission costs that decode. The loop measures about once a second, so it
+// simply waits for the slot's quiet tail -- at most one slot of delay, against a
+// converter that drifts hertz per minute.
+static gboolean qo100_may_retune_now(RECEIVER *rx) {
+  if(radio==NULL || rx==NULL) return TRUE;
+  if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return TRUE;
+  if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return TRUE;   // the tap is mode-gated
+  double slot =(radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S :QO100_FT8_SLOT_S;
+  double quiet=(radio->decode_mode==DECODE_FT4)?QO100_FT4_QUIET_S:QO100_FT8_QUIET_S;
+  double utc=(double)(g_get_real_time()/1000)/1000.0;     // UTC seconds
+  return fmod(utc,slot)>=quiet;
+}
+
+// The median of the recent fine residuals -- used to REJECT outliers, not to
+// replace the reading. Acting on the median directly was measured on the stand
+// and is worse: it lags the drift by half its own length, so at 0.5 Hz/s the
+// movement inside a 15 s slot went 1.95 -> 3.62 Hz. Rejecting instead keeps the
+// latest value (no lag) and throws away the beacon fades and neighbours that
+// made it jump; a reading more than QO100_MED_TOL_HZ from the median of the last
+// five seconds is not the converter, which drifts hertz per MINUTE.
+static double median_of(const double *v, int n) {
+  double t[QO100_MED_N];
+  memcpy(t,v,sizeof(double)*(size_t)n);
+  for(int i=1;i<n;i++) {                       // insertion sort, n is 5
+    double x=t[i]; int j=i-1;
+    while(j>=0 && t[j]>x) { t[j+1]=t[j]; j--; }
+    t[j+1]=x;
+  }
+  return t[n/2];
+}
+
 // GTK-thread half: push the queued step into the receiver and the band it is on.
 // Everything here touches WDSP / the protocol layer and so cannot run on the
 // audio thread the measurement lives on.
@@ -798,6 +845,7 @@ static void beacon_reset_locked(void) {
   b_gone_samples=0.0;
   b_expect=0.0;
   b_reject=0;
+  b_med_n=0;
   b_hold=0;
 }
 
@@ -1098,19 +1146,56 @@ static void beacon_frame(RECEIVER *rx) {
   b_stuck=0;
   b_step_prev=0.0;
 
-  if(fabs(residual)<QO100_DEADBAND_HZ) {
+  // Two speeds, because the two situations are not the same measurement. A large
+  // reading is a genuine converter offset that has been measured directly, so
+  // there is nothing to gain by approaching it in fractions — take all of it, and
+  // do not smooth it either. A small one is mostly measurement noise on a fading
+  // path: it goes through the median of the last QO100_MED_N seconds first, and
+  // only then through the damping gain.
+  double act;
+  if(fabs(residual)>QO100_COARSE_HZ) {
+    act=residual;
+    b_med_n=0;                          // a real offset invalidates the history
+  } else {
+    if(b_med_n<QO100_MED_N) b_med[b_med_n++]=residual;
+    else {
+      for(int i=1;i<QO100_MED_N;i++) b_med[i-1]=b_med[i];
+      b_med[QO100_MED_N-1]=residual;
+    }
+    if(b_med_n<QO100_MED_N) {           // not enough yet to judge an outlier
+      b_expect=residual;
+      snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (settling %d/%d)",
+               residual,b_med_n,QO100_MED_N);
+      return;
+    }
+    double med=median_of(b_med,b_med_n);
+    if(fabs(residual-med)>QO100_MED_TOL_HZ) {
+      b_expect=residual;
+      snprintf(b_status,sizeof(b_status),
+               "Locked  %+.1f Hz  (%+.1f off the last five, ignored)",
+               residual,residual-med);
+      return;
+    }
+    act=residual;
+  }
+
+  if(fabs(act)<QO100_DEADBAND_HZ) {
     b_expect=residual;                  // nothing moves, so nothing should change
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
-             residual,b_applied);
+             act,b_applied);
     return;
   }
 
-  // Two speeds, because the two situations are not the same measurement. A large
-  // reading is a genuine converter offset that has been measured directly, so
-  // there is nothing to gain by approaching it in fractions — take all of it. A
-  // small one is mostly measurement noise on a fading path, so damp it, or the
-  // radio twitches a few Hz every frame for ever.
-  double step=(fabs(residual)>QO100_COARSE_HZ)?residual:residual*QO100_GAIN;
+  // A step is a jump in the audio, so it waits for a gap in the traffic that
+  // cares: see qo100_may_retune_now().
+  if(!qo100_may_retune_now(rx)) {
+    b_expect=residual;
+    snprintf(b_status,sizeof(b_status),
+             "Locked  %+.1f Hz  (holding for the decoder's slot)",act);
+    return;
+  }
+
+  double step=(fabs(act)>QO100_COARSE_HZ)?act:act*QO100_GAIN;
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
 
@@ -1129,6 +1214,12 @@ static void beacon_frame(RECEIVER *rx) {
               b_applied+step,residual);
     return;
   }
+  // The history is not thrown away across a step -- that would make every fine
+  // correction wait five seconds for a new one, and at 0.5 Hz/s of drift the
+  // error grows 2.5 Hz in that gap (measured: 1.95 -> 3.62 Hz of movement inside
+  // a 15 s slot). It is SHIFTED instead: after the radio moves by `step`, every
+  // stored residual means `residual - step` in the new frame.
+  for(int i=0;i<b_med_n;i++) b_med[i]-=step;
 
   snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
            residual,b_applied+step);

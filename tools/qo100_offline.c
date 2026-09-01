@@ -937,6 +937,50 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // ---- 22f. a correction is a STEP in the audio, and ft8_lib demodulates each
+  //           candidate at a fixed frequency -- it does no drift tracking -- so a
+  //           step inside a transmission costs that decode. With FT8 selected the
+  //           loop must wait for the slot's quiet tail. Deterministic: the case
+  //           starts by waiting for the BUSY part of a slot, which is where 89 %
+  //           of wall-clock time is anyway, and the run takes about a second.
+  {
+    bands_init();
+    for(;;) {
+      double utc=(double)(g_get_real_time()/1000)/1000.0;
+      double ph=fmod(utc,15.0);
+      if(ph<10.0) break;                   // room for the run to finish inside
+      g_usleep(200000);
+    }
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    rx->mode_a=DIGU;                       // the decoder taps only in DIGU/DIGL
+    RADIO *r=mk_radio(rx);
+    r->decode_mode=DECODE_FT8;
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    radio->decode_mode=DECODE_FT8;
+    double *iq=g_new0(double,BLOCK*2);
+    double phase=0.0; guint32 seed=77;
+    long long beacon=qo100_beacon_frequency(0);
+    for(int b=0;b<blocks*3;b++) {
+      gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)-3000.0-(double)rx->error_a,
+                FS,1.0,0.05,&phase,&seed);
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"retunes=%d error_a=%lld — %s",
+             retunes,(long long)rx->error_a,st);
+    check("no retune inside an FT8 transmission",
+          retunes==0 && rx->error_a==0 && strstr(st,"holding")!=NULL, d);
+    g_free(iq); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
