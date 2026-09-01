@@ -469,6 +469,17 @@ COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 %.o: %.c .build-flags
 	$(COMPILE) -MMD -MP -c -o $@ $<
 
+# ft8_lib's monitor.c sets its own LOG_LEVEL and prints three lines from
+# monitor_init(), which the decoder calls once per decode window -- three lines
+# of "Block size = 1920" every two seconds for as long as FT8 is selected, on top
+# of everything this application has to say.  debug.h takes LOG_PRINTF from
+# whoever defines it first, so the vendored file stays untouched (the rule for
+# every tree under here) and the printing is simply defined away for that one
+# object.  Nothing is lost: the three numbers are constants of the protocol.
+# (void)0 rather than nothing at all: LOG() is `if (level >= LOG_LEVEL) PRINTF`,
+# and an empty replacement leaves an empty if body, which -Wempty-body reports.
+ft8_lib/common/monitor.o: OPTIONS += -D'LOG_PRINTF(...)=(void)0'
+
 PROGRAM=machpsdr
 # mingw's gcc appends .exe to an extensionless -o, so a target named `machpsdr`
 # would never look up to date and every make would relink.
