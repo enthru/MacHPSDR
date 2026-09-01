@@ -472,7 +472,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // condition for the dial to be telling the truth.
 
 #define QO100_FFT_N        32768     // ~5.9 Hz/bin at 192 kHz, ~170 ms per frame
-#define QO100_ACQ_HZ       60000.0   // search half-width while hunting
+#define QO100_ACQ_MIN_HZ   60000.0   // ...and never search a narrower one than this
 #define QO100_TRACK_HZ      2000.0   // ...and once locked
 #define QO100_DC_GUARD_HZ    300.0   // the I/Q DC-offset spike lives here
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
@@ -483,11 +483,16 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_DEADBAND_HZ      1.0   // below this, leave the radio alone
 #define QO100_COARSE_HZ      100.0   // above this the reading is a real offset, not jitter
 #define QO100_GAIN             0.5   // fraction of a SMALL error applied per step
-#define QO100_MAX_STEP_HZ  20000.0   // never jump further than this in one go
+// One correction may cover any error an LNB can actually have (30 ppm of
+// 9750 MHz is 292 kHz), because the agreement rule above now stands in front of
+// it: a reading that moved the radio this far had to hold still for a second
+// first. At the old 20 kHz a 250 kHz LNB pulled in at 20 kHz per 1.5 s and the
+// operator watched the dial crawl for twenty seconds.
+#define QO100_MAX_STEP_HZ 400000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
 #define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
-#define QO100_MAX_APPLIED_HZ 250000.0 // total correction one session may ever apply
+#define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
 static GMutex   bmtx;
 static RECEIVER *track_rx;
@@ -515,6 +520,7 @@ static double   b_step_prev;         // the last step queued, 0 if none
 static double   b_res_prev;          // ...and the residual it was measured from
 static int      b_stuck;             // consecutive coarse steps that changed nothing
 static double   b_run_samples;       // stream time the current agreement run covers
+static double   b_say_samples;        // ...and since the last spoken diagnosis
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -564,8 +570,15 @@ static void fft_radix2(double *re, double *im, int n) {
 
 // Locate the strongest line within [expected-win, expected+win] and return its
 // position in Hz. Destroys re/im. Caller holds bmtx.
+//
+// snr_out and bins_out are for the operator, not for the loop: "Searching for
+// the beacon" is the one status that says nothing about WHY, and the difference
+// between "the strongest thing in the window is 3 dB out of the noise" and "the
+// window holds four bins" is the difference between a dish problem and a
+// settings problem. Both are filled in even when the search fails.
 static gboolean find_carrier(double *re, double *im, int fs,
-                             double expected, double win, double *found) {
+                             double expected, double win, double *found,
+                             double *snr_out, int *bins_out) {
   const int N=QO100_FFT_N;
   for(int i=0;i<N;i++) {
     double w=0.5-0.5*cos(2.0*M_PI*(double)i/(double)(N-1));   // Hann
@@ -584,8 +597,10 @@ static gboolean find_carrier(double *re, double *im, int fs,
     sum+=p; count++;
     if(p>peak) { peak=p; pk=m; }
   }
+  if(bins_out!=NULL) *bins_out=count;
   if(pk<1 || pk>=N-1 || count<8) return FALSE;
   double mean=sum/(double)count;
+  if(snr_out!=NULL && mean>0.0) *snr_out=peak/mean;
   if(mean<=0.0 || peak/mean<QO100_MIN_SNR) return FALSE;
 
   double y0=sqrt(re[pk-1]*re[pk-1]+im[pk-1]*im[pk-1]);
@@ -637,6 +652,7 @@ static void beacon_reset_locked(void) {
   b_res_prev=0.0;
   b_stuck=0;
   b_run_samples=0.0;
+  b_say_samples=0.0;
   b_hold=0;
 }
 
@@ -712,17 +728,47 @@ static void beacon_frame(RECEIVER *rx) {
   // the beacon is then still 17 kHz from the centre of a +/-2 kHz window, the
   // search stops finding it, and the radio sits reporting "locked" while being
   // 17 kHz wrong for ever. (Found by tools/qo100_offline.c, not on air.)
-  double win=(b_locked && b_settled)?QO100_TRACK_HZ:QO100_ACQ_HZ;
+  //
+  // ACQUISITION searches as much of the span as it can reach, and the reason is
+  // arithmetic an LNB's data sheet makes plain: the error is the CRYSTAL's
+  // tolerance multiplied by 9750 MHz, so 5 ppm is 48.8 kHz, 10 ppm is 97.5 and
+  // 20 ppm — an ordinary consumer part — is 195 kHz. The +/-60 kHz this used to
+  // hunt in cannot see any of those, and the operator gets "Searching for the
+  // beacon" for ever with nothing to tell them the beacon is simply outside the
+  // window. A wide search is only safe because of the agreement rule above: a
+  // strong SSB or CW station in the span is not a steady line for a whole
+  // second, so it cannot be mistaken for a beacon.
+  double win=(b_locked && b_settled)?QO100_TRACK_HZ
+                                    :MAX(QO100_ACQ_MIN_HZ,span_half);
   if(win>span_half-fabs(expected)) win=span_half-fabs(expected);
   if(win<50.0) win=50.0;
 
-  double found;
-  if(!find_carrier(bre,bim,track_fs,expected,win,&found)) {
+  double found, snr=0.0;
+  int bins=0;
+  b_say_samples+=(double)QO100_FFT_N;
+  gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
+  if(say) b_say_samples=0.0;
+
+  if(!find_carrier(bre,bim,track_fs,expected,win,&found,&snr,&bins)) {
     b_run=0;
+    b_run_samples=0.0;
     if(!b_locked) g_strlcpy(b_status,"Searching for the beacon\342\200\246",sizeof(b_status));
     else g_strlcpy(b_status,"Locked (beacon momentarily gone)",sizeof(b_status));
+    // Say why, at INFO, because this is the status an operator gets stuck on and
+    // it is the one that explains nothing by itself.
+    if(say)
+      log_info("qo100: no carrier — beacon expected %+.1f kHz from centre, "
+               "window +/-%.1f kHz (%d bins of %.1f Hz), best peak %.1f x mean "
+               "(needs %.0f), span %d Hz\n",
+               expected/1000.0,win/1000.0,bins,(double)track_fs/(double)QO100_FFT_N,
+               snr,QO100_MIN_SNR,track_fs);
     return;
   }
+  if(say)
+    log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
+             "(residual %+.1f Hz, %.1f x mean, %s)\n",
+             found,expected,found-expected,snr,
+             b_locked?"locked":"acquiring");
 
   double residual=found-expected;
 
@@ -816,11 +862,12 @@ static void beacon_frame(RECEIVER *rx) {
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
 
-  // A second stop, for the same reason from the other end: an LNB is out by
-  // kilohertz to tens of kilohertz and drifts by less, and the acquisition
-  // window is only +/-60 kHz wide, so a quarter of a megahertz of accumulated
-  // correction in one session is not a converter being measured -- it is a loop
-  // that has stopped converging on something.
+  // A second stop, for the same reason from the other end. An LNB's error is its
+  // crystal's tolerance times 9750 MHz -- 292 kHz at 30 ppm, and a badly out
+  // consumer part perhaps twice that -- while the search can only see half a
+  // span either way in the first place. A megahertz of accumulated correction in
+  // one session is therefore not a converter being measured, it is a loop that
+  // has stopped converging on something.
   if(fabs(b_applied+step)>QO100_MAX_APPLIED_HZ) {
     beacon_reset_locked();
     b_stopped=TRUE;

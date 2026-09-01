@@ -747,7 +747,22 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
-  // ---- 22. a radio that answers LATE must not be mistaken for one that never
+  // ---- 22. the LNB's error is the crystal's tolerance times 9750 MHz: 5 ppm is
+  //          48.8 kHz, 20 ppm -- an ordinary consumer part -- is 195 kHz. The
+  //          +/-60 kHz this used to hunt in could not see either, and the
+  //          operator got "Searching for the beacon" for ever. Run it at a
+  //          Pluto's own span, where the beacon is a quarter of a megahertz out.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    double res=run_loop(250000.0,0.0,blocks*8,&locked,2304000,10489540000LL);
+    snprintf(d,sizeof(d),"250 kHz -> %+.1f Hz left, locked=%d",res,locked);
+    check("a 250 kHz LNB error is still acquired",
+          locked && fabs(res)<10.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 23. a radio that answers LATE must not be mistaken for one that never
   //          answers. A correction takes the driver's queued transfers, the FIFO
   //          in front of the DSP thread and the retune itself to come back, and
   //          at a 2 304 000 span -- a Pluto's own rate -- an FFT frame is 14 ms,
