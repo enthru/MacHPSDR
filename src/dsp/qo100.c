@@ -518,10 +518,19 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // SoapySDRDevice_setFrequency takes 14.4 ms on average and up to 97 ms, on USB,
 // and it runs on the GTK thread -- so every correction is a visible hitch in the
 // waterfall and a disturbance in the audio. (Over a network Pluto it is worse.)
-// The LNB drifts hertz per MINUTE, so a fine correction every half minute keeps
-// the dial inside a hertz or two while costing one hitch in that time. A COARSE
-// reading is a real offset and goes straight through.
-#define QO100_MIN_APPLY_S       30.0
+//
+// What that buys has to be worth it, and how much it buys is the ERROR, so the
+// wait is not a flat interval -- a flat one delays a five-hertz error exactly as
+// long as it delays half a hertz, which is merely slow. A trim is allowed once
+// the error and the time since the last one multiply out to QO100_TRIM_HZ_S:
+//
+//     10 Hz -> 2 s (the floor)   3 Hz -> 3.3 s   1 Hz -> 10 s   0.5 Hz -> 20 s
+//
+// with QO100_MIN_APPLY_S as a hard floor so a noisy minute cannot become a storm
+// of retunes. A COARSE reading is a real offset, not a trim, and goes straight
+// through with no wait at all.
+#define QO100_MIN_APPLY_S        2.0
+#define QO100_TRIM_HZ_S         10.0
 // A retune is a step in the audio, and ft8_lib demodulates each candidate at a
 // FIXED frequency -- it does no drift tracking at all -- so a step inside a
 // transmission smears it. FT8 sends from ~0.5 s to ~13.4 s of its 15 s UTC slot
@@ -1222,10 +1231,12 @@ static void beacon_frame(RECEIVER *rx) {
   // itself costs the operator something (see QO100_MIN_APPLY_S).
   if(fabs(act)<=QO100_COARSE_HZ) {
     double since=b_since_apply/(double)track_fs;
-    if(since<QO100_MIN_APPLY_S) {
+    double need=(fabs(act)>0.0)?QO100_TRIM_HZ_S/fabs(act):1.0e9;
+    if(need<QO100_MIN_APPLY_S) need=QO100_MIN_APPLY_S;
+    if(since<need) {
       b_expect=residual;
       snprintf(b_status,sizeof(b_status),
-               "Locked  %+.1f Hz  (next trim in %.0f s)",act,QO100_MIN_APPLY_S-since);
+               "Locked  %+.1f Hz  (trim in %.0f s)",act,need-since);
       return;
     }
   }
