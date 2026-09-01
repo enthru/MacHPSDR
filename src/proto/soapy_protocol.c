@@ -632,12 +632,19 @@ void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
  *     2 304 000  65536      97.8 %        22.4 ms
  *     2 304 000  262144     99.2 %         8.4 ms
  *
- * So: ~85 ms of stream, rounded up to a power of two (the driver's own
- * preference), which is the 4x that bought those two rows.  It is paid for in
- * latency and in nothing else, and only on the network backend -- the same
- * device over `usb:` has none of this and is left alone, as is every other
- * driver.  MACHPSDR_SOAPY_BUFFLEN overrides for experiment; 0 hands the driver
- * back its own choice.
+ * ~55 ms of stream, rounded up to a power of two (the driver's own preference),
+ * is the knee: at the 2 304 000 a Pluto runs here that is 131072 samples, and
+ * more buys nothing while costing latency (each row measured twice, 10 s):
+ *
+ *     buffer                 delivered
+ *     65536   (28 ms)        96.9 %, 97.3 %
+ *     131072  (57 ms)        99.6 %, 99.6 %
+ *     262144  (114 ms)       99.0 %, 99.0 %
+ *
+ * It is paid for in latency and in nothing else, and only on the network
+ * backend -- the same device over `usb:` has none of this and is left alone, as
+ * is every other driver.  MACHPSDR_SOAPY_BUFFLEN overrides for experiment; 0
+ * hands the driver back its own choice.
  *
  * Note the driver keeps its MTU at the default when bufflen is given
  * explicitly, so this does NOT change the size of the app's reads -- only how
@@ -657,7 +664,7 @@ static void soapy_rx_stream_args(SoapySDRKwargs *args, int rate) {
   } else if(radio!=NULL && radio->discovered!=NULL &&
             strstr(radio->discovered->info.soapy.make_args,"uri=ip:")!=NULL &&
             rate>0) {
-    long target=rate/12;                       /* ~85 ms of stream */
+    long target=rate/18;                       /* ~55 ms of stream; see above */
     bufflen=16384;
     while(bufflen<target && bufflen<(1L<<20)) bufflen<<=1;
   }
