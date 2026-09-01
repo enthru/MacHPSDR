@@ -24,7 +24,9 @@
 #include <string.h>
 #include <SoapySDR/Device.h>
 #include <SoapySDR/Formats.h>
+#include <SoapySDR/Version.h>
 #include "discovered.h"
+#include "resource_path.h"
 #include "soapy_discovery.h"
 
 static int rtlsdr_count=0;
@@ -526,6 +528,43 @@ static void pluto_env_address(char *addr, size_t len) {
   if(env!=NULL && env[0]!='\0') g_strlcpy(addr,env,len);
 }
 
+// A build straight out of the repository loads only the SYSTEM's SoapySDR
+// modules, and no distribution packages the PlutoSDR driver: Homebrew has no
+// soapyplutosdr at all and Ubuntu's soapysdr-module-all carries twelve drivers
+// without it.  That is why tools/build-soapy-plutosdr.sh exists and why `make
+// app` and the AppImage copy what it builds into the bundle -- but nothing
+// pointed a plain ./machpsdr at it, so the device this fork has done the most
+// receive-path work for was the one a developer build could not see, while the
+// released packages could.  Measured on this tree: "Available factories...
+// hackrf, rtlsdr".
+//
+// So the script's own output directory joins SOAPY_SDR_PLUGIN_PATH when it is
+// there, found beside the BINARY (the rule resource_path.h exists for) and
+// APPENDED, so an explicit setting from the operator still comes first.  In an
+// installed bundle there is no build/ next to the executable and this finds
+// nothing, which is correct -- the bundle's launcher has already named its own.
+//
+// Deliberately not a general "load whatever is under build/": tools/soapy_null.cpp
+// is a FAKE radio and must stay opt-in, or an ordinary run grows a device that
+// does not exist.  It is named here so that the next person to add a module
+// directory has to decide which of the two kinds it is.
+static void soapy_add_local_plugin_path(void) {
+  const char *exe=machpsdr_exe_dir();
+  if(exe==NULL) return;                       // Windows, or unknowable
+  char dir[1024];
+  g_snprintf(dir,sizeof(dir),"%s/build/soapy-plutosdr/lib/SoapySDR/modules%s",
+             exe,SOAPY_SDR_ABI_VERSION);
+  if(!g_file_test(dir,G_FILE_TEST_IS_DIR)) return;
+  const char *cur=getenv("SOAPY_SDR_PLUGIN_PATH");
+  if(cur!=NULL && strstr(cur,dir)!=NULL) return;
+  char *val=(cur!=NULL && cur[0]!='\0')
+              ? g_strdup_printf("%s%c%s",cur,G_SEARCHPATH_SEPARATOR,dir)
+              : g_strdup(dir);
+  g_setenv("SOAPY_SDR_PLUGIN_PATH",val,TRUE);
+  log_info("soapy_discovery: local driver build in %s\n",dir);
+  g_free(val);
+}
+
 void soapy_discovery(void) {
   size_t length;
   int i;
@@ -535,6 +574,10 @@ void soapy_discovery(void) {
   int added_uris=0;
 
   log_info("%s\n",__FUNCTION__);
+
+  // Before anything that can reach SoapySDR: modules are loaded once, on the
+  // first call that needs them, and netdev_probe() below is such a call.
+  soapy_add_local_plugin_path();
 
   // Saved network devices first: they cannot be found by any scan, and probing
   // them first keeps their discovered[] indices stable for the Forget button.
