@@ -55,7 +55,16 @@ static gboolean deaf_radio;
 // an FFT frame is longer than an element, so most frames hold both lines and the
 // peak search picks whichever is momentarily stronger.
 static gboolean f1a_ident;
-static double   worst_pull;         // furthest the loop dragged the radio, settled
+// Blocks of delay between the loop writing error_a and the signal showing it:
+// the driver's transfers in flight, the FIFO in front of the DSP thread and the
+// retune itself. Real, and much longer than one FFT frame at a wide span.
+static int      lag_blocks;
+// Peak-to-peak MOVEMENT of the correction once the loop has settled, not its
+// distance from nominal: which of the two F1A lines the published figure names
+// is unknown (see the note), so sitting 400 Hz off is a documented ambiguity,
+// while moving 400 Hz back and forth is the bug -- that is what a decode or an
+// SSB listener hears.
+static double   worst_pull;
 
 #define test_band test_bands[0]
 
@@ -168,17 +177,33 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   long long beacon=qo100_beacon_frequency(0);
 
   worst_pull=0.0;
+  double pull_lo=1e18, pull_hi=-1e18;
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)fs;
     // Second half of the run only: the first correction is the LNB's real error
     // being taken out, which is the loop doing its job.
     if(b>max_blocks/2) {
-      double pull=fabs(lo_error+(double)rx->error_a);
-      if(pull>worst_pull) worst_pull=pull;
+      double e=(double)rx->error_a;
+      if(e<pull_lo) pull_lo=e;
+      if(e>pull_hi) pull_hi=e;
+      worst_pull=pull_hi-pull_lo;
     }
-    double hop=(f1a_ident && fmod(t,0.2)<0.1)?400.0:0.0;
+    // The ident as a beacon actually sends it: bursts of keying with idle
+    // carrier between them. A carrier that hops for ever is not a beacon, it is
+    // a loop-breaker -- and asserting against it would only pin the loop's
+    // refusal to lock at all.
+    double hop=(f1a_ident && fmod(t,4.0)<2.0 && fmod(t,0.2)<0.1)?400.0:0.0;
+    // What the radio is ACTUALLY tuned to right now: what the loop asked for
+    // lag_blocks ago.
+    double applied=(double)rx->error_a;
+    if(lag_blocks>0) {
+      static double hist[4096];
+      int slot=b%(lag_blocks+1);
+      applied=(b>lag_blocks)?hist[(b-lag_blocks)%(lag_blocks+1)]:0.0;
+      hist[slot]=(double)rx->error_a;
+    }
     double baseband=(double)(beacon-rx->frequency_a)-lo_error
-                    -(deaf_radio?0.0:(double)rx->error_a)+hop;
+                    -(deaf_radio?0.0:applied)+hop;
     gen_block(iq,BLOCK,baseband,fs,1.0,noise,&phase,&seed);
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
@@ -722,7 +747,28 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
-  // ---- 22. ctun/freetune: the dial the operator reads is the CURSOR, so that
+  // ---- 22. a radio that answers LATE must not be mistaken for one that never
+  //          answers. A correction takes the driver's queued transfers, the FIFO
+  //          in front of the DSP thread and the retune itself to come back, and
+  //          at a 2 304 000 span -- a Pluto's own rate -- an FFT frame is 14 ms,
+  //          so the pipeline is ten of them. Without the post-correction hold the
+  //          loop reads its own stale frames, corrects twice for one error, and
+  //          latches the stuck guard on a radio that is working.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    lag_blocks=48;                       // ~0.5 s at 192 kHz: three FFT frames
+    double res=run_loop(3000.0,0.0,blocks*2,&locked,FS,10489540000LL);
+    lag_blocks=0;
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d — %s",res,locked,st);
+    check("a radio that answers late still converges",
+          locked && fabs(res)<10.0 && strstr(st,"Stopped")==NULL, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 23. ctun/freetune: the dial the operator reads is the CURSOR, so that
   //          is what the uplink must be paired with. Anchoring VFO B to the span
   //          centre put it half a span out — 60 kHz here, on a transponder
   //          500 kHz wide — and SAT split then carried the error along for ever.

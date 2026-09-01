@@ -476,15 +476,16 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_TRACK_HZ      2000.0   // ...and once locked
 #define QO100_DC_GUARD_HZ    300.0   // the I/Q DC-offset spike lives here
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
-#define QO100_LOCK_RUN           3   // consecutive agreeing frames to declare a lock
-#define QO100_LOCK_TOL_HZ    200.0   // ...how closely they must agree
+#define QO100_LOCK_RUN           3   // agreeing frames to declare a lock -- AND...
+#define QO100_AGREE_MS      1000.0   // ...that much STREAM TIME of them (see below)
+#define QO100_LOCK_TOL_HZ    200.0   // how closely they must agree while acquiring
+#define QO100_TRACK_TOL_HZ    20.0   // ...and once locked, which is what sees the ident
 #define QO100_DEADBAND_HZ      1.0   // below this, leave the radio alone
 #define QO100_COARSE_HZ      100.0   // above this the reading is a real offset, not jitter
 #define QO100_GAIN             0.5   // fraction of a SMALL error applied per step
 #define QO100_MAX_STEP_HZ  20000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
-#define QO100_SLEW_HZ           20.0 // most a SETTLED reading may move between frames
-#define QO100_SLEW_LOST         60   // ...frames of that before the lock is given up
+#define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 250000.0 // total correction one session may ever apply
 
@@ -513,8 +514,18 @@ static gboolean b_stopped;
 static double   b_step_prev;         // the last step queued, 0 if none
 static double   b_res_prev;          // ...and the residual it was measured from
 static int      b_stuck;             // consecutive coarse steps that changed nothing
-static double   b_expect;            // where the next frame's residual should land
-static int      b_reject;            // consecutive readings refused as impossible
+static double   b_run_samples;       // stream time the current agreement run covers
+// Samples to throw away after a correction. A step takes time to reach the radio
+// and time to come back: the driver's transfers already in flight, the FIFO
+// between the receive thread and the DSP thread, and the retune itself. Frames
+// measured inside that window still carry the OLD frequency, and at a 2 304 000
+// span -- a Pluto's own rate -- an FFT frame is 14 ms, so the pipeline is TEN of
+// them. Believing them means correcting twice for one error, and reading "that
+// step changed nothing" three times running, which latches the stuck guard on a
+// loop that is working perfectly. Counted in SAMPLES rather than wall clock:
+// that is what the latency is actually made of, and it makes the offline
+// harness (which feeds far faster than real time) measure the same thing.
+static int      b_hold;
 
 static volatile gint apply_queued;   // one applier in flight at a time
 static double   pend_step;           // Hz to add to error_a, under bmtx
@@ -625,8 +636,8 @@ static void beacon_reset_locked(void) {
   b_step_prev=0.0;
   b_res_prev=0.0;
   b_stuck=0;
-  b_expect=0.0;
-  b_reject=0;
+  b_run_samples=0.0;
+  b_hold=0;
 }
 
 void qo100_beacon_reset(void) {
@@ -715,48 +726,49 @@ static void beacon_frame(RECEIVER *rx) {
 
   double residual=found-expected;
 
-  // Acquisition needs agreement, not just a strong bin: the search takes a
-  // maximum over hundreds of trial positions, so noise alone produces a
-  // confident-looking peak somewhere every frame. A real beacon comes back to
-  // the same place; noise does not. (Same lesson as the APT sync detector.)
+  // Agreement, and it is measured in STREAM TIME rather than in frames. The
+  // search takes a maximum over hundreds of trial positions, so noise alone
+  // produces a confident-looking peak somewhere every frame; a real beacon comes
+  // back to the same place. (Same lesson as the APT sync detector.) But an FFT
+  // frame is 170 ms at a 192 kHz span and 14 ms at 2 304 000 -- a Pluto's own
+  // rate -- so "three frames agreed" is half a second of evidence on one radio
+  // and 43 ms on another, which is shorter than a single CW element and is
+  // precisely the thing that must not be believed.
+  //
+  // Because the lower beacon is F1A: its carrier HOPS 400 Hz while it keys its
+  // ident, and every reading taken during that is one of two frequencies. The
+  // same test therefore guards every correction, not just the first -- it used
+  // to guard acquisition alone, and the loop dragged the radio 400.9 Hz back and
+  // forth at 0.6 retunes a second (measured against a modelled ident), which is
+  // audible on SSB and fatal to FT8, whose decoder has no drift tracking at all
+  // and wants the frequency to hold still across a 15 s slot. An unsteady beacon
+  // now buys nothing: the run resets, no correction is applied, and the loop
+  // waits for the ident to end. A beacon that has genuinely MOVED is steady in
+  // its new place, so half a second later it is followed like any other reading.
+  double tol=b_locked?QO100_TRACK_TOL_HZ:QO100_LOCK_TOL_HZ;
+  if(b_run>0 && fabs(residual-b_last)<tol) {
+    b_run++;
+    b_run_samples+=(double)QO100_FFT_N;
+  } else {
+    b_run=1;
+    b_run_samples=(double)QO100_FFT_N;
+  }
+  b_last=residual;
+  gboolean agreed=(b_run>=QO100_LOCK_RUN &&
+                   b_run_samples>=(double)track_fs*(QO100_AGREE_MS/1000.0));
+
   if(!b_locked) {
-    if(b_run>0 && fabs(residual-b_last)<QO100_LOCK_TOL_HZ) b_run++;
-    else b_run=1;
-    b_last=residual;
-    if(b_run<QO100_LOCK_RUN) {
+    if(!agreed) {
       snprintf(b_status,sizeof(b_status),"Acquiring\342\200\246 %+.0f Hz",residual);
       return;
     }
     b_locked=TRUE;
-  }
-
-  // Once the loop is settled, what it may BELIEVE is bounded by what an
-  // oscillator can physically do. An LNB drifting a fast 10 Hz/s moves 1.7 Hz
-  // between frames, so a reading that jumps by hundreds is never the LNB: it is
-  // the lower beacon's own ident. That beacon is F1A -- the carrier hops 400 Hz
-  // while it keys -- and an FFT frame (171 ms at 192 kHz) is longer than an
-  // element, so most frames hold BOTH lines and the peak search picks whichever
-  // is momentarily stronger. Measured on the loop as shipped, with the ident
-  // modelled: the radio was dragged 400.9 Hz back and forth, 0.6 retunes a
-  // second -- audible on SSB and fatal to FT8, whose decoder has no drift
-  // tracking at all and wants the frequency to hold still across a 15 s slot.
-  // A reading outside the slew limit is therefore IGNORED rather than applied;
-  // if it stays outside for QO100_SLEW_LOST frames the beacon really has moved
-  // (or the lock was never on it) and the lock is dropped, which puts the
-  // three-frame agreement test back in front of the next correction.
-  if(b_locked && b_settled && fabs(residual-b_expect)>QO100_SLEW_HZ) {
-    b_reject++;
-    if(b_reject<QO100_SLEW_LOST) {
-      snprintf(b_status,sizeof(b_status),
-               "Locked  (ignoring a %+.0f Hz jump -- beacon ident?)",residual-b_expect);
-      b_step_prev=0.0;
-      return;
-    }
-    beacon_reset_locked();
-    g_strlcpy(b_status,"Re-acquiring â the beacon moved",sizeof(b_status));
+  } else if(!agreed) {
+    snprintf(b_status,sizeof(b_status),
+             "Locked  (beacon unsteady %+.0f Hz -- ident?)",residual);
+    b_step_prev=0.0;
     return;
   }
-  b_reject=0;
 
   b_residual=residual;
   b_settled=(fabs(residual)<QO100_SETTLED_HZ);
@@ -790,7 +802,6 @@ static void beacon_frame(RECEIVER *rx) {
   b_step_prev=0.0;
 
   if(fabs(residual)<QO100_DEADBAND_HZ) {
-    b_expect=residual;
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
              residual,b_applied);
     return;
@@ -830,10 +841,8 @@ static void beacon_frame(RECEIVER *rx) {
     b_applied+=step;
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
-    b_expect=residual-step;
+    b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
     g_idle_add(apply_idle,NULL);
-  } else {
-    b_expect=residual;                  // nothing was applied, so nothing should move
   }
 }
 
@@ -867,6 +876,7 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   }
 
   for(int k=0;k<n_frames;k++) {
+    if(b_hold>0) { b_hold--; bacc=0; continue; }   // stale: a step is in flight
     // (Q, I) — the receiver buffer's order; see the sign note above.
     bre[bacc]=iq[2*k+1];
     bim[bacc]=iq[2*k];
