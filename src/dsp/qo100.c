@@ -514,6 +514,14 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
 #define QO100_MED_N              5   // fine readings are checked against this many
 #define QO100_MED_TOL_HZ         3.0 // ...and one this far off the median is noise
+// A retune is NOT free. Measured on a Pluto with a live 768 kHz stream:
+// SoapySDRDevice_setFrequency takes 14.4 ms on average and up to 97 ms, on USB,
+// and it runs on the GTK thread -- so every correction is a visible hitch in the
+// waterfall and a disturbance in the audio. (Over a network Pluto it is worse.)
+// The LNB drifts hertz per MINUTE, so a fine correction every half minute keeps
+// the dial inside a hertz or two while costing one hitch in that time. A COARSE
+// reading is a real offset and goes straight through.
+#define QO100_MIN_APPLY_S       30.0
 // A retune is a step in the audio, and ft8_lib demodulates each candidate at a
 // FIXED frequency -- it does no drift tracking at all -- so a step inside a
 // transmission smears it. FT8 sends from ~0.5 s to ~13.4 s of its 15 s UTC slot
@@ -561,6 +569,10 @@ static double   b_expect;             // where the next measurement should land
 static int      b_reject;             // consecutive measurements refused as impossible
 static double   b_med[QO100_MED_N];   // recent fine residuals, for the median
 static int      b_med_n;
+// Counted in STREAM time, like the hold and the agreement: that is the clock the
+// loop lives on, and it is what makes the offline stand -- which feeds far faster
+// than real time -- measure the behaviour the operator gets.
+static double   b_since_apply;        // stream since the radio was last moved
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -814,11 +826,20 @@ static gboolean apply_idle(gpointer data) {
   // The receiver may have gone away, or the operator may have switched away from
   // it, between the measurement and this callback.
   if(radio!=NULL && rx!=NULL && rx==radio->active_receiver && step!=0.0) {
+    gint64 t0=g_get_monotonic_time();
     rx->error_a += (gint64)llround(step);
     BAND *band=band_get_band(rx->band_a);
     if(band!=NULL) band->errorLO=rx->error_a;   // so it survives a band change and a restart
     frequency_changed(rx);
     update_frequency(rx);
+    // The retune runs on the GTK thread and a SoapySDR device can take tens of
+    // milliseconds over it -- measured on a Pluto at 14.4 ms average, 97 ms
+    // worst, on a live stream. That is a visible hitch in the waterfall, so when
+    // it happens the log says which of the two it was rather than leaving the
+    // operator to blame the receiver.
+    double ms=(double)(g_get_monotonic_time()-t0)/1000.0;
+    if(ms>20.0)
+      log_info("qo100: the %+.1f Hz retune took %.0f ms on the GTK thread\n",step,ms);
   }
   g_atomic_int_set(&apply_queued,0);
   return G_SOURCE_REMOVE;
@@ -846,6 +867,7 @@ static void beacon_reset_locked(void) {
   b_expect=0.0;
   b_reject=0;
   b_med_n=0;
+  b_since_apply=1.0e12;                 // a fresh lock may trim at once
   b_hold=0;
 }
 
@@ -1016,6 +1038,7 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
   spectrum_clear();
+  b_since_apply+=avg_samples;
   b_dry_samples=0.0;
   b_gone_samples=0.0;
 
@@ -1195,6 +1218,18 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
 
+  // ...and a FINE step waits for the rate limit as well, because the retune
+  // itself costs the operator something (see QO100_MIN_APPLY_S).
+  if(fabs(act)<=QO100_COARSE_HZ) {
+    double since=b_since_apply/(double)track_fs;
+    if(since<QO100_MIN_APPLY_S) {
+      b_expect=residual;
+      snprintf(b_status,sizeof(b_status),
+               "Locked  %+.1f Hz  (next trim in %.0f s)",act,QO100_MIN_APPLY_S-since);
+      return;
+    }
+  }
+
   double step=(fabs(act)>QO100_COARSE_HZ)?act:act*QO100_GAIN;
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
@@ -1232,6 +1267,7 @@ static void beacon_frame(RECEIVER *rx) {
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
     b_expect=residual-step;             // where the next measurement must land
+    b_since_apply=0.0;
     b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
     spectrum_clear();                   // ...and it must not be averaged with this
     g_idle_add(apply_idle,NULL);
