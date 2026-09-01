@@ -632,14 +632,27 @@ void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
  *     2 304 000  65536      97.8 %        22.4 ms
  *     2 304 000  262144     99.2 %         8.4 ms
  *
- * ~55 ms of stream, rounded up to a power of two (the driver's own preference),
- * is the knee: at the 2 304 000 a Pluto runs here that is 131072 samples, and
- * more buys nothing while costing latency (each row measured twice, 10 s):
+ * ~36 ms of stream is the best of it -- and it is not a monotonic trade where
+ * more buffer buys more stream.  Each row twice, 10 s, at the 2 304 000 a Pluto
+ * runs here, and the gap column is the one that matters to anything watching:
  *
- *     buffer                 delivered
- *     65536   (28 ms)        96.9 %, 97.3 %
- *     131072  (57 ms)        99.6 %, 99.6 %
- *     262144  (114 ms)       99.0 %, 99.0 %
+ *     buffer                 delivered        p95 gap   longest
+ *     65536   (28 ms)        96.9 %, 97.3 %    96 ms    119 ms
+ *     81920   (36 ms)        99.9 %, 99.8 %    38 ms    124 ms
+ *     131072  (57 ms)        99.6 %, 99.6 %   101 ms    151 ms
+ *     262144  (114 ms)       99.0 %, 99.0 %   121 ms    199 ms
+ *
+ * A longer request is not merely wasteful: it occupies the socket for longer,
+ * so a stall inside it costs more and the delivery is WORSE as well as later.
+ * Rounded to a multiple of 8192 rather than to a power of two (the driver's own
+ * preference, which would overshoot 36 ms to 57 here).
+ *
+ * The gap column also decides how the display moves, though nothing here is
+ * tuned for it: update_timer_cb advances the waterfall one line per analyzer
+ * frame, and a frame is one 1/fps of STREAM, so the waterfall inherits the
+ * delivery cadence with no buffer of its own to hide it -- unlike the audio,
+ * which rides over a 160 ms WDSP ring and a 50 ms sink.  A 38 ms p95 sits under
+ * the 40 ms frame at the default 25 fps; a 101 ms one does not.
  *
  * It is paid for in latency and in nothing else, and only on the network
  * backend -- the same device over `usb:` has none of this and is left alone, as
@@ -664,9 +677,10 @@ static void soapy_rx_stream_args(SoapySDRKwargs *args, int rate) {
   } else if(radio!=NULL && radio->discovered!=NULL &&
             strstr(radio->discovered->info.soapy.make_args,"uri=ip:")!=NULL &&
             rate>0) {
-    long target=rate/18;                       /* ~55 ms of stream; see above */
-    bufflen=16384;
-    while(bufflen<target && bufflen<(1L<<20)) bufflen<<=1;
+    const long target=(long)(((long long)rate*36)/1000);   /* ~36 ms; see above */
+    bufflen=((target+8191)/8192)*8192;
+    if(bufflen<8192) bufflen=8192;
+    if(bufflen>(1L<<20)) bufflen=(1L<<20);
   }
   if(bufflen>0) {
     char temp[32];
