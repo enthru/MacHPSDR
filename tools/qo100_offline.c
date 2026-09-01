@@ -72,15 +72,22 @@ static double   lo_drift_hz_s;
 // loop reads moves a few hertz from one integrated second to the next. It has
 // mean zero, so a loop that chases it only moves the operator's dial about.
 static double   lo_wobble_hz;
+// A steady carrier this far from the beacon's RESTING tone, on air the whole
+// time. It is what makes the tone discriminator's veto testable: a guard that
+// no case exercises is a guard that gets deleted in the next refactor.
+static double   intruder_hz;
+// ...and whole seconds in which the beacon itself is not there to argue.
+static gboolean f1a_fade;
+#define QO100_FSK_SHIFT_HZ_TEST 400.0   /* qo100.c's own, which it does not export */
 // Blocks of delay between the loop writing error_a and the signal showing it:
 // the driver's transfers in flight, the FIFO in front of the DSP thread and the
 // retune itself. Real, and much longer than one FFT frame at a wide span.
 static int      lag_blocks;
 // Peak-to-peak MOVEMENT of the correction once the loop has settled, not its
-// distance from nominal: which of the two F1A lines the published figure names
-// is unknown (see the note), so sitting 400 Hz off is a documented ambiguity,
-// while moving 400 Hz back and forth is the bug -- that is what a decode or an
-// SSB listener hears.
+// distance from nominal: moving 400 Hz back and forth is a bug of its own --
+// that is what a decode or an SSB listener hears -- and it is separate from
+// SITTING 400 Hz off, which is worst_track's job and is no longer an ambiguity
+// (see the hop model in run_loop).
 static double   worst_pull;
 // ...and how far the dial ever sat from the beacon once settled, which is the
 // number an operator hears.
@@ -200,6 +207,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   double *iq=g_new0(double,BLOCK*2);
   double phase=0.0;
   guint32 seed=12345;
+  // The PUBLISHED tone -- `hop` below is what puts the signal on the line the
+  // beacon is actually radiating at that instant.
   long long beacon=qo100_beacon_frequency(0);
 
   worst_pull=0.0;
@@ -233,18 +242,23 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // a loop-breaker -- and asserting against it would only pin the loop's
     // refusal to lock at all.
     //
-    // The burst is SIX seconds and its mark duty 60 %, which is what makes this
+    // The burst is SIX seconds and its keyed duty 60 %, which is what makes this
     // case bite: the loop integrates one second at a time, so two whole
     // measurements land inside the keying with the keyed line the taller of the
     // two, they agree with each other, and 400 Hz is applied as a coarse step.
     // That is the "jumps forward and comes back" reported from air.
-    // F1A as the standard defines it, which is the thing the loop has to get
-    // right: the carrier RESTS on the published (mark) frequency and drops
-    // 400 Hz for the space between elements. So the nominal line is the one
-    // that is nearly always there, and the shifted one appears only while the
-    // beacon is sending.
-    double hop=(f1a_ident && t>=f1a_from_s &&
-                fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?-400.0:0.0;
+    //
+    // WHERE THE TWO LINES SIT is the assertion this whole file rests on, and it
+    // is measured rather than read: the beacon RESTS on the tone
+    // QO100_BEACON_REST_HZ ABOVE its published frequency and drops to the
+    // published one while it keys (operator's dish, 2026-09-01). So the line
+    // that is nearly always there is NOT the one the dial must be trued to --
+    // which is the whole of the bug this models. `residual` below is the dial's
+    // error against the published figure, so a loop that trues the resting tone
+    // instead reads +/-400 here and every test in the file fails.
+    double hop=(double)QO100_BEACON_REST_HZ;
+    if(f1a_ident && t>=f1a_from_s && fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)
+      hop=0.0;
     // ...and the guard's worst case, which is what the operator's log turned
     // out to be: whole integrated seconds in which the loop's OWN line is
     // absent and the only candidate is 400 Hz away -- "nearest of 1 lines".
@@ -253,9 +267,19 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // the line it is tracking is the one that only appears between elements.
     // Three seconds shifted, three keying, three on the nominal, over and
     // over, which is a harder version of that than the air produces.
+    double beacon_amp=1.0;
     if(f1a_shape && t>=f1a_from_s) {
-      double ph=fmod(t,9.0);
-      hop=(ph<3.0)?-400.0:((ph<6.0)?((fmod(t,0.2)<0.1)?-400.0:0.0):0.0);
+      // ...and with f1a_fade, a fourth quarter in which the beacon is not
+      // audible at all: a fade, or simply its line falling under the SNR gate
+      // while something else in the window holds the mean up. That is the
+      // second the operator's log kept showing -- "nearest of 1 lines", and the
+      // one line is not the beacon's.
+      double period=f1a_fade?12.0:9.0;
+      double ph=fmod(t,period);
+      hop=(ph<3.0)?0.0
+                  :((ph<6.0)?((fmod(t,0.2)<0.1)?0.0:(double)QO100_BEACON_REST_HZ)
+                            :(double)QO100_BEACON_REST_HZ);
+      if(f1a_fade && ph>=9.0) beacon_amp=0.0;
     }
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
@@ -273,7 +297,22 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     }
     double baseband=(double)(beacon-rx->frequency_a)-lo_error-lo_drift_hz_s*t+wob
                     -(deaf_radio?0.0:applied)+hop;
-    gen_block(iq,BLOCK,baseband,fs,1.0,noise,&phase,&seed);
+    gen_block(iq,BLOCK,baseband,fs,beacon_amp,noise,&phase,&seed);
+    if(intruder_hz!=0.0) {
+      // Somebody parked next to the beacon, on air continuously -- so unlike
+      // the beacon's own tones it is there in EVERY integrated second.
+      static double iph=0.0; static guint32 isd=4242;
+      double *ib=g_new0(double,BLOCK*2);
+      // 6 dB below the beacon: this case is about the TRACKING guard, and an
+      // intruder as loud as the beacon and 400 Hz from it is an acquisition
+      // coin-flip -- two equal lines inside one cluster, with nothing but the
+      // 500 kHz pairing able to say which is which. That is a separate
+      // question, and letting it decide this case would only make it flaky.
+      gen_block(ib,BLOCK,baseband-hop+(double)QO100_BEACON_REST_HZ+intruder_hz,
+                fs,0.5,0.0,&iph,&isd);
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=ib[k];
+      g_free(ib);
+    }
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
     while(g_main_context_iteration(NULL,FALSE)) ;
@@ -392,6 +431,15 @@ int main(int argc, char **argv) {
                 qo100_beacon_frequency(QO100_BEACON_SEL_LOWER)==QO100_BEACON_LOWER &&
                 qo100_beacon_frequency(QO100_BEACON_SEL_UPPER)==QO100_BEACON_UPPER &&
                 qo100_beacon_frequency(QO100_BEACON_SEL_WB)==QO100_WB_BEACON &&
+                // ...and the line the loop MEASURES is not the line the dial is
+                // trued to: a CW beacon rests one shift above its published
+                // figure, and the WB beacon (no carrier at all) is offset by
+                // nothing, since nothing tracks it.
+                qo100_beacon_track_frequency(QO100_BEACON_SEL_LOWER)==
+                  QO100_BEACON_LOWER+QO100_BEACON_REST_HZ &&
+                qo100_beacon_track_frequency(QO100_BEACON_SEL_UPPER)==
+                  QO100_BEACON_UPPER+QO100_BEACON_REST_HZ &&
+                qo100_beacon_track_frequency(QO100_BEACON_SEL_WB)==QO100_WB_BEACON &&
                 qo100_beacon_has_carrier(QO100_BEACON_SEL_LOWER) &&
                 qo100_beacon_has_carrier(QO100_BEACON_SEL_UPPER) &&
                 !qo100_beacon_has_carrier(QO100_BEACON_SEL_WB) &&
@@ -882,7 +930,9 @@ int main(int argc, char **argv) {
     double *iq=g_new0(double,BLOCK*2);
     double *walker=g_new0(double,BLOCK*2);
     double p1=0.0,p2=0.0; guint32 s1=21,s2=22;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     const double lo_err=3000.0;
     const int settle=blocks*3;                  // lock and settle on the beacon
     const int total=settle+(int)(40.0*(double)FS/(double)BLOCK);
@@ -989,17 +1039,20 @@ int main(int argc, char **argv) {
   }
 
   // ---- 21g. the dial is only truthful if the loop knows WHICH of the beacon's
-  //           two tones is the published one, and that is not a matter of
-  //           taste: IARU Region 1 publishes an FSK beacon's mark, the carrier
-  //           rests there between messages and drops 400 Hz to the space while
-  //           sending (AMSAT-DL forum, PA3FYM quoting the standard). So the
-  //           mark is the tone that is on the air when the other is not, and a
-  //           lock on the space is a dial 400 Hz off with nothing on air to say
-  //           so -- which is what the operator's second log was.
-  //           This starts the loop in the worst place for it: acquisition
-  //           lands in a stretch where ONLY the space is transmitting, so it
-  //           locks 400 Hz low and every guard in the file is then against
-  //           moving that far. It has to end up on the mark anyway.
+  //           two tones is the published one, and that is not a matter of taste
+  //           and not a matter of documents either. It was read out of the IARU
+  //           convention -- the carrier rests on the nominal and drops 400 Hz to
+  //           the space while sending -- and on air the beacon does the
+  //           opposite: it RESTS 400 Hz ABOVE the published figure (operator's
+  //           dish, 2026-09-01, from the state the dial was truthful in). The
+  //           loop therefore MEASURES the resting tone, which is the only one
+  //           always on air, and trues the dial 400 Hz below it.
+  //           This starts the loop in the worst place for that: acquisition
+  //           lands in a stretch where only the KEYED tone is transmitting, so
+  //           it locks on that one and every guard in the file is then against
+  //           moving the 400 Hz back up. It has to end up on the resting tone
+  //           anyway -- and a dial trued to the resting tone instead reads
+  //           +400 Hz here, which is the operator's report exactly.
   {
     bands_init();
     gboolean locked=FALSE;
@@ -1008,8 +1061,37 @@ int main(int argc, char **argv) {
     f1a_shape=FALSE; f1a_ident=FALSE;
     snprintf(d,sizeof(d),"%+.1f Hz from the published tone, %d retunes, locked=%d",
              res,retunes,locked);
-    check("the lock lands on the published tone, not the space",
+    check("the lock lands on the published tone, not the rest",
           locked && fabs(res)<10.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21h. ...and the same machinery must not fire on evidence that only
+  //           LOOKS like it. The tone test says "readings one shift above me
+  //           mean I am on the keyed tone, climb"; a station parked one shift
+  //           above the resting tone produces exactly those readings, because
+  //           an F1A beacon's own line really does vanish out of whole
+  //           integrated seconds and the nearest candidate is then the
+  //           intruder. Counted one way only -- which is how this was written
+  //           -- that is a RATCHET: it can fire, nothing can argue back, and
+  //           the misfire is permanent, written into band->errorLO and saved.
+  //           The veto is the other half of the same evidence: while the keyed
+  //           tone is showing up one shift BELOW, the loop is demonstrably
+  //           where it belongs, so no window that contains such a reading may
+  //           settle anything. Remove `b_tone_dn==0` from qo100.c and this case
+  //           reads 400 Hz off.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    f1a_ident=TRUE; f1a_shape=TRUE; f1a_fade=TRUE; f1a_from_s=10.0;
+    intruder_hz=QO100_FSK_SHIFT_HZ_TEST;
+    double res=run_loop(3000.0,0.0,blocks*16,&locked,FS,10489540000LL);
+    intruder_hz=0.0;
+    f1a_from_s=0.0; f1a_fade=FALSE; f1a_shape=FALSE; f1a_ident=FALSE;
+    snprintf(d,sizeof(d),"%+.1f Hz from the published tone, biggest step %.0f Hz, "
+             "locked=%d",res,worst_step,locked);
+    check("a station one shift up does not steal the lock",
+          locked && fabs(res)<40.0 && worst_step<100.0, d);
     qo100_beacon_reset();
   }
 
@@ -1045,7 +1127,9 @@ int main(int argc, char **argv) {
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
     double phase=0.0; guint32 seed=99;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     // Only the interloper: 398 kHz from where the beacon is expected, and the
     // strongest thing in the span. Nothing may lock to it.
     double interloper=(double)(beacon-rx->frequency_a)+398000.0;
@@ -1082,7 +1166,9 @@ int main(int argc, char **argv) {
     double *iq=g_new0(double,BLOCK*2);
     double *hog=g_new0(double,BLOCK*2);
     double ph1=0.0, ph2=0.0; guint32 s1=7, s2=8;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     const double lo_err=3000.0;                       // a sane LNB, 3 kHz out
     for(int b=0;b<blocks*3;b++) {
       double base=(double)(beacon-rx->frequency_a)-lo_err-(double)rx->error_a;
@@ -1121,7 +1207,9 @@ int main(int argc, char **argv) {
     double *iq=g_new0(double,BLOCK*2);
     double *t2=g_new0(double,BLOCK*2);
     double p1=0.0,p2=0.0,p3=0.0; guint32 s1=11,s2=12,s3=13;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     const double lo_err=350000.0;
     const double expected=(double)(beacon-rx->frequency_a);
     for(int b=0;b<blocks*12;b++) {
@@ -1163,7 +1251,9 @@ int main(int argc, char **argv) {
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
     double phase=0.0; guint32 seed=31;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     // Lock onto an impostor sitting 500 Hz from where the beacon is expected --
     // close enough to be declared settled, which is what narrows the window.
     for(int b=0;b<blocks;b++) {
@@ -1221,7 +1311,9 @@ int main(int argc, char **argv) {
     radio->decode_mode=DECODE_FT8;
     double *iq=g_new0(double,BLOCK*2);
     double phase=0.0; guint32 seed=77;
-    long long beacon=qo100_beacon_frequency(0);
+    // A bare continuous carrier stands for the tone the beacon RESTS on, which
+    // is the one a tracker sees, and it is one shift above the published figure.
+    long long beacon=qo100_beacon_track_frequency(0);
     for(int b=0;b<blocks*3;b++) {
       gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)-3000.0-(double)rx->error_a,
                 FS,1.0,0.05,&phase,&seed);

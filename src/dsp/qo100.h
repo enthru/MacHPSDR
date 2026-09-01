@@ -191,6 +191,18 @@ extern void qo100_beacon_forget_receiver(RECEIVER *rx);
 extern long long qo100_beacon_frequency(int sel);
 extern gboolean  qo100_beacon_has_carrier(int sel);
 
+/* An F1A beacon is TWO lines 400 Hz apart and the published figure names only
+   one of them; which one is the whole difference between a truthful dial and a
+   dial 400 Hz off. MEASURED ON AIR, on the operator's dish (2026-09-01): the
+   CW beacon RESTS on the tone 400 Hz ABOVE its published frequency and drops to
+   the published one while it keys — so the tone that is on air when the other
+   is not, the only one a loop can track without gaps, is NOT the one the dial
+   must be trued to. qo100_beacon_track_frequency() is where the loop looks;
+   qo100_beacon_frequency() stays what the operator tunes to and what the band
+   plan draws. */
+#define QO100_BEACON_REST_HZ 400LL
+extern long long qo100_beacon_track_frequency(int sel);
+
 #define QO100_BEACON_SEL_LOWER 0
 #define QO100_BEACON_SEL_UPPER 1
 #define QO100_BEACON_SEL_WB    2
