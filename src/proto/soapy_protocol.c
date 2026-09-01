@@ -1023,6 +1023,22 @@ static gpointer receive_thread(gpointer data) {
   void *buffs[]={buffer};
   int overruns=0;
   gint64 overrun_reported=g_get_monotonic_time();
+  /* Stream-health accounting.  The overrun check below only catches a stream
+     arriving FASTER than it is consumed; a stream arriving SHORT is invisible,
+     because a driver owes no error for samples its device dropped while the
+     host was not asking.  On the libiio network backend nothing is even
+     capable of reporting it -- SoapyPlutoSDR's readStreamStatus() is
+     SOAPY_SDR_NOT_SUPPORTED -- so a networked Pluto over a jittery link
+     delivered 94.6 % of a 768 kHz stream with 0 overruns, 0 timeouts and 0
+     errors (tools/soapy_bench.c).  What the operator gets is a stuttering
+     waterfall and chopped audio, and the application had nothing to say about
+     it.  So: count what arrives against what the device says it is running at,
+     and name the shortfall.  Missing samples are not a silence the DSP can see
+     -- the samples either side are spliced. */
+  long long got=0;
+  double worst_gap=0.0;
+  gint64 health_t0=g_get_monotonic_time();
+  gint64 last_read=health_t0;
 
 log_info("%s: running\n",__FUNCTION__);
   size_t channel=rx->adc;
@@ -1034,6 +1050,12 @@ log_info("%s: running\n",__FUNCTION__);
     if(!rx_stream_active) {
       g_atomic_int_set(&rx_parked[channel],1);
       g_usleep(1000);
+      /* Not a shortfall: the stream is deactivated for the transmission.
+         Start the window again when it comes back, or the pause is reported
+         as loss. */
+      got=0; worst_gap=0.0;
+      health_t0=g_get_monotonic_time();
+      last_read=health_t0;
       continue;
     }
     g_atomic_int_set(&rx_parked[channel],0);
@@ -1058,6 +1080,28 @@ log_info("%s: running\n",__FUNCTION__);
                   __FUNCTION__,overruns,(double)(now-overrun_reported)/1.0e6,(long)channel);
         overrun_reported=now;
         overruns=0;
+      }
+    }
+    {
+      const gint64 now=g_get_monotonic_time();
+      const double gap=(double)(now-last_read)/1000.0;    /* ms */
+      last_read=now;
+      if(gap>worst_gap) worst_gap=gap;
+      if(elements>0) got+=elements;
+      if(now-health_t0>=5000000) {
+        const double secs=(double)(now-health_t0)/1.0e6;
+        const double expect=(double)soapy_rx_actual_rate*secs;
+        /* 1 % covers the block quantisation at the window edges; a link that is
+           merely a little late does not trip this, and a link that is dropping
+           does so by tens of milliseconds per second. */
+        if(expect>0.0 && (double)got<0.99*expect) {
+          log_error("%s: adc %ld received %.1f%% of the stream in the last %.0f s "
+                    "(%.0f ms of signal lost per second, longest gap between reads %.0f ms) -- "
+                    "this is loss, not latency: the samples either side of it are spliced\n",
+                    __FUNCTION__,(long)channel,100.0*(double)got/expect,secs,
+                    1000.0*(expect-(double)got)/(double)soapy_rx_actual_rate/secs,worst_gap);
+        }
+        got=0; worst_gap=0.0; health_t0=now;
       }
     }
     if(elements<0) continue;

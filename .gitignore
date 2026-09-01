@@ -70,6 +70,8 @@ metis_emu
 metis_emu.dSYM/
 p2_emu
 p2_emu.dSYM/
+soapy_bench
+soapy_bench.dSYM/
 
 # apt_offline default output (a decoded pass, regenerated on demand)
 apt.png

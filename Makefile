@@ -960,6 +960,27 @@ p2-emu: p2_emu
 p2_emu: tools/p2_emu.c
 	$(CC) $(CFLAGS) -o $@ tools/p2_emu.c -lm
 
+# Does the LINK carry the stream?  tools/soapy_bench.c reads a SoapySDR device
+# the way soapy_protocol.c's receive thread does and reports what actually
+# arrived -- delivered samples/s against the rate the device says it is running,
+# the tail of the gaps between reads, overruns and timeouts.  Not part of `make
+# check`: it opens a radio, so it needs one, and it must not run while the app
+# holds the device.
+#
+# It exists because a networked PlutoSDR reaches the app through libiio's
+# network backend, which is strictly request/response -- nothing drains the
+# device while a READBUF is in flight, so a stall on the link is samples the
+# DMA ring dropped, spliced into the stream, with no error reported anywhere
+# (SoapyPlutoSDR's readStreamStatus is SOAPY_SDR_NOT_SUPPORTED).  That presents
+# as a stuttering waterfall and chopped audio, i.e. as a broken receiver.  This
+# tells the link and the receiver apart with no application in the way.
+#   make soapy-bench
+#   ./soapy_bench --uri ip:192.168.100.5 --rate 768000     # then the same over usb:
+.PHONY: soapy-bench
+soapy-bench: soapy_bench$(EXE)
+soapy_bench$(EXE): tools/soapy_bench.c
+	$(CC) $(CFLAGS) $(BREW_INCLUDES) -o $@ tools/soapy_bench.c $(BREW_LIBS) -lSoapySDR -lm
+
 # The AGC-on-FM harness: tools/agc_offline.c.  The only harness that opens a
 # WDSP channel, because the thing it pins lives inside one -- SetRXAMode() owns
 # the AGC block's run flag and clears it for FM/WFM, so set_agc() only works
