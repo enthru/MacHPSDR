@@ -521,6 +521,7 @@ static double   b_res_prev;          // ...and the residual it was measured from
 static int      b_stuck;             // consecutive coarse steps that changed nothing
 static double   b_run_samples;       // stream time the current agreement run covers
 static double   b_say_samples;        // ...and since the last spoken diagnosis
+static double   b_dry_samples;        // ...and since anything at all was found
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -576,8 +577,14 @@ static void fft_radix2(double *re, double *im, int n) {
 // between "the strongest thing in the window is 3 dB out of the noise" and "the
 // window holds four bins" is the difference between a dish problem and a
 // settings problem. Both are filled in even when the search fails.
+// The bounds are explicit rather than "expected +/- win" because a symmetric
+// window around the expectation is NOT the same as the band the receiver can
+// hear: with the beacon expected 40 kHz below centre in a 192 kHz span, a
+// symmetric window reaches -86 kHz on one side and +6 kHz on the other, so an
+// LNB erring the other way put the beacon inside the SPAN and outside the
+// SEARCH. Acquisition therefore sweeps the whole sampled band.
 static gboolean find_carrier(double *re, double *im, int fs,
-                             double expected, double win, double *found,
+                             double lo_hz, double hi_hz, double *found,
                              double *snr_out, int *bins_out) {
   const int N=QO100_FFT_N;
   for(int i=0;i<N;i++) {
@@ -592,7 +599,7 @@ static gboolean find_carrier(double *re, double *im, int fs,
   for(int m=0;m<N;m++) {
     double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;   // signed baseband Hz
     if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
-    if(sf<expected-win || sf>expected+win) continue;
+    if(sf<lo_hz || sf>hi_hz) continue;
     double p=re[m]*re[m]+im[m]*im[m];
     sum+=p; count++;
     if(p>peak) { peak=p; pk=m; }
@@ -653,6 +660,7 @@ static void beacon_reset_locked(void) {
   b_stuck=0;
   b_run_samples=0.0;
   b_say_samples=0.0;
+  b_dry_samples=0.0;
   b_hold=0;
 }
 
@@ -738,10 +746,16 @@ static void beacon_frame(RECEIVER *rx) {
   // window. A wide search is only safe because of the agreement rule above: a
   // strong SSB or CW station in the span is not a steady line for a whole
   // second, so it cannot be mistaken for a beacon.
-  double win=(b_locked && b_settled)?QO100_TRACK_HZ
-                                    :MAX(QO100_ACQ_MIN_HZ,span_half);
-  if(win>span_half-fabs(expected)) win=span_half-fabs(expected);
-  if(win<50.0) win=50.0;
+  double lo_hz,hi_hz;
+  if(b_locked && b_settled) {
+    lo_hz=expected-QO100_TRACK_HZ;
+    hi_hz=expected+QO100_TRACK_HZ;
+  } else {
+    lo_hz=-span_half;                  // the whole band the receiver can hear
+    hi_hz= span_half;
+  }
+  if(lo_hz<-span_half) lo_hz=-span_half;
+  if(hi_hz> span_half) hi_hz= span_half;
 
   double found, snr=0.0;
   int bins=0;
@@ -749,21 +763,36 @@ static void beacon_frame(RECEIVER *rx) {
   gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
   if(say) b_say_samples=0.0;
 
-  if(!find_carrier(bre,bim,track_fs,expected,win,&found,&snr,&bins)) {
+  if(!find_carrier(bre,bim,track_fs,lo_hz,hi_hz,&found,&snr,&bins)) {
     b_run=0;
     b_run_samples=0.0;
-    if(!b_locked) g_strlcpy(b_status,"Searching for the beacon\342\200\246",sizeof(b_status));
+    b_dry_samples+=(double)QO100_FFT_N;
+    if(!b_locked) {
+      // After ten seconds of finding nothing, stop repeating "Searching" and
+      // name the limit the operator can actually act on. An LNB's error is its
+      // crystal's tolerance times 9750 MHz -- 195 kHz at 20 ppm -- and a span of
+      // 192 kHz only reaches +/-96 kHz, so with a narrow span the beacon can be
+      // outside the RECEIVER, where no search width helps. The two cures are the
+      // operator's: a wider span while acquiring, or an LNB LO nearer the truth.
+      if(b_dry_samples>(double)track_fs*10.0)
+        snprintf(b_status,sizeof(b_status),
+                 "Nothing found in the Â±%.0f kHz this span covers â "
+                 "widen the span, or set the LNB LO closer",span_half/1000.0);
+      else
+        g_strlcpy(b_status,"Searching for the beacon\342\200\246",sizeof(b_status));
+    }
     else g_strlcpy(b_status,"Locked (beacon momentarily gone)",sizeof(b_status));
     // Say why, at INFO, because this is the status an operator gets stuck on and
     // it is the one that explains nothing by itself.
     if(say)
       log_info("qo100: no carrier — beacon expected %+.1f kHz from centre, "
-               "window +/-%.1f kHz (%d bins of %.1f Hz), best peak %.1f x mean "
-               "(needs %.0f), span %d Hz\n",
-               expected/1000.0,win/1000.0,bins,(double)track_fs/(double)QO100_FFT_N,
-               snr,QO100_MIN_SNR,track_fs);
+               "searched %+.1f..%+.1f kHz (%d bins of %.1f Hz), best peak %.1f x "
+               "mean (needs %.0f), span %d Hz\n",
+               expected/1000.0,lo_hz/1000.0,hi_hz/1000.0,bins,
+               (double)track_fs/(double)QO100_FFT_N,snr,QO100_MIN_SNR,track_fs);
     return;
   }
+  b_dry_samples=0.0;
   if(say)
     log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
              "(residual %+.1f Hz, %.1f x mean, %s)\n",

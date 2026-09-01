@@ -762,7 +762,27 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
-  // ---- 23. a radio that answers LATE must not be mistaken for one that never
+  // ---- 23. the search band is the RECEIVER's, not a window around the guess.
+  //          With the beacon expected 40 kHz below centre, a symmetric window
+  //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
+  //          erring the other way put the carrier inside the SPAN and outside
+  //          the SEARCH, which reads as a beacon that is not there.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    // With noise, so the case cannot be passed by a Hann sidelobe leaking into
+    // the window edge: on a noiseless carrier the old symmetric window found its
+    // own leakage at +6.4 kHz, stepped 46 kHz on that, and stumbled into the
+    // real line from there.
+    double res=run_loop(-60000.0,1.0,blocks*2,&locked,FS,10489540000LL);
+    snprintf(d,sizeof(d),"-60 kHz (beacon lands +20 kHz) -> %+.1f Hz, locked=%d",
+             res,locked);
+    check("a carrier on the far side of centre is found",
+          locked && fabs(res)<10.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 24. a radio that answers LATE must not be mistaken for one that never
   //          answers. A correction takes the driver's queued transfers, the FIFO
   //          in front of the DSP thread and the retune itself to come back, and
   //          at a 2 304 000 span -- a Pluto's own rate -- an FFT frame is 14 ms,
