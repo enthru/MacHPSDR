@@ -1542,9 +1542,9 @@ void receiver_set_freetune(RECEIVER *rx, gboolean enable) {
     rx->ctun_max = rx->frequency_a + (long long)(rx->sample_rate / 2);
     if(rx->ctun_frequency < rx->ctun_min) rx->ctun_frequency = rx->ctun_min;
     if(rx->ctun_frequency > rx->ctun_max) rx->ctun_frequency = rx->ctun_max;
-    /* The hardware LO is already on the current centre; remember it so we only
-       retune when the span centre later moves (see frequency_changed). */
-    rx->freetune_hw_frequency = rx->frequency_a;
+    /* The radio is already on this frequency; seed the tracker so entering
+       freetune does not command a retune of its own (see frequency_changed). */
+    rx->hw_frequency = rx->frequency_a - rx->lo_a + rx->error_a;
     receiver_apply_shift(rx,rx->ctun_offset,TRUE);
   } else {
     if(!rx->ctun) {
@@ -4008,8 +4008,8 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   /* Restore the tuning shift after the channel open -- into the feed's NCO or
      into WDSP's shift block, whichever this receiver ended up with. */
   receiver_apply_shift(rx,rx->ctun_offset,rx->ctun||rx->freetune);
-  /* The LO starts on the current centre; seed the freetune retune tracker. */
-  rx->freetune_hw_frequency = rx->frequency_a;
+  /* The LO starts on the current centre; seed the retune tracker. */
+  rx->hw_frequency = rx->frequency_a - rx->lo_a + rx->error_a;
 
   int result;
   XCreateAnalyzer(rx->channel, &result, WDSP_ANALYZER_MAX_SIZE, 1, 1, "");

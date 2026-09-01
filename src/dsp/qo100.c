@@ -335,6 +335,16 @@ gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz) {
 // Transponder mode
 // ---------------------------------------------------------------------------
 
+// The frequency the operator is actually listening on: under ctun or freetune
+// that is the CURSOR, not the span centre -- the same rule vfo_apply_frequency()
+// and receiver_notch_anchor() follow. Anchoring the uplink to frequency_a put
+// VFO B up to half a span away from the downlink being listened to (~90 kHz on a
+// 192 kHz span, on a transponder 500 kHz wide), and SAT split then carried that
+// error along for ever, since it moves both VFOs by the same delta.
+static long long qo100_dial(RECEIVER *rx) {
+  return (rx->ctun || rx->freetune) ? rx->ctun_frequency : rx->frequency_a;
+}
+
 gboolean qo100_transponder_setup(RADIO *r) {
   if(r==NULL) return FALSE;
   RECEIVER *rx=r->active_receiver;
@@ -383,7 +393,8 @@ gboolean qo100_transponder_setup(RADIO *r) {
   // slack cannot make the two transponders meet: they are half a megahertz
   // apart, ten times this.
   const long long slack=50000LL;
-  if(rx->frequency_a < tp_low-slack || rx->frequency_a > tp_high+slack) {
+  long long dial=qo100_dial(rx);
+  if(dial < tp_low-slack || dial > tp_high+slack) {
     // For the narrow transponder, band-stack entry 1 is the SSB stretch below
     // the middle beacon — a place to land that is neither a beacon nor the CW
     // section. For the wideband one it is the first wide channel, which is where
@@ -393,7 +404,10 @@ gboolean qo100_transponder_setup(RADIO *r) {
   }
 
   long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
-  rx->frequency_b=rx->frequency_a-offset;
+  // Re-read the dial: set_band() may have moved it just above, and it clears
+  // ctun on the way through.
+  dial=qo100_dial(rx);
+  rx->frequency_b=dial-offset;
 
   // The transponder is non-inverting, so the uplink keeps the downlink's
   // sideband — and SPLIT_SAT is the mode that moves both VFOs the same way,
@@ -413,7 +427,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 
   log_info("qo100: %s transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)\n",
            wb?"wideband":"narrow-band",
-           (long long)rx->frequency_a,(long long)rx->frequency_b,offset);
+           (long long)dial,(long long)rx->frequency_b,offset);
   return TRUE;
 }
 
@@ -469,6 +483,8 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_GAIN             0.5   // fraction of a SMALL error applied per step
 #define QO100_MAX_STEP_HZ  20000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
+#define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
+#define QO100_MAX_APPLIED_HZ 250000.0 // total correction one session may ever apply
 
 static GMutex   bmtx;
 static RECEIVER *track_rx;
@@ -486,6 +502,15 @@ static double   b_last;              // previous frame's residual, for the agree
 static double   b_residual;          // published: last accepted residual
 static double   b_applied;           // published: total correction pushed into the LO error
 static char     b_status[128]="Off";
+
+// The loop refuses to keep correcting when its corrections do not arrive. Both
+// are latched: only an operator action (Re-acquire, another beacon, the lock
+// switched off and on) clears them, since re-acquiring by itself would simply
+// walk into the same wall three frames later.
+static gboolean b_stopped;
+static double   b_step_prev;         // the last step queued, 0 if none
+static double   b_res_prev;          // ...and the residual it was measured from
+static int      b_stuck;             // consecutive coarse steps that changed nothing
 
 static volatile gint apply_queued;   // one applier in flight at a time
 static double   pend_step;           // Hz to add to error_a, under bmtx
@@ -593,11 +618,16 @@ static void beacon_reset_locked(void) {
   b_last=0.0;
   b_locked=FALSE;
   b_settled=FALSE;
+  b_step_prev=0.0;
+  b_res_prev=0.0;
+  b_stuck=0;
 }
 
 void qo100_beacon_reset(void) {
   g_mutex_lock(&bmtx);
   beacon_reset_locked();
+  b_stopped=FALSE;
+  b_applied=0.0;
   b_residual=0.0;
   track_rx=NULL;
   g_strlcpy(b_status,"Off",sizeof(b_status));
@@ -639,6 +669,7 @@ void qo100_beacon_status(char *buf, int size) {
 
 // Analyse one filled frame. Caller holds bmtx.
 static void beacon_frame(RECEIVER *rx) {
+  if(b_stopped) return;                 // latched refusal, see below
   double expected=(double)(track_beacon-rx->frequency_a);
   double span_half=0.45*(double)track_fs;
 
@@ -696,6 +727,34 @@ static void beacon_frame(RECEIVER *rx) {
   b_residual=residual;
   b_settled=(fabs(residual)<QO100_SETTLED_HZ);
 
+  // A correction that does not move the reading is not a correction, and the
+  // loop has no way to tell "the radio ignored it" from "the LNB drifted back by
+  // exactly as much" -- so it applies the same step again, and again, at up to
+  // 20 kHz a frame into error_a and into the band's PERSISTED errorLO with it.
+  // That is not a hypothetical failure mode, it is the one this guard was
+  // written for: frequency_changed() pushed a new LO to Protocol 2 / SoapySDR
+  // only in its non-ctun branch, so with ctun or freetune on the radio never
+  // moved and the operator was left with a dial nobody could account for.
+  // Only COARSE steps are judged, since a fine one is half of a few hertz of
+  // measurement noise and would false-positive on a lock that is working.
+  if(fabs(b_step_prev)>QO100_COARSE_HZ) {
+    double moved=b_res_prev-residual;             // what the previous step bought
+    if(fabs(moved)<0.25*fabs(b_step_prev)) b_stuck++; else b_stuck=0;
+    if(b_stuck>=QO100_STUCK_RUN) {
+      double last=b_step_prev;          // beacon_reset_locked() clears it
+      beacon_reset_locked();
+      b_stopped=TRUE;
+      g_strlcpy(b_status,
+                "Stopped: the correction is not reaching the radio",
+                sizeof(b_status));
+      log_error("qo100: beacon lock stopped -- %.0f Hz applied and the residual "
+                "stayed at %.0f Hz; the radio is not being retuned\n",
+                last,residual);
+      return;
+    }
+  }
+  b_step_prev=0.0;
+
   if(fabs(residual)<QO100_DEADBAND_HZ) {
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
              residual,b_applied);
@@ -711,6 +770,21 @@ static void beacon_frame(RECEIVER *rx) {
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
 
+  // A second stop, for the same reason from the other end: an LNB is out by
+  // kilohertz to tens of kilohertz and drifts by less, and the acquisition
+  // window is only +/-60 kHz wide, so a quarter of a megahertz of accumulated
+  // correction in one session is not a converter being measured -- it is a loop
+  // that has stopped converging on something.
+  if(fabs(b_applied+step)>QO100_MAX_APPLIED_HZ) {
+    beacon_reset_locked();
+    b_stopped=TRUE;
+    snprintf(b_status,sizeof(b_status),
+             "Stopped: %+.0f kHz of correction is not an LNB",(b_applied+step)/1000.0);
+    log_error("qo100: beacon lock stopped -- %.0f Hz accumulated, residual %.0f Hz\n",
+              b_applied+step,residual);
+    return;
+  }
+
   snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
            residual,b_applied+step);
 
@@ -719,6 +793,8 @@ static void beacon_frame(RECEIVER *rx) {
   if(g_atomic_int_compare_and_exchange(&apply_queued,0,1)) {
     pend_step=step;
     b_applied+=step;
+    b_step_prev=step;                   // ...and what it must be worth next frame
+    b_res_prev=residual;
     g_idle_add(apply_idle,NULL);
   }
 }

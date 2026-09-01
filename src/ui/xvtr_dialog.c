@@ -137,7 +137,6 @@ void xvtr_dialog_refresh_row(int band) {
 void update_receiver(int band) {
   int i;
   RECEIVER *rx;
-  gboolean saved_ctun;
   for(i=0;i<MAX_RECEIVERS;i++) {
     rx=radio->receiver[i];
     if(rx!=NULL) {
@@ -145,14 +144,13 @@ void update_receiver(int band) {
         BAND *xvtr=band_get_band(band);
         rx->lo_a=xvtr->frequencyLO;
         rx->error_a=xvtr->errorLO;
-        saved_ctun=rx->ctun;
-        if(saved_ctun) {
-          rx->ctun=FALSE;
-        }
+        // This used to switch ctun off around the call and back on afterwards,
+        // because frequency_changed() only retuned the hardware in its non-ctun
+        // branch -- and paid for it by clearing the tuning shift, so an operator
+        // who edited an LO under ctun was left listening at the span centre
+        // instead of at their cursor. The branch now follows the commanded
+        // frequency, which is exactly what an LO edit moves.
         frequency_changed(rx);
-        if(saved_ctun) {
-          rx->ctun=TRUE;
-        }
 
         if(radio->transmitter!=NULL) {
           if(radio->transmitter->rx==rx) {

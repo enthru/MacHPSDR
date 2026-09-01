@@ -310,6 +310,30 @@ void radio_set_wfm_deemphasis(RADIO *r, int sel) {
   }
 }
 
+// The sum every protocol tunes the radio to. It moves when the dial moves, when
+// freetune slides the span centre at a span edge -- and when a converter's LO or
+// its measured error changes under a dial that has not moved at all, which is
+// what the QO-100 beacon lock does once a frame.
+static long long rx_hw_frequency(RECEIVER *rx) {
+  return rx->frequency_a - rx->lo_a + rx->error_a;
+}
+
+// Tell the radio where to tune. Protocol 1 needs nothing: its output thread
+// recomputes the same sum every pass. Protocol 2 and SoapySDR are told only when
+// the commanded frequency has actually changed, unless the caller forces it.
+static void rx_push_hw_frequency(RECEIVER *rx, gboolean force) {
+  long long cmd=rx_hw_frequency(rx);
+  if(!force && cmd==rx->hw_frequency) return;
+  rx->hw_frequency=cmd;
+  if(radio->discovered->protocol==PROTOCOL_2) {
+    protocol2_high_priority();
+#ifdef SOAPYSDR
+  } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    soapy_protocol_set_rx_frequency(rx);
+#endif
+  }
+}
+
 void frequency_changed(RECEIVER *rx) {
 
     // Diversity mixer hidden rx synced to the rx which is
@@ -372,21 +396,19 @@ void frequency_changed(RECEIVER *rx) {
     }
 
     // Freetune (unlike plain CTUN) lets the span centre follow the cursor at the
-    // span edges: frequency_a moves, so the hardware LO must be retuned to match.
-    // Retune only when the centre actually changed, so in-span tuning stays a
-    // click-free digital shift. Protocol 1 needs nothing here (its output thread
-    // reads frequency_a continuously); Protocol 2 / SoapySDR must be told.
-    if(rx->freetune && rx->frequency_a != rx->freetune_hw_frequency) {
-      if(radio->discovered->protocol==PROTOCOL_2) {
-        protocol2_high_priority();
-#ifdef SOAPYSDR
-      } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-        soapy_protocol_set_rx_frequency(rx);
-#endif
-      }
-      rx->band_a=get_band_from_frequency(rx->frequency_a);
-      rx->freetune_hw_frequency=rx->frequency_a;
-    }
+    // span edges, so the band under the centre can change while the cursor is
+    // being dragged.
+    if(rx->freetune) rx->band_a=get_band_from_frequency(rx->frequency_a);
+    // The hardware follows the COMMANDED frequency, and in ctun/freetune two
+    // things move it while the span sits still: freetune sliding the centre, and
+    // a converter's LO error being corrected under the dial -- which is what the
+    // QO-100 beacon lock does. This used to be gated on the freetune centre
+    // alone, so under ctun or freetune that correction went into error_a and
+    // never onto the radio: the next measurement read the same offset, applied
+    // it again, and walked error_a -- and with it the band's PERSISTED errorLO
+    // -- away at up to 20 kHz a frame. Protocol 1 was immune (its output thread
+    // recomputes the sum every pass); Protocol 2 and SoapySDR were not.
+    rx_push_hw_frequency(rx,FALSE);
   } else {
     // Normal tuning: the VFO cursor sits at the centre, so there is no ctun
     // offset. Clear any stale value left over from ctun/freetune so the cursor
@@ -400,13 +422,7 @@ void frequency_changed(RECEIVER *rx) {
     // frequency tracking frequency_a here too, not just in the ctun/freetune
     // branch above, or a notch would drift off-station under plain tuning.
     RXANBPSetTuneFrequency(rx->channel, (double)rx->frequency_a);
-    if(radio->discovered->protocol==PROTOCOL_2) {
-      protocol2_high_priority();
-#ifdef SOAPYSDR
-    } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-      soapy_protocol_set_rx_frequency(rx);
-#endif
-    }
+    rx_push_hw_frequency(rx,TRUE);
     rx->band_a=get_band_from_frequency(rx->frequency_a);
   }
 

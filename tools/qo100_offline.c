@@ -46,6 +46,11 @@ static BAND      test_bands[BANDS+XVTRS];
 static BANDSTACK test_stacks[BANDS+XVTRS];
 static BANDSTACK_ENTRY test_entries[BANDS+XVTRS][3];
 static int  retunes;                // how many times the loop moved the radio
+// A radio that takes the retune and does not move: the shape of the bug the
+// stuck guard exists for (frequency_changed() pushed a new LO to Protocol 2 /
+// SoapySDR only in its non-ctun branch, so under ctun or freetune the correction
+// stayed in error_a and never reached the hardware).
+static gboolean deaf_radio;
 
 #define test_band test_bands[0]
 
@@ -158,7 +163,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   long long beacon=qo100_beacon_frequency(0);
 
   for(int b=0;b<max_blocks;b++) {
-    double baseband=(double)(beacon-rx->frequency_a)-lo_error-(double)rx->error_a;
+    double baseband=(double)(beacon-rx->frequency_a)-lo_error
+                    -(deaf_radio?0.0:(double)rx->error_a);
     gen_block(iq,BLOCK,baseband,fs,1.0,noise,&phase,&seed);
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
@@ -658,6 +664,53 @@ int main(int argc, char **argv) {
     check("old narrow-only converter row is widened, error kept",
           rb->frequencyMax==QO100_WB_DOWN_HIGH && rb->errorLO==-8321 &&
           qo100_in_wb_transponder(rx->frequency_a), d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 20. the radio that never moves. A correction the hardware ignores is
+  //          indistinguishable, frame by frame, from an LNB that drifted back by
+  //          exactly as much — so the loop applies it again, and again, at up to
+  //          20 kHz a frame into error_a and into the band's PERSISTED errorLO
+  //          with it. It must stop instead, and say why. (This is the failure
+  //          that was reported from air: ctun on, and the correction reaching
+  //          error_a but never the radio.)
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    deaf_radio=TRUE;
+    double res=run_loop(3000.0,0.0,blocks,&locked,FS,10489540000LL);
+    deaf_radio=FALSE;
+    double err=res-3000.0;                 // what the loop pushed into error_a
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"error_a %+.0f Hz, locked=%d — %s",err,locked,st);
+    check("a radio that never moves stops the loop",
+          fabs(err)<20000.0 && !locked && strstr(st,"Stopped")!=NULL, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21. ctun/freetune: the dial the operator reads is the CURSOR, so that
+  //          is what the uplink must be paired with. Anchoring VFO B to the span
+  //          centre put it half a span out — 60 kHz here, on a transponder
+  //          500 kHz wide — and SAT split then carried the error along for ever.
+  {
+    bands_init();
+    RADIO *r0=g_new0(RADIO,1);
+    char msg[160];
+    qo100_create_transverters(r0,msg,sizeof(msg));
+    g_free(r0);
+    RECEIVER *rx=mk_rx(10489650000LL,FS);      // span centre
+    rx->ctun=TRUE;
+    rx->ctun_frequency=10489710000LL;          // ...and the cursor, 60 kHz up
+    RADIO *r=mk_radio(rx);
+    r->qo100_beacon_lock=FALSE;
+    radio=r;
+    qo100_transponder_setup(r);
+    snprintf(d,sizeof(d),"cursor %lld -> B %lld",
+             (long long)rx->ctun_frequency,(long long)rx->frequency_b);
+    check("ctun: the uplink pairs with the cursor",
+          rx->frequency_b==10489710000LL-QO100_TP_OFFSET &&
+          rx->ctun_frequency==10489710000LL, d);
     g_free(rx); g_free(r); radio=NULL;
   }
 
