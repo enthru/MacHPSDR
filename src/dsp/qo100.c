@@ -512,8 +512,9 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
 #define QO100_SLEW_HZ          50.0  // most a LOCKED reading may move in one of those
 #define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
-#define QO100_MED_N              5   // fine readings are checked against this many
-#define QO100_MED_TOL_HZ         3.0 // ...and one this far off the median is noise
+#define QO100_MED_N              5   // fine readings are acted on through this many
+#define QO100_SCATTER          0.5   // ...and only if the median beats this much
+                                     // of the spread of the window behind it
 // A retune is NOT free. Measured on a Pluto with a live 768 kHz stream:
 // SoapySDRDevice_setFrequency takes 14.4 ms on average and up to 97 ms, on USB,
 // and it runs on the GTK thread -- so every correction is a visible hitch in the
@@ -557,7 +558,8 @@ static int      bacc;
 static gboolean b_locked;
 static gboolean b_settled;           // residual small enough for the narrow window
 static int      b_run;               // consecutive agreeing frames
-static double   b_last;              // previous frame's residual, for the agreement test
+static double   b_last;              // previous frame's residual, for the log's delta
+static double   b_run_ref;           // ...and the run's ANCHOR, for the agreement test
 static double   b_residual;          // published: last accepted residual
 static double   b_applied;           // published: total correction pushed into the LO error
 static char     b_status[128]="Off";
@@ -680,7 +682,7 @@ static void spectrum_add(double *re, double *im, double *pow_acc) {
 // sitting where the beacon was expected.)
 static gboolean find_carrier(const double *pow_acc, int fs,
                              double lo_hz, double hi_hz, double expected,
-                             double partner_hz,
+                             double partner_hz, gboolean dominant,
                              double *found, double *snr_out, int *bins_out,
                              int *cand_out) {
   const int N=QO100_FFT_N;
@@ -752,22 +754,33 @@ static gboolean find_carrier(const double *pow_acc, int fs,
   }
   if(sel<1 || sel>=N-1) return FALSE;
 
-  // Third pass, and it is what makes an F1A beacon measurable. The nearest
+  // Third pass, and it is what makes an F1A beacon ACQUIRABLE. The nearest
   // candidate locates the SIGNAL; within one signal's width the line to measure
   // is the one it spends most of its time on, which in an integrated spectrum is
-  // simply the tallest. Nearest alone is bistable on a keyed beacon: the two
-  // lines are 400 Hz apart, whichever is nearer changes as the correction
+  // simply the tallest. Nearest alone is bistable while acquiring: the beacon's
+  // two lines are 400 Hz apart, whichever is nearer changes as the correction
   // proceeds, and the loop ends up hopping between them 400 Hz at a time --
   // measured, before this pass existed.
+  //
+  // It is exactly wrong once the loop is TRACKING, and that is the caller's
+  // `dominant` flag. A settled lock knows where its beacon is to within a few
+  // hertz, so the nearest line IS the beacon and the tallest is whatever is
+  // momentarily loudest within 600 Hz of it -- the ident's other line, or
+  // somebody tuning up across it. Following that is how a loop reading -0.0 Hz
+  // walked out to -111.8 and applied it as a coarse step, reported from air.
+  // The bistability this pass exists for cannot happen here: nothing moves the
+  // expectation by 400 Hz once the tracking window is only 2 kHz wide.
   double sel_sf=((sel<=N/2)?(double)sel:(double)(sel-N))*bin_hz;
-  for(int m=1;m<N-1;m++) {
-    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
-    if(fabs(sf-sel_sf)>QO100_CLUSTER_HZ) continue;
-    if(sf<lo_hz || sf>hi_hz) continue;
-    double pw=pow_acc[m];
-    if(pw/mean<QO100_MIN_SNR) continue;
-    if(pw<pow_acc[m-1] || pw<pow_acc[m+1]) continue;
-    if(pw>pow_acc[sel]) sel=m;
+  if(dominant) {
+    for(int m=1;m<N-1;m++) {
+      double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
+      if(fabs(sf-sel_sf)>QO100_CLUSTER_HZ) continue;
+      if(sf<lo_hz || sf>hi_hz) continue;
+      double pw=pow_acc[m];
+      if(pw/mean<QO100_MIN_SNR) continue;
+      if(pw<pow_acc[m-1] || pw<pow_acc[m+1]) continue;
+      if(pw>pow_acc[sel]) sel=m;
+    }
   }
   pk=sel;
   if(snr_out!=NULL) *snr_out=pow_acc[pk]/mean;
@@ -864,6 +877,7 @@ static void beacon_reset_locked(void) {
   spectrum_clear();
   b_run=0;
   b_last=0.0;
+  b_run_ref=0.0;
   b_locked=FALSE;
   b_settled=FALSE;
   b_step_prev=0.0;
@@ -994,7 +1008,9 @@ static void beacon_frame(RECEIVER *rx) {
     else if(radio->qo100_beacon_sel==QO100_BEACON_SEL_UPPER)
       partner=-(double)(QO100_BEACON_UPPER-QO100_BEACON_LOWER);
   }
-  if(!find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,&found,&snr,&bins,&cands)) {
+  gboolean tracking=(b_locked && b_settled);
+  if(!find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,!tracking,
+                   &found,&snr,&bins,&cands)) {
     spectrum_clear();
     b_run=0;
     b_run_samples=0.0;
@@ -1079,13 +1095,24 @@ static void beacon_frame(RECEIVER *rx) {
   // now buys nothing: the run resets, no correction is applied, and the loop
   // waits for the ident to end. A beacon that has genuinely MOVED is steady in
   // its new place, so half a second later it is followed like any other reading.
+  //
+  // And agreement is with the run's own ANCHOR -- its first reading -- not with
+  // the one before it. Chained to the previous reading, a run is not evidence
+  // that anything held still: every consecutive pair can be inside the 20 Hz
+  // tolerance while the run itself walks as far as it likes. That is not a
+  // theoretical hole, it is the shape of the report this test came from -- a
+  // locked loop sitting on -0.0 Hz walked out through -68 to -111.8 Hz, twenty
+  // hertz at a time, and applied the -111.8 as a coarse step. A beacon holds
+  // ONE frequency for a second at a time; anything that walks now breaks the
+  // run at the point it leaves the anchor, and buys nothing.
   double tol=b_locked?QO100_TRACK_TOL_HZ:QO100_LOCK_TOL_HZ;
-  if(b_run>0 && fabs(residual-b_last)<tol) {
+  if(b_run>0 && fabs(residual-b_run_ref)<tol) {
     b_run++;
     b_run_samples+=avg_samples;
   } else {
     b_run=1;
     b_run_samples=avg_samples;
+    b_run_ref=residual;
   }
   double delta=residual-b_last;
   b_last=residual;
@@ -1182,8 +1209,22 @@ static void beacon_frame(RECEIVER *rx) {
   // reading is a genuine converter offset that has been measured directly, so
   // there is nothing to gain by approaching it in fractions — take all of it, and
   // do not smooth it either. A small one is mostly measurement noise on a fading
-  // path: it goes through the median of the last QO100_MED_N seconds first, and
-  // only then through the damping gain.
+  // path, so what is acted on is the MEDIAN of the last QO100_MED_N seconds and
+  // not the reading itself, before the damping gain on top of that.
+  //
+  // The median used to be a gate instead — a reading more than 3 Hz off it was
+  // refused, the reading itself applied — and that is a worse instrument in both
+  // directions at once. Against jitter it is leakier: a reading that happens to
+  // land near the median is applied in full, so the loop chases whichever wobble
+  // agrees with itself (measured, +/-8 Hz of wobble: 17 retunes and 7 Hz of dial
+  // movement, against 8 and 2 for the median). And against DRIFT it is a wall:
+  // an LNB warming at 2 Hz/s puts every reading 4 Hz off the median of the last
+  // five by arithmetic alone, so a +/-3 Hz gate refuses the lot for ever and
+  // nothing is trimmed until the error passes QO100_COARSE_HZ and the radio
+  // moves in one 100 Hz jump — the fault the fine loop exists to avoid. Taking
+  // the median as the measurement is immune to a single wild reading by
+  // construction and lags a drift by two seconds, which at any rate an LNB can
+  // manage is a few hertz.
   double act;
   if(fabs(residual)>QO100_COARSE_HZ) {
     act=residual;
@@ -1194,21 +1235,45 @@ static void beacon_frame(RECEIVER *rx) {
       for(int i=1;i<QO100_MED_N;i++) b_med[i-1]=b_med[i];
       b_med[QO100_MED_N-1]=residual;
     }
-    if(b_med_n<QO100_MED_N) {           // not enough yet to judge an outlier
-      b_expect=residual;
+    // b_expect is deliberately NOT moved by this return. It is the anchor the
+    // slew guard above measures against -- where the beacon was last seen to
+    // really BE -- and a window that is still filling has not established that
+    // yet. Moving it here (and, in the code this replaced, on every refused
+    // reading) makes the two guards cancel out: each reading teaches the slew
+    // guard to accept its successor twenty hertz further on, and a chain of
+    // those is what walked a locked loop from -0.0 Hz out to -111.8 Hz and then
+    // applied it as a coarse step. The anchor moves when a reading is BELIEVED,
+    // and when the radio itself is moved.
+    if(b_med_n<QO100_MED_N) {           // the window is not full yet
       snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (settling %d/%d)",
                residual,b_med_n,QO100_MED_N);
       return;
     }
-    double med=median_of(b_med,b_med_n);
-    if(fabs(residual-med)>QO100_MED_TOL_HZ) {
+    act=median_of(b_med,b_med_n);
+
+    // ...and it is only acted on when it stands out of the window's OWN
+    // scatter. A median is an estimate and the spread of the readings behind it
+    // is that estimate's uncertainty: on a fading path the line wanders several
+    // hertz from one integrated second to the next -- a bin is 23 Hz at the
+    // 768 kHz span this is used at -- and a loop that applies half of every
+    // wobble simply moves the operator's dial about for no gain. The estimate
+    // must therefore beat the half-spread of the window behind it, which is the
+    // wobble's own amplitude. Measured, with the reading wobbling +/-12 Hz:
+    // 8 Hz of dial movement and 14 retunes a minute without this test, 0 Hz and
+    // 2 with it -- and a drift of 2 Hz/s is tracked either way, because a drift
+    // biases the median far more than it widens the window.
+    double lo_m=b_med[0], hi_m=b_med[0];
+    for(int i=1;i<b_med_n;i++) {
+      if(b_med[i]<lo_m) lo_m=b_med[i];
+      if(b_med[i]>hi_m) hi_m=b_med[i];
+    }
+    if(fabs(act)<QO100_SCATTER*(hi_m-lo_m)) {
       b_expect=residual;
       snprintf(b_status,sizeof(b_status),
-               "Locked  %+.1f Hz  (%+.1f off the last five, ignored)",
-               residual,residual-med);
+               "Locked  %+.1f Hz  (inside the %.1f Hz the readings scatter by)",
+               act,hi_m-lo_m);
       return;
     }
-    act=residual;
   }
 
   if(fabs(act)<QO100_DEADBAND_HZ) {

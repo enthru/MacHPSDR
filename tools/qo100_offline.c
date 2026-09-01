@@ -55,6 +55,20 @@ static gboolean deaf_radio;
 // an FFT frame is longer than an element, so most frames hold both lines and the
 // peak search picks whichever is momentarily stronger.
 static gboolean f1a_ident;
+// ...and, where the test is about TRACKING rather than acquisition, only after
+// the loop has settled: which line acquisition picks out of a burst is the
+// documented ambiguity, and a test that turns on the ident before there is a
+// lock measures that instead of what it means to.
+static double   f1a_from_s;
+// An LNB warms up and drifts while it does it: Hz per minute normally, and the
+// loop's own guards are written around a "fast 10 Hz/s". The ident test needs
+// it, because a loop that cannot measure during the ident is only visible as
+// one that falls behind something moving.
+static double   lo_drift_hz_s;
+// ...and the measurement itself is not clean on a fading path: the line the
+// loop reads moves a few hertz from one integrated second to the next. It has
+// mean zero, so a loop that chases it only moves the operator's dial about.
+static double   lo_wobble_hz;
 // Blocks of delay between the loop writing error_a and the signal showing it:
 // the driver's transfers in flight, the FIFO in front of the DSP thread and the
 // retune itself. Real, and much longer than one FFT frame at a wide span.
@@ -65,6 +79,12 @@ static int      lag_blocks;
 // while moving 400 Hz back and forth is the bug -- that is what a decode or an
 // SSB listener hears.
 static double   worst_pull;
+// ...and how far the dial ever sat from the beacon once settled, which is the
+// number an operator hears.
+static double   worst_track;
+// ...and the most it ever moved inside ONE FT8 slot, which is the number that
+// decides whether a decode survives: ft8_lib does no drift tracking at all.
+static double   worst_slot;
 
 #define test_band test_bands[0]
 
@@ -177,6 +197,9 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   long long beacon=qo100_beacon_frequency(0);
 
   worst_pull=0.0;
+  worst_track=0.0;
+  worst_slot=0.0;
+  double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
   double pull_lo=1e18, pull_hi=-1e18;
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)fs;
@@ -184,6 +207,12 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // being taken out, which is the loop doing its job.
     if(b>max_blocks/2) {
       double e=(double)rx->error_a;
+      if(slot_t0<0.0 || t-slot_t0>=15.0) { slot_t0=t; slot_lo=slot_hi=e; }
+      if(e<slot_lo) slot_lo=e;
+      if(e>slot_hi) slot_hi=e;
+      if(slot_hi-slot_lo>worst_slot) worst_slot=slot_hi-slot_lo;
+      double off=fabs(lo_error+lo_drift_hz_s*t+e);   // dial vs the real beacon
+      if(off>worst_track) worst_track=off;
       if(e<pull_lo) pull_lo=e;
       if(e>pull_hi) pull_hi=e;
       worst_pull=pull_hi-pull_lo;
@@ -198,7 +227,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // measurements land inside the keying with the keyed line the taller of the
     // two, they agree with each other, and 400 Hz is applied as a coarse step.
     // That is the "jumps forward and comes back" reported from air.
-    double hop=(f1a_ident && fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?400.0:0.0;
+    double hop=(f1a_ident && t>=f1a_from_s &&
+                fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?400.0:0.0;
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
     double applied=(double)rx->error_a;
@@ -208,7 +238,12 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       applied=(b>lag_blocks)?hist[(b-lag_blocks)%(lag_blocks+1)]:0.0;
       hist[slot]=(double)rx->error_a;
     }
-    double baseband=(double)(beacon-rx->frequency_a)-lo_error
+    double wob=0.0;
+    if(lo_wobble_hz>0.0) {
+      guint32 h=(guint32)(int)t*2654435761u;
+      wob=lo_wobble_hz*((double)((h>>16)&0xFF)/127.5-1.0);
+    }
+    double baseband=(double)(beacon-rx->frequency_a)-lo_error-lo_drift_hz_s*t+wob
                     -(deaf_radio?0.0:applied)+hop;
     gen_block(iq,BLOCK,baseband,fs,1.0,noise,&phase,&seed);
     qo100_beacon_iq_feed(rx,iq,BLOCK);
@@ -753,6 +788,144 @@ int main(int argc, char **argv) {
              worst_pull,res,locked);
     check("the beacon's F1A ident is not followed",
           locked && worst_pull<5.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21c. ...and the ident must not stop the loop TRACKING either. Refusing
+  //           a bad reading is only half the job: while the beacon keys, the
+  //           taller of its two lines is the keyed one, and a loop that measures
+  //           whatever is tallest within 600 Hz of its beacon spends the whole
+  //           ident 400 Hz out and refusing itself -- so nothing is trimmed for
+  //           as long as the ident lasts, and a converter that is drifting
+  //           meanwhile simply walks away. Once the loop is settled it knows
+  //           where its beacon is to within a few hertz, so the NEAREST line is
+  //           the beacon by construction and the tallest is only whatever is
+  //           momentarily loudest beside it (see find_carrier's `dominant`).
+  //           An LNB warming at 2 Hz/s under a beacon that idents 60 % of the
+  //           time is the case that separates the two.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    f1a_ident=TRUE;
+    f1a_from_s=20.0;                       // the loop is settled before it starts
+    lo_drift_hz_s=2.0;
+    double res=run_loop(3000.0,0.0,blocks*9,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    f1a_from_s=0.0;
+    f1a_ident=FALSE;
+    snprintf(d,sizeof(d),"wandered %.1f Hz, %d retunes, locked=%d",
+             worst_track,retunes,locked);
+    check("a drifting LNB is still tracked through the ident",
+          locked && worst_track<25.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21b. ...and neither must anything else that MOVES. Reported from air,
+  //           with the log to go with it: a locked loop reading a steady -0.0 Hz
+  //           walked out to -68, then -111.8, and applied the -111.8 as a coarse
+  //           step -- the dial jumping a hundred hertz off a beacon it was
+  //           sitting on. Nothing in it was a single bad reading: every step was
+  //           inside the 20 Hz tracking tolerance and inside the 50 Hz slew
+  //           guard, so a chain of them walked the loop as far as it liked. The
+  //           three holes that made it possible are each fixed and each is
+  //           exercised here (see qo100.c): agreement was chained to the
+  //           PREVIOUS reading rather than to the run's own anchor; a reading
+  //           the median threw out still moved the slew reference to itself; and
+  //           the tallest-line-in-the-cluster rule kept following the mover even
+  //           once the loop knew to within a few hertz where its beacon was.
+  //
+  //           The geometry that reproduces it: a station 6 dB louder than the
+  //           beacon appears on top of it and tunes away at 20 Hz a second --
+  //           one tracking tolerance per measurement, which is the fastest a
+  //           chain can be walked -- then parks 400 Hz off, where the F1A ident
+  //           puts its other line anyway.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double *walker=g_new0(double,BLOCK*2);
+    double p1=0.0,p2=0.0; guint32 s1=21,s2=22;
+    long long beacon=qo100_beacon_frequency(0);
+    const double lo_err=3000.0;
+    const int settle=blocks*3;                  // lock and settle on the beacon
+    const int total=settle+(int)(40.0*(double)FS/(double)BLOCK);
+    long long settled_err=0;
+    double drag=0.0;
+    for(int b=0;b<total;b++) {
+      double base=(double)(beacon-rx->frequency_a)-lo_err-(double)rx->error_a;
+      gen_block(iq,BLOCK,base,FS,1.0,0.02,&p1,&s1);
+      if(b>=settle) {
+        if(b==settle) settled_err=rx->error_a;
+        double t=(double)(b-settle)*(double)BLOCK/(double)FS;
+        double off=20.0*t;                      // 20 Hz a second...
+        if(off>400.0) off=400.0;                // ...and then it parks
+        gen_block(walker,BLOCK,base+off,FS,2.0,0.0,&p2,&s2);
+        for(int k=0;k<BLOCK*2;k++) iq[k]+=walker[k];
+        double moved=fabs((double)(rx->error_a-settled_err));
+        if(moved>drag) drag=moved;
+      }
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    double left=lo_err+(double)rx->error_a;
+    snprintf(d,sizeof(d),"dragged %.1f Hz, %+.1f Hz left, locked=%d",
+             drag,left,qo100_beacon_locked());
+    check("a signal walking across the beacon does not drag the lock",
+          drag<30.0 && fabs(left)<30.0, d);
+    g_free(iq); g_free(walker); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
+
+  // ---- 21d. a converter that DRIFTS must be trimmed, not jumped. The fine
+  //           loop used to refuse any reading more than 3 Hz off the median of
+  //           the last five -- and an LNB warming at 2 Hz/s puts every reading
+  //           4 Hz off that median by arithmetic alone, so it refused the lot
+  //           and nothing was corrected until the error passed
+  //           QO100_COARSE_HZ, at which point the dial moved 100 Hz in one
+  //           step. Measured on the shipped loop: 101 Hz of movement inside a
+  //           15 s slot and 2 retunes a minute, against 32 Hz -- the drift
+  //           itself -- and 30 now. The FT8 number is the slot: ft8_lib does no
+  //           drift tracking, so what a decode feels is how far the dial moved
+  //           while it was listening.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    lo_drift_hz_s=2.0;
+    double res=run_loop(3000.0,0.0,blocks*12,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    snprintf(d,sizeof(d),"%.0f Hz inside a slot, %.1f Hz of wander, %d retunes, "
+             "locked=%d",worst_slot,worst_track,retunes,locked);
+    check("a drifting LNB is trimmed, not jumped",
+          locked && worst_slot<40.0 && worst_track<30.0 && retunes>10, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21e. ...and the other side of that trade, which is what the 3 Hz gate
+  //           was buying: the reading itself wobbles on a fading path, several
+  //           hertz from one integrated second to the next (a bin is 23 Hz at
+  //           the 768 kHz span this runs at), and a loop that applies half of
+  //           every wobble moves the operator's dial about for nothing. Acting
+  //           on the median only when it beats the spread of the window behind
+  //           it keeps both: +/-12 Hz of wobble moves the dial 0 Hz here, where
+  //           acting on every median moved it 8.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    lo_wobble_hz=12.0;
+    double res=run_loop(3000.0,0.0,blocks*9,&locked,FS,10489540000LL);
+    lo_wobble_hz=0.0;
+    snprintf(d,sizeof(d),"dial moved %.1f Hz, %+.1f Hz left, %d retunes, locked=%d",
+             worst_pull,res,retunes,locked);
+    check("a wobbling reading is not chased",
+          locked && worst_pull<4.0 && fabs(res)<15.0, d);
     qo100_beacon_reset();
   }
 
