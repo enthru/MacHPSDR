@@ -478,11 +478,13 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
 #define QO100_LOCK_RUN           3   // consecutive agreeing frames to declare a lock
 #define QO100_LOCK_TOL_HZ    200.0   // ...how closely they must agree
-#define QO100_DEADBAND_HZ      3.0   // below this, leave the radio alone
+#define QO100_DEADBAND_HZ      1.0   // below this, leave the radio alone
 #define QO100_COARSE_HZ      100.0   // above this the reading is a real offset, not jitter
 #define QO100_GAIN             0.5   // fraction of a SMALL error applied per step
 #define QO100_MAX_STEP_HZ  20000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
+#define QO100_SLEW_HZ           20.0 // most a SETTLED reading may move between frames
+#define QO100_SLEW_LOST         60   // ...frames of that before the lock is given up
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 250000.0 // total correction one session may ever apply
 
@@ -511,6 +513,8 @@ static gboolean b_stopped;
 static double   b_step_prev;         // the last step queued, 0 if none
 static double   b_res_prev;          // ...and the residual it was measured from
 static int      b_stuck;             // consecutive coarse steps that changed nothing
+static double   b_expect;            // where the next frame's residual should land
+static int      b_reject;            // consecutive readings refused as impossible
 
 static volatile gint apply_queued;   // one applier in flight at a time
 static double   pend_step;           // Hz to add to error_a, under bmtx
@@ -621,6 +625,8 @@ static void beacon_reset_locked(void) {
   b_step_prev=0.0;
   b_res_prev=0.0;
   b_stuck=0;
+  b_expect=0.0;
+  b_reject=0;
 }
 
 void qo100_beacon_reset(void) {
@@ -724,6 +730,34 @@ static void beacon_frame(RECEIVER *rx) {
     b_locked=TRUE;
   }
 
+  // Once the loop is settled, what it may BELIEVE is bounded by what an
+  // oscillator can physically do. An LNB drifting a fast 10 Hz/s moves 1.7 Hz
+  // between frames, so a reading that jumps by hundreds is never the LNB: it is
+  // the lower beacon's own ident. That beacon is F1A -- the carrier hops 400 Hz
+  // while it keys -- and an FFT frame (171 ms at 192 kHz) is longer than an
+  // element, so most frames hold BOTH lines and the peak search picks whichever
+  // is momentarily stronger. Measured on the loop as shipped, with the ident
+  // modelled: the radio was dragged 400.9 Hz back and forth, 0.6 retunes a
+  // second -- audible on SSB and fatal to FT8, whose decoder has no drift
+  // tracking at all and wants the frequency to hold still across a 15 s slot.
+  // A reading outside the slew limit is therefore IGNORED rather than applied;
+  // if it stays outside for QO100_SLEW_LOST frames the beacon really has moved
+  // (or the lock was never on it) and the lock is dropped, which puts the
+  // three-frame agreement test back in front of the next correction.
+  if(b_locked && b_settled && fabs(residual-b_expect)>QO100_SLEW_HZ) {
+    b_reject++;
+    if(b_reject<QO100_SLEW_LOST) {
+      snprintf(b_status,sizeof(b_status),
+               "Locked  (ignoring a %+.0f Hz jump -- beacon ident?)",residual-b_expect);
+      b_step_prev=0.0;
+      return;
+    }
+    beacon_reset_locked();
+    g_strlcpy(b_status,"Re-acquiring â the beacon moved",sizeof(b_status));
+    return;
+  }
+  b_reject=0;
+
   b_residual=residual;
   b_settled=(fabs(residual)<QO100_SETTLED_HZ);
 
@@ -756,6 +790,7 @@ static void beacon_frame(RECEIVER *rx) {
   b_step_prev=0.0;
 
   if(fabs(residual)<QO100_DEADBAND_HZ) {
+    b_expect=residual;
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
              residual,b_applied);
     return;
@@ -795,7 +830,10 @@ static void beacon_frame(RECEIVER *rx) {
     b_applied+=step;
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
+    b_expect=residual-step;
     g_idle_add(apply_idle,NULL);
+  } else {
+    b_expect=residual;                  // nothing was applied, so nothing should move
   }
 }
 

@@ -51,6 +51,11 @@ static int  retunes;                // how many times the loop moved the radio
 // SoapySDR only in its non-ctun branch, so under ctun or freetune the correction
 // stayed in error_a and never reached the hardware).
 static gboolean deaf_radio;
+// The lower beacon is F1A: its carrier HOPS 400 Hz while it keys its ident, and
+// an FFT frame is longer than an element, so most frames hold both lines and the
+// peak search picks whichever is momentarily stronger.
+static gboolean f1a_ident;
+static double   worst_pull;         // furthest the loop dragged the radio, settled
 
 #define test_band test_bands[0]
 
@@ -162,9 +167,18 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   guint32 seed=12345;
   long long beacon=qo100_beacon_frequency(0);
 
+  worst_pull=0.0;
   for(int b=0;b<max_blocks;b++) {
+    double t=(double)b*(double)BLOCK/(double)fs;
+    // Second half of the run only: the first correction is the LNB's real error
+    // being taken out, which is the loop doing its job.
+    if(b>max_blocks/2) {
+      double pull=fabs(lo_error+(double)rx->error_a);
+      if(pull>worst_pull) worst_pull=pull;
+    }
+    double hop=(f1a_ident && fmod(t,0.2)<0.1)?400.0:0.0;
     double baseband=(double)(beacon-rx->frequency_a)-lo_error
-                    -(deaf_radio?0.0:(double)rx->error_a);
+                    -(deaf_radio?0.0:(double)rx->error_a)+hop;
     gen_block(iq,BLOCK,baseband,fs,1.0,noise,&phase,&seed);
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
@@ -689,7 +703,26 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
-  // ---- 21. ctun/freetune: the dial the operator reads is the CURSOR, so that
+  // ---- 21. the beacon's own ident must not be followed. F1A hops the carrier
+  //          400 Hz, and the loop applied every post-lock reading, so it dragged
+  //          the radio back and forth by that much: measured on the shipped loop
+  //          at 400.9 Hz of movement inside a 15 s window, 0.6 retunes a second.
+  //          Audible on SSB, and fatal to FT8 — ft8_lib does no drift tracking,
+  //          so the frequency has to hold still across the whole slot.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    f1a_ident=TRUE;
+    double res=run_loop(3000.0,0.0,blocks*3,&locked,FS,10489540000LL);
+    f1a_ident=FALSE;
+    snprintf(d,sizeof(d),"dragged %.1f Hz, %+.1f Hz left, locked=%d",
+             worst_pull,res,locked);
+    check("the beacon's F1A ident is not followed",
+          locked && worst_pull<5.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 22. ctun/freetune: the dial the operator reads is the CURSOR, so that
   //          is what the uplink must be paired with. Anchoring VFO B to the span
   //          centre put it half a span out — 60 kHz here, on a transponder
   //          500 kHz wide — and SAT split then carried the error along for ever.
