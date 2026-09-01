@@ -38,6 +38,22 @@ extern double ctcss_frequencies[CTCSS_FREQUENCIES];
    for context around the carrier, not for viewing PA linearity. */
 #define TX_MONITOR_SPAN_HZ 24000.0
 
+/* Ceiling for the SoapySDR TX DAC rate (Hz).
+
+   tx->iq_output_rate used to be radio->sample_rate outright, back when that
+   number was the device's ADC rate for every SoapySDR radio.  It is not any
+   more: for the devices driven at the receiver's own span (soapy_hw_rate_for)
+   it is the WIDEST SPAN OFFERED — 9 600 000 on a HackRF — and a transmitter
+   that follows it opens its WDSP channel to interpolate the 48 kHz mic by 200,
+   sizes output_samples at 204 800 and allocates ~6.5 MB of TX buffers for a
+   signal a few kHz wide.  Nothing on the transmit side wants the rate the
+   PANADAPTER is drawing at.
+
+   1 920 000 because that is the rate this path was actually keyed at on real
+   hardware (HackRF ran 2 000 000, rounded down to a multiple of mic_dsp_rate)
+   before the widest-span change moved the number under it. */
+#define TX_SOAPY_MAX_IQ_RATE 1920000
+
 typedef struct _transmitter {
   gint channel; // WDSP channel
 

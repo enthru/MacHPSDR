@@ -1890,7 +1890,15 @@ log_info("create_transmitter: channel=%d\n",channel);
       // TX DAC accepts arbitrary rates, so it simply clocks the samples out at
       // this (very slightly lower) rate - the emitted signal stays correct.
       // For 2000000 this yields 1920000, the same clean rate the RX path uses.
-      tx->iq_output_rate=(radio->sample_rate/tx->mic_dsp_rate)*tx->mic_dsp_rate;
+      //
+      // The rate to round comes from soapy_tx_dac_rate(), NOT from
+      // radio->sample_rate: that number stopped meaning "the ADC rate" when the
+      // widest spans arrived, and for a span-driven device it is the widest
+      // span OFFERED.  This line silently went from 1920000 to 9600000 on a
+      // HackRF when that happened, taking the whole TX chain's geometry with
+      // it -- and it must NOT be capped on a device whose radio->sample_rate is
+      // a real ADC rate, because an AD9361 runs one clock for both directions.
+      tx->iq_output_rate=(soapy_tx_dac_rate()/tx->mic_dsp_rate)*tx->mic_dsp_rate;
       tx->buffer_size=1024;
       tx->output_samples=1024*(tx->iq_output_rate/tx->mic_sample_rate);
       break;

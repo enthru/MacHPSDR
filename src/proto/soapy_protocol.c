@@ -330,10 +330,31 @@ static void ms_resamp_free(int adc) {
        9.6 MHz ADC rate, would run the resampler at 9.6 MS/s for someone
        listening to SSB in a 192 kHz window.  The readback in soapy_set_rx_rate
        still has the last word if the device substitutes. */
+gboolean soapy_span_driven(void) {
+  if(radio==NULL || radio->discovered==NULL) return FALSE;
+  return strcmp(radio->discovered->name,"sdrplay")==0 ||
+         strcmp(radio->discovered->name,"hackrf")==0;
+}
+
 static int soapy_hw_rate_for(RECEIVER *rx) {
   if(strcmp(radio->discovered->name,"sdrplay")==0) return rx->sample_rate;
   if(strcmp(radio->discovered->name,"hackrf")==0)
     return (rx->sample_rate>HACKRF_MIN_HW_RATE)?rx->sample_rate:HACKRF_MIN_HW_RATE;
+  return radio->sample_rate;
+}
+
+/* The rate to run the TX DAC at, which is NOT simply radio->sample_rate any
+   more.  For a device with a real fixed ADC rate that number still is the rate
+   the hardware runs at, and the DAC must use it too -- on an AD9361 in
+   particular RX and TX are one clock (ad9361_set_bb_rate programmes both), so
+   giving the transmitter a different number silently retunes the receiver.
+   For a span-driven device it is the widest span OFFERED, which has nothing to
+   do with transmitting: a HackRF would open the TX chain at 9 600 000 and
+   interpolate a 48 kHz microphone by 200.  Those get the ceiling instead. */
+int soapy_tx_dac_rate(void) {
+  if(radio==NULL) return TX_SOAPY_MAX_IQ_RATE;
+  if(soapy_span_driven() && radio->sample_rate>TX_SOAPY_MAX_IQ_RATE)
+    return TX_SOAPY_MAX_IQ_RATE;
   return radio->sample_rate;
 }
 

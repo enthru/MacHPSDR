@@ -24,6 +24,14 @@
 
 SoapySDRDevice *get_soapy_device(void);
 
+/* TRUE for a device whose radio->sample_rate is the widest span OFFERED rather
+   than a fixed ADC rate (see soapy_hw_rate_for in soapy_protocol.c). */
+gboolean soapy_span_driven(void);
+
+/* The rate the TX DAC should run at.  Not radio->sample_rate: see the comment
+   on the definition. */
+int soapy_tx_dac_rate(void);
+
 void soapy_protocol_create_receiver(RECEIVER *rx);
 void soapy_protocol_start_receiver(RECEIVER *rx);
 // Stop one receiver's receive thread and close its RX stream.  Call with
