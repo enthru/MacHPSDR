@@ -192,7 +192,13 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // carrier between them. A carrier that hops for ever is not a beacon, it is
     // a loop-breaker -- and asserting against it would only pin the loop's
     // refusal to lock at all.
-    double hop=(f1a_ident && fmod(t,4.0)<2.0 && fmod(t,0.2)<0.1)?400.0:0.0;
+    //
+    // The burst is SIX seconds and its mark duty 60 %, which is what makes this
+    // case bite: the loop integrates one second at a time, so two whole
+    // measurements land inside the keying with the keyed line the taller of the
+    // two, they agree with each other, and 400 Hz is applied as a coarse step.
+    // That is the "jumps forward and comes back" reported from air.
+    double hop=(f1a_ident && fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?400.0:0.0;
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
     double applied=(double)rx->error_a;
@@ -741,7 +747,7 @@ int main(int argc, char **argv) {
     bands_init();
     gboolean locked=FALSE;
     f1a_ident=TRUE;
-    double res=run_loop(3000.0,0.0,blocks*3,&locked,FS,10489540000LL);
+    double res=run_loop(3000.0,0.0,blocks*9,&locked,FS,10489540000LL);
     f1a_ident=FALSE;
     snprintf(d,sizeof(d),"dragged %.1f Hz, %+.1f Hz left, locked=%d",
              worst_pull,res,locked);

@@ -510,6 +510,8 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
 #define QO100_LOST_MS       10000.0  // locked, but nothing found for this long => let go
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
+#define QO100_SLEW_HZ          50.0  // most a LOCKED reading may move in one of those
+#define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
@@ -544,6 +546,8 @@ static double   b_run_samples;       // stream time the current agreement run co
 static double   b_say_samples;        // ...and since the last spoken diagnosis
 static double   b_dry_samples;        // ...and since anything at all was found
 static double   b_gone_samples;       // ...and since a LOCKED loop last saw its beacon
+static double   b_expect;             // where the next measurement should land
+static int      b_reject;             // consecutive measurements refused as impossible
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -792,6 +796,8 @@ static void beacon_reset_locked(void) {
   b_say_samples=0.0;
   b_dry_samples=0.0;
   b_gone_samples=0.0;
+  b_expect=0.0;
+  b_reject=0;
   b_hold=0;
 }
 
@@ -1024,6 +1030,7 @@ static void beacon_frame(RECEIVER *rx) {
       return;
     }
     b_locked=TRUE;
+    b_expect=residual;                  // the lock starts believing from here
   } else if(!agreed) {
     snprintf(b_status,sizeof(b_status),
              "Locked  (beacon unsteady %+.0f Hz -- ident?)",residual);
@@ -1034,35 +1041,65 @@ static void beacon_frame(RECEIVER *rx) {
   b_residual=residual;
   b_settled=(fabs(residual)<QO100_SETTLED_HZ);
 
-  // A correction that does not move the reading is not a correction, and the
-  // loop has no way to tell "the radio ignored it" from "the LNB drifted back by
-  // exactly as much" -- so it applies the same step again, and again, at up to
-  // 20 kHz a frame into error_a and into the band's PERSISTED errorLO with it.
-  // That is not a hypothetical failure mode, it is the one this guard was
-  // written for: frequency_changed() pushed a new LO to Protocol 2 / SoapySDR
-  // only in its non-ctun branch, so with ctun or freetune on the radio never
-  // moved and the operator was left with a dial nobody could account for.
-  // Only COARSE steps are judged, since a fine one is half of a few hertz of
-  // measurement noise and would false-positive on a lock that is working.
-  if(fabs(b_step_prev)>QO100_COARSE_HZ) {
-    double moved=b_res_prev-residual;             // what the previous step bought
-    if(fabs(moved)<0.25*fabs(b_step_prev)) b_stuck++; else b_stuck=0;
-    if(b_stuck>=QO100_STUCK_RUN) {
-      double last=b_step_prev;          // beacon_reset_locked() clears it
-      beacon_reset_locked();
-      b_stopped=TRUE;
-      g_strlcpy(b_status,
-                "Stopped: the correction is not reaching the radio",
-                sizeof(b_status));
-      log_error("qo100: beacon lock stopped -- %.0f Hz applied and the residual "
-                "stayed at %.0f Hz; the radio is not being retuned\n",
-                last,residual);
+  // A reading that is not where the last one said it would be has exactly two
+  // explanations, and they are opposite faults, so they are told apart before
+  // either is acted on.
+  //
+  //   * it did not MOVE when a correction should have moved it -- our step is
+  //     not reaching the radio. That is not hypothetical: frequency_changed()
+  //     pushed a new LO to Protocol 2 / SoapySDR only in its non-ctun branch, so
+  //     under ctun or freetune the loop corrected error_a for ever against a
+  //     radio that never budged.
+  //   * it moved further than an oscillator can. A locked loop measures once a
+  //     second and an LNB drifting a fast 10 Hz/s moves ten hertz in that time,
+  //     so a 400 Hz jump is not the converter -- it is the beacon's own keying.
+  //     The lower one is F1A and shifts 400 Hz, and a whole integrating second
+  //     landing inside a burst of it makes the KEYED line the taller. Two such
+  //     seconds in a row satisfied the agreement rule and applied the lot as a
+  //     coarse step: the dial jumping forward and coming back, reported from air
+  //     in exactly those words.
+  //
+  // Only COARSE steps can prove the first, since a fine one is half of a few
+  // hertz of noise; and the second stops believing after QO100_SLEW_LOST
+  // measurements, at which point the beacon really has moved and the lock goes,
+  // putting the wide search and the 500 kHz pairing back in front of it.
+  if(b_locked && fabs(residual-b_expect)>QO100_SLEW_HZ) {
+    if(fabs(b_step_prev)>QO100_COARSE_HZ &&
+       fabs(residual-b_res_prev)<0.25*fabs(b_step_prev)) {
+      b_stuck++;
+      if(b_stuck>=QO100_STUCK_RUN) {
+        double last=b_step_prev;        // beacon_reset_locked() clears it
+        beacon_reset_locked();
+        b_stopped=TRUE;
+        g_strlcpy(b_status,
+                  "Stopped: the correction is not reaching the radio",
+                  sizeof(b_status));
+        log_error("qo100: beacon lock stopped -- %.0f Hz applied and the residual "
+                  "stayed at %.0f Hz; the radio is not being retuned\n",
+                  last,residual);
+        return;
+      }
+      snprintf(b_status,sizeof(b_status),
+               "Locked  (%+.0f Hz applied, nothing moved)",b_step_prev);
+      return;                            // b_step_prev/b_res_prev kept on purpose
+    }
+    b_reject++;
+    if(b_reject<QO100_SLEW_LOST) {
+      snprintf(b_status,sizeof(b_status),
+               "Locked  (ignoring %+.0f Hz \342\200\224 beacon ident?)",residual-b_expect);
+      b_step_prev=0.0;
       return;
     }
+    beacon_reset_locked();
+    g_strlcpy(b_status,"Re-acquiring \342\200\224 the beacon moved",sizeof(b_status));
+    return;
   }
+  b_reject=0;
+  b_stuck=0;
   b_step_prev=0.0;
 
   if(fabs(residual)<QO100_DEADBAND_HZ) {
+    b_expect=residual;                  // nothing moves, so nothing should change
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
              residual,b_applied);
     return;
@@ -1103,9 +1140,12 @@ static void beacon_frame(RECEIVER *rx) {
     b_applied+=step;
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
+    b_expect=residual-step;             // where the next measurement must land
     b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
     spectrum_clear();                   // ...and it must not be averaged with this
     g_idle_add(apply_idle,NULL);
+  } else {
+    b_expect=residual;                  // nothing was applied, so nothing moves
   }
 }
 
