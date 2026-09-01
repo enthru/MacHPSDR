@@ -501,6 +501,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_MAX_STEP_HZ 400000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
 #define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
+#define QO100_LOST_MS       10000.0  // locked, but nothing found for this long => let go
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
@@ -532,6 +533,7 @@ static int      b_stuck;             // consecutive coarse steps that changed no
 static double   b_run_samples;       // stream time the current agreement run covers
 static double   b_say_samples;        // ...and since the last spoken diagnosis
 static double   b_dry_samples;        // ...and since anything at all was found
+static double   b_gone_samples;       // ...and since a LOCKED loop last saw its beacon
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -709,6 +711,7 @@ static void beacon_reset_locked(void) {
   b_run_samples=0.0;
   b_say_samples=0.0;
   b_dry_samples=0.0;
+  b_gone_samples=0.0;
   b_hold=0;
 }
 
@@ -827,7 +830,28 @@ static void beacon_frame(RECEIVER *rx) {
       else
         g_strlcpy(b_status,"Searching for the beacon\342\200\246",sizeof(b_status));
     }
-    else g_strlcpy(b_status,"Locked (beacon momentarily gone)",sizeof(b_status));
+    else {
+      // A lock is a claim about where the beacon IS, and once settled it is
+      // searched for in a window +/-2 kHz wide. If the beacon then goes -- it
+      // was never the beacon, the dish moved, the transponder is quiet -- that
+      // window is a 4 kHz slit with nothing in it and no way out: measured on
+      // the operator's radio, TWO MINUTES of "0 candidate lines" in a row while
+      // the real beacon sat 14 kHz away, because nothing ever let the lock go.
+      // Ten seconds of stream without a carrier is enough to stop believing it.
+      b_gone_samples+=(double)QO100_FFT_N;
+      if(b_gone_samples>=(double)track_fs*(QO100_LOST_MS/1000.0)) {
+        beacon_reset_locked();
+        g_strlcpy(b_status,
+                  "Re-acquiring â the beacon was gone for 10 s",
+                  sizeof(b_status));
+        log_info("qo100: lock given up — no carrier for %.0f s, searching wide "
+                 "again\n",QO100_LOST_MS/1000.0);
+      } else {
+        snprintf(b_status,sizeof(b_status),
+                 "Locked (beacon gone %.0f s)",
+                 b_gone_samples/(double)track_fs);
+      }
+    }
     // Say why, at INFO, because this is the status an operator gets stuck on and
     // it is the one that explains nothing by itself.
     if(say)
@@ -840,6 +864,7 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
   b_dry_samples=0.0;
+  b_gone_samples=0.0;
 
   double residual=found-expected;
   // Per frame, at DEBUG: the only way to tell a beacon whose line MOVES (the

@@ -835,6 +835,55 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // ---- 22d. a lock is a claim about where the beacon IS, and once settled the
+  //           search narrows to +/-2 kHz around it. If the thing it locked to
+  //           then goes -- it was never the beacon, or the transponder went
+  //           quiet -- that window is a slit with nothing in it. Measured on the
+  //           operator's radio: two minutes of "0 candidate lines" in a row
+  //           while the real beacon sat 14 kHz away, because nothing ever let
+  //           the lock go.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double phase=0.0; guint32 seed=31;
+    long long beacon=qo100_beacon_frequency(0);
+    // Lock onto an impostor sitting 500 Hz from where the beacon is expected --
+    // close enough to be declared settled, which is what narrows the window.
+    for(int b=0;b<blocks;b++) {
+      gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)+500.0-(double)rx->error_a,
+                FS,1.0,0.05,&phase,&seed);
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    gboolean was=qo100_beacon_locked();
+    // ...then it stops transmitting, and the REAL beacon is 14 kHz away, far
+    // outside the tracking window.
+    for(int b=0;b<blocks*8;b++) {
+      gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)+14000.0-(double)rx->error_a,
+                FS,1.0,0.05,&phase,&seed);
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    // The loop drives error_a to the offset it is looking at, so following the
+    // real line means error_a == 14000.
+    double left=(double)rx->error_a-14000.0;
+    snprintf(d,sizeof(d),"locked first=%d, now %+.0f Hz from the real line — %s",
+             was,left,st);
+    check("a lock whose carrier vanishes is given up",
+          was && fabs(left)<200.0, d);
+    g_free(iq); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
