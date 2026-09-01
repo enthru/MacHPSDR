@@ -238,17 +238,24 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // measurements land inside the keying with the keyed line the taller of the
     // two, they agree with each other, and 400 Hz is applied as a coarse step.
     // That is the "jumps forward and comes back" reported from air.
+    // F1A as the standard defines it, which is the thing the loop has to get
+    // right: the carrier RESTS on the published (mark) frequency and drops
+    // 400 Hz for the space between elements. So the nominal line is the one
+    // that is nearly always there, and the shifted one appears only while the
+    // beacon is sending.
     double hop=(f1a_ident && t>=f1a_from_s &&
-                fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?400.0:0.0;
-    // ...and the way it really reads on air, which the burst model above does
-    // not produce: F1A is two frequencies and NEITHER is idle, so a whole
-    // integrated second lands inside one element often enough that the loop's
-    // own line is simply absent -- "nearest of 1 lines", with the only
-    // candidate 400 Hz away. Three seconds at the shifted line, three keying,
-    // three at the other, over and over.
+                fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)?-400.0:0.0;
+    // ...and the guard's worst case, which is what the operator's log turned
+    // out to be: whole integrated seconds in which the loop's OWN line is
+    // absent and the only candidate is 400 Hz away -- "nearest of 1 lines".
+    // A beacon does not really rest on its space for three seconds; a loop
+    // sitting on the WRONG line of the pair sees exactly this, because then
+    // the line it is tracking is the one that only appears between elements.
+    // Three seconds shifted, three keying, three on the nominal, over and
+    // over, which is a harder version of that than the air produces.
     if(f1a_shape && t>=f1a_from_s) {
       double ph=fmod(t,9.0);
-      hop=(ph<3.0)?400.0:((ph<6.0)?((fmod(t,0.2)<0.1)?400.0:0.0):0.0);
+      hop=(ph<3.0)?-400.0:((ph<6.0)?((fmod(t,0.2)<0.1)?-400.0:0.0):0.0);
     }
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
@@ -803,12 +810,14 @@ int main(int argc, char **argv) {
     bands_init();
     gboolean locked=FALSE;
     f1a_ident=TRUE;
+    f1a_from_s=20.0;                       // acquisition is case 21g's business
     double res=run_loop(3000.0,0.0,blocks*9,&locked,FS,10489540000LL);
+    f1a_from_s=0.0;
     f1a_ident=FALSE;
     snprintf(d,sizeof(d),"dragged %.1f Hz, %+.1f Hz left, locked=%d",
              worst_pull,res,locked);
     check("the beacon's F1A ident is not followed",
-          locked && worst_pull<5.0, d);
+          locked && worst_pull<5.0 && fabs(res)<10.0, d);
     qo100_beacon_reset();
   }
 
@@ -976,6 +985,31 @@ int main(int argc, char **argv) {
              "locked=%d",worst_step,worst_track,retunes,locked);
     check("a fast-drifting LNB survives the ident",
           locked && worst_step<60.0 && worst_track<80.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 21g. the dial is only truthful if the loop knows WHICH of the beacon's
+  //           two tones is the published one, and that is not a matter of
+  //           taste: IARU Region 1 publishes an FSK beacon's mark, the carrier
+  //           rests there between messages and drops 400 Hz to the space while
+  //           sending (AMSAT-DL forum, PA3FYM quoting the standard). So the
+  //           mark is the tone that is on the air when the other is not, and a
+  //           lock on the space is a dial 400 Hz off with nothing on air to say
+  //           so -- which is what the operator's second log was.
+  //           This starts the loop in the worst place for it: acquisition
+  //           lands in a stretch where ONLY the space is transmitting, so it
+  //           locks 400 Hz low and every guard in the file is then against
+  //           moving that far. It has to end up on the mark anyway.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    f1a_ident=TRUE; f1a_shape=TRUE; f1a_from_s=0.0;
+    double res=run_loop(3000.0,0.0,blocks*9,&locked,FS,10489540000LL);
+    f1a_shape=FALSE; f1a_ident=FALSE;
+    snprintf(d,sizeof(d),"%+.1f Hz from the published tone, %d retunes, locked=%d",
+             res,retunes,locked);
+    check("the lock lands on the published tone, not the space",
+          locked && fabs(res)<10.0, d);
     qo100_beacon_reset();
   }
 

@@ -484,6 +484,21 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_TRACK_HZ      2000.0   // ...and once locked
 #define QO100_DC_GUARD_HZ    300.0   // the I/Q DC-offset spike lives here
 #define QO100_CLUSTER_HZ     600.0   // lines this close belong to one signal
+// ...and when a signal has TWO lines this far apart, it is a CW beacon identing.
+// WHICH of them the dial must be trued to is not a matter of taste: IARU
+// Region 1 publishes an FSK beacon's MARK -- the key-down tone, which is also
+// where the carrier rests between messages -- with space that much LOWER
+// (AMSAT-DL forum, PA3FYM quoting the standard: "the carrier is on the nominal
+// frequency. If it transmits its message, first the carrier goes to 'space'
+// (400 Hz lower)"). Locking to the space is a dial 400 Hz off with nothing on
+// air to say so, and it is what the operator's second log was. How the loop
+// tells which one it is on is in beacon_frame: the mark is the tone that is
+// there when the other is not.
+#define QO100_FSK_SHIFT_HZ   400.0   // the published shift of both CW beacons
+#define QO100_FSK_TOL_HZ      80.0   // ...how exactly a pair must show it
+#define QO100_TONE_WIN          20   // measurements judging which tone we are on
+#define QO100_TONE_RUN           4   // ...answering one shift up before a locked
+                                     // loop accepts that it is on the space
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
 // Agreement is counted in MEASUREMENTS now, and each already integrates a second
 // of stream: two of them agreeing is two seconds of evidence, which is what the
@@ -593,6 +608,9 @@ static double   b_gone_samples;       // ...and since a LOCKED loop last saw its
 static double   b_expect;             // where the next measurement should land
 static double   b_expect_samples;     // ...and how much stream ago that was decided
 static int      b_reject;             // consecutive measurements refused as impossible
+static gboolean b_tone_up;            // ...and the verdict "we are on the space"
+static int      b_tone_win;           // measurements in the window judging that
+static int      b_tone_hits;          // ...and how many answered one shift up
 static double   b_med[QO100_MED_N];   // recent fine residuals, for the median
 static int      b_med_n;
 // Counted in STREAM time, like the hold and the agreement: that is the clock the
@@ -905,6 +923,9 @@ static void beacon_reset_locked(void) {
   b_expect=0.0;
   b_expect_samples=0.0;
   b_reject=0;
+  b_tone_up=FALSE;
+  b_tone_win=0;
+  b_tone_hits=0;
   b_med_n=0;
   b_since_apply=1.0e12;                 // a fresh lock may trim at once
   b_hold=0;
@@ -1085,6 +1106,27 @@ static void beacon_frame(RECEIVER *rx) {
   b_gone_samples=0.0;
 
   double residual=found-expected;
+
+  // Which of the beacon's two tones is the loop sitting on? THE MARK IS THE ONE
+  // THAT IS THERE WHEN THE OTHER IS NOT -- the carrier rests on the published
+  // frequency and drops to the space only while the beacon is sending -- so a
+  // loop on the space finds its own line missing in every idle second and reads
+  // the mark instead, one shift up. Count those against the measurements as a
+  // whole (this is before the agreement gate on purpose: a reading that breaks
+  // the run IS the evidence), and a window in which the other tone answered
+  // often enough settles it. A station parked one shift away cannot produce
+  // this, whatever its strength, because it does not make the beacon's own line
+  // vanish -- which is why the pairing in find_carrier is left to acquisition
+  // and the tracking answer is counted in time instead.
+  if(b_locked) {
+    b_tone_win++;
+    if(fabs(residual-b_expect-QO100_FSK_SHIFT_HZ)<QO100_FSK_TOL_HZ) b_tone_hits++;
+    if(b_tone_win>=QO100_TONE_WIN) {
+      if(b_tone_hits>=QO100_TONE_RUN) b_tone_up=TRUE;
+      b_tone_win=0;
+      b_tone_hits=0;
+    }
+  }
   // Per frame, at DEBUG: the only way to tell a beacon whose line MOVES (the
   // lower one is F1A and hops 400 Hz while it keys) from one that is steady but
   // competing with another carrier. The INFO summary below is five seconds
@@ -1208,10 +1250,28 @@ static void beacon_frame(RECEIVER *rx) {
   // makes the beacon's OTHER line acceptable. A converter that really has run
   // further than that while the loop was blind is what QO100_SLEW_LOST is for:
   // the lock goes, and the wide search and the 500 kHz pairing get it back.
+  // ...with one exception, and it is the only reading in this file allowed past
+  // the guard. THE MARK IS THE TONE THAT IS THERE WHEN THE OTHER IS NOT: the
+  // carrier rests on the published frequency and drops to the space only while
+  // the beacon is sending, so a loop sitting on the space finds its own line
+  // missing in every idle second and reads the mark instead, one shift up.
+  // That is what QO100_TONE_RUN counts -- readings exactly one shift above the
+  // anchor, against readings that land on it -- and four of them net is a claim
+  // no station parked 400 Hz away can make, because a parked carrier does not
+  // make the beacon's own line vanish.
+  //
+  // Without this the loop can be right and unable to act on it: acquisition
+  // landing in a second where only the space was on air locks to the space, the
+  // mark is then refused as a 400 Hz jump for 30 measurements, and the
+  // correction arrives only because the lock is finally dropped altogether.
+  // Half a minute of "ignoring +400 Hz" in the log, and a dial 400 Hz off the
+  // whole time.
+  gboolean tone_swap=(b_tone_up &&
+                      fabs(residual-b_expect-QO100_FSK_SHIFT_HZ)<QO100_FSK_TOL_HZ);
   double slew_allow=QO100_SLEW_HZ+
                     QO100_SLEW_RATE_HZ_S*(b_expect_samples/(double)track_fs);
   if(slew_allow>QO100_SLEW_MAX_HZ) slew_allow=QO100_SLEW_MAX_HZ;
-  if(b_locked && fabs(residual-b_expect)>slew_allow) {
+  if(b_locked && !tone_swap && fabs(residual-b_expect)>slew_allow) {
     if(fabs(b_step_prev)>QO100_COARSE_HZ &&
        fabs(residual-b_res_prev)<0.25*fabs(b_step_prev)) {
       b_stuck++;
@@ -1412,6 +1472,7 @@ static void beacon_frame(RECEIVER *rx) {
   // has not run yet the next frame's measurement is stale anyway.
   if(g_atomic_int_compare_and_exchange(&apply_queued,0,1)) {
     pend_step=step;
+    b_tone_up=FALSE;                    // ...spent, whether or not it was one
     b_applied+=step;
     b_step_prev=step;                   // ...and what it must be worth next frame
     b_res_prev=residual;
