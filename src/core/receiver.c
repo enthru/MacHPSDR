@@ -1950,6 +1950,44 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
   return TRUE;
 }
 
+/* Waterfall cadence diagnostic (MACHPSDR_WF_CADENCE=1).  Off by default and one
+   int compare when off.  Reports, every 5 s: lines actually drawn per second
+   against the fps that was asked for, and the spread of the intervals between
+   them -- which is the thing a stuttering waterfall IS.  A perfectly clocked
+   25 fps reads "25.0 lines/s, p50 40 p95 40 max 40". */
+static void rx_wf_cadence_note(RECEIVER *rx) {
+  static int on=-1;
+  static gint64 t0=0, prev=0;
+  static int n=0;
+  static double iv[4096];
+  if(on<0) {
+    const char *e=g_getenv("MACHPSDR_WF_CADENCE");
+    on=(e!=NULL && *e!='0') ? 1 : 0;
+  }
+  if(!on) return;
+  const gint64 now=g_get_monotonic_time();
+  if(prev!=0 && n<(int)(sizeof(iv)/sizeof(iv[0]))) iv[n++]=(double)(now-prev)/1000.0;
+  prev=now;
+  if(t0==0) { t0=now; return; }
+  if(now-t0<5000000 || n<2) return;
+  const double secs=(double)(now-t0)/1.0e6;
+  double sorted[4096];
+  memcpy(sorted,iv,(size_t)n*sizeof(double));
+  for(int i=1;i<n;i++) {            /* n is small and this runs once per 5 s */
+    const double v=sorted[i]; int j=i-1;
+    while(j>=0 && sorted[j]>v) { sorted[j+1]=sorted[j]; j--; }
+    sorted[j+1]=v;
+  }
+  const double want=1000.0/(double)(rx->fps>0?rx->fps:1);
+  int late=0;
+  for(int i=0;i<n;i++) if(sorted[i]>1.5*want) late++;
+  log_info("wf cadence: %.1f lines/s (fps %d wants %.1f), interval p50 %.0f p95 %.0f max %.0f ms, "
+           "%d of %d over 1.5x the frame\n",
+           (double)n/secs,rx->fps,(double)rx->fps,
+           sorted[n/2],sorted[(int)(n*0.95)],sorted[n-1],late,n);
+  t0=now; n=0;
+}
+
 static gboolean update_timer_cb(void *data) {
   int rc=0;
   int rc2;
@@ -2024,6 +2062,13 @@ static gboolean update_timer_cb(void *data) {
   if(draw_display) {
     if(have_pixels) {
       if(rc) {
+        /* MACHPSDR_WF_CADENCE=1: how evenly the waterfall actually advances.
+           A line is drawn per analyzer frame and a frame is one 1/fps of
+           STREAM, so the line rate follows delivery rather than the clock --
+           on a network device it inherits the burstiness of the link, which
+           the audio's ring hides and the waterfall cannot.  This measures
+           what the eye sees; everything else measures samples. */
+        rx_wf_cadence_note(rx);
         update_rx_panadapter(rx,running);
         update_waterfall(rx);
       } else if(!running) {
