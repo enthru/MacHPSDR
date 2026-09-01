@@ -608,6 +608,68 @@ void soapy_protocol_change_sample_rate(RECEIVER *rx,int rate) {
   g_mutex_unlock(&radio->delete_rx_mutex);
 }
 
+/* SoapySDR stream arguments.  One device needs them, and needs them badly.
+ *
+ * A networked PlutoSDR is reached through libiio's NETWORK backend, which is
+ * strictly request/response: iio_buffer_refill() writes "READBUF <dev> <len>"
+ * and waits for the whole reply, so nothing is draining the device while that
+ * request is in flight.  A stall on the link is therefore not late data -- it is
+ * samples the Pluto's DMA ring dropped, spliced into the stream, and NOTHING
+ * reports it: SoapyPlutoSDR's readStreamStatus() is SOAPY_SDR_NOT_SUPPORTED, so
+ * readStream never returns SOAPY_SDR_OVERFLOW and never sets END_ABRUPT.  The
+ * operator sees a stuttering waterfall and chopped audio, which reads as a
+ * broken receiver rather than as a link that stalls.
+ *
+ * The driver sizes its buffer at about a sixtieth of the sample rate (~17 ms),
+ * so a link whose latency spikes past that loses samples on every spike.  The
+ * cure is a buffer long enough to cover a spike: fewer round trips per second,
+ * and each one covers more time.  Measured over Wi-Fi with 94 ms latency
+ * outliers (tools/soapy_bench.c, 12 s per row):
+ *
+ *     rate       buffer   delivered   signal lost per second
+ *     768 000    16384      94.6 %        53.6 ms
+ *     768 000    65536      99.5 %         4.8 ms
+ *     2 304 000  65536      97.8 %        22.4 ms
+ *     2 304 000  262144     99.2 %         8.4 ms
+ *
+ * So: ~85 ms of stream, rounded up to a power of two (the driver's own
+ * preference), which is the 4x that bought those two rows.  It is paid for in
+ * latency and in nothing else, and only on the network backend -- the same
+ * device over `usb:` has none of this and is left alone, as is every other
+ * driver.  MACHPSDR_SOAPY_BUFFLEN overrides for experiment; 0 hands the driver
+ * back its own choice.
+ *
+ * Note the driver keeps its MTU at the default when bufflen is given
+ * explicitly, so this does NOT change the size of the app's reads -- only how
+ * much the device buffers behind them.
+ */
+static void soapy_rx_stream_args(SoapySDRKwargs *args, int rate) {
+  long bufflen=0;
+  const char *env=getenv("MACHPSDR_SOAPY_BUFFLEN");
+
+  if(env!=NULL) {
+    bufflen=atol(env);
+    /* Bounded like every other number that reaches an allocation: this one is
+       a buffer the DEVICE has to find, and a silly value fails the setup
+       rather than being ignored. */
+    if(bufflen<0) bufflen=0;
+    if(bufflen>(1L<<22)) bufflen=(1L<<22);
+  } else if(radio!=NULL && radio->discovered!=NULL &&
+            strstr(radio->discovered->info.soapy.make_args,"uri=ip:")!=NULL &&
+            rate>0) {
+    long target=rate/12;                       /* ~85 ms of stream */
+    bufflen=16384;
+    while(bufflen<target && bufflen<(1L<<20)) bufflen<<=1;
+  }
+  if(bufflen>0) {
+    char temp[32];
+    snprintf(temp,sizeof(temp),"%ld",bufflen);
+    SoapySDRKwargs_set(args,"bufflen",temp);
+    log_info("%s: network device: asking for a %ld-sample stream buffer (%.0f ms at %d)\n",
+             __FUNCTION__,bufflen,1000.0*(double)bufflen/(double)(rate>0?rate:1),rate);
+  }
+}
+
 void soapy_protocol_create_receiver(RECEIVER *rx) {
   int rc;
 
@@ -651,14 +713,16 @@ log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate
     rx_stream[channel]=NULL;
   }
 log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)channel);
+  SoapySDRKwargs stream_args={0};
+  soapy_rx_stream_args(&stream_args,soapy_rx_actual_rate>0?soapy_rx_actual_rate:soapy_rx_sample_rate);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
-  rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+  rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
     _exit(-1);
   }
 #else
-  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
   if(rx_stream[channel]==NULL) {
     // This branch has no return code to report -- setupStream answers with the
     // pointer -- so the reason comes from the device.  It used to print
@@ -667,7 +731,7 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
     _exit(-1);
   }
 #endif
-
+  SoapySDRKwargs_clear(&stream_args);
 
   const int mtu=(int)SoapySDRDevice_getStreamMTU(soapy_device,rx_stream[channel]);
   max_samples=mtu;
@@ -706,9 +770,31 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   // expect the RX rate -> artefacts (a live reconnect happened to set RX last and
   // sounded clean, which is why toggling the device "fixed" it).  Setting it here
   // makes the RX rate authoritative at activation, independent of call order.
+  //
+  // Re-assert only if the rate really has MOVED, though.  setSampleRate is not
+  // a no-op on every driver even when the number does not change:
+  // SoapyPlutoSDR re-sizes the RX stream's buffer from the rate whenever the
+  // stream exists, and this runs after setupStream -- so on a networked Pluto
+  // the unconditional re-assert silently undid the long buffer
+  // soapy_rx_stream_args() had just asked for (measured: "asking for a
+  // 262144-sample stream buffer" followed by the driver's own "Auto setting
+  // Buffer Size: 65536", and the loss unchanged).  Whichever rate the hardware
+  // is really at is what the readback says, which is the whole reason the
+  // HackRF case is detectable: with the clock left at the TX rate the readback
+  // differs and the set below still happens.  100 ppm, because a rate a hair
+  // off the request is the same rate with a rounding error -- a Pluto asked
+  // for 2 304 000 reports 2 303 999.
   const int rate_before=soapy_rx_actual_rate;
-  const int rate=soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
-  log_info("%s: rate=%d\n",__FUNCTION__,rate);
+  const double at=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc);
+  int rate;
+  if(at>0.0 && fabs(at-(double)soapy_rx_sample_rate)<=(double)soapy_rx_sample_rate*1.0e-4) {
+    rate=(int)(at+0.5);
+    soapy_rx_actual_rate=rate;
+    log_info("%s: rate=%d (already there, not re-set)\n",__FUNCTION__,rate);
+  } else {
+    rate=soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
+    log_info("%s: rate=%d\n",__FUNCTION__,rate);
+  }
 
   size_t channel=rx->adc;
   if(channel>=MAX_CHANNELS) {
