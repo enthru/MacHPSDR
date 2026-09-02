@@ -657,6 +657,22 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // through with no wait at all.
 #define QO100_MIN_APPLY_S        2.0
 #define QO100_TRIM_HZ_S         10.0
+// ...and with a decoder running the floor is one MEASUREMENT, not two seconds.
+// The loop cannot act faster than it measures anyway, and while the converter
+// is warming, every trim it skips is drift left in the audio -- see the gate
+// below for why that is the thing to spend retunes on.
+#define QO100_DECODER_APPLY_S    (QO100_AVG_MS/1000.0)
+// A step at or below this is not a discontinuity, it is the CANCELLATION of one:
+// the converter has drifted that far since the last trim and the correction puts
+// the audio back where the decoder found it. Bigger than this and it is a jump
+// worth waiting for a quiet moment.
+#define QO100_FT8_TRIM_HZ       15.0
+// ...and NOTHING may hold a correction longer than this. The decoder gate is
+// allowed to DELAY a step to a quieter moment; it is not allowed to cancel it,
+// and a loop that waits several slots for a quiet tail it keeps missing is a
+// loop that does not correct at all. Operator's requirement, in his words: a
+// correction has to happen at least once every fifteen seconds, FT8 or no FT8.
+#define QO100_MAX_HOLD_S        15.0
 // A retune is a step in the audio, and ft8_lib demodulates each candidate at a
 // FIXED frequency -- it does no drift tracking at all -- so a step inside a
 // transmission smears it. FT8 sends from ~0.5 s to ~13.4 s of its 15 s UTC slot
@@ -969,17 +985,31 @@ void qo100_beacon_set_clock(double (*fn)(void)) {
   qo100_clock=(fn!=NULL)?fn:qo100_clock_real;
 }
 
-// How long until the loop's NEXT chance to move the radio, which is not a
-// constant: with FT8 or FT4 decoding, a correction may only land in the slot's
-// quiet tail, so the answer is a whole slot. Everything the control law does
-// with time -- how far to feed the drift forward, and how much of the measured
-// error to take -- has to be told that number, or it is tuned for a loop that
-// runs once a second while running once every fifteen.
-static double qo100_next_chance_s(RECEIVER *rx) {
-  if(radio==NULL || rx==NULL) return QO100_FF_S;
-  if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return QO100_FF_S;
-  if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return QO100_FF_S;
-  return (radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S:QO100_FT8_SLOT_S;
+// Is a decoder that cares about a step in the audio running on this receiver?
+static gboolean qo100_decoder_slot(RECEIVER *rx, double *slot, double *quiet) {
+  if(radio==NULL || rx==NULL) return FALSE;
+  if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return FALSE;
+  if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return FALSE;   // the tap is mode-gated
+  if(slot!=NULL)  *slot =(radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S :QO100_FT8_SLOT_S;
+  if(quiet!=NULL) *quiet=(radio->decode_mode==DECODE_FT4)?QO100_FT4_QUIET_S:QO100_FT8_QUIET_S;
+  return TRUE;
+}
+
+// How long until the loop's NEXT chance to move the radio -- which is what the
+// control law's two time-shaped decisions are made of: how far to feed the
+// drift forward, and how much of the measured error to take now. It is the trim
+// rate limiter's own wait, and a whole slot ON TOP of it for a step big enough
+// that the gate below makes it wait for one.
+static double qo100_next_chance_s(RECEIVER *rx, double act) {
+  double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
+                                                 :QO100_MIN_APPLY_S;
+  double need=(fabs(act)>0.0)?QO100_TRIM_HZ_S/fabs(act):QO100_FF_S;
+  if(need<floor_s) need=floor_s;
+  double slot=0.0;
+  if(fabs(act)>QO100_FT8_TRIM_HZ && fabs(act)<=QO100_COARSE_HZ &&
+     qo100_decoder_slot(rx,&slot,NULL))
+    need+=slot;
+  return need;
 }
 
 // Where the middle beacon's spectrum is CENTRED, in baseband Hz, out of the same
@@ -1187,12 +1217,33 @@ static void middle_beacon_verdict(double off, double width, int bins) {
              k,(k==1||k==-1)?"":"s",shift);
 }
 
-static gboolean qo100_may_retune_now(RECEIVER *rx) {
+static gboolean qo100_may_retune_now(RECEIVER *rx, double act, double since_s) {
   if(radio==NULL || rx==NULL) return TRUE;
-  if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return TRUE;
-  if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return TRUE;   // the tap is mode-gated
-  double slot =(radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S :QO100_FT8_SLOT_S;
-  double quiet=(radio->decode_mode==DECODE_FT4)?QO100_FT4_QUIET_S:QO100_FT8_QUIET_S;
+  // The ceiling first: whatever else this function thinks, a correction that has
+  // been waiting this long goes.
+  if(since_s>=QO100_MAX_HOLD_S) return TRUE;
+  // A correction bigger than a trim is not what this gate is for. It exists so
+  // that a step does not land inside a transmission ft8_lib is demodulating at
+  // a fixed frequency -- but a dial that is hundreds of hertz out is not
+  // producing decodes worth protecting, it is producing decodes REPORTED at the
+  // wrong frequency, and acquisition is a run of such steps: cold, at the
+  // 35 kHz an LNB is easily out by, every one of them waited for a slot's quiet
+  // tail and the first lock took minutes. Acquisition goes through at once;
+  // trims, which is everything this gate was written for, wait.
+  if(fabs(act)>QO100_COARSE_HZ) return TRUE;
+  // ...and NOR is a trim, which is the correction this gate was hurting most.
+  // Holding the dial still through a transmission does not hold the AUDIO
+  // still: the converter keeps drifting, and to ft8_lib -- which demodulates
+  // each candidate at one fixed frequency for the whole slot -- a signal
+  // sliding 30 Hz through the decode is indistinguishable from the dial being
+  // dragged 30 Hz. Measured against a 2 Hz/s converter with the gate holding
+  // every trim: 32 Hz of audio swept inside one slot, and 96 Hz at 6 Hz/s,
+  // where an FT8 tone is 6.25 Hz wide. That is what a bent trace on the
+  // waterfall is. A trim of a few hertz CANCELS that slide; it is not a
+  // discontinuity, and the decoder is better off with it than without it.
+  if(fabs(act)<=QO100_FT8_TRIM_HZ) return TRUE;
+  double slot=0.0, quiet=0.0;
+  if(!qo100_decoder_slot(rx,&slot,&quiet)) return TRUE;
   double utc=qo100_clock();                              // UTC seconds
   return fmod(utc,slot)>=quiet;
 }
@@ -1812,7 +1863,6 @@ static void beacon_frame(RECEIVER *rx) {
   // FT8 slot if a decoder is gating it. Both halves of the control law below
   // are that number: what a drift will have added by then, and whether there is
   // another chance soon enough to make a half step worth taking.
-  double chance=qo100_next_chance_s(rx);
   double now_s=b_stream_samples/(double)track_fs;
 
   // EVERY believed reading goes into the window, and each carries the stream
@@ -1869,18 +1919,20 @@ static void beacon_frame(RECEIVER *rx) {
     }
   }
 
-  // ...fed forward to the MIDDLE of the wait ahead, not a flat two seconds.
-  // QO100_FF_S is "about how long until the next trim", which stopped being
-  // true the moment a decoder slot gate went in front of the loop: the next
-  // trim is then a whole slot away, and a drift fed forward two seconds of it
-  // leaves the other thirteen to accumulate. Half the wait puts the dial in the
-  // middle of the error the interval sweeps through (+/-d*S/2) instead of at
-  // one end of it (0..d*S).
-  double ff=slope*((chance>QO100_FF_S)?0.5*chance:QO100_FF_S);
-
-  double act;
+  // The drift is fed forward to the MIDDLE of the wait ahead -- half of it, not
+  // all: feeding the whole wait forward was measured and is unstable, because
+  // the wait itself shrinks as the error it is derived from grows (161.9 Hz of
+  // audio swept inside a slot at 6 Hz/s, against 11.9 for half). The wait is
+  // asked for rather than assumed: QO100_FF_S was "about how long until the next
+  // trim", which is only true when nothing is holding the loop back. Half the
+  // wait puts the dial in the middle of the error the interval sweeps through
+  // (+/-d*W/2) instead of at one end of it (0..d*W). It needs `act`, so both
+  // branches below compute their own.
+  double act, ff=0.0, chance=QO100_FF_S;
   if(fabs(residual)>QO100_COARSE_HZ) {
     act=residual;                       // a real offset, measured directly
+    chance=qo100_next_chance_s(rx,act);
+    ff=slope*0.5*chance;
   } else {
     // b_expect is deliberately NOT moved by this return. It is the anchor the
     // slew guard above measures against -- where the beacon was last seen to
@@ -1903,6 +1955,8 @@ static void beacon_frame(RECEIVER *rx) {
     // BE, not where it was.
     double med=median_of(b_med,b_med_n);
     act=med+slope*(now_s-b_med_t[b_med_n/2]);
+    chance=qo100_next_chance_s(rx,act);
+    ff=slope*0.5*chance;
 
     // ...and it is only acted on when it stands out of the window's OWN
     // scatter. A median is an estimate and the spread of the readings behind it
@@ -1945,7 +1999,7 @@ static void beacon_frame(RECEIVER *rx) {
 
   // A step is a jump in the audio, so it waits for a gap in the traffic that
   // cares: see qo100_may_retune_now().
-  if(!qo100_may_retune_now(rx)) {
+  if(!qo100_may_retune_now(rx,act,b_since_apply/(double)track_fs)) {
     b_expect=residual;
     b_expect_samples=0.0;
     snprintf(b_status,sizeof(b_status),
@@ -1958,7 +2012,10 @@ static void beacon_frame(RECEIVER *rx) {
   if(fabs(act)<=QO100_COARSE_HZ) {
     double since=b_since_apply/(double)track_fs;
     double need=(fabs(act)>0.0)?QO100_TRIM_HZ_S/fabs(act):1.0e9;
-    if(need<QO100_MIN_APPLY_S) need=QO100_MIN_APPLY_S;
+    double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
+                                                   :QO100_MIN_APPLY_S;
+    if(need<floor_s) need=floor_s;
+    if(need>QO100_MAX_HOLD_S) need=QO100_MAX_HOLD_S;   // the ceiling, again
     if(since<need) {
       b_expect=residual;
       b_expect_samples=0.0;

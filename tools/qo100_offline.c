@@ -80,6 +80,7 @@ static double   intruder_hz;
 static gboolean f1a_fade;
 #define QO100_FSK_SHIFT_HZ_TEST 400.0   /* qo100.c's own, which it does not export */
 #define QO100_FT8_SLOT_S_TEST    15.0   /* ...and the slot its retune gate waits for */
+#define QO100_MAX_HOLD_S_TEST    15.0   /* ...and the longest it may ever hold one */
 // The FT8 slot gate, and the clock it is judged against: with a decoder running
 // the loop may only move the radio in the slot's quiet tail, so its period is a
 // whole slot rather than the second it measures in. Stream time stands in for
@@ -122,6 +123,15 @@ static double   worst_track;
 // ...and the most it ever moved inside ONE FT8 slot, which is the number that
 // decides whether a decode survives: ft8_lib does no drift tracking at all.
 static double   worst_slot;
+// ...but MOVEMENT is only half of it, and it is the half that flatters a loop
+// which does nothing. What bends an FT8 trace on the waterfall is the dial's
+// ERROR sweeping while the transmission runs -- the converter drifting with
+// nothing cancelling it reads exactly the same to the decoder as the dial being
+// dragged about, and a loop told to hold still through the slot produces the
+// first while avoiding the second. This is the number the operator is looking
+// at: peak-to-peak audio-frequency excursion inside one slot. An FT8 tone is
+// 6.25 Hz wide.
+static double   worst_slot_err;
 // ...and the biggest single step it ever applied, which is what "it jumps about"
 // means when an operator says it.
 static double   worst_step;
@@ -250,6 +260,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   worst_slot=0.0;
   worst_step=0.0;
   worst_gap=0.0;
+  worst_slot_err=0.0;
+  double err_lo=1e18, err_hi=-1e18;
   double last_move_t=-1.0;
   double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
   long long last_err=0;
@@ -261,11 +273,17 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // being taken out, which is the loop doing its job.
     if(b>max_blocks/2) {
       double e=(double)rx->error_a;
-      if(slot_t0<0.0 || t-slot_t0>=15.0) { slot_t0=t; slot_lo=slot_hi=e; }
+      double err=lo_error+lo_drift_hz_s*t+e;         // dial vs the real beacon
+      if(slot_t0<0.0 || t-slot_t0>=15.0) {
+        slot_t0=t; slot_lo=slot_hi=e; err_lo=err_hi=err;
+      }
       if(e<slot_lo) slot_lo=e;
       if(e>slot_hi) slot_hi=e;
       if(slot_hi-slot_lo>worst_slot) worst_slot=slot_hi-slot_lo;
-      double off=fabs(lo_error+lo_drift_hz_s*t+e);   // dial vs the real beacon
+      if(err<err_lo) err_lo=err;
+      if(err>err_hi) err_hi=err;
+      if(err_hi-err_lo>worst_slot_err) worst_slot_err=err_hi-err_lo;
+      double off=fabs(err);
       if(off>worst_track) worst_track=off;
       if(e<pull_lo) pull_lo=e;
       if(e>pull_hi) pull_hi=e;
@@ -1355,49 +1373,36 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
-  // ---- 22f. a correction is a STEP in the audio, and ft8_lib demodulates each
-  //           candidate at a fixed frequency -- it does no drift tracking -- so a
-  //           step inside a transmission costs that decode. With FT8 selected the
-  //           loop must wait for the slot's quiet tail. Deterministic: the case
-  //           starts by waiting for the BUSY part of a slot, which is where 89 %
-  //           of wall-clock time is anyway, and the run takes about a second.
+  // ---- 22f. the decoder gate may DELAY a correction; it may not cancel one.
+  //           This case used to assert the opposite -- "no retune inside an FT8
+  //           transmission" -- and that contract was wrong in the only way that
+  //           matters on air. Holding the dial still through a transmission does
+  //           not hold the AUDIO still: the converter keeps drifting, and to
+  //           ft8_lib, which demodulates each candidate at one fixed frequency,
+  //           a signal sliding through the decode is exactly as bad as the dial
+  //           being dragged. Measured with the gate holding every trim: 32 Hz of
+  //           audio swept inside one slot at 2 Hz/s and 96 Hz at 6, where a tone
+  //           is 6.25 Hz -- the bent FT8 traces the operator was looking at.
+  //           So a trim now goes through whenever it is due, an acquisition-
+  //           sized step goes through at once, and what is left -- a step
+  //           between the two -- prefers the quiet tail but is capped by
+  //           QO100_MAX_HOLD_S: a correction that has waited that long goes.
+  //           The requirement, in the operator's words, is that a correction
+  //           happens at least once every fifteen seconds whether or not FT8 is
+  //           running, and that is what this case pins.
   {
     bands_init();
-    for(;;) {
-      double utc=(double)(g_get_real_time()/1000)/1000.0;
-      double ph=fmod(utc,15.0);
-      if(ph<10.0) break;                   // room for the run to finish inside
-      g_usleep(200000);
-    }
-    RECEIVER *rx=mk_rx(10489540000LL,FS);
-    rx->mode_a=DIGU;                       // the decoder taps only in DIGU/DIGL
-    RADIO *r=mk_radio(rx);
-    r->decode_mode=DECODE_FT8;
-    radio=r;
-    test_band.frequencyLO=9750000000LL;
-    test_band.errorLO=0;
-    retunes=0;
-    qo100_beacon_reset();
-    radio->qo100_beacon_lock=TRUE;
-    radio->decode_mode=DECODE_FT8;
-    double *iq=g_new0(double,BLOCK*2);
-    double phase=0.0; guint32 seed=77;
-    // A bare continuous carrier stands for the tone the beacon RESTS on, which
-    // is the one a tracker sees, and it is one shift above the published figure.
-    long long beacon=qo100_beacon_track_frequency(0);
-    for(int b=0;b<blocks*3;b++) {
-      gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)-3000.0-(double)rx->error_a,
-                FS,1.0,0.05,&phase,&seed);
-      qo100_beacon_iq_feed(rx,iq,BLOCK);
-      while(g_main_context_iteration(NULL,FALSE)) ;
-    }
-    char st[128];
-    qo100_beacon_status(st,sizeof(st));
-    snprintf(d,sizeof(d),"retunes=%d error_a=%lld — %s",
-             retunes,(long long)rx->error_a,st);
-    check("no retune inside an FT8 transmission",
-          retunes==0 && rx->error_a==0 && strstr(st,"holding")!=NULL, d);
-    g_free(iq); g_free(rx); g_free(r); radio=NULL;
+    gboolean locked=FALSE;
+    ft8_gate=TRUE;
+    lo_drift_hz_s=0.4;                   // slow enough that trims are rare
+    double res=run_loop(3000.0,0.0,blocks*20,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    ft8_gate=FALSE;
+    snprintf(d,sizeof(d),"worst gap %.0f s (cap %.0f), %.1f Hz inside a slot, "
+             "%d retunes, %+.1f Hz left, locked=%d",
+             worst_gap,QO100_MAX_HOLD_S_TEST,worst_slot_err,retunes,res,locked);
+    check("the decoder gate delays a correction, it never cancels one",
+          locked && worst_gap<=QO100_MAX_HOLD_S_TEST+2.0 && retunes>3, d);
     qo100_beacon_reset();
   }
 
@@ -1428,12 +1433,11 @@ int main(int argc, char **argv) {
       double res=run_loop(3000.0,0.0,blocks*30,&locked,FS,10489540000LL);
       lo_drift_hz_s=0.0;
       ft8_gate=FALSE;
-      snprintf(d,sizeof(d),"%.0f Hz/s: %.1f Hz of wander (floor %.0f), %.0f s "
-               "worst gap, %d retunes, %+.1f Hz left, locked=%d",
-               rates[k],worst_track,rates[k]*QO100_FT8_SLOT_S_TEST/2.0,
-               worst_gap,retunes,res,locked);
-      check("a drifting LNB is corrected every FT8 slot, not every third",
-            locked && worst_track<bound[k] && worst_gap<20.0, d);
+      snprintf(d,sizeof(d),"%.0f Hz/s: %.1f Hz inside a slot (an FT8 tone is "
+               "6.2), %.1f Hz of wander, %.0f s worst gap, %d retunes, locked=%d",
+               rates[k],worst_slot_err,worst_track,worst_gap,retunes,locked);
+      check("a drifting LNB does not sweep the audio inside an FT8 slot",
+            locked && worst_slot_err<bound[k] && worst_gap<20.0, d);
       qo100_beacon_reset();
     }
   }
