@@ -79,6 +79,27 @@ static double   intruder_hz;
 // ...and whole seconds in which the beacon itself is not there to argue.
 static gboolean f1a_fade;
 #define QO100_FSK_SHIFT_HZ_TEST 400.0   /* qo100.c's own, which it does not export */
+#define QO100_FT8_SLOT_S_TEST    15.0   /* ...and the slot its retune gate waits for */
+// The FT8 slot gate, and the clock it is judged against: with a decoder running
+// the loop may only move the radio in the slot's quiet tail, so its period is a
+// whole slot rather than the second it measures in. Stream time stands in for
+// UTC (qo100_beacon_set_clock) because minutes of drift have to be covered in a
+// run that lasts under a second.
+static gboolean ft8_gate;
+static double   mock_utc;
+static double   test_utc(void) { return mock_utc; }
+// ...and what the cadence came out as: the longest the loop ever went without
+// moving the radio, once it was tracking.
+static double   worst_gap;
+// The MIDDLE beacon, 400 bd BPSK on 10489.750, as loud as this: it is what the
+// dial's independent check reads, and its spectrum is symmetric about its own
+// published frequency whichever way the CW beacon's two tones are named.
+static double   mid_bpsk_amp;
+// ...and the world in which the IARU reading is the true one: the CW beacon
+// RESTS on its published frequency instead of one shift above it. The loop
+// then trues the wrong line and everything the radio shows is 400 Hz high --
+// self-consistently, which is exactly what the check exists to catch.
+static gboolean rest_on_published;
 // Blocks of delay between the loop writing error_a and the signal showing it:
 // the driver's transfers in flight, the FIFO in front of the DSP thread and the
 // retune itself. Real, and much longer than one FFT frame at a wide span.
@@ -204,6 +225,12 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   qo100_beacon_reset();
   radio->qo100_beacon_lock=TRUE;               // reset() clears the status only
 
+  if(ft8_gate) {
+    rx->mode_a=DIGU;                           // the decoder taps only in DIGU/DIGL
+    radio->decode_mode=DECODE_FT8;
+    qo100_beacon_set_clock(test_utc);
+  }
+
   double *iq=g_new0(double,BLOCK*2);
   double phase=0.0;
   guint32 seed=12345;
@@ -215,11 +242,14 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   worst_track=0.0;
   worst_slot=0.0;
   worst_step=0.0;
+  worst_gap=0.0;
+  double last_move_t=-1.0;
   double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
   long long last_err=0;
   double pull_lo=1e18, pull_hi=-1e18;
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)fs;
+    mock_utc=t;                                  // UTC for the slot gate
     // Second half of the run only: the first correction is the LNB's real error
     // being taken out, which is the loop doing its job.
     if(b>max_blocks/2) {
@@ -235,6 +265,11 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       worst_pull=pull_hi-pull_lo;
       double st=fabs((double)(rx->error_a-last_err));
       if(st>worst_step) worst_step=st;
+      if(last_move_t<0.0) last_move_t=t;
+      if(st>0.0) {
+        if(t-last_move_t>worst_gap) worst_gap=t-last_move_t;
+        last_move_t=t;
+      } else if(t-last_move_t>worst_gap) worst_gap=t-last_move_t;
     }
     last_err=rx->error_a;
     // The ident as a beacon actually sends it: bursts of keying with idle
@@ -256,9 +291,9 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // which is the whole of the bug this models. `residual` below is the dial's
     // error against the published figure, so a loop that trues the resting tone
     // instead reads +/-400 here and every test in the file fails.
-    double hop=(double)QO100_BEACON_REST_HZ;
+    double hop=rest_on_published?0.0:(double)QO100_BEACON_REST_HZ;
     if(f1a_ident && t>=f1a_from_s && fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)
-      hop=0.0;
+      hop=rest_on_published?-(double)QO100_BEACON_REST_HZ:0.0;
     // ...and the guard's worst case, which is what the operator's log turned
     // out to be: whole integrated seconds in which the loop's OWN line is
     // absent and the only candidate is 400 Hz away -- "nearest of 1 lines".
@@ -313,11 +348,32 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       for(int k=0;k<BLOCK*2;k++) iq[k]+=ib[k];
       g_free(ib);
     }
+    if(mid_bpsk_amp>0.0) {
+      // 400 bd, one random symbol per fs/400 samples, added to the same block:
+      // a suppressed-carrier signal with no line to peak-search, which is the
+      // whole reason the check is a centroid.
+      static double mph=0.0; static guint32 msd=987654321u;
+      static int msym=1, mcnt=0;
+      double mb=(double)(QO100_BEACON_MIDDLE-rx->frequency_a)-lo_error
+                -lo_drift_hz_s*t-(deaf_radio?0.0:applied);
+      double dph=2.0*M_PI*mb/(double)fs;
+      int sps=fs/400;
+      for(int k=0;k<BLOCK;k++) {
+        if(mcnt<=0) { msd=msd*1103515245u+12345u; msym=((msd>>16)&1)?1:-1; mcnt=sps; }
+        mcnt--;
+        double mi=mid_bpsk_amp*(double)msym*cos(mph);
+        double mq=mid_bpsk_amp*(double)msym*sin(mph);
+        mph+=dph; if(mph>2.0*M_PI) mph-=2.0*M_PI;
+        iq[2*k]  +=mq;     // (Q, I), like everything else here
+        iq[2*k+1]+=mi;
+      }
+    }
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
     while(g_main_context_iteration(NULL,FALSE)) ;
   }
 
+  qo100_beacon_set_clock(NULL);
   double residual=lo_error+(double)rx->error_a;
   if(locked_out!=NULL) *locked_out=qo100_beacon_locked();
   g_free(iq);
@@ -1327,6 +1383,95 @@ int main(int argc, char **argv) {
     check("no retune inside an FT8 transmission",
           retunes==0 && rx->error_a==0 && strstr(st,"holding")!=NULL, d);
     g_free(iq); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
+  }
+
+  // ---- 22g. ...and the OTHER half of that gate, which is the one the operator
+  //           reported: a correction that may only land in the slot's quiet tail
+  //           lands once every fifteen seconds, and the control law behind it
+  //           was tuned for a loop that runs once a second. It applied HALF the
+  //           measured error (QO100_GAIN) and fed the drift forward two seconds
+  //           (QO100_FF_S, commented "about how long until the next trim") -- so
+  //           with the gate on, half the error was left standing for a whole
+  //           slot while the converter added fifteen seconds of drift to it.
+  //           Steady state is then 26x the drift rate: measured on the shipped
+  //           loop at 2 Hz/s, the dial sat 57 Hz from the beacon and went 45 s
+  //           without a correction. Feeding the drift to the middle of the next
+  //           slot and taking the whole error when the next chance is that far
+  //           away is what this case pins.
+  {
+    // Two rates, because the bound is not a taste: correcting once per slot S
+    // against a drift d costs a sawtooth of +/-d*S/2 whatever the loop does --
+    // 15 Hz at 2 Hz/s and 45 at 6 -- and the case has to separate that floor
+    // from the loop falling behind it.
+    const double rates[2]={2.0,6.0}, bound[2]={40.0,70.0};
+    for(int k=0;k<2;k++) {
+      bands_init();
+      gboolean locked=FALSE;
+      ft8_gate=TRUE;
+      lo_drift_hz_s=rates[k];
+      double res=run_loop(3000.0,0.0,blocks*30,&locked,FS,10489540000LL);
+      lo_drift_hz_s=0.0;
+      ft8_gate=FALSE;
+      snprintf(d,sizeof(d),"%.0f Hz/s: %.1f Hz of wander (floor %.0f), %.0f s "
+               "worst gap, %d retunes, %+.1f Hz left, locked=%d",
+               rates[k],worst_track,rates[k]*QO100_FT8_SLOT_S_TEST/2.0,
+               worst_gap,retunes,res,locked);
+      check("a drifting LNB is corrected every FT8 slot, not every third",
+            locked && worst_track<bound[k] && worst_gap<20.0, d);
+      qo100_beacon_reset();
+    }
+  }
+
+  // ---- 22h. the dial's INDEPENDENT check, and its negative control. Nothing
+  //           on the CW beacon can settle which of its two tones the published
+  //           figure names: the loop reads the same +/-2 Hz on the wrong line
+  //           as on the right one, which is how a dial 400 Hz off shipped for a
+  //           release. The middle beacon is 400 bd BPSK and symmetric about its
+  //           own published frequency, so where it is CENTRED says what the
+  //           dial is worth. The control is the world the IARU text describes
+  //           -- the beacon resting on its published tone -- where the loop
+  //           locks happily and everything the radio shows is 400 Hz high; a
+  //           check that cannot say so is decoration.
+  {
+    char ck[192];
+    for(int k=0;k<2;k++) {
+      bands_init();
+      gboolean locked=FALSE;
+      mid_bpsk_amp=0.5;
+      rest_on_published=(k==1);
+      // 768 kHz: the middle beacon is 210 kHz from this dial, so a 192 kHz span
+      // cannot see it at all -- which is itself one of the answers the check
+      // gives ("outside the span").
+      double res=run_loop(3000.0,0.10,blocks*20,&locked,768000,10489540000LL);
+      mid_bpsk_amp=0.0;
+      rest_on_published=FALSE;
+      qo100_beacon_check(ck,sizeof(ck));
+      snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d — %s",res,locked,ck);
+      if(k==0)
+        check("the middle beacon confirms a truthful dial",
+              locked && strstr(ck,"the dial agrees")!=NULL, d);
+      else
+        check("...and names the 400 Hz when the lock trues the wrong tone",
+              locked && strstr(ck,"400 Hz HIGH")!=NULL, d);
+      qo100_beacon_reset();
+    }
+    // ...and the control on the whole-step half of it. Taking all of `act`
+    // instead of half is only safe because the estimate is already a median of
+    // seven readings that has to beat its own window's scatter -- so the same
+    // wobble case 21e pins for the ungated loop is required of the gated one,
+    // where a step is worth fifteen seconds and chasing noise costs more.
+    bands_init();
+    gboolean locked=FALSE;
+    ft8_gate=TRUE;
+    lo_wobble_hz=12.0;
+    double res=run_loop(3000.0,0.0,blocks*20,&locked,FS,10489540000LL);
+    lo_wobble_hz=0.0;
+    ft8_gate=FALSE;
+    snprintf(d,sizeof(d),"dial moved %.1f Hz, %+.1f Hz left, %d retunes, locked=%d",
+             worst_pull,res,retunes,locked);
+    check("a wobbling reading is not chased for a whole slot either",
+          locked && worst_pull<10.0, d);
     qo100_beacon_reset();
   }
 

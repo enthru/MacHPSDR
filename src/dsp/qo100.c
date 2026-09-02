@@ -536,6 +536,24 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_TONE_RUN           4   // ...answering one shift up before a locked
                                      // loop accepts that it is on the keyed tone
 #define QO100_MIN_SNR         12.0   // peak/mean power in the window to trust a frame
+// The dial's one INDEPENDENT check, and the reason it exists is the 400 Hz
+// above. WHICH of the CW beacon's two tones the published figure names is a
+// convention, and no measurement of that beacon can settle it: the loop reads
+// +/-2 Hz on the wrong line exactly as it does on the right one, which is how a
+// dial 400 Hz off shipped for a release with nothing on air to argue with it.
+// The MIDDLE beacon is not a convention. It is 400 bd BPSK, so its spectrum is
+// symmetric about its own carrier whether or not that carrier is suppressed,
+// and where the middle of it lands is a direct reading of what the dial is
+// worth -- through the same LNB, the same span and the same FFT as the lock.
+// It is a CHECK and never a correction: a centroid over an 800 Hz-wide
+// modulated signal is worth tens of hertz where the CW lock is worth two.
+#define QO100_MID_WIN_HZ    4000.0   // half-window searched around the middle beacon
+#define QO100_MID_SNR          4.0   // a bin joins the beacon at this x the floor
+#define QO100_MID_MIN_BINS       6   // ...and this many of them make a signal
+#define QO100_MID_MIN_WIDTH_HZ 150.0 // ...that is wider than one carrier, or it is
+                                     // a carrier somebody parked there
+#define QO100_MID_VERDICT_HZ  150.0  // how near 0 or one shift a reading must be
+                                     // before it is called either
 // Agreement is counted in MEASUREMENTS now, and each already integrates a second
 // of stream: two of them agreeing is two seconds of evidence, which is what the
 // old "three frames" was trying and failing to be (three frames is 512 ms at a
@@ -628,6 +646,7 @@ static double   b_run_ref;           // ...and the run's ANCHOR, for the agreeme
 static double   b_residual;          // published: last accepted residual
 static double   b_applied;           // published: total correction pushed into the LO error
 static char     b_status[128]="Off";
+static char     b_check[192]="";      // the middle beacon's verdict on the dial
 
 // The loop refuses to keep correcting when its corrections do not arrive. Both
 // are latched: only an operator action (Re-acquire, another beacon, the lock
@@ -648,8 +667,10 @@ static gboolean b_tone_up;            // ...and the verdict "we are on the space
 static int      b_tone_win;           // measurements in the window judging that
 static int      b_tone_hits;          // ...and how many answered one shift up
 static int      b_tone_dn;            // ...against how many answered one down
-static double   b_med[QO100_MED_N];   // recent fine residuals, for the median
+static double   b_med[QO100_MED_N];   // recent residuals, for the median
+static double   b_med_t[QO100_MED_N];  // ...and the stream second each was read at
 static int      b_med_n;
+static double   b_stream_samples;      // the loop's own clock, in samples of stream
 // Counted in STREAM time, like the hold and the agreement: that is the clock the
 // loop lives on, and it is what makes the offline stand -- which feeds far faster
 // than real time -- measure the behaviour the operator gets.
@@ -885,13 +906,125 @@ static gboolean find_carrier(const double *pow_acc, int fs,
 // transmission costs that decode. The loop measures about once a second, so it
 // simply waits for the slot's quiet tail -- at most one slot of delay, against a
 // converter that drifts hertz per minute.
+// UTC seconds, and the only wall clock this file reads. Behind a hook because
+// the question "how OFTEN does the loop get to move the radio" is answered in
+// minutes of drift, and the offline harness runs a minute of stream in well
+// under a second -- a case about the cadence cannot be written against a clock
+// it does not drive.
+static double qo100_clock_real(void) {
+  return (double)(g_get_real_time()/1000)/1000.0;
+}
+static double (*qo100_clock)(void)=qo100_clock_real;
+
+void qo100_beacon_set_clock(double (*fn)(void)) {
+  qo100_clock=(fn!=NULL)?fn:qo100_clock_real;
+}
+
+// How long until the loop's NEXT chance to move the radio, which is not a
+// constant: with FT8 or FT4 decoding, a correction may only land in the slot's
+// quiet tail, so the answer is a whole slot. Everything the control law does
+// with time -- how far to feed the drift forward, and how much of the measured
+// error to take -- has to be told that number, or it is tuned for a loop that
+// runs once a second while running once every fifteen.
+static double qo100_next_chance_s(RECEIVER *rx) {
+  if(radio==NULL || rx==NULL) return QO100_FF_S;
+  if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return QO100_FF_S;
+  if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return QO100_FF_S;
+  return (radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S:QO100_FT8_SLOT_S;
+}
+
+// Where the middle beacon's spectrum is CENTRED, in baseband Hz, out of the same
+// accumulated power the lock is measured from. Deliberately a centroid and not a
+// peak search: a BPSK signal has no peak to find, and its shape is what carries
+// the frequency. The floor is the window's own median, so the transponder's
+// noise slope does not drag the answer; only bins standing QO100_MID_SNR out of
+// it are weighted, and by their excess over it rather than their power, or the
+// loudest bin would decide a measurement whose whole point is the shape.
+static gboolean middle_beacon_centre(const double *pow_acc, int fs,
+                                     double expected, double half,
+                                     double *centre, double *width, int *nbins) {
+  const int N=QO100_FFT_N;
+  const double bin_hz=(double)fs/(double)N;
+  static double win[QO100_FFT_N];
+  static double wsf[QO100_FFT_N];
+  int n=0;
+  for(int m=0;m<N;m++) {
+    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;   // signed baseband Hz
+    if(fabs(sf)<QO100_DC_GUARD_HZ) continue;
+    if(sf<expected-half || sf>expected+half) continue;
+    wsf[n]=sf;
+    win[n]=pow_acc[m];
+    n++;
+  }
+  if(n<4*QO100_MID_MIN_BINS) return FALSE;
+
+  static double sorted[QO100_FFT_N];
+  memcpy(sorted,win,sizeof(double)*(size_t)n);
+  for(int i=1;i<n;i++) {                       // insertion sort: n is a few hundred
+    double x=sorted[i]; int j=i-1;
+    while(j>=0 && sorted[j]>x) { sorted[j+1]=sorted[j]; j--; }
+    sorted[j+1]=x;
+  }
+  double floor_p=sorted[n/2];
+  if(floor_p<=0.0) return FALSE;
+
+  double sw=0.0, sf1=0.0, sf2=0.0;
+  int hit=0;
+  for(int i=0;i<n;i++) {
+    if(win[i]<QO100_MID_SNR*floor_p) continue;
+    double w=win[i]-floor_p;
+    sw+=w; sf1+=w*wsf[i]; sf2+=w*wsf[i]*wsf[i];
+    hit++;
+  }
+  if(nbins!=NULL) *nbins=hit;
+  if(hit<QO100_MID_MIN_BINS || sw<=0.0) return FALSE;
+  double c=sf1/sw;
+  double var=sf2/sw-c*c;
+  if(centre!=NULL) *centre=c;
+  if(width!=NULL) *width=(var>0.0)?2.0*sqrt(var):0.0;
+  return TRUE;
+}
+
+// ...and what that reading MEANS, in the one sentence an operator can act on.
+// The published figure is 10489.750: the check is what the dial says about it
+// after the CW lock has had its way, so a reading near zero is the whole
+// convention confirmed and a reading near one FSK shift is the convention
+// inverted -- which is not a subtlety, it is every frequency this radio shows
+// being 400 Hz out, self-consistently, with the beacon lock reporting +/-2 Hz
+// throughout.
+static void middle_beacon_verdict(double off, double width, int bins) {
+  const double shift=QO100_FSK_SHIFT_HZ;
+  if(width<QO100_MID_MIN_WIDTH_HZ) {
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon: %d bins only %.0f Hz wide — that is a carrier, "
+             "not the BPSK beacon; no verdict",bins,width);
+    return;
+  }
+  if(fabs(off)<QO100_MID_VERDICT_HZ)
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon (BPSK) centred %+.0f Hz — the dial agrees "
+             "(%.0f Hz wide, %d bins)",off,width,bins);
+  else if(fabs(off-shift)<QO100_MID_VERDICT_HZ)
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon %+.0f Hz off — the dial reads %.0f Hz HIGH: the CW "
+             "beacon rests on its published tone, not above it",off,shift);
+  else if(fabs(off+shift)<QO100_MID_VERDICT_HZ)
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon %+.0f Hz off — the dial reads %.0f Hz LOW: the lock "
+             "is sitting on the beacon's keyed tone",off,shift);
+  else
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon %+.0f Hz off — neither zero nor one %.0f Hz shift; "
+             "check the LNB and the lock",off,shift);
+}
+
 static gboolean qo100_may_retune_now(RECEIVER *rx) {
   if(radio==NULL || rx==NULL) return TRUE;
   if(radio->decode_mode!=DECODE_FT8 && radio->decode_mode!=DECODE_FT4) return TRUE;
   if(rx->mode_a!=DIGU && rx->mode_a!=DIGL) return TRUE;   // the tap is mode-gated
   double slot =(radio->decode_mode==DECODE_FT4)?QO100_FT4_SLOT_S :QO100_FT8_SLOT_S;
   double quiet=(radio->decode_mode==DECODE_FT4)?QO100_FT4_QUIET_S:QO100_FT8_QUIET_S;
-  double utc=(double)(g_get_real_time()/1000)/1000.0;     // UTC seconds
+  double utc=qo100_clock();                              // UTC seconds
   return fmod(utc,slot)>=quiet;
 }
 
@@ -976,6 +1109,8 @@ static void beacon_reset_locked(void) {
   b_tone_hits=0;
   b_tone_dn=0;
   b_med_n=0;
+  b_stream_samples=0.0;
+  b_check[0]='\0';
   b_since_apply=1.0e12;                 // a fresh lock may trim at once
   b_hold=0;
 }
@@ -1016,6 +1151,16 @@ gboolean qo100_beacon_locked(void) {
 
 double qo100_beacon_residual_hz(void) { return b_residual; }
 double qo100_beacon_applied_hz(void)  { return b_applied; }
+
+// The middle beacon's verdict on the dial, empty until there is one. Separate
+// from the lock's own status on purpose: the lock reports how steady it is,
+// which it can do perfectly while being 400 Hz wrong, and this is the only
+// line in the application that can tell the operator otherwise.
+void qo100_beacon_check(char *buf, int size) {
+  g_mutex_lock(&bmtx);
+  g_strlcpy(buf,b_check,(gsize)size);
+  g_mutex_unlock(&bmtx);
+}
 
 void qo100_beacon_status(char *buf, int size) {
   if(buf==NULL || size<=0) return;
@@ -1083,6 +1228,7 @@ static void beacon_frame(RECEIVER *rx) {
   int bins=0, cands=0;
   b_say_samples+=avg_samples;
   b_expect_samples+=avg_samples;
+  b_stream_samples+=avg_samples;
   gboolean say=(b_say_samples>=(double)track_fs*5.0);   // at most once per 5 s of stream
   if(say) b_say_samples=0.0;
 
@@ -1116,7 +1262,7 @@ static void beacon_frame(RECEIVER *rx) {
       // operator's: a wider span while acquiring, or an LNB LO nearer the truth.
       if(b_dry_samples>(double)track_fs*10.0)
         snprintf(b_status,sizeof(b_status),
-                 "Nothing found in the Â±%.0f kHz this span covers â "
+                 "Nothing found in the ±%.0f kHz this span covers — "
                  "widen the span, or set the LNB LO closer",span_half/1000.0);
       else
         g_strlcpy(b_status,"Searching for the beacon\342\200\246",sizeof(b_status));
@@ -1133,7 +1279,7 @@ static void beacon_frame(RECEIVER *rx) {
       if(b_gone_samples>=(double)track_fs*(QO100_LOST_MS/1000.0)) {
         beacon_reset_locked();
         g_strlcpy(b_status,
-                  "Re-acquiring â the beacon was gone for 10 s",
+                  "Re-acquiring — the beacon was gone for 10 s",
                   sizeof(b_status));
         log_info("qo100: lock given up — no carrier for %.0f s, searching wide "
                  "again\n",QO100_LOST_MS/1000.0);
@@ -1154,6 +1300,29 @@ static void beacon_frame(RECEIVER *rx) {
                track_fs);
     return;
   }
+  // The dial's independent check, asked of the SAME second's spectrum and
+  // therefore before it is cleared. Only once the lock has settled: before
+  // that the dial is knowingly wrong and the reading would only say by how
+  // much. Every five seconds, like the summary it sits beside.
+  if(say && b_locked && b_settled) {
+    double mid=(double)(QO100_BEACON_MIDDLE-rx->frequency_a);
+    double c=0.0, w=0.0;
+    int nb=0;
+    if(fabs(mid)+QO100_MID_WIN_HZ>span_half)
+      g_strlcpy(b_check,"Middle beacon outside the span — no independent "
+                        "check of the dial (widen the span to 500 kHz)",
+                sizeof(b_check));
+    else if(fabs(mid)<2.0*QO100_DC_GUARD_HZ)
+      g_strlcpy(b_check,"Middle beacon sits on the centre — no independent "
+                        "check of the dial from there",sizeof(b_check));
+    else if(middle_beacon_centre(bpow,track_fs,mid,QO100_MID_WIN_HZ,&c,&w,&nb)) {
+      middle_beacon_verdict(c-mid,w,nb);
+      log_info("qo100: %s\n",b_check);
+    } else
+      g_strlcpy(b_check,"Middle beacon not heard — no independent check "
+                        "of the dial",sizeof(b_check));
+  }
+
   spectrum_clear();
   b_since_apply+=avg_samples;
   b_dry_samples=0.0;
@@ -1234,7 +1403,24 @@ static void beacon_frame(RECEIVER *rx) {
   // hertz at a time, and applied the -111.8 as a coarse step. A beacon holds
   // ONE frequency for a second at a time; anything that walks now breaks the
   // run at the point it leaves the anchor, and buys nothing.
+  //
+  // ...and while LOCKED that tolerance AGES, for the same reason the slew
+  // guard's allowance does and at the same rate. The anchor is the run's FIRST
+  // reading, so a converter drifting at 6 Hz/s has legitimately walked 42 Hz
+  // from it by the seventh second -- and frozen at 40 Hz the run then broke,
+  // every seventh second, and stayed broken for the two it takes to build
+  // another one. That is invisible on a loop that may act every second and
+  // fatal on one gated by a decoder: the single chance in fifteen seconds kept
+  // landing in the gap. Measured at 6 Hz/s with FT8 selected, before the
+  // ageing: two slots in three missed and the dial 143 Hz out, where the
+  // sawtooth of one correction per slot is 45. The cap is the slew guard's own
+  // and stays well clear of the 400 Hz ident, so no amount of ageing ever makes
+  // the beacon's other line an agreement.
   double tol=b_locked?QO100_TRACK_TOL_HZ:QO100_LOCK_TOL_HZ;
+  if(b_locked) {
+    tol+=QO100_SLEW_RATE_HZ_S*(b_run_samples/(double)track_fs);
+    if(tol>QO100_SLEW_MAX_HZ) tol=QO100_SLEW_MAX_HZ;
+  }
   if(b_run>0 && fabs(residual-b_run_ref)<tol) {
     b_run++;
     b_run_samples+=avg_samples;
@@ -1395,16 +1581,80 @@ static void beacon_frame(RECEIVER *rx) {
   // the median as the measurement is immune to a single wild reading by
   // construction and lags a drift by two seconds, which at any rate an LNB can
   // manage is a few hertz.
-  double act, ff=0.0;                   // ...and the drift to feed forward
-  if(fabs(residual)>QO100_COARSE_HZ) {
-    act=residual;
-    b_med_n=0;                          // a real offset invalidates the history
+  // How long until this loop may move the radio again -- a second, or a whole
+  // FT8 slot if a decoder is gating it. Both halves of the control law below
+  // are that number: what a drift will have added by then, and whether there is
+  // another chance soon enough to make a half step worth taking.
+  double chance=qo100_next_chance_s(rx);
+  double now_s=b_stream_samples/(double)track_fs;
+
+  // EVERY believed reading goes into the window, and each carries the stream
+  // second it was read at. Two things were wrong with the window this replaces,
+  // and both of them only bite once something makes the loop skip measurements:
+  //
+  //  * a COARSE reading emptied it. That is right when a coarse step is applied
+  //    -- the radio moves and the history is about the old dial -- but the wipe
+  //    happened on the READING, and with a decoder slot gate in front of the
+  //    loop a coarse reading is refused fourteen seconds out of fifteen. So the
+  //    window was cleared over and over by readings that changed nothing, and
+  //    the one moment the loop was allowed to act it was still "settling 1/7".
+  //    The step itself does not need the wipe either: the shift at the bottom
+  //    of this function already re-expresses every stored residual in the new
+  //    frame, and it does so without throwing the drift estimate away.
+  //  * and an entry was assumed to be one second old. A measurement integrates
+  //    QO100_AVG_MS of stream, a step costs another half second of hold, and a
+  //    gated loop lets whole seconds pass -- so the slope, which is the drift
+  //    in Hz per SECOND, was computed by dividing by an entry count. It is
+  //    divided by the clock now.
+  if(b_med_n<QO100_MED_N) {
+    b_med[b_med_n]=residual;
+    b_med_t[b_med_n]=now_s;
+    b_med_n++;
   } else {
-    if(b_med_n<QO100_MED_N) b_med[b_med_n++]=residual;
-    else {
-      for(int i=1;i<QO100_MED_N;i++) b_med[i-1]=b_med[i];
-      b_med[QO100_MED_N-1]=residual;
+    for(int i=1;i<QO100_MED_N;i++) { b_med[i-1]=b_med[i]; b_med_t[i-1]=b_med_t[i]; }
+    b_med[QO100_MED_N-1]=residual;
+    b_med_t[QO100_MED_N-1]=now_s;
+  }
+
+  // The window's own SLOPE, robustly, and BEFORE the two branches: the drift is
+  // the converter's rate and has nothing to do with how big the error happens
+  // to be, so a coarse step gets it fed forward exactly as a trim does. Without
+  // that, a correction taken while the error is large lands the dial on where
+  // the beacon was at that instant and it starts falling behind again the same
+  // second -- and with a slot gate at 6 Hz/s the error grows past
+  // QO100_COARSE_HZ inside every slot, so EVERY correction was that kind.
+  // It is the median of the consecutive rates, believed only when every one of
+  // them agrees with it in sign: a converter drifting is a run of readings all
+  // moving the same way, and jitter, however wide, is not. Nothing here takes a
+  // bare gradient off two endpoints -- that is one wild reading away from
+  // claiming any rate you like.
+  double slope=0.0;
+  if(b_med_n>=QO100_MED_N) {
+    double diff[QO100_MED_N-1];
+    int nd=0;
+    for(int i=1;i<b_med_n;i++) {
+      double dt=b_med_t[i]-b_med_t[i-1];
+      if(dt>0.0) diff[nd++]=(b_med[i]-b_med[i-1])/dt;
     }
+    if(nd>0) {
+      slope=median_of(diff,nd);
+      for(int i=0;i<nd;i++) if(diff[i]*slope<=0.0) { slope=0.0; break; }
+    }
+  }
+
+  // ...fed forward to the MIDDLE of the wait ahead, not a flat two seconds.
+  // QO100_FF_S is "about how long until the next trim", which stopped being
+  // true the moment a decoder slot gate went in front of the loop: the next
+  // trim is then a whole slot away, and a drift fed forward two seconds of it
+  // leaves the other thirteen to accumulate. Half the wait puts the dial in the
+  // middle of the error the interval sweeps through (+/-d*S/2) instead of at
+  // one end of it (0..d*S).
+  double ff=slope*((chance>QO100_FF_S)?0.5*chance:QO100_FF_S);
+
+  double act;
+  if(fabs(residual)>QO100_COARSE_HZ) {
+    act=residual;                       // a real offset, measured directly
+  } else {
     // b_expect is deliberately NOT moved by this return. It is the anchor the
     // slew guard above measures against -- where the beacon was last seen to
     // really BE -- and a window that is still filling has not established that
@@ -1419,25 +1669,13 @@ static void beacon_frame(RECEIVER *rx) {
                residual,b_med_n,QO100_MED_N);
       return;
     }
-    // The window's own SLOPE first, robustly: the median of its consecutive
-    // differences, and one entry is one second of stream, so it is Hz per
-    // second. It is believed only when every difference agrees with it in sign
-    // -- a converter drifting is a run of readings all moving the same way, and
-    // jitter, however wide, is not. Nothing here needs a bare gradient, and
-    // that is deliberate: a slope taken off two endpoints is one wild reading
-    // away from claiming any rate you like.
-    double diff[QO100_MED_N-1];
-    for(int i=1;i<b_med_n;i++) diff[i-1]=b_med[i]-b_med[i-1];
-    double slope=median_of(diff,b_med_n-1);
-    for(int i=0;i<b_med_n-1;i++) if(diff[i]*slope<=0.0) { slope=0.0; break; }
-
-    // The median is the middle of the window, so under a drift it is already
-    // two seconds stale by the time it is computed, and the correction lands
-    // later still. Both are known now, so both are taken out: what is acted on
-    // is where the error will BE, not where it was.
+    // The median is the middle of the window, so under a drift it is stale by
+    // the age of the middle READING -- which is a clock reading now, not
+    // half the entry count -- and the correction lands later still. Both are
+    // known, so both are taken out: what is acted on is where the error will
+    // BE, not where it was.
     double med=median_of(b_med,b_med_n);
-    act=med+slope*0.5*(double)(QO100_MED_N-1);
-    ff=slope*QO100_FF_S;
+    act=med+slope*(now_s-b_med_t[b_med_n/2]);
 
     // ...and it is only acted on when it stands out of the window's OWN
     // scatter. A median is an estimate and the spread of the readings behind it
@@ -1456,7 +1694,7 @@ static void beacon_frame(RECEIVER *rx) {
     // already 20 Hz.
     double lo_m=1e18, hi_m=-1e18;
     for(int i=0;i<b_med_n;i++) {
-      double dt=b_med[i]-slope*(double)i;
+      double dt=b_med[i]-slope*(b_med_t[i]-b_med_t[0]);
       if(dt<lo_m) lo_m=dt;
       if(dt>hi_m) hi_m=dt;
     }
@@ -1508,7 +1746,18 @@ static void beacon_frame(RECEIVER *rx) {
   // until the next trim -- feeding it forward is what stops the loop running a
   // standing lag proportional to how fast the LNB is warming, and it costs no
   // extra retunes because it rides on one that was going to happen anyway.
-  double step=(fabs(act)>QO100_COARSE_HZ)?act:(act*QO100_GAIN+ff);
+  // The damping gain is a bet that another chance is coming shortly: take half,
+  // measure again a second later, take half of what is left. With a decoder
+  // slot gate in front of the loop that bet is off -- the next chance is a
+  // whole slot away, so a half step is half the error left standing for fifteen
+  // seconds while the converter keeps drifting into it. Measured on the shipped
+  // loop with FT8 selected and an LNB at 2 Hz/s: a standing 56 Hz, and the
+  // steady state is 26x the drift rate, so a warming converter at 6 Hz/s sat
+  // 170 Hz off. What made the half safe is still there -- the estimate is the
+  // median of seven seconds and has to beat that window's own scatter -- so the
+  // loop that only gets one chance takes the whole of it.
+  double gain=(chance>2.0*QO100_AVG_MS/1000.0)?1.0:QO100_GAIN;
+  double step=(fabs(act)>QO100_COARSE_HZ)?act:(act*gain+ff);
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
 
@@ -1527,19 +1776,20 @@ static void beacon_frame(RECEIVER *rx) {
               b_applied+step,residual);
     return;
   }
-  // The history is not thrown away across a step -- that would make every fine
-  // correction wait five seconds for a new one, and at 0.5 Hz/s of drift the
-  // error grows 2.5 Hz in that gap (measured: 1.95 -> 3.62 Hz of movement inside
-  // a 15 s slot). It is SHIFTED instead: after the radio moves by `step`, every
-  // stored residual means `residual - step` in the new frame.
-  for(int i=0;i<b_med_n;i++) b_med[i]-=step;
-
   snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
            residual,b_applied+step);
 
   // Queue the retune for the GTK thread, at most one at a time: if the applier
   // has not run yet the next frame's measurement is stale anyway.
   if(g_atomic_int_compare_and_exchange(&apply_queued,0,1)) {
+    // The history is not thrown away across a step -- that would make every
+    // correction wait a whole window for a new one, and at 0.5 Hz/s of drift
+    // the error grows 2.5 Hz in that gap (measured: 1.95 -> 3.62 Hz of movement
+    // inside a 15 s slot). It is SHIFTED instead: after the radio moves by
+    // `step`, every stored residual means `residual - step` in the new frame.
+    // Inside this branch, because a step that was NOT queued moves nothing and
+    // a window shifted for it would be describing a dial that never existed.
+    for(int i=0;i<b_med_n;i++) b_med[i]-=step;
     pend_step=step;
     b_tone_up=FALSE;                    // ...spent, whether or not it was one
     b_applied+=step;
@@ -1549,6 +1799,7 @@ static void beacon_frame(RECEIVER *rx) {
     b_expect_samples=0.0;
     b_since_apply=0.0;
     b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
+    b_stream_samples+=(double)b_hold;   // ...which is stream the clock still counts
     spectrum_clear();                   // ...and it must not be averaged with this
     g_idle_add(apply_idle,NULL);
   } else {

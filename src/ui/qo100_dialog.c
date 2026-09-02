@@ -38,6 +38,7 @@
 // timer can never fire against a freed widget (the same pattern as the DX-cluster
 // and PPM status readouts).
 static GtkWidget *qo100_status_label;
+static GtkWidget *qo100_check_label;
 static GtkWidget *qo100_setup_label;
 static GtkWidget *qo100_xvtr_label;
 static guint      qo100_poll_id;
@@ -48,6 +49,15 @@ static void status_refresh(void) {
   qo100_beacon_status(st,sizeof(st));
   snprintf(buf,sizeof(buf),"Beacon: %s",st);
   gtk_label_set_text(GTK_LABEL(qo100_status_label),buf);
+  // The lock's own status says how STEADY it is, which it can be while being
+  // 400 Hz wrong; this is the only line that can say otherwise, so it gets a
+  // row of its own rather than being appended to that one.
+  if(qo100_check_label!=NULL) {
+    char ck[192];
+    qo100_beacon_check(ck,sizeof(ck));
+    gtk_label_set_text(GTK_LABEL(qo100_check_label),
+                       (ck[0]!='\0')?ck:"Middle beacon: no check yet");
+  }
 }
 
 static gboolean status_poll(gpointer data) {
@@ -60,6 +70,7 @@ static void qo100_dialog_destroy(GtkWidget *widget, gpointer data) {
   (void)widget; (void)data;
   if(qo100_poll_id!=0) { g_source_remove(qo100_poll_id); qo100_poll_id=0; }
   qo100_status_label=NULL;
+  qo100_check_label=NULL;
   qo100_setup_label=NULL;
   qo100_xvtr_label=NULL;
 }
@@ -316,9 +327,17 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   gtk_widget_set_halign(qo100_status_label,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),qo100_status_label,0,row++,2,1);
 
+  qo100_check_label=gtk_label_new("Middle beacon: no check yet");
+  gtk_widget_set_halign(qo100_check_label,GTK_ALIGN_START);
+  gtk_label_set_wrap(GTK_LABEL(qo100_check_label),TRUE);
+  gtk_grid_attach(GTK_GRID(grid),qo100_check_label,0,row++,2,1);
+
   GtkWidget *lk_hint=gtk_label_new(
     "The correction is written into the receive band's LO error, so it survives a\n"
-    "restart. The uplink converter is a different box and is never touched by it.");
+    "restart. The uplink converter is a different box and is never touched by it.\n"
+    "The CW beacon cannot check itself — which of its two tones the published\n"
+    "figure names is a convention — so the dial is checked against the middle\n"
+    "beacon, whose BPSK is symmetric about 10489.750. Needs a span that reaches it.");
   gtk_widget_set_halign(lk_hint,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),lk_hint,0,row++,2,1);
 

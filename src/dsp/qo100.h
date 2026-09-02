@@ -172,6 +172,15 @@ extern double   qo100_beacon_residual_hz(void);  /* last measured error, Hz */
 extern double   qo100_beacon_applied_hz(void);   /* correction currently applied */
 extern void     qo100_beacon_status(char *buf, int size);
 
+/* ...and the MIDDLE beacon's verdict on the dial, empty until there is one.
+   The CW lock cannot check itself: which of an F1A beacon's two tones the
+   published figure names is a convention, and the loop reads the same +/-2 Hz
+   on the wrong line as on the right one. The middle beacon is 400 bd BPSK and
+   its spectrum is symmetric about its own published frequency, so where it is
+   centred is a direct reading of what the dial is worth. Needs a span reaching
+   10489.750 (500 kHz from the narrow transponder's edges). */
+extern void     qo100_beacon_check(char *buf, int size);
+
 /* Forget the lock state (e.g. when the operator switches beacon or band). The
    correction already written into the band's LO error is deliberately kept — it
    is a real measurement of the converter, not session state. */
@@ -202,6 +211,12 @@ extern gboolean  qo100_beacon_has_carrier(int sel);
    plan draws. */
 #define QO100_BEACON_REST_HZ 400LL
 extern long long qo100_beacon_track_frequency(int sel);
+
+/* The UTC clock the FT8/FT4 slot gate is judged against, replaceable so
+   tools/qo100_offline.c can run the loop against STREAM time: the cadence cases
+   cover minutes of drift in a run that lasts under a second. NULL restores the
+   real clock. Nothing in the application calls it. */
+extern void qo100_beacon_set_clock(double (*fn)(void));
 
 #define QO100_BEACON_SEL_LOWER 0
 #define QO100_BEACON_SEL_UPPER 1
