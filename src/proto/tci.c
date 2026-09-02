@@ -860,13 +860,25 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       client_send_text(c, r);
     }
   } else if (!strcmp(name, "iq_start")) {
-    if (addr != NULL) client_set_iq(c, req_index, TRUE);   // subscribe only to an existing rx
+    if (addr != NULL) {
+      client_set_iq(c, req_index, TRUE);   // subscribe only to an existing rx
+      char r[32];
+      g_snprintf(r, sizeof(r), "iq_start:%d;", req_index);
+      client_send_text(c, r);              // the echo IS the answer — see audio_start
+    }
     log_info("tci: iq_start rx=%d%s (fd=%d, subs=%d)\n", req_index,
              addr ? "" : " (no such rx)", c->fd, g_atomic_int_get(&iq_sub_count));
   } else if (!strcmp(name, "iq_stop")) {
     // No argument means "every stream"; an argument names one rx, and a negative
     // one names none — it must not be read as the internal all-rx sentinel.
     client_set_iq(c, (nargs >= 1) ? (req_index >= 0 ? req_index : MAX_RECEIVERS) : -1, FALSE);
+    if (nargs >= 1 && req_index >= 0) {
+      char r[32];
+      g_snprintf(r, sizeof(r), "iq_stop:%d;", req_index);
+      client_send_text(c, r);
+    } else {
+      tci_ack_echo(c, token);              // the "every stream" form has no index to name
+    }
     log_info("tci: iq_stop rx=%d (fd=%d, subs=%d)\n", req_index, c->fd, g_atomic_int_get(&iq_sub_count));
   } else if (!strcmp(name, "iq_samplerate") || !strcmp(name, "iq_sample_rate")) {
     // We stream at the receiver's native DDC rate; report it (a requested rate
@@ -876,11 +888,40 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     g_snprintf(r, sizeof(r), "iq_samplerate:%d;", rate);
     client_send_text(c, r);
   } else if (!strcmp(name, "audio_start")) {
-    if (addr != NULL) client_set_audio(c, req_index, TRUE);
+    // A stream command is CONFIRMED by the server echoing it back, and a client
+    // that gates on the confirmation has no other way to learn the subscription
+    // took: subscribing in silence is indistinguishable from ignoring it.
+    // Streaming the audio is not the answer either — the client is still in its
+    // start-up sequence and not yet reading the stream.  JTDX sends
+    // `audio_start:<rx>;`, waits 500 ms for `audio_start:<rx>;` to come back and
+    // otherwise reports "TCI Audio could not be switched on" and drops the
+    // socket, which is what the operator's log showed on a loop: connect,
+    // audio_start, disconnect.  (JTDX's TCITransceiver.cpp sets stream_audio_
+    // only in its Cmd_AudioStart case, and compares the echoed index against its
+    // own rig number as a STRING — so the reply must name the index the client
+    // wrote, which is req_index and never the fallback rx_index.)
+    //
+    // An absent rx is left UNANSWERED on purpose: acking it would promise a
+    // stream that is never going to arrive, and the client's own timeout is
+    // then the truth.  Same rule as the subscription itself — never a silent
+    // fallback to rx 0.
+    if (addr != NULL) {
+      client_set_audio(c, req_index, TRUE);
+      char r[32];
+      g_snprintf(r, sizeof(r), "audio_start:%d;", req_index);
+      client_send_text(c, r);
+    }
     log_info("tci: audio_start rx=%d%s (fd=%d, subs=%d)\n", req_index,
              addr ? "" : " (no such rx)", c->fd, g_atomic_int_get(&audio_sub_count));
   } else if (!strcmp(name, "audio_stop")) {
     client_set_audio(c, (nargs >= 1) ? (req_index >= 0 ? req_index : MAX_RECEIVERS) : -1, FALSE);
+    if (nargs >= 1 && req_index >= 0) {
+      char r[32];
+      g_snprintf(r, sizeof(r), "audio_stop:%d;", req_index);
+      client_send_text(c, r);              // a stop is confirmed the same way
+    } else {
+      tci_ack_echo(c, token);              // the "every stream" form has no index to name
+    }
     log_info("tci: audio_stop rx=%d (fd=%d, subs=%d)\n", req_index, c->fd, g_atomic_int_get(&audio_sub_count));
   } else if (!strcmp(name, "audio_samplerate") || !strcmp(name, "audio_sample_rate")) {
     // RX/TX audio stream rate. A requested rate is honoured via a resampler
@@ -1248,6 +1289,8 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     //   start/stop   — TCI's device start/stop is ExpertSDR's "power"; the radio
     //                  here is opened and closed by the startup/exit path, and a
     //                  socket client does not get to tear the DSP chain down.
+    //                  The handshake announces `start;` because the radio IS on
+    //                  by then; this echo answers a client that asks anyway.
     //   spot/…       — dxcluster.c's store is fed by the cluster thread with
     //                  age-out and dup-merge; it has no injection API and its
     //                  entries mean "someone spotted this", not "a client drew
@@ -1343,6 +1386,14 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     g_snprintf(r, sizeof(r), "trx:%d,%s;", txi, g_radio->mox ? "true" : "false");
     client_send_text(c, r);
   }
+  // TCI's device power, and a fact rather than a courtesy here: the server is
+  // started at the end of create_radio, with the hardware already streaming, so
+  // a client that got as far as this handshake is talking to a radio that is
+  // on.  Announcing it matters because a client may refuse to go any further
+  // without it — JTDX throws "TCI SDR is not switched on" unless the operator
+  // has ticked its own "switch the SDR on" box, which only makes it send
+  // `start;` and take the echo below for the same answer.
+  client_send_text(c, "start;");
   client_send_text(c, "ready;");
 }
 
