@@ -202,9 +202,32 @@ static void gen_block(double *iq, int n, double baseband_hz, int fs,
   }
 }
 
+// Add a 400 bd suppressed-carrier BPSK beacon to an existing receiver-format
+// block. State belongs to the caller so independently generated test signals do
+// not share symbol or phase history.
+static void add_bpsk(double *iq, int n, double baseband_hz, int fs, double amp,
+                     double *phase, guint32 *seed, int *symbol, int *count) {
+  double dph=2.0*M_PI*baseband_hz/(double)fs;
+  int sps=fs/400;
+  for(int k=0;k<n;k++) {
+    if(*count<=0) {
+      *seed=(*seed)*1103515245u+12345u;
+      *symbol=((*seed>>16)&1)?1:-1;
+      *count=sps;
+    }
+    (*count)--;
+    double i=amp*(double)(*symbol)*cos(*phase);
+    double q=amp*(double)(*symbol)*sin(*phase);
+    *phase+=dph;
+    if(*phase>2.0*M_PI) *phase-=2.0*M_PI;
+    iq[2*k]  +=q;
+    iq[2*k+1]+=i;
+  }
+}
+
 // ---- test rig ---------------------------------------------------------------
 
-#define FS       192000
+#define FS       768000
 #define BLOCK      2048
 
 static RECEIVER *mk_rx(long long freq_a, int sample_rate) {
@@ -380,7 +403,13 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       for(int k=0;k<BLOCK*2;k++) iq[k]+=ib[k];
       g_free(ib);
     }
-    if(mid_bpsk_amp>0.0) {
+    double generated_mid_amp=mid_bpsk_amp;
+    // A real NB passband contains the neighbouring middle beacon. Most loop
+    // tests exercise the selected CW source, so include its geometric witness
+    // by default; individual BPSK tests may request a stronger copy.
+    if(generated_mid_amp<=0.0 && beacon_sel!=QO100_BEACON_SEL_MIDDLE)
+      generated_mid_amp=0.5;
+    if(generated_mid_amp>0.0) {
       // 400 bd, one random symbol per fs/400 samples, added to the same block:
       // a suppressed-carrier signal with no line to peak-search, which is the
       // whole reason the check is a centroid.
@@ -388,17 +417,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       static int msym=1, mcnt=0;
       double mb=(double)(QO100_BEACON_MIDDLE-rx->frequency_a)-lo_error
                 -lo_drift_hz_s*t-(deaf_radio?0.0:applied);
-      double dph=2.0*M_PI*mb/(double)fs;
-      int sps=fs/400;
-      for(int k=0;k<BLOCK;k++) {
-        if(mcnt<=0) { msd=msd*1103515245u+12345u; msym=((msd>>16)&1)?1:-1; mcnt=sps; }
-        mcnt--;
-        double mi=mid_bpsk_amp*(double)msym*cos(mph);
-        double mq=mid_bpsk_amp*(double)msym*sin(mph);
-        mph+=dph; if(mph>2.0*M_PI) mph-=2.0*M_PI;
-        iq[2*k]  +=mq;     // (Q, I), like everything else here
-        iq[2*k+1]+=mi;
-      }
+      add_bpsk(iq,BLOCK,mb,fs,generated_mid_amp,&mph,&msd,&msym,&mcnt);
     }
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
@@ -430,7 +449,7 @@ int main(int argc, char **argv) {
   // How many blocks one FFT frame needs, plus the settling the loop takes: the
   // frame is 32768 samples and the correction is fractional, so allow plenty.
   const int blocks_per_frame=32768/BLOCK;
-  const int blocks=blocks_per_frame*40;
+  const int blocks=blocks_per_frame*160;
 
   // ---- 1. the sign. The single most important assertion in this file: an LNB
   //         3 kHz high must be corrected TOWARD zero, not away from it.
@@ -493,12 +512,52 @@ int main(int argc, char **argv) {
     g_free(iq); g_free(rx); g_free(radio); radio=NULL;
   }
 
-  // ---- 6. a lower sample rate still covering the beacon.
+  // ---- 6. A 192 kHz span can contain only one NB beacon, so no signal in it
+  //         may be trusted as the beacon and the stored LO correction must not
+  //         be touched.
   {
     gboolean locked=FALSE;
-    double res=run_loop(1500.0,0.0,blocks,&locked,96000,10489520000LL);
-    snprintf(d,sizeof(d),"96 kHz, 1500 Hz -> %+.1f Hz left, locked=%d",res,locked);
-    check("works at 96 kHz", locked && fabs(res)<10.0, d);
+    double res=run_loop(1500.0,0.0,blocks,&locked,192000,10489540000LL);
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"192 kHz, %+.1f Hz unchanged, locked=%d, retunes=%d — %s",
+             res,locked,retunes,st);
+    check("192 kHz is refused without touching the radio",
+          !locked && fabs(res-1500.0)<0.1 && retunes==0 && strstr(st,"768 kHz")!=NULL,d);
+  }
+
+  // The 400 Hz F1A pair identifies the resting/keyed tones inside a candidate,
+  // not the candidate's absolute place in the QO-100 plan. Without a beacon at
+  // 250/500 kHz it must remain an untrusted signal and must not move errorLO.
+  {
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double *key=g_new0(double,BLOCK*2);
+    double p1=0.0,p2=0.0; guint32 s1=100,s2=101;
+    double base=(double)(QO100_BEACON_LOWER-rx->frequency_a)-2000.0;
+    for(int b=0;b<blocks;b++) {
+      gen_block(iq,BLOCK,base,FS,1.0,0.03,&p1,&s1);
+      gen_block(key,BLOCK,base+QO100_FSK_SHIFT_HZ_TEST,FS,0.6,0.0,&p2,&s2);
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=key[k];
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      while(g_main_context_iteration(NULL,FALSE)) ;
+    }
+    char st[128];
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"locked=%d retunes=%d error=%lld — %s",
+             qo100_beacon_locked(),retunes,(long long)rx->error_a,st);
+    check("an isolated 400 Hz F1A pair is not a beacon",
+          !qo100_beacon_locked() && retunes==0 && rx->error_a==0 &&
+          strstr(st,"unconfirmed")!=NULL,d);
+    g_free(iq); g_free(key); g_free(rx); g_free(r); radio=NULL;
+    qo100_beacon_reset();
   }
 
   // ---- 7. the band plan and the transponder arithmetic, which are pure data.
@@ -1017,7 +1076,8 @@ int main(int argc, char **argv) {
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
     double *walker=g_new0(double,BLOCK*2);
-    double p1=0.0,p2=0.0; guint32 s1=21,s2=22;
+    double p1=0.0,p2=0.0,mp=0.0; guint32 s1=21,s2=22,ms=23;
+    int msy=1,mc=0;
     // A bare continuous carrier stands for the tone the beacon RESTS on, which
     // is the one a tracker sees, and it is one shift above the published figure.
     long long beacon=qo100_beacon_track_frequency(0);
@@ -1029,6 +1089,8 @@ int main(int argc, char **argv) {
     for(int b=0;b<total;b++) {
       double base=(double)(beacon-rx->frequency_a)-lo_err-(double)rx->error_a;
       gen_block(iq,BLOCK,base,FS,1.0,0.02,&p1,&s1);
+      add_bpsk(iq,BLOCK,base+(double)(QO100_BEACON_MIDDLE-QO100_BEACON_LOWER),
+               FS,0.5,&mp,&ms,&msy,&mc);
       if(b>=settle) {
         if(b==settle) settled_err=rx->error_a;
         double t=(double)(b-settle)*(double)BLOCK/(double)FS;
@@ -1255,7 +1317,8 @@ int main(int argc, char **argv) {
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
     double *hog=g_new0(double,BLOCK*2);
-    double ph1=0.0, ph2=0.0; guint32 s1=7, s2=8;
+    double ph1=0.0, ph2=0.0, mp=0.0; guint32 s1=7, s2=8, ms=9;
+    int msy=1,mc=0;
     // A bare continuous carrier stands for the tone the beacon RESTS on, which
     // is the one a tracker sees, and it is one shift above the published figure.
     long long beacon=qo100_beacon_track_frequency(0);
@@ -1263,6 +1326,8 @@ int main(int argc, char **argv) {
     for(int b=0;b<blocks*3;b++) {
       double base=(double)(beacon-rx->frequency_a)-lo_err-(double)rx->error_a;
       gen_block(iq,BLOCK,base,768000,1.0,0.05,&ph1,&s1);          // the beacon
+      add_bpsk(iq,BLOCK,base+(double)(QO100_BEACON_MIDDLE-QO100_BEACON_LOWER),768000,0.5,
+               &mp,&ms,&msy,&mc);
       gen_block(hog,BLOCK,base-50000.0,768000,3.0,0.0,&ph2,&s2);  // 9.5 dB louder
       for(int k=0;k<BLOCK*2;k++) iq[k]+=hog[k];
       qo100_beacon_iq_feed(rx,iq,BLOCK);
@@ -1296,7 +1361,8 @@ int main(int argc, char **argv) {
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
     double *t2=g_new0(double,BLOCK*2);
-    double p1=0.0,p2=0.0,p3=0.0; guint32 s1=11,s2=12,s3=13;
+    double p1=0.0,p2=0.0,p3=0.0,mp=0.0; guint32 s1=11,s2=12,s3=13,ms=14;
+    int msy=1,mc=0;
     // A bare continuous carrier stands for the tone the beacon RESTS on, which
     // is the one a tracker sees, and it is one shift above the published figure.
     long long beacon=qo100_beacon_track_frequency(0);
@@ -1305,6 +1371,8 @@ int main(int argc, char **argv) {
     for(int b=0;b<blocks*12;b++) {
       double low=expected-lo_err-(double)rx->error_a;      // the lower beacon
       gen_block(iq,BLOCK,low,768000,1.0,0.05,&p1,&s1);
+      add_bpsk(iq,BLOCK,low+(double)(QO100_BEACON_MIDDLE-QO100_BEACON_LOWER),768000,0.5,
+               &mp,&ms,&msy,&mc);
       gen_block(t2,BLOCK,low+500000.0,768000,1.0,0.0,&p2,&s2);   // the upper one
       for(int k=0;k<BLOCK*2;k++) iq[k]+=t2[k];
       // ...and a QSO sitting exactly where the settings say the beacon is,
@@ -1340,7 +1408,8 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
     radio->qo100_beacon_lock=TRUE;
     double *iq=g_new0(double,BLOCK*2);
-    double phase=0.0; guint32 seed=31;
+    double phase=0.0,mp=0.0; guint32 seed=31,ms=32;
+    int msy=1,mc=0;
     // A bare continuous carrier stands for the tone the beacon RESTS on, which
     // is the one a tracker sees, and it is one shift above the published figure.
     long long beacon=qo100_beacon_track_frequency(0);
@@ -1349,6 +1418,8 @@ int main(int argc, char **argv) {
     for(int b=0;b<blocks;b++) {
       gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)+500.0-(double)rx->error_a,
                 FS,1.0,0.05,&phase,&seed);
+      add_bpsk(iq,BLOCK,(double)(QO100_BEACON_MIDDLE-rx->frequency_a)+500.0-
+               (double)rx->error_a,FS,0.5,&mp,&ms,&msy,&mc);
       qo100_beacon_iq_feed(rx,iq,BLOCK);
       while(g_main_context_iteration(NULL,FALSE)) ;
     }
@@ -1358,6 +1429,8 @@ int main(int argc, char **argv) {
     for(int b=0;b<blocks*8;b++) {
       gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)+14000.0-(double)rx->error_a,
                 FS,1.0,0.05,&phase,&seed);
+      add_bpsk(iq,BLOCK,(double)(QO100_BEACON_MIDDLE-rx->frequency_a)+14000.0-
+               (double)rx->error_a,FS,0.5,&mp,&ms,&msy,&mc);
       qo100_beacon_iq_feed(rx,iq,BLOCK);
       while(g_main_context_iteration(NULL,FALSE)) ;
     }
@@ -1518,7 +1591,7 @@ int main(int argc, char **argv) {
     lo_drift_hz_s=1.0;
     // The CW beacon is on air the whole time as well, exactly as it is up there,
     // and squaring turns it into a line of its own. It must not be the lock.
-    double res=run_loop(3000.0,0.05,blocks*20,&locked,768000,10489540000LL);
+    double res=run_loop(3000.0,0.05,blocks*5,&locked,768000,10489540000LL);
     lo_drift_hz_s=0.0;
     mid_bpsk_amp=0.0;
     beacon_sel=QO100_BEACON_SEL_LOWER;
@@ -1632,6 +1705,45 @@ int main(int argc, char **argv) {
     snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d — %s",res,locked,st);
     check("a radio that answers late still converges",
           locked && fabs(res)<10.0 && strstr(st,"Stopped")==NULL, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 25. the DSP queues a correction onto the GTK loop.  Re-acquire or a
+  //          source/receiver change before that callback runs must invalidate
+  //          the request; otherwise an old step can be applied to a new lock.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    test_band.frequencyLO=9750000000LL;
+    test_band.errorLO=0;
+    retunes=0;
+    qo100_beacon_reset();
+    radio->qo100_beacon_lock=TRUE;
+    double *iq=g_new0(double,BLOCK*2);
+    double phase=0.0,mp=0.0; guint32 seed=73,ms=74;
+    int msy=1,mc=0;
+    long long beacon=qo100_beacon_track_frequency(QO100_BEACON_SEL_LOWER);
+    for(int b=0;b<blocks;b++) {
+      gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)-3000.0,
+                FS,1.0,0.02,&phase,&seed);
+      add_bpsk(iq,BLOCK,(double)(QO100_BEACON_MIDDLE-rx->frequency_a)-3000.0,
+               FS,0.5,&mp,&ms,&msy,&mc);
+      qo100_beacon_iq_feed(rx,iq,BLOCK);
+      // Deliberately do not dispatch the GTK idle callback.
+    }
+    char queued_status[128];
+    qo100_beacon_status(queued_status,sizeof(queued_status));
+    gboolean untouched_before=(rx->error_a==0 && retunes==0 &&
+                               strstr(queued_status,"applying")!=NULL);
+    qo100_beacon_reset();                 // invalidates the queued transaction
+    while(g_main_context_iteration(NULL,FALSE)) ;
+    snprintf(d,sizeof(d),"before ack error=%lld/retunes=%d, after reset error=%lld/retunes=%d",
+             0LL,0,(long long)rx->error_a,retunes);
+    check("a queued retune is cancelled by re-acquire",
+          untouched_before && rx->error_a==0 && retunes==0,d);
+    g_free(iq); g_free(rx); g_free(r); radio=NULL;
     qo100_beacon_reset();
   }
 

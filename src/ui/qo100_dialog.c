@@ -351,9 +351,13 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   GtkWidget *lk_hint=gtk_label_new(
     "The correction is written into the receive band's LO error, so it survives a\n"
     "restart. The uplink converter is a different box and is never touched by it.\n"
-    "The CW beacon cannot check itself — which of its two tones the published\n"
-    "figure names is a convention — so the dial is checked against the middle\n"
-    "beacon, whose BPSK is symmetric about 10489.750. Needs a span that reaches it.");
+    "The selected beacon is always the correction source. For a CW selection the\n"
+    "middle BPSK beacon confirms the acquisition, but never replaces it. Select\n"
+    "Middle explicitly to correct from its unambiguous BPSK centre. The CW lock\n"
+    "identifies the 400 Hz F1A pair and keeps its resting line as the anchor.\n"
+    "Beacon correction requires a receiver span of at least 768 kHz. It is\n"
+    "disabled at 192 kHz because one isolated carrier cannot be identified safely;\n"
+    "acquisition is accepted only when another NB beacon is seen 250/500 kHz away.");
   gtk_widget_set_halign(lk_hint,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),lk_hint,0,row++,2,1);
 

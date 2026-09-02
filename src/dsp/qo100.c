@@ -512,6 +512,11 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // condition for the dial to be telling the truth.
 
 #define QO100_FFT_N        32768     // ~5.9 Hz/bin at 192 kHz, ~170 ms per frame
+// Acquiring from one isolated carrier is unsafe: on a busy transponder there is
+// no way to prove that carrier is a beacon.  A 768 kHz receiver span is the
+// minimum supported setting because it lets the selected NB beacon be checked
+// against a neighbour in the 250/500 kHz frequency plan.
+#define QO100_BEACON_MIN_FS 768000
 // How far off a converter may plausibly be, and therefore how far acquisition
 // looks: an LNB's error is its crystal's tolerance times 9750 MHz, so 30 ppm --
 // worse than any consumer part has a right to be -- is 292 kHz. Sweeping the
@@ -638,7 +643,16 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
 #define QO100_SLEW_HZ          50.0  // most a LOCKED reading may move in one of those
 #define QO100_SLEW_RATE_HZ_S   20.0  // ...and how fast that allowance then AGES
-#define QO100_SLEW_MAX_HZ     250.0  // ...to, staying clear of the 400 Hz ident
+// It was 250, and 250 is not a converter: an LNB drifting a fast 10 Hz/s moves
+// ten hertz between measurements, so an allowance a quarter of a kilohertz wide
+// does not tolerate drift, it admits the neighbours. Measured on air with it:
+// readings of +278 and +161 Hz accepted ("agreed on 8 frames, tolerance 183 Hz")
+// and applied, after which the loop spent a minute chasing its own steps --
+// +161, -119, -101, -45, -45 -- while the middle beacon's reading spread from
+// 74 Hz to 377 as the dial moved under it. A hundred hertz is still ten times
+// what a warming converter does in a second, and still far below the 400 Hz
+// ident that this cap exists to stay clear of.
+#define QO100_SLEW_MAX_HZ     100.0  // ...to, staying clear of the 400 Hz ident
 #define QO100_SLEW_LOST         30   // ...consecutive refusals before the lock goes
 #define QO100_MED_N             7  // fine readings are acted on through this many
                                    // (seconds, one each). Five is too few to tell a
@@ -712,6 +726,7 @@ static int      bacc;
 
 static gboolean b_locked;
 static gboolean b_settled;           // residual small enough for the narrow window
+static gboolean b_verified;          // identity proved once by the 250/500 kHz plan
 static int      b_run;               // consecutive agreeing frames
 static double   b_last;              // previous frame's residual, for the log's delta
 static double   b_run_ref;           // ...and the run's ANCHOR, for the agreement test
@@ -742,6 +757,7 @@ static gboolean b_tone_up;            // ...and the verdict "we are on the space
 static int      b_tone_win;           // measurements in the window judging that
 static int      b_tone_hits;          // ...and how many answered one shift up
 static int      b_tone_dn;            // ...against how many answered one down
+static double   b_slope;              // the drift the window shows, in Hz/s
 static double   b_med[QO100_MED_N];   // recent residuals, for the median
 static double   b_med_t[QO100_MED_N];  // ...and the stream second each was read at
 static int      b_med_n;
@@ -764,6 +780,10 @@ static int      b_hold;
 
 static volatile gint apply_queued;   // one applier in flight at a time
 static double   pend_step;           // Hz to add to error_a, under bmtx
+static double   pend_residual;       // measurement the pending step came from
+static RECEIVER *pend_rx;            // exact receiver the request belongs to
+static guint64  b_epoch;             // invalidates a queued request on reset/source change
+static guint64  pend_epoch;
 
 // In-place iterative radix-2 FFT (forward). Self-contained for the same reason
 // ppm_cal.c keeps its own: this module must not depend on which FFT the FT8 or
@@ -861,7 +881,8 @@ static gboolean find_carrier(const double *pow_acc, int fs,
                              gboolean dominant,
                              double probe_hz, gboolean *probe_out,
                              double *found, double *snr_out, int *bins_out,
-                             int *cand_out, const char **how_out) {
+                             int *cand_out, const char **how_out,
+                             gboolean *geometry_out) {
   const int N=QO100_FFT_N;
   const double bin_hz=(double)fs/(double)N;
   double sum=0.0, peak=-1.0;
@@ -913,6 +934,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
   // radio -- and until this string existed the log answered it only by
   // implication.
   const char *how="the nearest line";
+  if(geometry_out!=NULL) *geometry_out=FALSE;
 
   // A BEACON IS KNOWN BY ITS NEIGHBOURS, and that is the only test here that a
   // bare carrier cannot pass. Every rule in front of the lock -- the agreement
@@ -956,11 +978,40 @@ static gboolean find_carrier(const double *pow_acc, int fs,
       double want=cand_sf[pick]+bpsk_off_hz;
       if(fabs(want)+QO100_MID_WIN_HZ>0.5*(double)fs) continue;   // outside the span
       if(middle_beacon_centre(pow_acc,fs,want,QO100_MID_WIN_HZ,&c,&w,&nb) &&
-         fabs(c-want)<QO100_BPSK_CONFIRM_HZ && w>=QO100_MID_MIN_WIDTH_HZ) {
+         fabs(c-want)<QO100_PAIR_TOL_HZ && w>=QO100_MID_MIN_WIDTH_HZ) {
         sel=cand_bin[pick];
         best=pd;
         confirmed=TRUE;
         how="the middle beacon 250 kHz away";
+        if(geometry_out!=NULL) *geometry_out=TRUE;
+      }
+    }
+  }
+
+  // The CW beacons are F1A: the published/resting line and the keyed line are
+  // exactly QO100_KEYED_FROM_REST_HZ apart.  During acquisition this pair is a
+  // much stronger identity test than "nearest" or "tallest", both of which
+  // actively favour an ordinary steady carrier while the beacon is keying.
+  // Select the RESTING member explicitly; never let keying choose the anchor.
+  if(sel<0 && dominant) {
+    for(int i=0;i<held;i++) {
+      double want=cand_sf[i]+QO100_KEYED_FROM_REST_HZ;
+      int mate=-1;
+      for(int j=0;j<held;j++) {
+        if(i==j) continue;
+        if(fabs(cand_sf[j]-want)<QO100_FSK_TOL_HZ) { mate=j; break; }
+      }
+      if(mate<0) continue;
+      // The resting line dominates an integrated idle/keying window.  Requiring
+      // that direction prevents a station 400 Hz below the real resting carrier
+      // from being misread as "rest + keyed" with the pair reversed.
+      if(pow_acc[cand_bin[i]]<pow_acc[cand_bin[mate]]) continue;
+      double d=fabs(cand_sf[i]-expected);
+      if(d<best) {
+        best=d;
+        sel=cand_bin[i];
+        confirmed=TRUE;
+        how="the 400 Hz F1A pair";
       }
     }
   }
@@ -978,7 +1029,12 @@ static gboolean find_carrier(const double *pow_acc, int fs,
         if(fabs(cand_sf[j]-want)<QO100_PAIR_TOL_HZ) paired=TRUE;
       if(!paired) continue;
       double d=fabs(cand_sf[i]-expected);
-      if(d<best) { best=d; sel=cand_bin[i]; how="the 500 kHz beacon pair"; }
+      if(d<best) {
+        best=d;
+        sel=cand_bin[i];
+        how="the 500 kHz beacon pair";
+        if(geometry_out!=NULL) *geometry_out=TRUE;
+      }
     }
   }
 
@@ -1195,6 +1251,8 @@ static gboolean line_near(const double *pow_acc, int fs, double expect2,
 }
 
 static double median_of(const double *v, int n);   // ...defined with the loop below
+static void spectrum_clear(void);
+static void beacon_reset_locked(void);
 
 // ...and the reading the other way round: locked to the BPSK beacon, which
 // carries no tone convention, where the CW beacon's line falls IS the
@@ -1343,24 +1401,30 @@ static double median_of(const double *v, int n) {
 // Everything here touches WDSP / the protocol layer and so cannot run on the
 // audio thread the measurement lives on.
 static gboolean apply_idle(gpointer data) {
-  double step;
+  double step, residual;
   RECEIVER *rx;
+  guint64 epoch;
+  gboolean valid;
 
   g_mutex_lock(&bmtx);
   step=pend_step;
-  pend_step=0.0;
-  rx=track_rx;
+  residual=pend_residual;
+  rx=pend_rx;
+  epoch=pend_epoch;
+  valid=(epoch==b_epoch && rx!=NULL && rx==track_rx);
   g_mutex_unlock(&bmtx);
 
   // The receiver may have gone away, or the operator may have switched away from
   // it, between the measurement and this callback.
-  if(radio!=NULL && rx!=NULL && rx==radio->active_receiver && step!=0.0) {
+  gboolean applied=FALSE;
+  if(valid && radio!=NULL && rx==radio->active_receiver && step!=0.0) {
     gint64 t0=g_get_monotonic_time();
     rx->error_a += (gint64)llround(step);
     BAND *band=band_get_band(rx->band_a);
     if(band!=NULL) band->errorLO=rx->error_a;   // so it survives a band change and a restart
     frequency_changed(rx);
     update_frequency(rx);
+    applied=TRUE;
     // The retune runs on the GTK thread and a SoapySDR device can take tens of
     // milliseconds over it -- measured on a Pluto at 14.4 ms average, 97 ms
     // worst, on a live stream. That is a visible hitch in the waterfall, so when
@@ -1370,7 +1434,34 @@ static gboolean apply_idle(gpointer data) {
     if(ms>20.0)
       log_info("qo100: the %+.1f Hz retune took %.0f ms on the GTK thread\n",step,ms);
   }
+  // Commit the control-loop state only after the hardware command has actually
+  // been issued.  Until this point the DSP side discards input (b_hold == -1),
+  // so it cannot interpret old-frequency samples in the new reference frame.
+  g_mutex_lock(&bmtx);
+  if(applied && epoch==b_epoch && rx==track_rx) {
+    for(int i=0;i<b_med_n;i++) b_med[i]-=step;
+    b_tone_up=FALSE;
+    b_applied+=step;
+    b_step_prev=step;
+    b_res_prev=residual;
+    b_expect=residual-step;
+    b_expect_samples=0.0;
+    b_since_apply=0.0;
+    b_hold=track_fs/QO100_HOLD_DIV;
+    spectrum_clear();
+    snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
+             residual,b_applied);
+  } else if(epoch==b_epoch && b_hold<0) {
+    // The active receiver changed or the request otherwise became invalid.
+    // Re-acquire instead of leaving the loop permanently in pending state.
+    beacon_reset_locked();
+    g_strlcpy(b_status,"Re-acquiring -- retune was cancelled",sizeof(b_status));
+  }
+  pend_step=0.0;
+  pend_residual=0.0;
+  pend_rx=NULL;
   g_atomic_int_set(&apply_queued,0);
+  g_mutex_unlock(&bmtx);
   return G_SOURCE_REMOVE;
 }
 
@@ -1381,6 +1472,7 @@ static void spectrum_clear(void) {
 }
 
 static void beacon_reset_locked(void) {
+  b_epoch++;                              // cancel any queued retune transaction
   bacc=0;
   spectrum_clear();
   b_run=0;
@@ -1388,6 +1480,7 @@ static void beacon_reset_locked(void) {
   b_run_ref=0.0;
   b_locked=FALSE;
   b_settled=FALSE;
+  b_verified=FALSE;
   b_step_prev=0.0;
   b_res_prev=0.0;
   b_stuck=0;
@@ -1403,6 +1496,7 @@ static void beacon_reset_locked(void) {
   b_tone_hits=0;
   b_tone_dn=0;
   b_med_n=0;
+  b_slope=0.0;
   b_stream_samples=0.0;
   b_check[0]='\0';
   b_mid_n=0;
@@ -1438,14 +1532,26 @@ void qo100_beacon_forget_receiver(RECEIVER *rx) {
   g_mutex_unlock(&bmtx);
 }
 
-// Display-only: a benign read of a scalar the audio thread writes. Worst case a
-// readout is one frame (~170 ms) stale, which no caller cares about.
+// Display-only snapshots, still taken under the loop mutex: an unlocked double
+// read is a C data race even on machines where it happens to be naturally atomic.
 gboolean qo100_beacon_locked(void) {
-  return b_locked;
+  gboolean v;
+  g_mutex_lock(&bmtx);
+  v=b_locked;
+  g_mutex_unlock(&bmtx);
+  return v;
 }
 
-double qo100_beacon_residual_hz(void) { return b_residual; }
-double qo100_beacon_applied_hz(void)  { return b_applied; }
+double qo100_beacon_residual_hz(void) {
+  double v;
+  g_mutex_lock(&bmtx); v=b_residual; g_mutex_unlock(&bmtx);
+  return v;
+}
+double qo100_beacon_applied_hz(void) {
+  double v;
+  g_mutex_lock(&bmtx); v=b_applied; g_mutex_unlock(&bmtx);
+  return v;
+}
 
 // The middle beacon's verdict on the dial, empty until there is one. Separate
 // from the lock's own status on purpose: the lock reports how steady it is,
@@ -1562,6 +1668,7 @@ static void beacon_frame(RECEIVER *rx) {
   else if(radio->qo100_beacon_sel==QO100_BEACON_SEL_UPPER)
     bpsk_off=-QO100_BPSK_OFFSET_HZ;
   const char *how=track_bpsk?"the squared BPSK carrier":"the nearest line";
+  gboolean geometry=FALSE;
   gboolean got;
   if(track_bpsk) {
     // The squared domain: everything doubles, including the search width and
@@ -1571,18 +1678,68 @@ static void beacon_frame(RECEIVER *rx) {
     got=line_near(bsqr,track_fs,2.0*(expected+b_expect),
                      2.0*(tracking?QO100_TRACK_HZ:QO100_BPSK_ACQ_HZ),&off2,&snr);
     found=expected+b_expect+0.5*off2;
+    // Squaring makes a line from every carrier in the passband.  It is the
+    // middle beacon only if the unsquared spectrum at the same place is the
+    // expected broad BPSK hump, not another CW station.
+    if(got) {
+      double c=0.0,w=0.0;
+      int nb=0;
+      if(!middle_beacon_centre(bpow,track_fs,found,QO100_MID_WIN_HZ,&c,&w,&nb) ||
+         fabs(c-found)>QO100_BPSK_CONFIRM_HZ || w<QO100_MID_MIN_WIDTH_HZ)
+        got=FALSE;
+    }
+    if(got) {
+      how="the middle BPSK beacon";
+      // A BPSK-shaped signal at the expected frequency is still not sufficient
+      // identity on its own. Confirm it against either edge CW beacon at its
+      // exact place in the NB frequency plan. The offset is taken from the
+      // measured BPSK centre, so the same LNB error cancels out.
+      double cw_off=0.0, cw_snr=0.0;
+      double lower=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_LOWER)-
+                                  QO100_BEACON_MIDDLE);
+      double upper=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_UPPER)-
+                                  QO100_BEACON_MIDDLE);
+      if(fabs(lower)+QO100_PAIR_TOL_HZ<span_half &&
+         line_near(bpow,track_fs,lower,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
+        geometry=TRUE;
+        how="the middle BPSK beacon and lower CW beacon 250 kHz away";
+      } else if(fabs(upper)+QO100_PAIR_TOL_HZ<span_half &&
+                line_near(bpow,track_fs,upper,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
+        geometry=TRUE;
+        how="the middle BPSK beacon and upper CW beacon 250 kHz away";
+      }
+    }
     bins=0;
     cands=got?1:0;
-  } else
+  } else {
     got=find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,bpsk_off,!tracking,
                      probe,b_locked?&tone_other:NULL,
-                     &found,&snr,&bins,&cands,&how);
+                     &found,&snr,&bins,&cands,&how,&geometry);
+  }
+  // No correction is allowed until the source has been identified by the
+  // frequency plan at least once. The proof is then latched for this acquisition:
+  // correcting a large LNB error can move the companion outside the fixed span,
+  // and keying or a short fade must not revoke an identity already established.
+  // Re-acquire/source/receiver changes clear the latch in beacon_reset_locked().
+  if(got && geometry) b_verified=TRUE;
+  // The internal 400 Hz F1A pair only chooses the resting tone; it is not proof
+  // that the signal is one of QO-100's beacons.
+  gboolean unconfirmed=(got && !b_verified);
+  if(unconfirmed) {
+    got=FALSE;
+  }
   if(!got) {
     spectrum_clear();
     b_run=0;
     b_run_samples=0.0;
     b_dry_samples+=avg_samples;
     if(!b_locked) {
+      if(unconfirmed) {
+        g_strlcpy(b_status,
+                  "Beacon candidate is unconfirmed — need another NB beacon 250/500 kHz away",
+                  sizeof(b_status));
+        return;
+      }
       // After ten seconds of finding nothing, stop repeating "Searching" and
       // name the limit the operator can actually act on. An LNB's error is its
       // crystal's tolerance times 9750 MHz -- 195 kHz at 20 ppm -- and a span of
@@ -1776,7 +1933,9 @@ static void beacon_frame(RECEIVER *rx) {
   // the beacon's other line an agreement.
   double tol=b_locked?QO100_TRACK_TOL_HZ:QO100_LOCK_TOL_HZ;
   if(b_locked) {
-    tol+=QO100_SLEW_RATE_HZ_S*(b_run_samples/(double)track_fs);
+    double rate=QO100_SLEW_RATE_HZ_S;
+    if(2.0*fabs(b_slope)>rate) rate=2.0*fabs(b_slope);
+    tol+=rate*(b_run_samples/(double)track_fs);
     if(tol>QO100_SLEW_MAX_HZ) tol=QO100_SLEW_MAX_HZ;
   }
   if(b_run>0 && fabs(residual-b_run_ref)<tol) {
@@ -1883,8 +2042,13 @@ static void beacon_frame(RECEIVER *rx) {
   // whole time.
   gboolean tone_swap=(b_tone_up &&
                       fabs(residual-b_expect+QO100_KEYED_FROM_REST_HZ)<QO100_FSK_TOL_HZ);
+  // The allowance ages at whichever is faster: the nominal rate, or twice the
+  // drift this loop has actually MEASURED. A rate taken from the signal is the
+  // honest one; the nominal is the floor for when there is no estimate yet.
+  double age_rate=QO100_SLEW_RATE_HZ_S;
+  if(2.0*fabs(b_slope)>age_rate) age_rate=2.0*fabs(b_slope);
   double slew_allow=QO100_SLEW_HZ+
-                    QO100_SLEW_RATE_HZ_S*(b_expect_samples/(double)track_fs);
+                    age_rate*(b_expect_samples/(double)track_fs);
   if(slew_allow>QO100_SLEW_MAX_HZ) slew_allow=QO100_SLEW_MAX_HZ;
   if(b_locked && !tone_swap && fabs(residual-b_expect)>slew_allow) {
     if(fabs(b_step_prev)>QO100_COARSE_HZ &&
@@ -2000,6 +2164,7 @@ static void beacon_frame(RECEIVER *rx) {
       for(int i=0;i<nd;i++) if(diff[i]*slope<=0.0) { slope=0.0; break; }
     }
   }
+  b_slope=slope;                        // ...for the guards, which run earlier
 
   // The drift is fed forward to the MIDDLE of the wait ahead -- half of it, not
   // all: feeding the whole wait forward was measured and is unstable, because
@@ -2010,8 +2175,16 @@ static void beacon_frame(RECEIVER *rx) {
   // wait puts the dial in the middle of the error the interval sweeps through
   // (+/-d*W/2) instead of at one end of it (0..d*W). It needs `act`, so both
   // branches below compute their own.
+  // A COARSE step belongs to acquisition and to nothing else. Once the loop is
+  // SETTLED the dial is within a few hertz of the beacon, so a reading a
+  // hundred hertz out is not an offset that has appeared -- it is a neighbour,
+  // a partial second of ident, or the loop being lied to; applying it in full
+  // is how a settled lock threw +161 Hz at the radio and then spent a minute
+  // undoing it. Anything beyond the slew allowance is already refused above,
+  // and a run of refusals drops the lock, which is the honest way back to a
+  // wide search.
   double act, ff=0.0, chance=QO100_FF_S;
-  if(fabs(residual)>QO100_COARSE_HZ) {
+  if(fabs(residual)>QO100_COARSE_HZ && !b_settled) {
     act=residual;                       // a real offset, measured directly
     chance=qo100_next_chance_s(rx,act);
     ff=slope*0.5*chance;
@@ -2142,9 +2315,6 @@ static void beacon_frame(RECEIVER *rx) {
               b_applied+step,residual);
     return;
   }
-  snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (LO %+.0f Hz)",
-           residual,b_applied+step);
-
   // Queue the retune for the GTK thread, at most one at a time: if the applier
   // has not run yet the next frame's measurement is stale anyway.
   if(g_atomic_int_compare_and_exchange(&apply_queued,0,1)) {
@@ -2155,18 +2325,14 @@ static void beacon_frame(RECEIVER *rx) {
     // `step`, every stored residual means `residual - step` in the new frame.
     // Inside this branch, because a step that was NOT queued moves nothing and
     // a window shifted for it would be describing a dial that never existed.
-    for(int i=0;i<b_med_n;i++) b_med[i]-=step;
     pend_step=step;
-    b_tone_up=FALSE;                    // ...spent, whether or not it was one
-    b_applied+=step;
-    b_step_prev=step;                   // ...and what it must be worth next frame
-    b_res_prev=residual;
-    b_expect=residual-step;             // where the next measurement must land
-    b_expect_samples=0.0;
-    b_since_apply=0.0;
-    b_hold=track_fs/QO100_HOLD_DIV;     // wait for data that has the step in it
-    b_stream_samples+=(double)b_hold;   // ...which is stream the clock still counts
+    pend_residual=residual;
+    pend_rx=rx;
+    pend_epoch=b_epoch;
+    b_hold=-1;                           // wait for the GTK-side acknowledgement
     spectrum_clear();                   // ...and it must not be averaged with this
+    snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (applying %+.1f Hz)",
+             residual,step);
     g_idle_add(apply_idle,NULL);
   } else {
     b_expect=residual;                  // nothing was applied, so nothing moves
@@ -2193,6 +2359,22 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
     return;
   }
 
+  // At 192 kHz only one beacon can be present. An isolated line cannot be
+  // distinguished safely from an ordinary carrier, so do not acquire and,
+  // crucially, never alter errorLO at an unsupported span.
+  if(rx->sample_rate<QO100_BEACON_MIN_FS) {
+    g_mutex_lock(&bmtx);
+    if(track_rx!=rx || track_fs!=rx->sample_rate || b_locked || bacc!=0)
+      beacon_reset_locked();
+    track_rx=rx;
+    track_fs=rx->sample_rate;
+    g_strlcpy(b_status,
+              "Beacon correction requires at least a 768 kHz receiver span (192 kHz is disabled)",
+              sizeof(b_status));
+    g_mutex_unlock(&bmtx);
+    return;
+  }
+
   g_mutex_lock(&bmtx);
 
   // The line to MEASURE, which is not the published one: see
@@ -2209,7 +2391,19 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   }
 
   for(int k=0;k<n_frames;k++) {
-    if(b_hold>0) { b_hold--; bacc=0; continue; }   // stale: a step is in flight
+    if(b_hold!=0) {
+      // Negative means the GTK callback has not acknowledged the retune yet;
+      // positive is the post-retune pipeline flush.  Only the latter belongs to
+      // the new reference frame and therefore ages its timers.
+      if(b_hold>0) {
+        b_hold--;
+        b_stream_samples+=1.0;
+        b_expect_samples+=1.0;
+        b_since_apply+=1.0;
+      }
+      bacc=0;
+      continue;
+    }
     // (Q, I) — the receiver buffer's order; see the sign note above.
     bre[bacc]=iq[2*k+1];
     bim[bacc]=iq[2*k];
