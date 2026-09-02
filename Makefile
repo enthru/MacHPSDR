@@ -572,6 +572,9 @@ tx_info_meter.c \
 peak_detect.c \
 subrx.c \
 actions.c\
+keybind.c\
+keybind_run.c\
+keybind_dialog.c\
 dxcluster.c\
 cluster_dialog.c
 
@@ -720,6 +723,9 @@ tx_info_meter.o \
 peak_detect.o \
 subrx.o \
 actions.o \
+keybind.o \
+keybind_run.o \
+keybind_dialog.o \
 recorder.o \
 waterfall_theme.o \
 dxcluster.o \
@@ -917,6 +923,21 @@ tci_offline$(EXE): tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o \
 	  $(shell pkg-config --libs glib-2.0) $(WIN_NET_LIBS)
 
+# Headless keyboard-shortcut harness.  The store is everything about a shortcut
+# except what it finally does: the accelerator round trip through the props file
+# (a hand-edited line that will not parse must leave the row UNBOUND, not bind
+# keyval 0), the "one combination, one action" rule, the dispatch routing and
+# the hold-to-talk release -- which is compared on the key alone, because a
+# missed release strands the transmitter keyed.  keybind_run.c is NOT linked:
+# the harness supplies a recording stub, which is why the split exists.
+#   make keybind-offline && ./keybind_offline --selftest
+.PHONY: keybind-offline
+keybind-offline: keybind_offline$(EXE)
+keybind_offline$(EXE): tools/keybind_offline.c keybind.o property.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags gtk4) -o $@ tools/keybind_offline.c keybind.o property.o log.o \
+	  $(shell pkg-config --libs gtk4) -lm
+
 # Headless property-store harness.  Everything the operator sets goes through
 # property.c, and it is invisible to every other test: the settings are written
 # by the GUI at exit and read at start-up, so a defect there is silent until a
@@ -1021,7 +1042,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE)
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) keybind_offline$(EXE)
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
@@ -1090,9 +1111,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) keybind_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM keybind_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

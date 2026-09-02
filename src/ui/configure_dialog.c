@@ -60,6 +60,7 @@
 #ifdef FT8
 #include "ft8_dialog.h"
 #endif
+#include "keybind_dialog.h"
 #include "cluster_dialog.h"
 #include "tci_dialog.h"
 
@@ -332,6 +333,10 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 #ifdef MIDI
   add_page(create_midi_dialog(radio),"MIDI");
 #endif
+
+  // Beside MIDI because it is the same thing for the other input device: a
+  // control surface the operator maps onto the radio's actions.
+  add_page(create_keybind_dialog(radio),"Keys");
 
   add_page(create_labels_dialog(radio),"Display");
 

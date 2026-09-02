@@ -672,19 +672,30 @@ static void mute_b_cb(GtkToggleButton *widget,gpointer user_data) {
   receiver_set_volume(rx);
 }
 
-void mode_cb(GtkWidget *menu_item,gpointer data) {
-  CHOICE *choice=(CHOICE *)data;
-  receiver_mode_changed(choice->rx,choice->selection);
-  if(choice->rx->split!=SPLIT_OFF) {
-    choice->rx->mode_b=choice->selection;
+// The one way to change a receiver's mode from outside the DSP: the mode menu,
+// a keyboard shortcut and anything else all reach the transmitter and the VFO
+// row through here. receiver_mode_changed() alone moves the demodulator and
+// leaves the TX on the old mode -- so a shortcut built on it would transmit LSB
+// while the panadapter said USB.
+void vfo_set_mode(RECEIVER *rx,int mode) {
+  if(rx==NULL || mode<0 || mode>=MODES) return;
+  receiver_mode_changed(rx,mode);
+  if(rx->split!=SPLIT_OFF) {
+    rx->mode_b=mode;
   }
-  if(radio->transmitter!=NULL && radio->transmitter->rx==choice->rx) {
-    if(choice->rx->split!=SPLIT_OFF) {
-      transmitter_set_mode(radio->transmitter,choice->rx->mode_b);
+  if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    if(rx->split!=SPLIT_OFF) {
+      transmitter_set_mode(radio->transmitter,rx->mode_b);
     } else {
-      transmitter_set_mode(radio->transmitter,choice->rx->mode_a);
+      transmitter_set_mode(radio->transmitter,rx->mode_a);
     }
   }
+  update_vfo(rx);
+}
+
+void mode_cb(GtkWidget *menu_item,gpointer data) {
+  CHOICE *choice=(CHOICE *)data;
+  vfo_set_mode(choice->rx,choice->selection);
   gtk_button_set_label(GTK_BUTTON(choice->button),mode_string[choice->selection]);
 }
 

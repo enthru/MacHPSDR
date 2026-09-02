@@ -72,6 +72,7 @@
 #include "cwdaemon.h"
 #include "dxcluster.h"
 #include "tci.h"
+#include "keybind.h"
 
 #ifdef MIDI
 #include "midi.h"
@@ -456,6 +457,8 @@ log_info("radio_save_state: %s\n",filename);
   midi_save_state();
 #endif
 
+  keybind_save_state();
+
   // GTK4: no client-side window position; persist -1 (ignored on restore).
   x=-1; y=-1;
   sprintf(value,"%d",x);
@@ -734,6 +737,8 @@ void radio_restore_state(RADIO *radio) {
   value=getProperty("radio.midi_enabled");
   if(value) radio->midi_enabled=atoi(value);
 #endif
+
+  keybind_restore_state();
 
   filterRestoreState();
   // The 60 m band stack lives in a REGION-specific table, and radio->region has

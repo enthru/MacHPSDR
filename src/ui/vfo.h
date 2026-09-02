@@ -72,6 +72,10 @@ extern gint64 steps[STEPS];
 extern void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b);
 extern char *step_labels[STEPS];
 
+/* Apply a demodulation mode the way the mode menu does -- receiver, TX and the
+   VFO row together. Anything outside the DSP goes through this, not through
+   receiver_mode_changed() alone. */
+extern void vfo_set_mode(RECEIVER *rx,int mode);
 extern void vfo_a2b(RECEIVER *rx);
 extern void vfo_b2a(RECEIVER *rx);
 extern void vfo_aswapb(RECEIVER *rx);

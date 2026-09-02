@@ -66,6 +66,8 @@ props_offline
 props_offline.dSYM/
 agc_offline
 agc_offline.dSYM/
+keybind_offline
+keybind_offline.dSYM/
 metis_emu
 metis_emu.dSYM/
 p2_emu

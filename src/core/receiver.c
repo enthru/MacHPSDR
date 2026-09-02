@@ -55,6 +55,7 @@
 #include "qo100.h"
 #include "main.h"
 #include "vfo.h"
+#include "keybind.h"
 #include "meter.h"
 #include "radio_info.h"
 #include "rx_panadapter.h"
@@ -1620,6 +1621,12 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
   if(vfo_type_digit(keyval)) {
     return TRUE;
   }
+  // Operator-assigned shortcuts (Configure -> Keys). They come before the fixed
+  // keys below so a binding placed on one of them wins, and after digit entry so
+  // typing a frequency into the VFO still beats a shortcut on a digit.
+  if(keybind_key_pressed(keyval,keycode,state)) {
+    return TRUE;
+  }
   switch(keyval) {
     case GDK_KEY_space:
         set_mox(radio,TRUE);
@@ -1649,9 +1656,15 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
 // GTK4: GtkEventControllerKey "key-released" handler (void).
 void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   log_debug("Released: %s\n", gdk_keyval_name(keyval));
+  // Ends a hold-to-talk shortcut. It runs whatever else this key does, because
+  // a release that is skipped strands the transmitter keyed.
+  keybind_key_released(keyval,keycode,state);
   switch(keyval) {
     case GDK_KEY_space:
-      set_mox(radio,FALSE);
+      // ...unless the operator has given the space bar a shortcut of its own:
+      // then the press above never keyed anything, and dropping MOX here would
+      // take the transmitter down from under the MOX button.
+      if(!keybind_key_bound(keyval,keycode)) set_mox(radio,FALSE);
       break;
 #ifdef SSTV
     // Always release on key-up (no mode gate): if the mode changed away from
