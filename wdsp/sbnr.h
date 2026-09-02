@@ -8,6 +8,12 @@
     copies the real result back.  Scratch buffers are sized to the block, not a
     fixed stack array, so a 5120-sample block is safe.
 
+    setSize_sbnr()/setSamplerate_sbnr() exist because ch[channel].dsp_size and
+    dsp_rate MOVE on a live channel (a span change re-runs SetDSPBuffsize and
+    SetAllRates).  Without them this block kept the geometry the channel was
+    OPENED with: the scratch buffers no longer matched the block, and the
+    denoiser stayed built for a sample rate the channel had left.
+
     This file is part of the MacHPSDR fork; libspecbleach itself is unmodified.
 */
 
@@ -22,6 +28,7 @@ typedef struct _sbnr
 	int position;
 	int channel;
 	int size;			// dsp block size (complex samples per xsbnr)
+	int rate;			// the CHANNEL's dsp rate the denoiser was built for
 	double *in;
 	double *out;
 	float reduction_amount;		// 0..20 dB
@@ -34,10 +41,12 @@ typedef struct _sbnr
 	SpectralBleachHandle st;
 } sbnr, *SBNR;
 
-extern SBNR create_sbnr (int channel, int run, int position, int size, double *in, double *out);
+extern SBNR create_sbnr (int channel, int run, int position, int size, int rate, double *in, double *out);
 extern void destroy_sbnr (SBNR a);
 extern void flush_sbnr (SBNR a);
 extern void setBuffers_sbnr (SBNR a, double *in, double *out);
+extern void setSize_sbnr (SBNR a, int size);
+extern void setSamplerate_sbnr (SBNR a, int rate);
 extern void xsbnr (SBNR a, int pos);
 
 extern void SetRXASBNRRun (int channel, int run);

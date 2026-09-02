@@ -1019,6 +1019,20 @@ agc_offline$(EXE): tools/agc_offline.c
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) $(WDSP_INCLUDE) \
 	  -o $@ tools/agc_offline.c -L$(WDSP_DIR) -lwdsp -lm $(RPATH_FLAGS)
 
+# The NR3/NR4 harness: tools/nr_offline.c.  Same shape and the same reasons as
+# agc-offline -- it opens a WDSP channel because what it pins lives inside one:
+# rnnr and sbnr shipped without a setSize_*/setSamplerate_* pair, so a span
+# change left them on the geometry the channel was opened with, and no other
+# test here can see that (nothing else feeds a channel across a
+# SetDSPBuffsize).  Links no application object.
+#   make nr-offline && ./nr_offline --selftest
+.PHONY: nr-offline
+nr-offline: nr_offline$(EXE)
+nr_offline$(EXE): | wdsp-local
+nr_offline$(EXE): tools/nr_offline.c
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) $(WDSP_INCLUDE) \
+	  -o $@ tools/nr_offline.c -L$(WDSP_DIR) -lwdsp -lm $(RPATH_FLAGS)
+
 qo100-offline: qo100_offline$(EXE)
 # The QO-100 beacon lock is a closed loop that retunes the radio, so its sign has
 # to be provable off air. Links qo100.o alone; the handful of application
@@ -1042,7 +1056,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) keybind_offline$(EXE)
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE)
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
@@ -1111,9 +1125,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) keybind_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM keybind_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

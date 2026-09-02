@@ -357,6 +357,7 @@ void create_rxa (int channel)
 		0,												// run
 		0,												// position
 		ch[channel].dsp_size,							// buffer size
+		ch[channel].dsp_rate,							// samplerate
 		rxa[channel].midbuff,							// input buffer
 		rxa[channel].midbuff);							// output buffer
 
@@ -366,6 +367,7 @@ void create_rxa (int channel)
 		0,												// run
 		0,												// position
 		ch[channel].dsp_size,							// buffer size
+		ch[channel].dsp_rate,							// samplerate
 		rxa[channel].midbuff,							// input buffer
 		rxa[channel].midbuff);							// output buffer
 
@@ -685,6 +687,8 @@ void setDSPSamplerate_rxa (int channel)
 	setSamplerate_anf (rxa[channel].anf.p, ch[channel].dsp_rate);
 	setSamplerate_anr (rxa[channel].anr.p, ch[channel].dsp_rate);
 	setSamplerate_emnr (rxa[channel].emnr.p, ch[channel].dsp_rate);
+	setSamplerate_rnnr (rxa[channel].rnnr.p, ch[channel].dsp_rate);
+	setSamplerate_sbnr (rxa[channel].sbnr.p, ch[channel].dsp_rate);
 	setSamplerate_bandpass (rxa[channel].bp1.p, ch[channel].dsp_rate);
 	setSamplerate_wcpagc (rxa[channel].agc.p, ch[channel].dsp_rate);
 	setSamplerate_meter (rxa[channel].agcmeter.p, ch[channel].dsp_rate);
@@ -748,7 +752,9 @@ void setDSPBuffsize_rxa (int channel)
 	setBuffers_emnr (rxa[channel].emnr.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_emnr (rxa[channel].emnr.p, ch[channel].dsp_size);
 	setBuffers_rnnr (rxa[channel].rnnr.p, rxa[channel].midbuff, rxa[channel].midbuff);
+	setSize_rnnr (rxa[channel].rnnr.p, ch[channel].dsp_size);
 	setBuffers_sbnr (rxa[channel].sbnr.p, rxa[channel].midbuff, rxa[channel].midbuff);
+	setSize_sbnr (rxa[channel].sbnr.p, ch[channel].dsp_size);
 	setBuffers_bandpass (rxa[channel].bp1.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_bandpass (rxa[channel].bp1.p, ch[channel].dsp_size);
 	setBuffers_wcpagc (rxa[channel].agc.p, rxa[channel].midbuff, rxa[channel].midbuff);

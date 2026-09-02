@@ -14,22 +14,37 @@ void setBuffers_sbnr (SBNR a, double *in, double *out)
 	a->out = out;
 }
 
-void flush_sbnr (SBNR a)
+// The denoiser is built around one sample rate and one internal frame, so a
+// rate change is a rebuild.  20 ms is libspecbleach's own reference frame.
+static void sbnr_open_denoiser (SBNR a)
 {
-	// no external state to clear; libspecbleach keeps its own STFT history
-	(void) a;
+	a->st = specbleach_adaptive_initialize ((uint32_t) a->rate, 20);
 }
 
-SBNR create_sbnr (int channel, int run, int position, int size, double *in, double *out)
+// libspecbleach exposes no reset, and its STFT history and learned noise
+// profile are exactly what a flush means to discard -- a flush is the stream
+// being discontinued (a mode change, a span change, NR4 being switched on), and
+// carrying a noise profile learned on the previous band across it is a denoiser
+// subtracting the wrong thing until it re-adapts.  So the flush is a rebuild.
+// It runs with the channel stopped (flush_rxa is reached only from
+// SetChannelState), which is what makes the allocation safe here.
+void flush_sbnr (SBNR a)
+{
+	if (a->st) specbleach_adaptive_free (a->st);
+	sbnr_open_denoiser (a);
+}
+
+SBNR create_sbnr (int channel, int run, int position, int size, int rate, double *in, double *out)
 {
 	SBNR a = (SBNR) malloc0 (sizeof (sbnr));
 	a->run = run;
 	a->position = position;
 	a->channel = channel;
 	a->size = size;
+	a->rate = rate;
 	a->in = in;
 	a->out = out;
-	a->st = specbleach_adaptive_initialize (48000, 20);
+	sbnr_open_denoiser (a);
 	a->reduction_amount = 10.f;
 	a->smoothing_factor = 0.f;
 	a->whitening_factor = 0.f;
@@ -38,6 +53,24 @@ SBNR create_sbnr (int channel, int run, int position, int size, double *in, doub
 	a->fin  = (float *) malloc0 (size * sizeof (float));
 	a->fout = (float *) malloc0 (size * sizeof (float));
 	return a;
+}
+
+void setSize_sbnr (SBNR a, int size)
+{
+	if (a->size == size) return;
+	a->size = size;
+	_aligned_free (a->fout);
+	_aligned_free (a->fin);
+	a->fin  = (float *) malloc0 (a->size * sizeof (float));
+	a->fout = (float *) malloc0 (a->size * sizeof (float));
+}
+
+void setSamplerate_sbnr (SBNR a, int rate)
+{
+	if (a->rate == rate) return;
+	a->rate = rate;
+	specbleach_adaptive_free (a->st);
+	sbnr_open_denoiser (a);
 }
 
 void destroy_sbnr (SBNR a)
