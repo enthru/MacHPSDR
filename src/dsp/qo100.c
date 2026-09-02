@@ -209,17 +209,19 @@ gboolean qo100_beacon_has_carrier(int sel) {
   return sel!=QO100_BEACON_SEL_WB;
 }
 
-// The line the LOOP measures, as against the line the dial is trued to.  For
-// the two CW beacons that is QO100_BEACON_REST_HZ above the published figure
-// (see the note there and in qo100_beacon_frequency): a beacon spends most of
-// its life resting, so the resting tone is the one that is always on air, and
-// tracking anything else means whole integrated seconds in which the loop's own
-// line is simply absent.  The 500 kHz pairing that identifies a CW beacon
-// absolutely is unaffected, both tones being offset the same way.
+// The line the LOOP measures, as against the line the dial is trued to.  A
+// beacon spends most of its life resting, so the resting tone is the one that is
+// always on air and the only one a tracker can follow without gaps; tracking
+// anything else means whole integrated seconds in which the loop's own line is
+// simply absent.  Measured, that tone IS the published figure
+// (QO100_BEACON_REST_HZ, zero) — so this function is an identity today and
+// stays because it is the seam the whole question lives on.  The 500 kHz
+// pairing that identifies a CW beacon absolutely is unaffected either way, both
+// tones being offset the same.
 //
-// Only the LOWER beacon's rest tone has been measured; the upper is assumed to
-// be the same generator convention, which is also what QO100_FSK_SHIFT_HZ
-// already assumes of both.
+// Only the LOWER beacon's tones have been measured; the upper is assumed to be
+// the same generator convention, which is also what QO100_FSK_SHIFT_HZ already
+// assumes of both.
 long long qo100_beacon_track_frequency(int sel) {
   long long f=qo100_beacon_frequency(sel);
   return qo100_beacon_has_carrier(sel)?f+QO100_BEACON_REST_HZ:f;
@@ -526,6 +528,17 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // the reading one shift ABOVE that says the loop has landed on the keyed tone
 // and has to climb.
 #define QO100_FSK_SHIFT_HZ   400.0   // the published shift of both CW beacons
+// ...and WHICH SIDE the keyed tone is on, signed, which is the other half of the
+// same question and is equally a measurement. The beacon rests on its published
+// frequency and its keyed elements are one shift ABOVE it: the operator's log,
+// every window of it, counted lines one shift above the anchor and NEVER one
+// below, which places the loop on the lower of the two and the ident above it.
+// Written the other way round, the discriminator below reads the ident as
+// "you are on the keyed tone, climb" in every window it ever sees — it climbed,
+// lost the line it climbed to, dropped the lock, re-acquired on the line it
+// started from and climbed again: ±400 Hz of dial, about twice a minute, for
+// ever. That is what "нихера не синкается" looked like from inside.
+#define QO100_KEYED_FROM_REST_HZ (+QO100_FSK_SHIFT_HZ)
 // How exactly a pair must show that shift. It was 80 Hz, which is not a test:
 // the operator's log had +366.1 and +377.9 Hz counted as "exactly one shift"
 // -- 34 and 22 Hz out on a spacing that comes from ONE synthesiser and is
@@ -554,6 +567,15 @@ gboolean qo100_transponder_setup(RADIO *r) {
                                      // a carrier somebody parked there
 #define QO100_MID_VERDICT_HZ  150.0  // how near 0 or one shift a reading must be
                                      // before it is called either
+// ...and a verdict is never ONE reading. A centroid over an 800 Hz-wide
+// modulated signal on a fading path is worth tens of hertz, and the decision
+// resting on it -- which of two lines 400 Hz apart the published figure names
+// -- is one this application gets to make once and then saves into
+// band->errorLO. So the readings are collected and the MEDIAN of them answers,
+// with the spread quoted beside it: a number nobody can check is worth less
+// than a number that says how much it wobbled.
+#define QO100_MID_MED_N          5   // readings behind a verdict (one per 5 s)
+#define QO100_MID_MIN_N          3   // ...and the fewest that may speak at all
 // Agreement is counted in MEASUREMENTS now, and each already integrates a second
 // of stream: two of them agreeing is two seconds of evidence, which is what the
 // old "three frames" was trying and failing to be (three frames is 512 ms at a
@@ -647,6 +669,9 @@ static double   b_residual;          // published: last accepted residual
 static double   b_applied;           // published: total correction pushed into the LO error
 static char     b_status[128]="Off";
 static char     b_check[192]="";      // the middle beacon's verdict on the dial
+static double   b_mid[QO100_MID_MED_N];  // ...and the readings behind it
+static double   b_mid_w[QO100_MID_MED_N];
+static int      b_mid_n;
 
 // The loop refuses to keep correcting when its corrections do not arrive. Both
 // are latched: only an operator action (Re-acquire, another beacon, the lock
@@ -992,30 +1017,64 @@ static gboolean middle_beacon_centre(const double *pow_acc, int fs,
 // inverted -- which is not a subtlety, it is every frequency this radio shows
 // being 400 Hz out, self-consistently, with the beacon lock reporting +/-2 Hz
 // throughout.
+static double median_of(const double *v, int n);   // ...defined with the loop below
+
 static void middle_beacon_verdict(double off, double width, int bins) {
   const double shift=QO100_FSK_SHIFT_HZ;
-  if(width<QO100_MID_MIN_WIDTH_HZ) {
+
+  if(b_mid_n<QO100_MID_MED_N) {
+    b_mid[b_mid_n]=off;
+    b_mid_w[b_mid_n]=width;
+    b_mid_n++;
+  } else {
+    for(int i=1;i<QO100_MID_MED_N;i++) { b_mid[i-1]=b_mid[i]; b_mid_w[i-1]=b_mid_w[i]; }
+    b_mid[QO100_MID_MED_N-1]=off;
+    b_mid_w[QO100_MID_MED_N-1]=width;
+  }
+  double med=median_of(b_mid,b_mid_n), medw=median_of(b_mid_w,b_mid_n);
+  double lo=1e18, hi=-1e18;
+  for(int i=0;i<b_mid_n;i++) {
+    if(b_mid[i]<lo) lo=b_mid[i];
+    if(b_mid[i]>hi) hi=b_mid[i];
+  }
+
+  if(medw<QO100_MID_MIN_WIDTH_HZ) {
     snprintf(b_check,sizeof(b_check),
              "Middle beacon: %d bins only %.0f Hz wide — that is a carrier, "
-             "not the BPSK beacon; no verdict",bins,width);
+             "not the BPSK beacon; no verdict",bins,medw);
     return;
   }
-  if(fabs(off)<QO100_MID_VERDICT_HZ)
+  if(b_mid_n<QO100_MID_MIN_N) {
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon: %+.0f Hz, measuring (%d of %d readings)",
+             off,b_mid_n,QO100_MID_MIN_N);
+    return;
+  }
+  // The answer is counted in SHIFTS, not in the two cases that were expected.
+  // There are three tones in play, not two: where the beacon rests, where it
+  // keys, and where the published figure sits between them -- and the sources
+  // disagree about the last. AMSAT-DL's own text has the carrier resting on
+  // 'space', 400 Hz BELOW nominal, and the keyed information ON nominal, which
+  // if true makes this loop TWO shifts out, not one. A verdict that only knew
+  // 0 and +/-1 would have called that "neither" and told the operator nothing.
+  int k=(int)llround(med/shift);
+  if(fabs(med-(double)k*shift)>=QO100_MID_VERDICT_HZ)
+    snprintf(b_check,sizeof(b_check),
+             "Middle beacon %+.0f Hz off (%d readings, spread %.0f Hz) — not a "
+             "whole %.0f Hz shift; check the LNB and the lock",
+             med,b_mid_n,hi-lo,shift);
+  else if(k==0)
     snprintf(b_check,sizeof(b_check),
              "Middle beacon (BPSK) centred %+.0f Hz — the dial agrees "
-             "(%.0f Hz wide, %d bins)",off,width,bins);
-  else if(fabs(off-shift)<QO100_MID_VERDICT_HZ)
-    snprintf(b_check,sizeof(b_check),
-             "Middle beacon %+.0f Hz off — the dial reads %.0f Hz HIGH: the CW "
-             "beacon rests on its published tone, not above it",off,shift);
-  else if(fabs(off+shift)<QO100_MID_VERDICT_HZ)
-    snprintf(b_check,sizeof(b_check),
-             "Middle beacon %+.0f Hz off — the dial reads %.0f Hz LOW: the lock "
-             "is sitting on the beacon's keyed tone",off,shift);
+             "(%d readings, spread %.0f Hz, %.0f Hz wide)",
+             med,b_mid_n,hi-lo,medw);
   else
     snprintf(b_check,sizeof(b_check),
-             "Middle beacon %+.0f Hz off — neither zero nor one %.0f Hz shift; "
-             "check the LNB and the lock",off,shift);
+             "Middle beacon %+.0f Hz off (%d readings, spread %.0f Hz) — the dial "
+             "reads %.0f Hz %s, %+d shift%s of %.0f Hz: the lock is truing the "
+             "wrong tone",
+             med,b_mid_n,hi-lo,fabs(med),(med>0.0)?"HIGH":"LOW",
+             k,(k==1||k==-1)?"":"s",shift);
 }
 
 static gboolean qo100_may_retune_now(RECEIVER *rx) {
@@ -1111,6 +1170,7 @@ static void beacon_reset_locked(void) {
   b_med_n=0;
   b_stream_samples=0.0;
   b_check[0]='\0';
+  b_mid_n=0;
   b_since_apply=1.0e12;                 // a fresh lock may trim at once
   b_hold=0;
 }
@@ -1244,10 +1304,10 @@ static void beacon_frame(RECEIVER *rx) {
   gboolean tracking=(b_locked && b_settled);
   // Where the beacon's KEYED tone would be if the loop is on the resting one,
   // asked of the same second's spectrum -- see the tone discriminator below.
-  gboolean tone_below=FALSE;
-  double probe=expected+b_expect-QO100_FSK_SHIFT_HZ;
+  gboolean tone_other=FALSE;
+  double probe=expected+b_expect+QO100_KEYED_FROM_REST_HZ;
   if(!find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,!tracking,
-                   probe,b_locked?&tone_below:NULL,
+                   probe,b_locked?&tone_other:NULL,
                    &found,&snr,&bins,&cands)) {
     spectrum_clear();
     b_run=0;
@@ -1334,30 +1394,36 @@ static void beacon_frame(RECEIVER *rx) {
   // THE ONE THAT IS THERE WHEN THE OTHER IS NOT, and it is the one this loop
   // tracks (qo100_beacon_track_frequency) -- so a loop that has landed on the
   // KEYED tone instead finds its own line missing in every idle second and
-  // reads the resting one, one shift up. Count those against the measurements
-  // as a whole (this is before the agreement gate on purpose: a reading that
-  // breaks the run IS the evidence).
+  // reads the resting one, one shift AWAY on the side the resting tone lies
+  // (QO100_KEYED_FROM_REST_HZ: the ident is above, so the resting tone is
+  // below). Count those against the measurements as a whole (this is before the
+  // agreement gate on purpose: a reading that breaks the run IS the evidence).
   //
-  // And a line one shift BELOW the anchor is the same evidence pointing the
-  // other way, so it is looked for in the SAME second's spectrum rather than
-  // waited for as a reading of its own (`tone_below`). Both halves matter:
+  // And a line one shift on the OTHER side of the anchor is the same evidence
+  // pointing the other way -- that is the beacon's own keyed tone, i.e. proof
+  // the loop is already where it belongs -- so it is looked for in the SAME
+  // second's spectrum rather than waited for as a reading of its own
+  // (`tone_other`). Both halves matter:
   //
   //  * counted one way only -- which is how this was written -- the swap is a
   //    RATCHET. It can fire, nothing can ever argue back, and the misfire is
   //    permanent: it goes into band->errorLO and is saved to the props file, so
-  //    the next session starts on it.
+  //    the next session starts on it. With the two tones the wrong way round in
+  //    the model it fired for ever: the operator's log counted lines one shift
+  //    above the anchor in every window and none below, so the loop climbed,
+  //    lost the line it climbed to, dropped the lock and did it again.
   //  * and the argument has to come out of the SPECTRUM, not out of which line
-  //    happened to be picked. When something sits one shift above the resting
-  //    tone, the beacon's own keyed tone is one shift below it, both are equally
-  //    far from the expectation, and which of the two the nearest-line rule
-  //    returns is decided by where the FFT grid falls -- a coin whose bias does
-  //    not change all session. Asking the spectrum instead is not a coin: three
-  //    lines a shift apart mean the middle one has a neighbour, and a beacon has
-  //    two tones, not three.
+  //    happened to be picked. When something sits one shift beyond the resting
+  //    tone, the beacon's own keyed tone is one shift the other way, both are
+  //    equally far from the expectation, and which of the two the nearest-line
+  //    rule returns is decided by where the FFT grid falls -- a coin whose bias
+  //    does not change all session. Asking the spectrum instead is not a coin:
+  //    three lines a shift apart mean the middle one has a neighbour, and a
+  //    beacon has two tones, not three.
   if(b_locked) {
     b_tone_win++;
-    if(tone_below) b_tone_dn++;
-    else if(fabs(residual-b_expect-QO100_FSK_SHIFT_HZ)<QO100_FSK_TOL_HZ)
+    if(tone_other) b_tone_dn++;
+    else if(fabs(residual-b_expect+QO100_KEYED_FROM_REST_HZ)<QO100_FSK_TOL_HZ)
       b_tone_hits++;
     if(b_tone_win>=QO100_TONE_WIN) {
       if(b_tone_hits>=QO100_TONE_RUN && b_tone_dn==0) b_tone_up=TRUE;
@@ -1441,7 +1507,8 @@ static void beacon_frame(RECEIVER *rx) {
     log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
              "(residual %+.1f Hz, %.0f x mean, nearest of %d lines, %s; "
              "agreed on %d frames / %.0f ms of %.0f, last step %+.1f Hz, "
-             "tolerance %.0f Hz; tone %d up / %d down of %d%s)\n",
+             "tolerance %.0f Hz; tone %d on the resting side / %d on the keyed "
+             "side of %d%s)\n",
              found,expected,residual,snr,cands,b_locked?"locked":"acquiring",
              b_run,b_run_samples*1000.0/(double)track_fs,QO100_AGREE_MS,
              delta,tol,
@@ -1511,9 +1578,10 @@ static void beacon_frame(RECEIVER *rx) {
   // the guard. THE RESTING TONE IS THE ONE THAT IS THERE WHEN THE OTHER IS NOT,
   // and it is the tone this loop tracks, so a loop that has landed on the keyed
   // one instead finds its own line missing in every idle second and reads the
-  // resting tone, one shift up. That is what QO100_TONE_RUN counts -- readings
-  // exactly one shift above the anchor -- and QO100_FSK_TOL_HZ is what makes
-  // "exactly" mean something, the shift coming from one synthesiser.
+  // resting tone one shift away, on the side QO100_KEYED_FROM_REST_HZ says it
+  // lies (the ident is above, so the resting tone is below). That is what
+  // QO100_TONE_RUN counts, and QO100_FSK_TOL_HZ is what makes "exactly one
+  // shift" mean something, the shift coming from one synthesiser.
   //
   // Without this the loop can be right and unable to act on it: acquisition
   // landing in a second where only the keyed tone was on air locks to it, the
@@ -1522,7 +1590,7 @@ static void beacon_frame(RECEIVER *rx) {
   // Half a minute of "ignoring +400 Hz" in the log, and a dial 400 Hz off the
   // whole time.
   gboolean tone_swap=(b_tone_up &&
-                      fabs(residual-b_expect-QO100_FSK_SHIFT_HZ)<QO100_FSK_TOL_HZ);
+                      fabs(residual-b_expect+QO100_KEYED_FROM_REST_HZ)<QO100_FSK_TOL_HZ);
   double slew_allow=QO100_SLEW_HZ+
                     QO100_SLEW_RATE_HZ_S*(b_expect_samples/(double)track_fs);
   if(slew_allow>QO100_SLEW_MAX_HZ) slew_allow=QO100_SLEW_MAX_HZ;

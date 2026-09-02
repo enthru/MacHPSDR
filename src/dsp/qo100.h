@@ -202,14 +202,21 @@ extern gboolean  qo100_beacon_has_carrier(int sel);
 
 /* An F1A beacon is TWO lines 400 Hz apart and the published figure names only
    one of them; which one is the whole difference between a truthful dial and a
-   dial 400 Hz off. MEASURED ON AIR, on the operator's dish (2026-09-01): the
-   CW beacon RESTS on the tone 400 Hz ABOVE its published frequency and drops to
-   the published one while it keys — so the tone that is on air when the other
-   is not, the only one a loop can track without gaps, is NOT the one the dial
-   must be trued to. qo100_beacon_track_frequency() is where the loop looks;
-   qo100_beacon_frequency() stays what the operator tunes to and what the band
-   plan draws. */
-#define QO100_BEACON_REST_HZ 400LL
+   dial 400 Hz off, and it has now been settled by measurement rather than by
+   reading a standard. The beacon RESTS on its published frequency and its keyed
+   elements sit one shift ABOVE it (QO100_KEYED_FROM_REST_HZ in qo100.c), so the
+   tone that is on air when the other is not — the only one a loop can track
+   without gaps — IS the one the dial is trued to, and this offset is zero.
+   Two independent instruments on the operator's dish, 2026-09-02, both against
+   a dial that assumed the opposite: the middle BPSK beacon read a median +485 Hz
+   (it is symmetric about 10489.750 and knows nothing of tone conventions), and
+   the lock's own tone counters reported lines one shift ABOVE the anchor in
+   every window and never one below — i.e. the loop was sitting on the lower of
+   the two and the lower is the one that is nearly always there.
+   It is kept as a named constant, not deleted, because it is the seam the
+   question lives on: qo100_beacon_track_frequency() is where the loop looks and
+   qo100_beacon_frequency() is what the operator tunes to. */
+#define QO100_BEACON_REST_HZ 0LL
 extern long long qo100_beacon_track_frequency(int sel);
 
 /* The UTC clock the FT8/FT4 slot gate is judged against, replaceable so

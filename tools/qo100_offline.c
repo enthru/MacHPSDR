@@ -72,8 +72,8 @@ static double   lo_drift_hz_s;
 // loop reads moves a few hertz from one integrated second to the next. It has
 // mean zero, so a loop that chases it only moves the operator's dial about.
 static double   lo_wobble_hz;
-// A steady carrier this far from the beacon's RESTING tone, on air the whole
-// time. It is what makes the tone discriminator's veto testable: a guard that
+// A steady carrier this far from the beacon's RESTING tone (signed), on air the
+// whole time. It is what makes the tone discriminator's veto testable: a guard that
 // no case exercises is a guard that gets deleted in the next refactor.
 static double   intruder_hz;
 // ...and whole seconds in which the beacon itself is not there to argue.
@@ -95,11 +95,13 @@ static double   worst_gap;
 // dial's independent check reads, and its spectrum is symmetric about its own
 // published frequency whichever way the CW beacon's two tones are named.
 static double   mid_bpsk_amp;
-// ...and the world in which the IARU reading is the true one: the CW beacon
-// RESTS on its published frequency instead of one shift above it. The loop
-// then trues the wrong line and everything the radio shows is 400 Hz high --
-// self-consistently, which is exactly what the check exists to catch.
-static gboolean rest_on_published;
+// ...and the world this file used to model, which is the one the application
+// assumed until the operator's own log argued it down: the beacon resting one
+// shift ABOVE its published frequency and keying down onto it. A loop built for
+// the real beacon trues the wrong line there and everything the radio shows is
+// 400 Hz high -- self-consistently, which is exactly what the middle-beacon
+// check exists to catch.
+static gboolean rest_above_published;
 // Blocks of delay between the loop writing error_a and the signal showing it:
 // the driver's transfers in flight, the FIFO in front of the DSP thread and the
 // retune itself. Real, and much longer than one FFT frame at a wide span.
@@ -291,9 +293,15 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // which is the whole of the bug this models. `residual` below is the dial's
     // error against the published figure, so a loop that trues the resting tone
     // instead reads +/-400 here and every test in the file fails.
-    double hop=rest_on_published?0.0:(double)QO100_BEACON_REST_HZ;
+    // The beacon's two tones, as offsets from its PUBLISHED frequency: it rests
+    // on that frequency and its keyed elements sit one shift above it. The
+    // control flips the pair over, which is the world the application assumed
+    // before the operator's log settled it.
+    double rest_hz=rest_above_published?QO100_FSK_SHIFT_HZ_TEST:0.0;
+    double key_hz =rest_above_published?0.0:QO100_FSK_SHIFT_HZ_TEST;
+    double hop=rest_hz;
     if(f1a_ident && t>=f1a_from_s && fmod(t,10.0)<6.0 && fmod(t,0.2)<0.12)
-      hop=rest_on_published?-(double)QO100_BEACON_REST_HZ:0.0;
+      hop=key_hz;
     // ...and the guard's worst case, which is what the operator's log turned
     // out to be: whole integrated seconds in which the loop's OWN line is
     // absent and the only candidate is 400 Hz away -- "nearest of 1 lines".
@@ -311,9 +319,9 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       // one line is not the beacon's.
       double period=f1a_fade?12.0:9.0;
       double ph=fmod(t,period);
-      hop=(ph<3.0)?0.0
-                  :((ph<6.0)?((fmod(t,0.2)<0.1)?0.0:(double)QO100_BEACON_REST_HZ)
-                            :(double)QO100_BEACON_REST_HZ);
+      hop=(ph<3.0)?key_hz
+                  :((ph<6.0)?((fmod(t,0.2)<0.1)?key_hz:rest_hz)
+                            :rest_hz);
       if(f1a_fade && ph>=9.0) beacon_amp=0.0;
     }
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
@@ -343,7 +351,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       // coin-flip -- two equal lines inside one cluster, with nothing but the
       // 500 kHz pairing able to say which is which. That is a separate
       // question, and letting it decide this case would only make it flaky.
-      gen_block(ib,BLOCK,baseband-hop+(double)QO100_BEACON_REST_HZ+intruder_hz,
+      gen_block(ib,BLOCK,baseband-hop+rest_hz+intruder_hz,
                 fs,0.5,0.0,&iph,&isd);
       for(int k=0;k<BLOCK*2;k++) iq[k]+=ib[k];
       g_free(ib);
@@ -1095,20 +1103,19 @@ int main(int argc, char **argv) {
   }
 
   // ---- 21g. the dial is only truthful if the loop knows WHICH of the beacon's
-  //           two tones is the published one, and that is not a matter of taste
-  //           and not a matter of documents either. It was read out of the IARU
-  //           convention -- the carrier rests on the nominal and drops 400 Hz to
-  //           the space while sending -- and on air the beacon does the
-  //           opposite: it RESTS 400 Hz ABOVE the published figure (operator's
-  //           dish, 2026-09-01, from the state the dial was truthful in). The
-  //           loop therefore MEASURES the resting tone, which is the only one
-  //           always on air, and trues the dial 400 Hz below it.
+  //           two tones is the published one, and that is neither a matter of
+  //           taste nor one of documents. Two readings of the standard have
+  //           been tried in this tree and both were wrong on air; what settled
+  //           it was measurement -- the middle BPSK beacon, which is symmetric
+  //           about its own published frequency and knows nothing of tones,
+  //           and the loop's own tone counters, which reported lines one shift
+  //           ABOVE the anchor in every window and never one below. The beacon
+  //           RESTS on its published frequency and keys one shift ABOVE it.
   //           This starts the loop in the worst place for that: acquisition
   //           lands in a stretch where only the KEYED tone is transmitting, so
   //           it locks on that one and every guard in the file is then against
-  //           moving the 400 Hz back up. It has to end up on the resting tone
-  //           anyway -- and a dial trued to the resting tone instead reads
-  //           +400 Hz here, which is the operator's report exactly.
+  //           moving the 400 Hz back down. It has to end up on the resting tone
+  //           anyway -- a dial left on the keyed tone reads 400 Hz off here.
   {
     bands_init();
     gboolean locked=FALSE;
@@ -1123,30 +1130,33 @@ int main(int argc, char **argv) {
   }
 
   // ---- 21h. ...and the same machinery must not fire on evidence that only
-  //           LOOKS like it. The tone test says "readings one shift above me
-  //           mean I am on the keyed tone, climb"; a station parked one shift
-  //           above the resting tone produces exactly those readings, because
-  //           an F1A beacon's own line really does vanish out of whole
-  //           integrated seconds and the nearest candidate is then the
-  //           intruder. Counted one way only -- which is how this was written
-  //           -- that is a RATCHET: it can fire, nothing can argue back, and
-  //           the misfire is permanent, written into band->errorLO and saved.
-  //           The veto is the other half of the same evidence: while the keyed
-  //           tone is showing up one shift BELOW, the loop is demonstrably
-  //           where it belongs, so no window that contains such a reading may
-  //           settle anything. Remove `b_tone_dn==0` from qo100.c and this case
-  //           reads 400 Hz off.
+  //           LOOKS like it. The tone test says "readings one shift towards
+  //           where the resting tone would be mean I am on the keyed tone,
+  //           move"; a station parked one shift on that side of the resting
+  //           tone produces exactly those readings, because an F1A beacon's own
+  //           line really does vanish out of whole integrated seconds and the
+  //           nearest candidate is then the intruder. Counted one way only --
+  //           which is how this was written -- that is a RATCHET: it can fire,
+  //           nothing can argue back, and the misfire is permanent, written
+  //           into band->errorLO and saved. The veto is the other half of the
+  //           same evidence: while the beacon's own KEYED tone is showing up
+  //           one shift the other way, the loop is demonstrably where it
+  //           belongs, so no window containing such a reading may settle
+  //           anything. Remove `b_tone_dn==0` from qo100.c and this case reads
+  //           400 Hz off.
   {
     bands_init();
     gboolean locked=FALSE;
     f1a_ident=TRUE; f1a_shape=TRUE; f1a_fade=TRUE; f1a_from_s=10.0;
-    intruder_hz=QO100_FSK_SHIFT_HZ_TEST;
+    intruder_hz=-QO100_FSK_SHIFT_HZ_TEST;   // where the resting tone would be
+                                            // if the loop were on the keyed one
+    
     double res=run_loop(3000.0,0.0,blocks*16,&locked,FS,10489540000LL);
     intruder_hz=0.0;
     f1a_from_s=0.0; f1a_fade=FALSE; f1a_shape=FALSE; f1a_ident=FALSE;
     snprintf(d,sizeof(d),"%+.1f Hz from the published tone, biggest step %.0f Hz, "
              "locked=%d",res,worst_step,locked);
-    check("a station one shift up does not steal the lock",
+    check("a station one shift below does not steal the lock",
           locked && fabs(res)<40.0 && worst_step<100.0, d);
     qo100_beacon_reset();
   }
@@ -1439,13 +1449,13 @@ int main(int argc, char **argv) {
       bands_init();
       gboolean locked=FALSE;
       mid_bpsk_amp=0.5;
-      rest_on_published=(k==1);
+      rest_above_published=(k==1);
       // 768 kHz: the middle beacon is 210 kHz from this dial, so a 192 kHz span
       // cannot see it at all -- which is itself one of the answers the check
       // gives ("outside the span").
       double res=run_loop(3000.0,0.10,blocks*20,&locked,768000,10489540000LL);
       mid_bpsk_amp=0.0;
-      rest_on_published=FALSE;
+      rest_above_published=FALSE;
       qo100_beacon_check(ck,sizeof(ck));
       snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d — %s",res,locked,ck);
       if(k==0)
@@ -1453,7 +1463,8 @@ int main(int argc, char **argv) {
               locked && strstr(ck,"the dial agrees")!=NULL, d);
       else
         check("...and names the 400 Hz when the lock trues the wrong tone",
-              locked && strstr(ck,"400 Hz HIGH")!=NULL, d);
+              locked && strstr(ck,"-1 shift")!=NULL &&
+              strstr(ck,"LOW")!=NULL, d);
       qo100_beacon_reset();
     }
     // ...and the control on the whole-step half of it. Taking all of `act`
