@@ -2529,6 +2529,30 @@ gdouble receiver_panel_gain(RECEIVER *rx) {
   return rx->mute ? 0.0 : rx->volume;
 }
 
+// The gain a network listener's copy of this audio still needs applied.
+//
+// rx->audio_output_buffer is WDSP's output *after* receiver_panel_gain(), so a
+// stream tapped from it normally needs nothing — except in the one case that
+// gain was forced to unity for a decoder, where the listen gain has been moved
+// into software and the buffer is running at whatever the demodulator produces.
+// A network client is a listener, not the decoder, and taking the raw buffer
+// left it with no level control at all: with a decoder running, AF GAIN did not
+// reach the TCI stream and only AGC-G did — and with AGC switched off, nothing
+// did. Measured on QO-100: AGC on gave a peak of 4.93 with 38 % of the samples
+// past full scale, AGC off pinned 46.9 % of them against the clamp. The
+// in-tree decoders don't care (they read floats with no ceiling); a client
+// converting to 16-bit gets a square wave.
+//
+// Mute is deliberately NOT applied: it means "not in my speaker", and a client
+// that asked for the stream is not the speaker.
+gdouble receiver_stream_gain(RECEIVER *rx) {
+  if(rx==NULL) return 1.0;
+#ifdef DECODERS
+  if(decoder_taps_audio(rx)) return rx->volume;
+#endif
+  return 1.0;
+}
+
 static void process_rx_buffer(RECEIVER *rx) {
   gdouble left_sample,right_sample;
   short left_audio_sample, right_audio_sample;

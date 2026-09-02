@@ -1699,22 +1699,30 @@ static void tci_audio_drop_account(guint32 dropped, guint32 tried) {
   n_try  = 0;
 }
 
-static void tci_audio_clip_account(guint32 clipped, guint32 total) {
+static void tci_audio_clip_account(guint32 clipped, guint32 total, double peak) {
   static gint64 window_us = 0;
   static guint64 n_clip = 0, n_tot = 0;
+  static double  w_peak = 0.0;
   gint64 now = g_get_monotonic_time();
   n_clip += clipped;
   n_tot  += total;
+  if (peak > w_peak) w_peak = peak;
   if (window_us == 0) { window_us = now; return; }
   if (now - window_us < 5000000) return;
+  // Name the cut, not just the fault: the peak is measured before the clamp, so
+  // 20*log10(peak) is exactly how much AF GAIN (or AGC-G) has to come down, and
+  // an operator should not have to find that by bisection while a band is open.
   if (n_clip > 0 && n_tot > 0)
-    log_info("tci: RX audio over full scale -- %.1f%% of samples clipped to +/-1.0 in the last "
-             "%.0f s. The stream is float32 normalised to 1.0 and clients convert it to 16-bit; "
-             "turn AGC-G down (the same overload clips the speaker and the recorder)\n",
-             100.0 * (double)n_clip / (double)n_tot, (double)(now - window_us) / 1e6);
+    log_info("tci: RX audio over full scale -- %.1f%% of samples clipped in the last %.0f s, "
+             "peak %.2f (turn the level down by %.0f dB). The stream is float32 normalised to "
+             "1.0 and clients convert it to 16-bit, where this is a square wave; the same "
+             "overload clips the speaker and the recorder\n",
+             100.0 * (double)n_clip / (double)n_tot, (double)(now - window_us) / 1e6,
+             w_peak, 20.0 * log10(w_peak > 1.0 ? w_peak : 1.0));
   window_us = now;
   n_clip = 0;
   n_tot = 0;
+  w_peak = 0.0;
 }
 
 // Build the complete on-wire WS frame once (WS binary header + 64-byte TCI
@@ -1722,9 +1730,9 @@ static void tci_audio_clip_account(guint32 clipped, guint32 total) {
 // every client subscribed to this rx's stream (`audio` picks audio_mask vs
 // iq_mask; only clients with rx_index's bit set receive it). `data` may be a
 // float source (`fsrc`) or double source (`interleaved`) — exactly one is used.
-static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, int channels,
-                                 const double *interleaved, const float *fsrc,
-                                 guint32 nfloats, gboolean audio) {
+static void tci_stream_broadcast_gain(int data_type, int rx_index, int sample_rate, int channels,
+                                      const double *interleaved, const float *fsrc,
+                                      guint32 nfloats, gboolean audio, double gain) {
   if (rx_index < 0 || rx_index >= TCI_MAX_CLIENTS * 4) return;   // bit index sanity
   guint  rxbit = 1u << rx_index;
 
@@ -1781,27 +1789,32 @@ static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, i
   float *fp = (float *)(th + TCI_HDR_BYTES);
   if (audio) {
     guint32 clipped = 0;
+    double  peak = 0.0;
     if (fsrc != NULL) {
       for (guint32 i = 0; i < nfloats; i++) {
-        float v = fsrc[i];
+        float v = fsrc[i];                       // already scaled by the caller
+        if (fabs(v) > peak) peak = fabs(v);
         if (v >  1.0f) { v =  1.0f; clipped++; }
         else if (v < -1.0f) { v = -1.0f; clipped++; }
         fp[i] = v;
       }
     } else {
       for (guint32 i = 0; i < nfloats; i++) {
-        double v = interleaved[i];
+        double v = interleaved[i] * gain;
+        double a = fabs(v);
+        if (a > peak) peak = a;
         if (v >  1.0) { v =  1.0; clipped++; }
         else if (v < -1.0) { v = -1.0; clipped++; }
         fp[i] = (float)v;
       }
     }
-    tci_audio_clip_account(clipped, nfloats);
+    tci_audio_clip_account(clipped, nfloats, peak);
   } else if (fsrc != NULL) {
     memcpy(fp, fsrc, (size_t)nfloats * sizeof(float));
   } else {
     for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
   }
+
 
   guint32 tried = 0, dropped = 0;
   g_mutex_lock(&clients_mutex);
@@ -1840,7 +1853,7 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
     swapped[2*i]     = (float)iq[2*i + 1];   // I
     swapped[2*i + 1] = (float)iq[2*i];       // Q
   }
-  tci_stream_broadcast(TCI_STREAM_IQ, idx, sample_rate, 2, NULL, swapped, nf, FALSE);
+  tci_stream_broadcast_gain(TCI_STREAM_IQ, idx, sample_rate, 2, NULL, swapped, nf, FALSE, 1.0);
   g_free(swapped);
 }
 
@@ -1854,10 +1867,17 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
   int idx = tci_rx_index(rx);
   if (idx < 0 || idx >= MAX_RECEIVERS) return;
 
+  // A client is a listener, so it gets the listen gain -- which WDSP has
+  // normally applied already and has NOT when a decoder forced the panel to
+  // unity.  Without this the stream had no level control at all in that case
+  // (AF GAIN did not reach it, and with AGC off nothing did); see
+  // receiver_stream_gain().
+  const double g = receiver_stream_gain(rx);
+
   int target = g_atomic_int_get(&audio_stream_rate);
   if (target <= 0 || target == sample_rate) {
-    tci_stream_broadcast(TCI_STREAM_RX_AUDIO, idx, sample_rate, 2, audio, NULL,
-                         (guint32)nstereo * 2u, TRUE);
+    tci_stream_broadcast_gain(TCI_STREAM_RX_AUDIO, idx, sample_rate, 2, audio, NULL,
+                              (guint32)nstereo * 2u, TRUE, g);
     return;
   }
 
@@ -1868,7 +1888,7 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
 
   int cap = (int)((gint64)nstereo * target / sample_rate) + 4;
   float *inL = g_new(float, nstereo), *inR = g_new(float, nstereo);
-  for (int i = 0; i < nstereo; i++) { inL[i] = (float)audio[2*i]; inR[i] = (float)audio[2*i+1]; }
+  for (int i = 0; i < nstereo; i++) { inL[i] = (float)(audio[2*i] * g); inR[i] = (float)(audio[2*i+1] * g); }
   float *outL = g_new(float, cap), *outR = g_new(float, cap);
   int nL = tci_resamp_run(L, inL, nstereo, outL, cap);
   int nR = tci_resamp_run(R, inR, nstereo, outR, cap);
@@ -1876,7 +1896,8 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
   if (no > 0) {
     float *inter = g_new(float, (size_t)no * 2);
     for (int i = 0; i < no; i++) { inter[2*i] = outL[i]; inter[2*i+1] = outR[i]; }
-    tci_stream_broadcast(TCI_STREAM_RX_AUDIO, idx, target, 2, NULL, inter, (guint32)no * 2u, TRUE);
+    tci_stream_broadcast_gain(TCI_STREAM_RX_AUDIO, idx, target, 2, NULL, inter,
+                              (guint32)no * 2u, TRUE, 1.0);   // gain already applied above
     g_free(inter);
   }
   g_free(inL); g_free(inR); g_free(outL); g_free(outR);
