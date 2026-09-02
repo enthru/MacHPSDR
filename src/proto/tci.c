@@ -872,7 +872,11 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
       else if (ch == 1) dispatch_set_frequency_b(trx, hz);
     } else if (trx != NULL) {
       int ch = (nargs >= 2) ? atoi(args[1]) : 0;
-      long long f = (ch == 1) ? (long long)trx->frequency_b : (long long)trx->frequency_a;
+      // VFO A is reported as the frequency actually being demodulated, which is
+      // the cursor under ctun/freetune and not the span centre -- the same value
+      // the set above moves. See receiver_tuned_frequency().
+      long long f = (ch == 1) ? (long long)trx->frequency_b
+                              : receiver_tuned_frequency(trx);
       char r[64];
       g_snprintf(r, sizeof(r), "vfo:%d,%d,%lld;", rx_index, ch, f);
       client_send_text(c, r);
@@ -1409,7 +1413,7 @@ static void tci_send_handshake(TCI_CLIENT *c) {
     RECEIVER *t = tci_rx_at(idx);
     if (t == NULL) continue;
     char r[64];
-    g_snprintf(r, sizeof(r), "vfo:%d,0,%lld;", idx, (long long)t->frequency_a);
+    g_snprintf(r, sizeof(r), "vfo:%d,0,%lld;", idx, receiver_tuned_frequency(t));
     client_send_text(c, r);
     g_snprintf(r, sizeof(r), "vfo:%d,1,%lld;", idx, (long long)t->frequency_b);
     client_send_text(c, r);
@@ -1664,7 +1668,7 @@ void tci_notify_vfo(RECEIVER *rx) {
   int idx = tci_rx_index(rx);
   if (idx < 0) return;                         // hidden receiver: not a TCI trx
   char line[64];
-  g_snprintf(line, sizeof(line), "vfo:%d,0,%lld;", idx, (long long)rx->frequency_a);
+  g_snprintf(line, sizeof(line), "vfo:%d,0,%lld;", idx, receiver_tuned_frequency(rx));
   tci_broadcast_text(line);
   g_snprintf(line, sizeof(line), "vfo:%d,1,%lld;", idx, (long long)rx->frequency_b);
   tci_broadcast_text(line);

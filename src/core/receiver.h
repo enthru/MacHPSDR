@@ -682,6 +682,7 @@ extern void receiver_set_volume(RECEIVER *rx);
 // is the same receiver and must answer the same Mute.
 extern gdouble receiver_panel_gain(RECEIVER *rx);
 extern gboolean receiver_audio_tapped(RECEIVER *rx);
+extern long long receiver_tuned_frequency(RECEIVER *rx);
 extern void receiver_pretap_alloc(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);

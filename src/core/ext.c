@@ -100,20 +100,19 @@ int ext_set_mox(void *data) {
 // re-validates the pointer with receiver_is_live() before the first dereference.
 // Dropping the request is the right answer: whatever it was going to change no
 // longer exists.
+// Absolute set of VFO A from the network (TCI). Routed through the VFO's own
+// applier, exactly as CAT's FA is (cat_set_vfo_a): assigning frequency_a moves
+// the span CENTRE, so under ctun or freetune a client's "put me on 10489.784"
+// left the receiver demodulating wherever the cursor already was — and the
+// matching read then reported the centre, so the client could not even see the
+// disagreement. A setter has to move what its getter reports
+// (receiver_tuned_frequency).
 int ext_set_frequency_a(void *data) {
   RX_FREQUENCY *f=(RX_FREQUENCY *)data;
 
   if(!receiver_is_live(f->rx)) { g_free(f); return 0; }
-  g_mutex_lock(&f->rx->mutex);
+  vfo_apply_frequency(f->rx,f->frequency,FALSE);
 
-  if(f->rx!=NULL) {
-    f->rx->frequency_a=f->frequency;
-    f->rx->band_a=get_band_from_frequency(f->frequency);
-  }
-  frequency_changed(f->rx);
-  update_vfo(f->rx);
-  g_mutex_unlock(&f->rx->mutex);
-  
   g_free(f);
   return 0;
 }

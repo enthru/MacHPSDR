@@ -766,11 +766,7 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
         case 'A': //ZZFA
           // set/read VFO-A frequency
           if(command[4]==';') {
-            if(rx->ctun) {
-              sprintf(reply,"ZZFA%011lld;",rx->ctun_frequency);
-            } else {
-              sprintf(reply,"ZZFA%011lld;",rx->frequency_a);
-            }
+            sprintf(reply,"ZZFA%011lld;",receiver_tuned_frequency(rx));   // see FA
             send_resp(cmd,reply) ;
           } else if(command[15]==';') {
             cat_set_vfo_a(rx,atoll(&command[4]));   // see FA
@@ -2274,11 +2270,10 @@ int parse_cmd(void *data) {
         case 'A': //FA
           // set/read VFO-A frequency
           if(command[2]==';') {
-            if(rx->ctun) {
-              sprintf(reply,"FA%011lld;",rx->ctun_frequency);
-            } else {
-              sprintf(reply,"FA%011lld;",rx->frequency_a);
-            }
+            // freetune moves the cursor exactly as ctun does, and this tested
+            // only ctun -- so with freetune on, FA answered the span centre
+            // while the set below moved the cursor.
+            sprintf(reply,"FA%011lld;",receiver_tuned_frequency(rx));
             send_resp(cmd,reply) ;
           } else if(command[13]==';') {
             // Set what the READ above reports.  Under ctun/freetune the getter

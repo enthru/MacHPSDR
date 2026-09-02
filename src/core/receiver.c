@@ -2551,6 +2551,17 @@ gboolean receiver_audio_tapped(RECEIVER *rx) {
   return tci_audio_subscribed(rx);
 }
 
+// The frequency this receiver is actually listening on, which is NOT
+// rx->frequency_a under ctun or freetune: there the dial names the span centre
+// and the cursor is where the demodulator sits. Every answer given to the
+// outside world (CAT, TCI) has to be this one, and every set from outside has
+// to move this one — vfo_apply_frequency() is the applier that does, and it is
+// what the VFO's own type-in panel uses.
+long long receiver_tuned_frequency(RECEIVER *rx) {
+  if(rx==NULL) return 0;
+  return (rx->ctun || rx->freetune) ? rx->ctun_frequency : rx->frequency_a;
+}
+
 gdouble receiver_panel_gain(RECEIVER *rx) {
   if(receiver_audio_tapped(rx)) return 1.0;
   return rx->mute ? 0.0 : rx->volume;
