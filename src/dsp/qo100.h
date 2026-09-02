@@ -241,4 +241,14 @@ extern void qo100_beacon_set_clock(double (*fn)(void));
                                        to keep meaning what it meant */
 #define QO100_BEACON_SEL_MAX    3
 
+/* What a radio with no props file starts on, and what an out-of-range value in
+   one falls back to.  It is the MIDDLE beacon and not the lower one for the
+   reason qo100_beacon_frequency() gives at length: a 400 bd BPSK spectrum is
+   symmetric about its own published frequency, so locking to it cannot be one
+   400 Hz key-shift out, whereas which of an F1A beacon's two lines the
+   published figure names is a convention this tree has read out of a document
+   and got wrong twice.  A default is exactly the setting nobody checks, so it
+   is the one place the ambiguous source must not be. */
+#define QO100_BEACON_SEL_DEFAULT QO100_BEACON_SEL_MIDDLE
+
 #endif

@@ -640,10 +640,18 @@ the difference out continuously. The correction is stored with the receive band,
 so the next session starts already close. Your dial is never retuned, and the
 uplink converter — a different box with a different error — is never touched.
 
-Only the two CW beacons can be used as the reference. The middle beacon is BPSK
-and has no carrier to measure. The status line shows the current error and how much
-correction is being applied; **Re-acquire** starts the search again if you have
-moved a long way.
+**Reference beacon** picks which one is measured, and the default is the
+**middle** one at 10489.750. It is 400 bd BPSK — a suppressed carrier, with no
+line to search for — so the loop makes one by squaring the spectrum, and the
+reason to go to that trouble is that a BPSK spectrum is symmetric about its own
+published frequency: a lock to it cannot come out one keying shift off, the way
+a lock to a CW beacon can if you take the wrong one of its two tones for the
+published figure. The two CW beacons at the transponder edges can be used just
+as well. The wideband beacon in the same list is DVB-S2 and the lock refuses it
+— it is offered for the level reference line above, where on that transponder it
+is the only beacon within reach. The status line shows the current error and how
+much correction is being applied; **Re-acquire** starts the search again if you
+have moved a long way.
 
 The beacon must be inside the displayed span, and not right on the centre
 frequency (where it cannot be told apart from the receiver's own DC spike) — the

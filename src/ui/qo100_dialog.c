@@ -170,7 +170,7 @@ static void beacon_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
   RADIO *r=(RADIO *)data;
   guint row=gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
   r->qo100_beacon_sel=(row<G_N_ELEMENTS(beacon_rows))?beacon_rows[row]
-                                                     :QO100_BEACON_SEL_LOWER;
+                                                     :QO100_BEACON_SEL_DEFAULT;
   qo100_beacon_reset();                 // re-acquire against the new beacon
   if(r->active_receiver!=NULL) r->active_receiver->qo100_ref_dbm=-1000.0;
   status_refresh();

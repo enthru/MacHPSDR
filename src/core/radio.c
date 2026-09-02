@@ -1764,7 +1764,7 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.qo100_beacon_sel");
   if(value!=NULL) {                       // an index off a props file is bounded
     gint sel=atoi(value);
-    r->qo100_beacon_sel=(sel>=0 && sel<=QO100_BEACON_SEL_MAX)?sel:0;
+    r->qo100_beacon_sel=(sel>=0 && sel<=QO100_BEACON_SEL_MAX)?sel:QO100_BEACON_SEL_DEFAULT;
   }
   value=getProperty("radio.qo100_lnb_lo");
   if(value!=NULL) r->qo100_lnb_lo=atoll(value);
@@ -3496,7 +3496,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->qo100_offset = QO100_TP_OFFSET;
   r->qo100_bandplan = FALSE;
   r->qo100_beacon_lock = FALSE;
-  r->qo100_beacon_sel = 0;       // lower CW beacon
+  r->qo100_beacon_sel = QO100_BEACON_SEL_DEFAULT;   // the middle BPSK beacon
   r->qo100_lnb_lo = QO100_DEFAULT_LNB_LO;  // standard universal LNB, low band
   r->qo100_tx_lo = 0;            // 0 = the radio reaches 2.4 GHz without a converter
   r->qo100_beacon_ref = FALSE;
