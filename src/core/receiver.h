@@ -188,6 +188,12 @@ typedef struct _receiver {
   gint filter_b;
 
   split_type split;
+  // The split mode the SPLIT button turns back ON.  The button is one toggle
+  // over four states, so without this "off" throws the operator's choice away
+  // and the next press comes back as plain SPLIT -- their SAT/RSAT setup gone
+  // for a mis-click.  Written whenever split leaves a non-OFF state, whoever
+  // set it (menu, CAT, MIDI, QO-100), so it needs no cooperation from them.
+  split_type split_last;
   // SAT/RSAT tie the two VFOs together: tuning either one moves the other by
   // the same step, so the transponder offset the operator set up is preserved.
   // That is the whole point of the mode -- and it is also why the offset cannot

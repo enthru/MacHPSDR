@@ -81,6 +81,16 @@
 #define MIN_PANADAPTER_HEIGHT 90
 #define MIN_WATERFALL_HEIGHT  60
 
+/* A props file is an input like any other: a split mode read out of one indexes
+   nothing here, but it does select behaviour in a dozen switches, and a value
+   outside the enum matches none of them -- so it is rejected rather than folded
+   onto a valid mode. */
+static split_type split_from_props(const char *value,split_type fallback) {
+  int v=atoi(value);
+  if(v<SPLIT_OFF || v>SPLIT_RSAT) return fallback;
+  return (split_type)v;
+}
+
 void receiver_save_state(RECEIVER *rx) {
   if (rx->show_rx == FALSE) return;
   char name[80];
@@ -300,6 +310,12 @@ void receiver_save_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].split",rx->channel);
   sprintf(value,"%d",rx->split);
+  setProperty(name,value);
+  // The mode the SPLIT button turns back on -- saved separately because split
+  // itself is OFF whenever the operator left it off, and that must not erase
+  // the SAT/RSAT they set up.
+  sprintf(name,"receiver[%d].split_last",rx->channel);
+  sprintf(value,"%d",rx->split_last);
   setProperty(name,value);
 
   sprintf(name,"receiver[%d].offset",rx->channel);
@@ -680,7 +696,14 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].split",rx->channel);
   value=getProperty(name);
-  if(value) rx->split=atoi(value);
+  if(value) rx->split=split_from_props(value,SPLIT_OFF);
+  // Absent from a props file written before the button remembered its mode:
+  // whatever split was left in is the best answer there.  Never OFF, or the
+  // button would have nothing to turn on.
+  sprintf(name,"receiver[%d].split_last",rx->channel);
+  value=getProperty(name);
+  rx->split_last=value?split_from_props(value,SPLIT_ON):rx->split;
+  if(rx->split_last==SPLIT_OFF) rx->split_last=SPLIT_ON;
 
   sprintf(name,"receiver[%d].remote_audio",rx->channel);
   value=getProperty(name);
@@ -978,7 +1001,7 @@ void receiver_restore_state(RECEIVER *rx) {
 
   sprintf(name,"receiver[%d].split",rx->channel);
   value=getProperty(name);
-  if(value) rx->split=atoi(value);
+  if(value) rx->split=split_from_props(value,SPLIT_OFF);
   // Absent from an older props file, which must keep meaning "linked": that is
   // what every build before this one did.  rx->vfo_linked defaults to TRUE.
   sprintf(name,"receiver[%d].vfo_linked",rx->channel);

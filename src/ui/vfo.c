@@ -387,54 +387,66 @@ static void DisableSplitSubRX(gpointer user_data) {
   }
 }
 
-static void split_b_cb(GtkToggleButton *widget,gpointer user_data) {
-  RECEIVER *rx=(RECEIVER *)user_data;
-  rx->split=rx->split==SPLIT_OFF?SPLIT_ON:SPLIT_OFF;
-  g_signal_handlers_block_by_func(widget,G_CALLBACK(split_b_cb),user_data);
-  gtk_toggle_button_set_active(widget,rx->split!=SPLIT_OFF);
-  g_signal_handlers_unblock_by_func(widget,G_CALLBACK(split_b_cb),user_data);
-  gtk_button_set_label(GTK_BUTTON(widget),"SPLIT");
-  update_vfo(rx);
-}
+/* The one place a split mode is put into effect: the transmitter follows the
+   VFO the operator will actually key on, and update_vfo() puts the button's
+   label and pressed state back in step.  Menu, button and the KB_SPLIT shortcut
+   all come through here, so none of them can apply half of it -- which is what
+   the button used to do (no TX mode, no frequency_changed).
 
-void split_cb(GtkWidget *menu_item,gpointer data) {
-  CHOICE *choice=(CHOICE *)data;
-  RECEIVER *rx=choice->rx;
-  rx->split=choice->selection;
-  switch(rx->split) {
-     case SPLIT_OFF:
-     case SPLIT_ON:
-       gtk_button_set_label(GTK_BUTTON(choice->button),"SPLIT");
-       break;
-     case SPLIT_SAT:
-       gtk_button_set_label(GTK_BUTTON(choice->button),"SAT");
-       break;
-     case SPLIT_RSAT:
-       gtk_button_set_label(GTK_BUTTON(choice->button),"RSAT");
-       break;
-  }
-  g_signal_handlers_block_by_func(choice->button,G_CALLBACK(split_b_cb),rx);
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choice->button),rx->split!=SPLIT_OFF);
-  g_signal_handlers_unblock_by_func(choice->button,G_CALLBACK(split_b_cb),rx);
+   What it deliberately does NOT do is set the pair up: VFO B and the split
+   sub-receiver are left exactly as they are.  Switching split off and back on
+   to hear the DX's own frequency is an ordinary operating move, and it must not
+   cost the operator the VFO B they just tuned -- nor tear down a sub-receiver
+   they may have enabled themselves with SUBRX.  That belongs to the menu's
+   SPLIT item, which is the explicit "set a split up" request. */
+void vfo_set_split(RECEIVER *rx,split_type split) {
+  if(rx==NULL) return;
+  rx->split=split;
+  if(split!=SPLIT_OFF) rx->split_last=split;
 
-  if(radio->transmitter && radio->transmitter->rx==rx) {
-    switch(rx->split) {
-      case SPLIT_OFF:
-        transmitter_set_mode(radio->transmitter,rx->mode_a);
-        DisableSplitSubRX(rx);
-        break;
-      case SPLIT_ON:
-        transmitter_set_mode(radio->transmitter,rx->mode_b);
-        EnableSplitSubRX(rx);
-        break;
-      case SPLIT_SAT:
-      case SPLIT_RSAT:
-        transmitter_set_mode(radio->transmitter,rx->mode_b);
-        break;
-    }
+  if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    transmitter_set_mode(radio->transmitter,
+                         split==SPLIT_OFF?rx->mode_a:rx->mode_b);
   }
   frequency_changed(rx);
   update_vfo(rx);
+}
+
+/* The SPLIT button is one toggle over four modes, so "on" means the mode that
+   was last in effect -- read off rx->split as it is switched off rather than
+   from a record of the menu, so a mode set from CAT, MIDI or QO-100 comes back
+   the same way the menu's does. */
+void vfo_toggle_split(RECEIVER *rx) {
+  if(rx==NULL) return;
+  if(rx->split!=SPLIT_OFF) {
+    rx->split_last=rx->split;
+    vfo_set_split(rx,SPLIT_OFF);
+  } else {
+    vfo_set_split(rx,rx->split_last==SPLIT_OFF?SPLIT_ON:rx->split_last);
+  }
+}
+
+static void split_b_cb(GtkToggleButton *widget,gpointer user_data) {
+  vfo_toggle_split((RECEIVER *)user_data);
+}
+
+/* The menu's SPLIT is the "set a split up" request, so it keeps the sub-receiver
+   handling the button does not have: VFO B is loaded from A (+1 kHz in CW,
+   +5 kHz in SSB -- where a pile-up starts) and dual watch comes on.  Run before
+   vfo_set_split, since EnableSplitSubRX is what settles mode_b, and the
+   transmitter has to be given the mode it ends up with. */
+void split_cb(GtkWidget *menu_item,gpointer data) {
+  CHOICE *choice=(CHOICE *)data;
+  RECEIVER *rx=choice->rx;
+
+  if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    if(choice->selection==SPLIT_ON) {
+      EnableSplitSubRX(rx);
+    } else if(choice->selection==SPLIT_OFF) {
+      DisableSplitSubRX(rx);
+    }
+  }
+  vfo_set_split(rx,choice->selection);
 }
 
 static gboolean split_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer user_data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
@@ -448,23 +460,12 @@ static gboolean split_b_press_cb(GtkGestureClick *gesture,int n_press,double ex,
   GtkWidget *menu_item;
   CHOICE *choice;
 
+  /* Only the secondary button reaches here -- the gesture is created with
+     gtk_gesture_single_set_button(GDK_BUTTON_SECONDARY) and a left click is the
+     button's own "toggled" signal (split_b_cb).  There was a case 1 here doing
+     its own version of the toggle; it had not run since the gesture was
+     narrowed, and a second copy of that logic is exactly how the two drift. */
   switch(button) {
-    case 1:  // LEFT
-      if(rx->split!=SPLIT_OFF) {
-        transmitter_set_mode(radio->transmitter,rx->mode_a);
-        DisableSplitSubRX(rx);
-        rx->split=SPLIT_OFF;
-      } else {
-        EnableSplitSubRX(rx);
-        transmitter_set_mode(radio->transmitter,rx->mode_b);
-        rx->split=SPLIT_ON;
-      }
-      frequency_changed(rx);
-      update_vfo(rx);
-
-      return TRUE;
-      break;
-
     case 3:  // RIGHT
       menu=gtk_menu_new();
       menu_item=gtk_menu_item_new_with_label("Off");
@@ -1882,7 +1883,8 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   gtk_widget_set_name(v->split_b,"vfo-toggle");
   gtk_widget_set_tooltip_text(v->split_b,
       "Split: receive on VFO A, transmit on VFO B\n"
-      "Right-click for SPLIT / SAT / RSAT");
+      "Right-click for SPLIT / SAT / RSAT\n"
+      "Off and on again returns to the mode last used, and leaves VFO B alone");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->split_b),rx->split!=SPLIT_OFF);
   g_signal_connect(v->split_b, "toggled", G_CALLBACK(split_b_cb),rx);
   // Right-click opens the SPLIT/SAT/RSAT menu (left-click is the "toggled"

@@ -3917,6 +3917,7 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->show_panadapter=TRUE;
 
   rx->split=SPLIT_OFF;
+  rx->split_last=SPLIT_ON;  // what the SPLIT button turns on before any choice
   rx->vfo_linked=TRUE;   // SAT/RSAT track together unless the operator unlinks
   rx->duplex=FALSE;
   rx->mute_while_transmitting=FALSE;

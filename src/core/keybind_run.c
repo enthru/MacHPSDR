@@ -182,14 +182,9 @@ void keybind_run(int action, gboolean pressed) {
     case KB_B_TO_A:   vfo_b2a(rx);    break;
     case KB_A_SWAP_B: vfo_aswapb(rx); break;
     case KB_SPLIT:
-      if(rx->split==SPLIT_OFF) {
-        rx->split=SPLIT_ON;
-        if(radio->transmitter!=NULL && radio->transmitter->rx==rx) transmitter_set_mode(radio->transmitter,rx->mode_b);
-      } else {
-        rx->split=SPLIT_OFF;
-        if(radio->transmitter!=NULL && radio->transmitter->rx==rx) transmitter_set_mode(radio->transmitter,rx->mode_a);
-      }
-      update_vfo(rx);
+      // The button's own toggle: same modes, same side effects, and it comes
+      // back to SAT/RSAT if that is what was on.
+      vfo_toggle_split(rx);
       tci_notify_state(rx);
       break;
     case KB_CTUN:

@@ -79,4 +79,10 @@ extern void vfo_set_mode(RECEIVER *rx,int mode);
 extern void vfo_a2b(RECEIVER *rx);
 extern void vfo_b2a(RECEIVER *rx);
 extern void vfo_aswapb(RECEIVER *rx);
+// Put a split mode into effect (TX mode, retune, button state), and the SPLIT
+// button's own toggle over the mode last in effect.  Every path that changes
+// split from the GTK thread uses these.  Neither touches VFO B or the split
+// sub-receiver: setting the pair UP is the menu's SPLIT item, not a toggle.
+extern void vfo_set_split(RECEIVER *rx,split_type split);
+extern void vfo_toggle_split(RECEIVER *rx);
 
