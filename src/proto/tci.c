@@ -156,8 +156,13 @@ static void client_send_text(TCI_CLIENT *c, const char *s) {
 // frame) from a foreign thread (GTK notify / audio IQ). Never blocks: if the
 // send lock is contended it skips this client; on EAGAIN it drops the frame
 // cleanly; a partial write would desync the stream, so the client is shut down.
-static void client_send_framed_try(TCI_CLIENT *c, const guint8 *frame, size_t len) {
-  if (!g_mutex_trylock(&c->send_mtx)) return;   // busy -> drop for this client
+// Returns TRUE when the whole frame went out. A dropped frame is a spectrum
+// line nobody misses on the IQ stream and a HOLE in a decoder's audio on the
+// audio one, so the caller counts the audio case (tci_audio_drop_account) --
+// see there for why it is reported rather than merely tolerated.
+static gboolean client_send_framed_try(TCI_CLIENT *c, const guint8 *frame, size_t len) {
+  if (!g_mutex_trylock(&c->send_mtx)) return FALSE;   // busy -> drop for this client
+  gboolean sent = FALSE;
   int fd = c->fd;
   if (fd >= 0) {
     ssize_t w = net_send_nowait(fd, frame, len, TCI_SEND_FLAGS);
@@ -165,10 +170,13 @@ static void client_send_framed_try(TCI_CLIENT *c, const guint8 *frame, size_t le
       // Partial write mid-frame: the WebSocket stream is now unrecoverable for
       // this client — drop it (its own thread will clean up on the recv error).
       shutdown(fd, SHUT_RDWR);
+    } else if (w > 0) {
+      sent = TRUE;
     }
     // w<=0 (EAGAIN/would-block or error): nothing sent, frame dropped cleanly.
   }
   g_mutex_unlock(&c->send_mtx);
+  return sent;
 }
 
 // Broadcast a text line (ends with ';') to every client, best-effort. Builds the
@@ -1672,6 +1680,25 @@ void tci_notify_state(RECEIVER *rx) {
 // clipped.  Counters are plain statics touched from the RX audio threads (one
 // per receiver): a torn count costs a wrong percentage in a diagnostic, which
 // is not worth an atomic on the audio path.
+static void tci_audio_drop_account(guint32 dropped, guint32 tried) {
+  static gint64 window_us = 0;
+  static guint64 n_drop = 0, n_try = 0;
+  gint64 now = g_get_monotonic_time();
+  n_drop += dropped;
+  n_try  += tried;
+  if (window_us == 0) { window_us = now; return; }
+  if (now - window_us < 5000000) return;
+  if (n_drop > 0 && n_try > 0)
+    log_info("tci: dropped %llu of %llu RX audio frames in the last %.0f s (%.1f%%) -- the send "
+             "is non-blocking, so a client that reads slowly gets HOLES, which a decoder sees as "
+             "lost data rather than as quiet\n",
+             (unsigned long long)n_drop, (unsigned long long)n_try,
+             (double)(now - window_us) / 1e6, 100.0 * (double)n_drop / (double)n_try);
+  window_us = now;
+  n_drop = 0;
+  n_try  = 0;
+}
+
 static void tci_audio_clip_account(guint32 clipped, guint32 total) {
   static gint64 window_us = 0;
   static guint64 n_clip = 0, n_tot = 0;
@@ -1776,14 +1803,18 @@ static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, i
     for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
   }
 
+  guint32 tried = 0, dropped = 0;
   g_mutex_lock(&clients_mutex);
   for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
     if (clients[i].fd < 0) continue;
     gint mask = audio ? g_atomic_int_get(&clients[i].audio_mask)
                       : g_atomic_int_get(&clients[i].iq_mask);
-    if ((guint)mask & rxbit) client_send_framed_try(&clients[i], frame, flen);
+    if (!((guint)mask & rxbit)) continue;
+    tried++;
+    if (!client_send_framed_try(&clients[i], frame, flen)) dropped++;
   }
   g_mutex_unlock(&clients_mutex);
+  if (audio) tci_audio_drop_account(dropped, tried);
 
   g_free(frame);
 }
