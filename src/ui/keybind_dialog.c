@@ -238,7 +238,11 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
   int second=column_break();
   GtkWidget *group=NULL;
   const char *current_group=NULL;
-  int i,group_row=0,c=0;
+  /* The column a group goes in is its OWN variable: sharing the loop counter
+     that builds column[] left it at 2 -- one past the end -- for every group
+     before the break, and the garbage read as a GtkBox* was a bus error the
+     moment Configure was opened. */
+  int i,group_row=0,c,col=0;
 
   memset(accel_button,0,sizeof(accel_button));
   status_label=NULL;
@@ -263,13 +267,13 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
     if(current_group==NULL || strcmp(current_group,keybind_actions[i].group)!=0) {
       GtkWidget *frame;
       current_group=keybind_actions[i].group;
-      if(i>=second) c=1;
+      if(i>=second) col=1;
       frame=gtk_frame_new(current_group);
       gtk_widget_set_valign(frame,GTK_ALIGN_START);
       group=gtk_grid_new();
       sui_style_group(group);
       gtk_frame_set_child(GTK_FRAME(frame),group);
-      gtk_box_append(GTK_BOX(column[c]),frame);
+      gtk_box_append(GTK_BOX(column[col]),frame);
       group_row=0;
     }
 
