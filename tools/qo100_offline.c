@@ -1667,6 +1667,41 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // ---- 22l. THE COLD START, and the second report from air about this beacon.
+  //           The middle one is acquired by SQUARING, and squaring is not
+  //           selective -- every carrier on the transponder makes a line of its
+  //           own at twice its offset -- so its window is +/-25 kHz where a CW
+  //           beacon's is half a megahertz. An ordinary LNB is out by tens of
+  //           kilohertz (the operator's dish: 65), so on a cold start the middle
+  //           beacon is simply not in the window, for ever, and all the
+  //           application had to say about it was "Searching for the beacon"
+  //           and then an untrue "widen the span" -- the span was 768 kHz and
+  //           the beacon was in plain view on the panadapter.
+  //           What the operator did instead was the manoeuvre this loop now
+  //           performs for itself: lock the lower CW beacon, let it true the
+  //           dial, switch back to the middle one. Nothing here is new machinery
+  //           -- it is the CW path, with its 500/250 kHz identification intact --
+  //           so the assertion is simply that the operator no longer has to know
+  //           any of that. Against the code before the bootstrap this case never
+  //           locks at all and ends 65 kHz out, which is its own negative
+  //           control.
+  {
+    char st[128];
+    bands_init();
+    gboolean locked=FALSE;
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    double res=run_loop(65000.0,0.05,blocks*10,&locked,768000,10489624000LL);
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"%+.1f Hz left of 65000, %d retunes, locked=%d — %s",
+             res,retunes,locked,st);
+    check("a converter outside the BPSK window is brought in on CW",
+          locked && fabs(res)<50.0, d);
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
