@@ -666,6 +666,11 @@ extern void receiver_move(RECEIVER *rx,long long hz,gboolean round);
 extern void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round);
 extern void receiver_move_to(RECEIVER *rx,long long hz);
 extern void receiver_set_volume(RECEIVER *rx);
+// The WDSP panel gain a receiver should be listening at: the volume, zero when
+// muted, or unity while a decoder taps the audio (mute is then applied in
+// software, after the SUBRX mix).  subrx.c uses it for the sub-channel, which
+// is the same receiver and must answer the same Mute.
+extern gdouble receiver_panel_gain(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);
 extern void receiver_set_freetune(RECEIVER *rx, gboolean enable);

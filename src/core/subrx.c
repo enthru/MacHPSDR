@@ -194,7 +194,10 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
   subrx_frequency_changed(rx);
   subrx_mode_changed(rx);
 
-  SetRXAPanelGain1(subrx->channel, rx->volume);
+  // rx->volume alone here left VFO B playing through Mute: the main channel's
+  // gain goes to zero and the sub-channel's did not, so muting the receiver
+  // silenced one ear of it.  One gain function for both channels.
+  SetRXAPanelGain1(subrx->channel, receiver_panel_gain(rx));
   SetRXAPanelSelect(subrx->channel, 3);
   SetRXAPanelPan(subrx->channel, 0.5);
   SetRXAPanelCopy(subrx->channel, 0);
@@ -270,9 +273,10 @@ void subrx_update_noise(RECEIVER *rx) {
   SetEXTNOBRun(subrx->channel, rx->nb2);
 }
 
+// Reached from receiver_set_volume(), i.e. from every volume AND mute change.
 void subrx_volume_changed(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
-  SetRXAPanelGain1(subrx->channel, rx->volume);
+  SetRXAPanelGain1(subrx->channel, receiver_panel_gain(rx));
 }
 
 void subrx_change_sample_rate(RECEIVER *rx) {

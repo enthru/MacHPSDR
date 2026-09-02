@@ -2413,7 +2413,7 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
 #ifdef DECODERS
   // Re-apply the WDSP panel gain: entering DIGU/DIGL switches the channel to
   // unity (so the decoder taps full level regardless of volume/mute), leaving it
-  // restores the listen gain. rx_panel_gain() depends on the just-set mode.
+  // restores the listen gain. receiver_panel_gain() depends on the just-set mode.
   // Guard against early calls before the WDSP channel exists (create_receiver
   // sets the gain itself).
   if(rx->channel>=0) receiver_set_volume(rx);
@@ -2498,7 +2498,7 @@ void receiver_band_changed(RECEIVER *rx,int band) {
 // plain DIGU/DIGL listening is unaffected; the operator opts in from the
 // bottom-bar Decode block (radio->decode_mode). Used to force unity WDSP panel
 // gain (so the decoder always sees full level) and to apply the listen
-// volume/mute in software instead — see rx_panel_gain / process_rx_buffer.
+// volume/mute in software instead — see receiver_panel_gain / process_rx_buffer.
 static gboolean decoder_taps_audio(RECEIVER *rx) {
   if(radio==NULL || radio->decode_mode==DECODE_OFF) return FALSE;
   // SSTV also decodes narrowband FM (VHF, e.g. the ISS on 145.800); FT8/FT4 are
@@ -2513,14 +2513,16 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
 }
 #endif
 
-// WDSP audio-panel gain for a receiver's channel. Normally this is the listen
+// WDSP audio-panel gain for a receiver's channel -- and for its SUBRX channel,
+// which is the same operator listening to the same receiver and must answer the
+// same Mute. Normally this is the listen
 // gain (volume, or 0 when muted). When a decoder is active on this RX we run the
 // channel at unity instead: the decoder taps rx->audio_output_buffer, which WDSP
 // scales by this gain, and the operator does not listen to the decoded signal —
 // so it must decode regardless of the volume slider or mute. The listen
 // volume/mute is applied to the audible output in software in
 // process_rx_buffer() for that case. See receiver_set_volume().
-static gdouble rx_panel_gain(RECEIVER *rx) {
+gdouble receiver_panel_gain(RECEIVER *rx) {
 #ifdef DECODERS
   if(decoder_taps_audio(rx)) return 1.0;
 #endif
@@ -2564,7 +2566,7 @@ static void process_rx_buffer(RECEIVER *rx) {
     }
 #ifdef DECODERS
     // When a decoder is tapping this RX the WDSP channel runs at unity (see
-    // rx_panel_gain) so the decoder always sees a full-level signal; apply the
+    // receiver_panel_gain) so the decoder always sees a full-level signal; apply the
     // listen volume/mute to the audible output here instead, keeping the speaker
     // behaviour unchanged.
     if(decoder_taps_audio(rx)) {
@@ -4051,7 +4053,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   frequency_changed(rx);
   receiver_mode_changed(rx,rx->mode_a);
 
-  SetRXAPanelGain1(rx->channel, rx_panel_gain(rx));
+  SetRXAPanelGain1(rx->channel, receiver_panel_gain(rx));
   SetRXAPanelSelect(rx->channel, 3);
   SetRXAPanelPan(rx->channel, 0.5);
   SetRXAPanelCopy(rx->channel, 0);
@@ -4181,7 +4183,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 }
 
 void receiver_set_volume(RECEIVER *rx) {
-  SetRXAPanelGain1(rx->channel, rx_panel_gain(rx));
+  SetRXAPanelGain1(rx->channel, receiver_panel_gain(rx));
   if(rx->subrx_enable) {
     subrx_volume_changed(rx);
   }
