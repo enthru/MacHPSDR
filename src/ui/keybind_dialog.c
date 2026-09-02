@@ -187,12 +187,58 @@ static void page_destroyed(GtkWidget *widget, gpointer data) {
   status_label=NULL;
 }
 
+/* Rows a group occupies, counted from the action table (a group's actions are
+   consecutive), plus the frame's own chrome -- the column split needs every
+   height BEFORE a single frame is built. */
+static int group_height(int first) {
+  int n=0,i;
+  for(i=first;i<keybind_action_count;i++) {
+    if(strcmp(keybind_actions[i].group,keybind_actions[first].group)!=0) break;
+    n++;
+  }
+  return n+1;
+}
+
+/* Index of the first action of the group that starts the SECOND column: the
+   groups flow down one column and continue down the next (newspaper order, so
+   the page still reads in table order), and the break is put where the two
+   columns come out closest in height.  Choosing per group "whichever column is
+   shorter right now" reads worse and balances no better -- the last group is
+   the tallest one and lands wherever the greedy walk left it. */
+static int column_break(void) {
+  int start[KB_ACTIONS],height[KB_ACTIONS],n=0,total=0,i;
+  int run=0,best=0,best_diff=-1;
+  for(i=0;i<keybind_action_count;i++) {
+    if(i>0 && strcmp(keybind_actions[i].group,keybind_actions[i-1].group)==0) continue;
+    start[n]=i;
+    height[n]=group_height(i);
+    total+=height[n];
+    n++;
+  }
+  for(i=1;i<n;i++) {
+    int diff;
+    run+=height[i-1];
+    diff=run-(total-run);
+    if(diff<0) diff=-diff;
+    if(best_diff<0 || diff<best_diff) { best_diff=diff; best=start[i]; }
+  }
+  return best;
+}
+
 GtkWidget *create_keybind_dialog(RADIO *radio) {
-  GtkWidget *grid=gtk_grid_new();
-  GtkWidget *frame=NULL;
+  /* TWO INDEPENDENT COLUMNS, not a two-column grid: a grid gives every cell in
+     a row the height of the tallest frame in that row, so the three-row "Mode"
+     group sitting beside the seven-row "Tuning" one left a hole the height of
+     four rows under it, and the page was mostly gaps.  Boxes pack each column
+     tight, and column_break() puts the break where the two columns finish
+     closest to level.  (Same reason the TX page is three boxes side by side.) */
+  GtkWidget *page=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  GtkWidget *columns=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+  GtkWidget *column[2];
+  int second=column_break();
   GtkWidget *group=NULL;
   const char *current_group=NULL;
-  int i,row=0,col=0,group_row=0;
+  int i,group_row=0,c=0;
 
   memset(accel_button,0,sizeof(accel_button));
   status_label=NULL;
@@ -200,21 +246,30 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
   learn_controller=NULL;
   learn_widget=NULL;
 
-  sui_style_page(grid);
+  sui_style_page(page);
+  sui_style_page(columns);
+  for(c=0;c<2;c++) {
+    column[c]=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+    sui_style_page(column[c]);
+    gtk_widget_set_valign(column[c],GTK_ALIGN_START);
+    gtk_widget_set_hexpand(column[c],TRUE);
+    gtk_box_append(GTK_BOX(columns),column[c]);
+  }
+  gtk_box_append(GTK_BOX(page),columns);
 
   for(i=0;i<keybind_action_count;i++) {
     GtkWidget *label,*button,*clear;
 
     if(current_group==NULL || strcmp(current_group,keybind_actions[i].group)!=0) {
+      GtkWidget *frame;
       current_group=keybind_actions[i].group;
+      if(i>=second) c=1;
       frame=gtk_frame_new(current_group);
       gtk_widget_set_valign(frame,GTK_ALIGN_START);
       group=gtk_grid_new();
       sui_style_group(group);
       gtk_frame_set_child(GTK_FRAME(frame),group);
-      gtk_grid_attach(GTK_GRID(grid),frame,col,row,1,1);
-      col++;
-      if(col>1) { col=0; row++; }
+      gtk_box_append(GTK_BOX(column[c]),frame);
       group_row=0;
     }
 
@@ -240,8 +295,6 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
     group_row++;
   }
 
-  if(col!=0) row++;
-
   {
     GtkWidget *box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
     GtkWidget *clear_all=gtk_button_new_with_label("Clear all");
@@ -252,10 +305,10 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
                                "when the main window has the keyboard.");
     sui_label_left(status_label);
     gtk_box_append(GTK_BOX(box),status_label);
-    gtk_grid_attach(GTK_GRID(grid),box,0,row,2,1);
+    gtk_box_append(GTK_BOX(page),box);
   }
 
-  g_signal_connect(grid,"destroy",G_CALLBACK(page_destroyed),NULL);
+  g_signal_connect(page,"destroy",G_CALLBACK(page_destroyed),NULL);
   refresh_rows();
-  return grid;
+  return page;
 }
