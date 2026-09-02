@@ -861,7 +861,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
                              gboolean dominant,
                              double probe_hz, gboolean *probe_out,
                              double *found, double *snr_out, int *bins_out,
-                             int *cand_out) {
+                             int *cand_out, const char **how_out) {
   const int N=QO100_FFT_N;
   const double bin_hz=(double)fs/(double)N;
   double sum=0.0, peak=-1.0;
@@ -908,6 +908,11 @@ static gboolean find_carrier(const double *pow_acc, int fs,
   int sel=-1;
   double best=1e18;
   gboolean confirmed=FALSE;
+  // WHICH RULE picked the line, in words, because "what is it locked to?" is a
+  // question the operator has every right to ask of a loop that retunes their
+  // radio -- and until this string existed the log answered it only by
+  // implication.
+  const char *how="the nearest line";
 
   // A BEACON IS KNOWN BY ITS NEIGHBOURS, and that is the only test here that a
   // bare carrier cannot pass. Every rule in front of the lock -- the agreement
@@ -955,6 +960,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
         sel=cand_bin[pick];
         best=pd;
         confirmed=TRUE;
+        how="the middle beacon 250 kHz away";
       }
     }
   }
@@ -972,7 +978,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
         if(fabs(cand_sf[j]-want)<QO100_PAIR_TOL_HZ) paired=TRUE;
       if(!paired) continue;
       double d=fabs(cand_sf[i]-expected);
-      if(d<best) { best=d; sel=cand_bin[i]; }
+      if(d<best) { best=d; sel=cand_bin[i]; how="the 500 kHz beacon pair"; }
     }
   }
 
@@ -1016,6 +1022,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
     }
   }
   pk=sel;
+  if(how_out!=NULL) *how_out=how;
   if(snr_out!=NULL) *snr_out=pow_acc[pk]/mean;
 
   double y0=sqrt(pow_acc[pk-1]);
@@ -1554,6 +1561,7 @@ static void beacon_frame(RECEIVER *rx) {
     bpsk_off= QO100_BPSK_OFFSET_HZ;
   else if(radio->qo100_beacon_sel==QO100_BEACON_SEL_UPPER)
     bpsk_off=-QO100_BPSK_OFFSET_HZ;
+  const char *how=track_bpsk?"the squared BPSK carrier":"the nearest line";
   gboolean got;
   if(track_bpsk) {
     // The squared domain: everything doubles, including the search width and
@@ -1568,7 +1576,7 @@ static void beacon_frame(RECEIVER *rx) {
   } else
     got=find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,bpsk_off,!tracking,
                      probe,b_locked?&tone_other:NULL,
-                     &found,&snr,&bins,&cands);
+                     &found,&snr,&bins,&cands,&how);
   if(!got) {
     spectrum_clear();
     b_run=0;
@@ -1791,11 +1799,11 @@ static void beacon_frame(RECEIVER *rx) {
     log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
              "(residual %+.1f Hz, %.0f x mean, nearest of %d lines, %s; "
              "agreed on %d frames / %.0f ms of %.0f, last step %+.1f Hz, "
-             "tolerance %.0f Hz; tone %d on the resting side / %d on the keyed "
-             "side of %d%s)\n",
+             "tolerance %.0f Hz; picked by %s; tone %d on the resting side / "
+             "%d on the keyed side of %d%s)\n",
              found,expected,residual,snr,cands,b_locked?"locked":"acquiring",
              b_run,b_run_samples*1000.0/(double)track_fs,QO100_AGREE_MS,
-             delta,tol,
+             delta,tol,how,
              b_tone_hits,b_tone_dn,b_tone_win,b_tone_up?", armed":"");
 
   if(!b_locked) {
