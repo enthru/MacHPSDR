@@ -336,7 +336,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 
   // Beside MIDI because it is the same thing for the other input device: a
   // control surface the operator maps onto the radio's actions.
-  add_page(create_keybind_dialog(radio),"Keys");
+  add_page(create_keybind_dialog(radio),"Hotkeys");
 
   add_page(create_labels_dialog(radio),"Display");
 

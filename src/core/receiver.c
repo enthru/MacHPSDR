@@ -1635,7 +1635,7 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
   if(vfo_type_digit(keyval)) {
     return TRUE;
   }
-  // Operator-assigned shortcuts (Configure -> Keys). They come before the fixed
+  // Operator-assigned shortcuts (Configure -> Hotkeys). They come before the fixed
   // keys below so a binding placed on one of them wins, and after digit entry so
   // typing a frequency into the VFO still beats a shortcut on a digit.
   if(keybind_key_pressed(keyval,keycode,state)) {
