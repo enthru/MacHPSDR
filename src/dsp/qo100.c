@@ -557,6 +557,16 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // therefore exact. What the reading is worth is set by the tracking tolerance,
 // since a reading too unsteady to be trimmed on cannot identify a tone either.
 #define QO100_FSK_TOL_HZ      40.0
+// The narrow transponder's three beacons are 250 kHz apart by construction, and
+// the middle one is the confirmation a bare carrier cannot fake.
+#define QO100_BPSK_OFFSET_HZ 250000.0
+// How near the middle beacon's measured centre must land, and it is TIGHTER
+// than one FSK shift on purpose: that is what makes the geometry identify the
+// TONE as well as the beacon. The hump sits 250 kHz from the published tone, so
+// a candidate on the keyed tone finds it 400 Hz out and is refused -- no tone
+// discriminator, no history, no ratchet, just the distance between two beacons.
+#define QO100_BPSK_CONFIRM_HZ   200.0
+#define QO100_BPSK_CONFIRM_MAX      8  // candidates tried before giving up
 #define QO100_TONE_WIN          20   // measurements judging which tone we are on
 #define QO100_TONE_RUN           4   // ...answering one shift up before a locked
                                      // loop accepts that it is on the keyed tone
@@ -841,9 +851,14 @@ static void spectrum_add(double *re, double *im, double *pow_acc) {
 // one shift BELOW the line it is tracking, and the answer is what makes "the
 // resting tone is the one that is there when the other is not" a measurement
 // instead of an assumption -- see beacon_frame.
+static gboolean middle_beacon_centre(const double *pow_acc, int fs,
+                                     double expected, double half,
+                                     double *centre, double *width, int *nbins);
+
 static gboolean find_carrier(const double *pow_acc, int fs,
                              double lo_hz, double hi_hz, double expected,
-                             double partner_hz, gboolean dominant,
+                             double partner_hz, double bpsk_off_hz,
+                             gboolean dominant,
                              double probe_hz, gboolean *probe_out,
                              double *found, double *snr_out, int *bins_out,
                              int *cand_out) {
@@ -892,12 +907,63 @@ static gboolean find_carrier(const double *pow_acc, int fs,
 
   int sel=-1;
   double best=1e18;
+  gboolean confirmed=FALSE;
 
-  // The pairing first, when both edges could be in the window: a candidate with
-  // a partner exactly 500 kHz away IS a beacon, however far the operator's
-  // settings say it should not be. Among such candidates -- there is normally
-  // exactly one pair -- take the nearest to the expectation.
-  if(partner_hz!=0.0) {
+  // A BEACON IS KNOWN BY ITS NEIGHBOURS, and that is the only test here that a
+  // bare carrier cannot pass. Every rule in front of the lock -- the agreement
+  // run, the tracking tolerance, the slew guard -- rewards a line that stays
+  // put, and an F1A beacon is the one signal on the band that by definition
+  // does not: it hops 400 Hz while it idents. So a steady station parked near
+  // the beacon wins every one of those tests, which is exactly what happened on
+  // air (reported with a picture of it: an unmodulated carrier 2.3 kHz from the
+  // beacon, the loop sitting on it, the beacon's own keyed pair drawn plainly
+  // beside it).
+  //
+  // The narrow transponder's three beacons are 250 kHz apart by construction --
+  // 10489.500 / .750 / 10490.000 -- so the MIDDLE one is the confirmation:
+  // 400 bd BPSK is a hump about 800 Hz wide that nothing else on this band
+  // looks like, and it is on air continuously. A candidate with that hump
+  // exactly 250 kHz away (above it for the lower beacon, below for the upper)
+  // IS the beacon.
+  //
+  // It is the middle one and not the other CW beacon because of the SPAN. The
+  // two CW beacons are 500 kHz apart, so seeing both needs the dial within
+  // ~130 kHz of 10489.750 on a 768 kHz span -- an operator sitting on the FT8
+  // spot at 10489.540 has the far beacon 460 kHz away and out of the receiver
+  // entirely, while the middle beacon is 210 kHz away and in plain view.
+  // Nearest candidates first, and the first one confirmed wins: the test costs a
+  // window sort, so it is not run against a hundred lines.
+  if(dominant && bpsk_off_hz!=0.0) {
+    static gboolean tried[QO100_PAIR_MAX];
+    memset(tried,0,sizeof(gboolean)*(size_t)held);
+    for(int pass=0;pass<QO100_BPSK_CONFIRM_MAX && !confirmed;pass++) {
+      int    pick=-1;
+      double pd=1e18;
+      for(int i=0;i<held;i++) {
+        if(tried[i]) continue;
+        double d=fabs(cand_sf[i]-expected);
+        if(d<pd) { pd=d; pick=i; }
+      }
+      if(pick<0) break;
+      tried[pick]=TRUE;
+      double c=0.0, w=0.0;
+      int nb=0;
+      double want=cand_sf[pick]+bpsk_off_hz;
+      if(fabs(want)+QO100_MID_WIN_HZ>0.5*(double)fs) continue;   // outside the span
+      if(middle_beacon_centre(pow_acc,fs,want,QO100_MID_WIN_HZ,&c,&w,&nb) &&
+         fabs(c-want)<QO100_BPSK_CONFIRM_HZ && w>=QO100_MID_MIN_WIDTH_HZ) {
+        sel=cand_bin[pick];
+        best=pd;
+        confirmed=TRUE;
+      }
+    }
+  }
+
+  // Failing that, the 500 kHz pairing, when both edges are in the window: a
+  // candidate with a partner exactly that far away IS a beacon too. Among such
+  // candidates -- there is normally exactly one pair -- take the nearest to the
+  // expectation.
+  if(sel<0 && partner_hz!=0.0) {
     for(int i=0;i<held;i++) {
       double want=cand_sf[i]+partner_hz;
       if(want<lo_hz || want>hi_hz) continue;         // the partner is out of view
@@ -938,7 +1004,7 @@ static gboolean find_carrier(const double *pow_acc, int fs,
   // The bistability this pass exists for cannot happen here: nothing moves the
   // expectation by 400 Hz once the tracking window is only 2 kHz wide.
   double sel_sf=((sel<=N/2)?(double)sel:(double)(sel-N))*bin_hz;
-  if(dominant) {
+  if(dominant && !confirmed) {
     for(int m=1;m<N-1;m++) {
       double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
       if(fabs(sf-sel_sf)>QO100_CLUSTER_HZ) continue;
@@ -1480,6 +1546,14 @@ static void beacon_frame(RECEIVER *rx) {
   // asked of the same second's spectrum -- see the tone discriminator below.
   gboolean tone_other=FALSE;
   double probe=expected+b_expect+QO100_KEYED_FROM_REST_HZ;
+  // Where the MIDDLE beacon must be, relative to whichever CW beacon is
+  // selected: above the lower one, below the upper one. Zero when there is
+  // nothing to confirm against.
+  double bpsk_off=0.0;
+  if(radio->qo100_beacon_sel==QO100_BEACON_SEL_LOWER)
+    bpsk_off= QO100_BPSK_OFFSET_HZ;
+  else if(radio->qo100_beacon_sel==QO100_BEACON_SEL_UPPER)
+    bpsk_off=-QO100_BPSK_OFFSET_HZ;
   gboolean got;
   if(track_bpsk) {
     // The squared domain: everything doubles, including the search width and
@@ -1492,7 +1566,7 @@ static void beacon_frame(RECEIVER *rx) {
     bins=0;
     cands=got?1:0;
   } else
-    got=find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,!tracking,
+    got=find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,bpsk_off,!tracking,
                      probe,b_locked?&tone_other:NULL,
                      &found,&snr,&bins,&cands);
   if(!got) {

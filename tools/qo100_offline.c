@@ -76,6 +76,7 @@ static double   lo_wobble_hz;
 // whole time. It is what makes the tone discriminator's veto testable: a guard that
 // no case exercises is a guard that gets deleted in the next refactor.
 static double   intruder_hz;
+static double   intruder_amp=0.5;   // ...and how loud, relative to the beacon
 // ...and whole seconds in which the beacon itself is not there to argue.
 static gboolean f1a_fade;
 #define QO100_FSK_SHIFT_HZ_TEST 400.0   /* qo100.c's own, which it does not export */
@@ -375,7 +376,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       // 500 kHz pairing able to say which is which. That is a separate
       // question, and letting it decide this case would only make it flaky.
       gen_block(ib,BLOCK,baseband-hop+rest_hz+intruder_hz,
-                fs,0.5,0.0,&iph,&isd);
+                fs,intruder_amp,0.0,&iph,&isd);
       for(int k=0;k<BLOCK*2;k++) iq[k]+=ib[k];
       g_free(ib);
     }
@@ -1558,6 +1559,39 @@ int main(int argc, char **argv) {
               locked && strstr(ck,"+1 shift")!=NULL, d);
       qo100_beacon_reset();
     }
+  }
+
+  // ---- 22k. THE CASE FROM AIR: a steady carrier parked near the beacon takes
+  //           the lock, and it takes it because every rule in front of the lock
+  //           rewards a line that stays put while an F1A beacon is the one
+  //           signal on the band that by definition does not. Reported with a
+  //           picture: an unmodulated carrier 2.3 kHz from the beacon, the loop
+  //           sitting on it, the beacon's own keyed pair drawn plainly beside
+  //           it on the waterfall. Nearest-to-the-expectation cannot tell them
+  //           apart, strongest cannot, and agreement over time actively picks
+  //           the intruder.
+  //           What can tell them apart is the transponder's own geometry: the
+  //           beacons are 250 kHz apart, and the middle one is a BPSK hump
+  //           nothing else on the band looks like. The intruder here is as loud
+  //           as the beacon and nearer to the expectation, and the beacon is
+  //           identing throughout, so nothing but that geometry can win this.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    mid_bpsk_amp=1.0;                      // the middle beacon, 250 kHz up
+    intruder_hz=-2300.0;                   // ...and the impostor, as loud
+    intruder_amp=1.0;
+    f1a_ident=TRUE; f1a_from_s=0.0;
+    double res=run_loop(1500.0,0.05,blocks*20,&locked,768000,10489540000LL);
+    f1a_ident=FALSE;
+    intruder_amp=0.5;
+    intruder_hz=0.0;
+    mid_bpsk_amp=0.0;
+    snprintf(d,sizeof(d),"%+.1f Hz from the published tone (the impostor is at "
+             "%+.0f), locked=%d",res,-2300.0,locked);
+    check("a steady carrier beside the beacon does not take the lock",
+          locked && fabs(res)<100.0, d);
+    qo100_beacon_reset();
   }
 
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
