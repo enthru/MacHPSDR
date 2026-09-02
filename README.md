@@ -80,6 +80,7 @@ you've dialled in.
 | **macOS, Linux and Windows** | One tree, three platforms, each with a package that needs nothing installed on the target: `make app` for a self-contained `MacHPSDR.app`, `make appimage` for a single-file Linux **AppImage**, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes all three *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
 | **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
+| **Keyboard shortcuts** | Bind any of the radio's actions — zoom, band, filter, mode, VFO, RIT/XIT, volume, AGC, squelch, NB/NR/ANF, MOX and a hold-to-talk PTT — to keys of your own in **Configure → Hotkeys**: click the row, press the combination, done. One combination per action, matched by the physical key (a shortcut set on a Latin layout still fires on a Cyrillic one), suppressed while you are typing into a decoder panel, and saved with the radio's settings. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
 | **SSTV** | Receive **and transmit** analogue SSTV images (Martin, Scottie, Robot, PD — incl. ISS Robot 36 / PD120) with VIS auto-detect, an embedded image panel, a scrollable/zoomable view, PNG save, **auto-save of every received picture**, and image-file transmit. |
@@ -182,6 +183,24 @@ you've dialled in.
   - Tuning is clamped to **0 – 6 GHz** (or the radio's own upper limit if it is
     lower, e.g. ~61 MHz for classic HPSDR), so a stray edit can't run the VFO
     off to a nonsense frequency.
+
+- **Keyboard shortcuts (Hotkeys).** **Configure → Hotkeys** lists every action
+  the radio offers, in groups — Display (zoom, pan), Transmit (hold-to-talk PTT,
+  MOX, Tune), Mode (swap sideband, next/previous), Tuning (band, filter, one
+  tuning step, VFO lock), VFO (A>B, B>A, A<>B, split, CTUN, RIT/XIT and their
+  clears), Audio (mute, volume, AGC gain, squelch), DSP (AGC speed, NB, NR, ANF,
+  SNB) and one row per modulation mode — each with the key combination that runs
+  it. Click a row, press the combination; **Esc** cancels, **Backspace** clears,
+  and **Clear all** empties the page. Nothing is bound out of the box, one
+  combination belongs to one action (the page names the row it was taken from),
+  and each shortcut calls exactly what the matching control in the main window
+  calls, on the active receiver — so a key can never leave a setting half
+  applied. Matching is by **physical key**, so a shortcut captured on a Latin
+  layout still fires with a Cyrillic layout active; keys typed into a decoder
+  panel's text field are never dispatched as shortcuts. Space (transmit while
+  held), `[` / `]` (keyer paddles in CWL/CWU) and Cmd-Q keep working unbound,
+  and your own binding wins over them. Assignments are saved with the radio's
+  settings.
 
 - **Noise blankers & reduction.** Per-receiver toggles on the VFO row: **NB**/**NB2**
   (impulse-noise blankers), **ANF** (automatic notch) and **SNB** (Spectral Noise
@@ -1190,7 +1209,8 @@ Two gotchas:
 ## User manual
 
 A general overview of the main functions (window layout, tuning, receiver
-controls, TX, FT8/FT4, the recorder, configuration, MIDI, the fake device) is in
+controls, TX, FT8/FT4, the recorder, configuration, hotkeys and MIDI, the fake
+device) is in
 [`doc/`](./doc):
 
 - English — [`doc/manual-en.md`](./doc/manual-en.md)

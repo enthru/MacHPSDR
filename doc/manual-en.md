@@ -728,11 +728,73 @@ have not been tested on the air (no transmit hardware).*
 
 ---
 
-## 12. MIDI and keyboard control
+## 12. Keyboard shortcuts and MIDI
 
-Any global **action** (tune, mode, filter, AGC, MOX, zoom, …) can be bound to a
-keyboard shortcut or a MIDI control via **MIDI learn**. On macOS MIDI uses
-CoreMIDI. Mappings are saved to `midi.props`.
+### Hotkeys
+
+**Configure → Hotkeys** is the keyboard's own control surface: every action the
+radio offers, listed in groups, each with the key combination that runs it.
+Nothing is bound when you first open the page — it starts empty on purpose, so
+no key you already use is taken away behind your back.
+
+Click the button beside an action and it reads *Press a key…*; press the
+combination you want, with or without modifiers. **Esc** backs out and changes
+nothing, **Backspace** or **Delete** clears the row, and so does the **x** beside
+it. **Clear all** empties the whole page. One combination belongs to one action:
+give it to a second action and the first one loses it, and the line under the
+list says which action it was taken from.
+
+A shortcut acts on the **active receiver** and does exactly what the matching
+control in the main window does — the same setter, the same VFO row refresh — so
+there is nothing a key can do that a click cannot, and nothing it can leave half
+applied. The groups:
+
+- **Display** — zoom in, zoom out, zoom ×1, pan left/right.
+- **Transmit** — transmit while the key is held (the space bar's job, on a key of
+  your choosing), MOX on/off, Tune on/off.
+- **Mode** — swap sideband (LSB↔USB, CWL↔CWU, DIGL↔DIGU), next mode, previous mode.
+- **Tuning** — band ±, filter ±, tune one step up/down (the same step the VFO
+  wheel uses), lock the VFO.
+- **VFO** — A>B, B>A, A<>B, split, CTUN, RIT on/off and clear, XIT on/off and clear.
+- **Audio** — mute, volume ±, AGC gain ±1 dB, squelch ±. Squelch has no separate
+  switch anywhere in this application: a threshold above zero *is* squelch on, and
+  running it down to zero switches it off.
+- **DSP** — cycle AGC speed (off/long/slow/med/fast), noise blanker (off/NB/NB2),
+  noise reduction (off/NR/NR2/NR3/NR4), auto notch, spectral noise blanker.
+- **Modulation** — one key per mode, LSB through WFM.
+
+The volume, AGC-gain and squelch rows move by **one notch** of the control they
+mirror — the same step the scroll wheel over the VFO row gives — so a single
+press is the smallest change you can make by hand, and holding the key down with
+the keyboard's own repeat behaves like turning the wheel.
+
+Worth knowing:
+
+- Shortcuts are matched by the **physical key**, so one captured on a Latin
+  layout still fires with a Cyrillic layout active.
+- Shortcuts only fire while the **main window** has the keyboard: with the
+  Configure dialog in front, its own keys apply instead.
+- While the cursor is in a text field (an FT8 message, CW text, a call sign) keys
+  are typed, not dispatched — the decoder panels live in the main window, so this
+  matters in normal use.
+- A few keys work without being bound: **Space** transmits while held, **`[`** and
+  **`]`** are the iambic keyer's paddles in CWL/CWU, **Cmd-Q** (**Ctrl-Q**) quits,
+  and a **digit typed while the pointer is over a VFO digit** overwrites that
+  digit in place. Your own shortcuts are checked first, so binding Space to
+  something else really does take it away from transmit — except for VFO digit
+  entry, which keeps the number keys while the pointer is over the frequency.
+- Assignments are saved with the rest of the radio's settings and are there at
+  the next start.
+
+### MIDI
+
+The same idea for the other kind of control surface: a MIDI controller's knobs,
+sliders and buttons are mapped to the radio's actions in **Configure → MIDI** by
+**MIDI learn** — pick the action, move the control, and it is bound. On macOS
+this uses CoreMIDI, on Linux ALSA, on Windows winmm. The mapping is saved with
+the rest of the settings; the dialog's own Save/Load buttons export and import it
+as a separate `midi.props` file, which is how a mapping is carried to another
+machine. A MIDI paddle can also drive the CW keyer.
 
 ---
 
