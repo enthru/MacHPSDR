@@ -85,6 +85,10 @@ static gboolean f1a_fade;
 // whole slot rather than the second it measures in. Stream time stands in for
 // UTC (qo100_beacon_set_clock) because minutes of drift have to be covered in a
 // run that lasts under a second.
+// Which beacon the loop is told to track. The middle one is 400 bd BPSK: no
+// line to peak-search, so the loop squares the stream and tracks the carrier
+// that comes out -- the source that cannot be one 400 Hz shift out.
+static gint     beacon_sel;
 static gboolean ft8_gate;
 static double   mock_utc;
 static double   test_utc(void) { return mock_utc; }
@@ -227,6 +231,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   qo100_beacon_reset();
   radio->qo100_beacon_lock=TRUE;               // reset() clears the status only
 
+  if(beacon_sel!=QO100_BEACON_SEL_LOWER) radio->qo100_beacon_sel=beacon_sel;
   if(ft8_gate) {
     rx->mode_a=DIGU;                           // the decoder taps only in DIGU/DIGL
     radio->decode_mode=DECODE_FT8;
@@ -1484,6 +1489,71 @@ int main(int argc, char **argv) {
     check("a wobbling reading is not chased for a whole slot either",
           locked && worst_pull<10.0, d);
     qo100_beacon_reset();
+  }
+
+  // ---- 22i. the MIDDLE beacon as a lock source. It is 400 bd BPSK -- a
+  //           suppressed carrier, so there is no line to peak-search -- and the
+  //           loop makes one by squaring the stream: (+/-1)^2 is 1, so z^2 is
+  //           the carrier at twice its offset with the modulation gone. The
+  //           reason to bother is that a BPSK spectrum carries NO TONE
+  //           CONVENTION, so a dial trued to it cannot be one 400 Hz shift out
+  //           however the argument about the CW beacons ends -- and it is what
+  //           the rest of the QO-100 world calibrates against.
+  //           Three things are required of it: it acquires from a few kHz out,
+  //           it TRACKS a drifting converter, and -- the negative control -- a
+  //           strong CW carrier elsewhere in the span does not become the lock,
+  //           since squaring gives every carrier a line of its own at twice ITS
+  //           offset.
+  {
+    char st[128];
+    bands_init();
+    gboolean locked=FALSE;
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    lo_drift_hz_s=1.0;
+    // The CW beacon is on air the whole time as well, exactly as it is up there,
+    // and squaring turns it into a line of its own. It must not be the lock.
+    double res=run_loop(3000.0,0.05,blocks*20,&locked,768000,10489540000LL);
+    lo_drift_hz_s=0.0;
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    qo100_beacon_status(st,sizeof(st));
+    snprintf(d,sizeof(d),"%+.1f Hz left, %.1f Hz of wander, %d retunes, "
+             "locked=%d — %s",res,worst_track,retunes,locked,st);
+    check("the BPSK beacon can be tracked by squaring",
+          locked && fabs(res)<40.0 && worst_track<60.0, d);
+    qo100_beacon_reset();
+  }
+
+  // ---- 22j. ...and the check runs the other way round there. Locked to a
+  //           signal that has no tone convention, where the CW beacon's line
+  //           falls IS the convention -- read off the air against a dial with no
+  //           opinion about it, which is the measurement this file's 400 Hz
+  //           argument lacked twice. The model rests the CW beacon on its
+  //           published figure, so the verdict must say so; the control moves it
+  //           one shift up and the verdict must name that instead.
+  {
+    char ck[192];
+    for(int k=0;k<2;k++) {
+      bands_init();
+      gboolean locked=FALSE;
+      beacon_sel=QO100_BEACON_SEL_MIDDLE;
+      mid_bpsk_amp=1.0;
+      rest_above_published=(k==1);
+      double res=run_loop(1000.0,0.05,blocks*20,&locked,768000,10489540000LL);
+      mid_bpsk_amp=0.0;
+      rest_above_published=FALSE;
+      beacon_sel=QO100_BEACON_SEL_LOWER;
+      qo100_beacon_check(ck,sizeof(ck));
+      snprintf(d,sizeof(d),"%+.1f Hz left, locked=%d — %s",res,locked,ck);
+      if(k==0)
+        check("a BPSK lock reads the CW beacon's tone convention off the air",
+              locked && strstr(ck,"the tone model is right")!=NULL, d);
+      else
+        check("...and names the shift when the beacon rests elsewhere",
+              locked && strstr(ck,"+1 shift")!=NULL, d);
+      qo100_beacon_reset();
+    }
   }
 
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.

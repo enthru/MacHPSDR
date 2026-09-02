@@ -200,6 +200,14 @@ extern void qo100_beacon_forget_receiver(RECEIVER *rx);
 extern long long qo100_beacon_frequency(int sel);
 extern gboolean  qo100_beacon_has_carrier(int sel);
 
+/* ...and the middle beacon, which has no line either but whose carrier a
+   squaring loop recovers exactly (400 bd BPSK is +/-1 on one carrier, so z^2 is
+   that carrier at twice the offset with the modulation gone). It is the source
+   that cannot be one shift out, a BPSK spectrum carrying no tone convention —
+   which is what the rest of the QO-100 world calibrates against. */
+extern gboolean  qo100_beacon_is_bpsk(int sel);
+extern gboolean  qo100_beacon_lockable(int sel);
+
 /* An F1A beacon is TWO lines 400 Hz apart and the published figure names only
    one of them; which one is the whole difference between a truthful dial and a
    dial 400 Hz off, and it has now been settled by measurement rather than by
@@ -225,8 +233,12 @@ extern long long qo100_beacon_track_frequency(int sel);
    real clock. Nothing in the application calls it. */
 extern void qo100_beacon_set_clock(double (*fn)(void));
 
-#define QO100_BEACON_SEL_LOWER 0
-#define QO100_BEACON_SEL_UPPER 1
-#define QO100_BEACON_SEL_WB    2
+#define QO100_BEACON_SEL_LOWER  0
+#define QO100_BEACON_SEL_UPPER  1
+#define QO100_BEACON_SEL_WB     2
+#define QO100_BEACON_SEL_MIDDLE 3   /* appended, not inserted: the value is
+                                       persisted, so an existing props file has
+                                       to keep meaning what it meant */
+#define QO100_BEACON_SEL_MAX    3
 
 #endif

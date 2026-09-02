@@ -167,46 +167,58 @@ gboolean qo100_in_transponder(long long f) {
 }
 
 long long qo100_beacon_frequency(int sel) {
-  // Only the two CW beacons are offered.  The middle beacon is 400 bd BPSK,
-  // which is a SUPPRESSED-carrier signal — there is no spectral line for a
-  // carrier tracker to lock to, and peak-picking its sidebands would measure the
-  // modulation rather than the LNB.  It is still drawn in the band plan above.
+  // The MIDDLE beacon is offered as a lock source now, and it is the one that
+  // settles arguments.  It is 400 bd BPSK — a suppressed carrier with no line to
+  // peak-search — so the loop makes one by squaring (line_near() on a squared
+  // spectrum), and the reason to go to that trouble is that a BPSK spectrum
+  // carries NO TONE CONVENTION: it is symmetric about its own published
+  // frequency, whoever is right about the CW beacons' two lines.  It is also
+  // what the rest of the QO-100 world calibrates against.
   //
-  // WHICH of the F1A beacon's two lines this figure names is now settled, and it
-  // is settled by AIR rather than by document.  The beacon is frequency-shift
-  // keyed with a 400 Hz shift, so it is two lines and the published number is
-  // one of them; the loop must know which, because the other one is a dial
-  // 400 Hz off with nothing on air to say so.  Measured on the operator's dish
-  // on 2026-09-01, from the state the dial was truthful in: the published
-  // frequency is the LOWER line, and the beacon RESTS 400 Hz above it, dropping
-  // to the published one only while it keys.  That is the opposite of what this
-  // file assumed for one release — the assumption came from an IARU reading
-  // ("the carrier is on the nominal frequency … first the carrier goes to
-  // 'space' (400 Hz lower)"), and the loop, faithfully following it, trued the
-  // dial to the resting tone and put the operator 400 Hz low.
+  // WHICH of an F1A beacon's two lines the published figure names is the whole
+  // difference between a truthful dial and a dial 400 Hz off, and this tree has
+  // taken it from a document twice and been wrong twice.  It is settled by
+  // measurement now — see QO100_BEACON_REST_HZ in qo100.h and
+  // QO100_KEYED_FROM_REST_HZ below — and the two instruments that settled it are
+  // both still here: the middle beacon checks a CW lock, and a CW beacon checks
+  // a middle-beacon lock, which is the one that reads the convention off the
+  // air rather than assuming it.
   //
-  // So the tracked tone and the published tone are two different numbers now:
-  // qo100_beacon_track_frequency() is the line to MEASURE (the resting one — the
-  // only one on air continuously, which is what a tracker needs), and this
-  // function stays what the operator tunes to, what the band plan draws and what
-  // the dial is trued against.
+  // qo100_beacon_track_frequency() is the line to MEASURE and this function is
+  // what the operator tunes to, what the band plan draws and what the dial is
+  // trued against.  They are the same number today; the seam stays because the
+  // question lives on it.
   //
-  // The WIDEBAND beacon is here for a different job entirely.  It is DVB-S2 and
-  // so has no carrier either, but it is the reference the wideband transponder's
-  // power rule is written against ("at least 1 dB below the beacon"), and while
-  // the operator is on that transponder it is the only beacon anywhere near the
-  // span — the CW beacons are one to nine megahertz below it, which no span this
-  // application can open will reach.  So it is offered for the panadapter's
-  // level line and refused by the lock; qo100_beacon_has_carrier() is the split.
+  // The WIDEBAND beacon is here for a different job entirely.  DVB-S2's carrier
+  // is suppressed the same way, but 1.5 MS/s of shaped modulation leaves nothing
+  // a squaring loop can use either, and it is the reference the wideband
+  // transponder's power rule is written against ("at least 1 dB below the
+  // beacon").  While the operator is on that transponder it is the only beacon
+  // anywhere near the span — the CW beacons are one to nine megahertz below it,
+  // which no span this application can open will reach.  So it is offered for
+  // the panadapter's level line and refused by the lock; qo100_beacon_lockable()
+  // is the split.
   switch(sel) {
-    case QO100_BEACON_SEL_UPPER: return QO100_BEACON_UPPER;
-    case QO100_BEACON_SEL_WB:    return QO100_WB_BEACON;
-    default:                     return QO100_BEACON_LOWER;
+    case QO100_BEACON_SEL_UPPER:  return QO100_BEACON_UPPER;
+    case QO100_BEACON_SEL_MIDDLE: return QO100_BEACON_MIDDLE;
+    case QO100_BEACON_SEL_WB:     return QO100_WB_BEACON;
+    default:                      return QO100_BEACON_LOWER;
   }
 }
 
+// A bare carrier the peak search can find: the two CW beacons, and only those.
 gboolean qo100_beacon_has_carrier(int sel) {
-  return sel!=QO100_BEACON_SEL_WB;
+  return sel==QO100_BEACON_SEL_LOWER || sel==QO100_BEACON_SEL_UPPER;
+}
+
+// ...a suppressed one a squaring loop can recover: the middle beacon.
+gboolean qo100_beacon_is_bpsk(int sel) {
+  return sel==QO100_BEACON_SEL_MIDDLE;
+}
+
+// ...and either of those is something the lock can be run against.
+gboolean qo100_beacon_lockable(int sel) {
+  return qo100_beacon_has_carrier(sel) || qo100_beacon_is_bpsk(sel);
 }
 
 // The line the LOOP measures, as against the line the dial is trued to.  A
@@ -574,6 +586,14 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // band->errorLO. So the readings are collected and the MEDIAN of them answers,
 // with the spread quoted beside it: a number nobody can check is worth less
 // than a number that says how much it wobbled.
+// Acquisition for the BPSK source is DELIBERATELY narrow, where the CW one
+// sweeps half a megahertz. Squaring doubles every offset, so a +/-500 kHz hunt
+// would be a megahertz of squared spectrum in a span that has not got one -- and
+// squaring is not selective: every CW carrier on the transponder makes a line of
+// its own at twice ITS offset, so a wide window there is a field of candidates
+// that all look like beacons. A converter further out than this is brought in
+// with a CW beacon first, and the status says so rather than searching for ever.
+#define QO100_BPSK_ACQ_HZ  25000.0
 #define QO100_MID_MED_N          5   // readings behind a verdict (one per 5 s)
 #define QO100_MID_MIN_N          3   // ...and the fewest that may speak at all
 // Agreement is counted in MEASUREMENTS now, and each already integrates a second
@@ -657,6 +677,10 @@ static long long track_beacon;
 static double   bre[QO100_FFT_N];
 static double   bim[QO100_FFT_N];
 static double   bpow[QO100_FFT_N];   // |X|^2 summed over QO100_AVG_MS of stream
+static double   bsqr[QO100_FFT_N];   // ...and of z^2, for the BPSK source
+static double   bsq_re[QO100_FFT_N]; // ...whose own working buffers these are,
+static double   bsq_im[QO100_FFT_N]; // since spectrum_add consumes what it is given
+static gboolean track_bpsk;          // the selected beacon is the BPSK one
 static double   b_avg_samples;       // ...how much stream is in it
 static int      bacc;
 
@@ -1017,7 +1041,93 @@ static gboolean middle_beacon_centre(const double *pow_acc, int fs,
 // inverted -- which is not a subtlety, it is every frequency this radio shows
 // being 400 Hz out, self-consistently, with the beacon lock reporting +/-2 Hz
 // throughout.
+// The BPSK beacon has no line to find, so one is MADE. A 400 bd BPSK signal is
+// one carrier multiplied by +/-1, and (+/-1)^2 is 1 -- so z^2 is that carrier at
+// TWICE its baseband offset with the modulation gone entirely. This is the
+// standard suppressed-carrier recovery and it is what the rest of the QO-100
+// world tracks; the point of using it here is that a BPSK spectrum carries no
+// tone convention, so a dial trued to it cannot be one 400 Hz shift out however
+// the argument about the CW beacons' two tones ends.
+//
+// The expectation is kept UNWRAPPED (`expect2` may exceed the span) and only the
+// comparison with a bin is wrapped, which is what removes the ambiguity that
+// squaring would otherwise introduce: a line at 2f and one at 2f+fs are the same
+// bin, and halving them gives answers fs/2 apart. Working relative to the
+// expectation, the answer is expect2 + (small), so halving it lands where it
+// should. It also HALVES the frequency error: a hertz of error in the squared
+// line is half a hertz in the carrier.
+static gboolean line_near(const double *pow_acc, int fs, double expect2,
+                          double half2, double *off2, double *snr_out) {
+  const int N=QO100_FFT_N;
+  const double bin_hz=(double)fs/(double)N;
+  if(half2>0.45*(double)fs) half2=0.45*(double)fs;   // never wrap onto itself
+  double sum=0.0, peak=-1.0, peak_d=0.0;
+  int pk=-1, count=0;
+  for(int m=0;m<N;m++) {
+    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
+    if(fabs(sf)<QO100_DC_GUARD_HZ) continue;      // z^2 puts any DC offset here
+    double d=sf-expect2;
+    while(d> 0.5*(double)fs) d-=(double)fs;       // the squared line wraps; the
+    while(d<-0.5*(double)fs) d+=(double)fs;       // expectation does not
+    if(fabs(d)>half2) continue;
+    double p=pow_acc[m];
+    sum+=p; count++;
+    if(p>peak) { peak=p; pk=m; peak_d=d; }
+  }
+  if(pk<1 || pk>=N-1 || count<8) return FALSE;
+  double mean=sum/(double)count;
+  if(mean<=0.0) return FALSE;
+  if(snr_out!=NULL) *snr_out=peak/mean;
+  if(peak/mean<QO100_MIN_SNR) return FALSE;
+
+  // Parabolic interpolation on the three bins around the peak, in dB-less power
+  // exactly as find_carrier does it.
+  double y1=pow_acc[(pk-1+N)%N], y2=pow_acc[pk], y3=pow_acc[(pk+1)%N];
+  double den=y1-2.0*y2+y3;
+  double corr=(den!=0.0)?0.5*(y1-y3)/den:0.0;
+  if(corr>1.0) corr=1.0;
+  if(corr<-1.0) corr=-1.0;
+  if(off2!=NULL) *off2=peak_d+corr*bin_hz;
+  return TRUE;
+}
+
 static double median_of(const double *v, int n);   // ...defined with the loop below
+
+// ...and the reading the other way round: locked to the BPSK beacon, which
+// carries no tone convention, where the CW beacon's line falls IS the
+// convention. The resting tone is the answer that keeps coming back -- the
+// beacon spends most of its life on it -- so the median of the readings is the
+// resting tone and a keyed second is an outlier it survives.
+static void cw_tone_verdict(double off) {
+  const double shift=QO100_FSK_SHIFT_HZ;
+  if(b_mid_n<QO100_MID_MED_N) b_mid[b_mid_n++]=off;
+  else {
+    for(int i=1;i<QO100_MID_MED_N;i++) b_mid[i-1]=b_mid[i];
+    b_mid[QO100_MID_MED_N-1]=off;
+  }
+  if(b_mid_n<QO100_MID_MIN_N) {
+    snprintf(b_check,sizeof(b_check),
+             "Lower CW beacon %+.0f Hz from its published figure, measuring "
+             "(%d of %d)",off,b_mid_n,QO100_MID_MIN_N);
+    return;
+  }
+  double med=median_of(b_mid,b_mid_n);
+  int k=(int)llround(med/shift);
+  if(fabs(med-(double)k*shift)>=QO100_MID_VERDICT_HZ)
+    snprintf(b_check,sizeof(b_check),
+             "Lower CW beacon %+.0f Hz from its published figure (%d readings) — "
+             "not a whole %.0f Hz shift; the dial or the LNB is adrift",
+             med,b_mid_n,shift);
+  else if(k==0)
+    snprintf(b_check,sizeof(b_check),
+             "Lower CW beacon rests %+.0f Hz from its published figure "
+             "(%d readings) — the tone model is right",med,b_mid_n);
+  else
+    snprintf(b_check,sizeof(b_check),
+             "Lower CW beacon rests %+.0f Hz from its published figure "
+             "(%d readings) — %+d shift%s: QO100_BEACON_REST_HZ is wrong by that "
+             "much",med,b_mid_n,k,(k==1||k==-1)?"":"s");
+}
 
 static void middle_beacon_verdict(double off, double width, int bins) {
   const double shift=QO100_FSK_SHIFT_HZ;
@@ -1142,6 +1252,7 @@ static gboolean apply_idle(gpointer data) {
 
 static void spectrum_clear(void) {
   memset(bpow,0,sizeof(bpow));
+  memset(bsqr,0,sizeof(bsqr));
   b_avg_samples=0.0;
 }
 
@@ -1279,6 +1390,18 @@ static void beacon_frame(RECEIVER *rx) {
   // Integrate this frame and stop here unless a full averaging window has been
   // collected: the measurement is made on a second of stream, not on 43 ms of
   // it. Everything downstream therefore runs about once a second.
+  if(track_bpsk) {
+    // z^2, before spectrum_add consumes the raw block. The plain spectrum is
+    // accumulated too: the middle beacon cannot be its own independent check,
+    // so when it is the source the CW beacon becomes one, and that is read off
+    // bpow (see the check below).
+    for(int i=0;i<QO100_FFT_N;i++) {
+      double r=bre[i], m=bim[i];
+      bsq_re[i]=r*r-m*m;
+      bsq_im[i]=2.0*r*m;
+    }
+    spectrum_add(bsq_re,bsq_im,bsqr);
+  }
   spectrum_add(bre,bim,bpow);
   b_avg_samples+=(double)QO100_FFT_N;
   if(b_avg_samples<(double)track_fs*(QO100_AVG_MS/1000.0)) return;
@@ -1306,9 +1429,22 @@ static void beacon_frame(RECEIVER *rx) {
   // asked of the same second's spectrum -- see the tone discriminator below.
   gboolean tone_other=FALSE;
   double probe=expected+b_expect+QO100_KEYED_FROM_REST_HZ;
-  if(!find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,!tracking,
-                   probe,b_locked?&tone_other:NULL,
-                   &found,&snr,&bins,&cands)) {
+  gboolean got;
+  if(track_bpsk) {
+    // The squared domain: everything doubles, including the search width and
+    // the error, and the answer comes back halved. There is no pairing and no
+    // tone question here -- that is the whole reason this source exists.
+    double off2=0.0;
+    got=line_near(bsqr,track_fs,2.0*(expected+b_expect),
+                     2.0*(tracking?QO100_TRACK_HZ:QO100_BPSK_ACQ_HZ),&off2,&snr);
+    found=expected+b_expect+0.5*off2;
+    bins=0;
+    cands=got?1:0;
+  } else
+    got=find_carrier(bpow,track_fs,lo_hz,hi_hz,expected,partner,!tracking,
+                     probe,b_locked?&tone_other:NULL,
+                     &found,&snr,&bins,&cands);
+  if(!got) {
     spectrum_clear();
     b_run=0;
     b_run_samples=0.0;
@@ -1360,11 +1496,34 @@ static void beacon_frame(RECEIVER *rx) {
                track_fs);
     return;
   }
-  // The dial's independent check, asked of the SAME second's spectrum and
-  // therefore before it is cleared. Only once the lock has settled: before
-  // that the dial is knowingly wrong and the reading would only say by how
-  // much. Every five seconds, like the summary it sits beside.
-  if(say && b_locked && b_settled) {
+  // The check RUNS BOTH WAYS, because whichever beacon the loop is locked to
+  // cannot be the one that checks it.
+  //
+  //   * locked to a CW beacon, the middle one is the arbiter: BPSK is symmetric
+  //     about its own published frequency and knows nothing of tone conventions.
+  //   * locked to the middle one, the dial needs no convention at all -- so the
+  //     CW beacon's own line becomes the MEASUREMENT of that convention, which
+  //     is the argument this whole file has had twice. Where the resting tone
+  //     sits relative to 10489.500 is then read straight off the spectrum,
+  //     against a dial that has no opinion about it.
+  //
+  // Asked of the SAME second's spectrum, therefore before it is cleared, and
+  // only once the lock has settled: before that the dial is knowingly wrong and
+  // the reading would only say by how much. Every five seconds, like the
+  // summary it sits beside.
+  if(say && b_locked && b_settled && track_bpsk) {
+    double cw=(double)(QO100_BEACON_LOWER-rx->frequency_a);
+    double off=0.0, sn=0.0;
+    if(fabs(cw)>span_half-2.0*QO100_FSK_SHIFT_HZ)
+      g_strlcpy(b_check,"Lower CW beacon outside the span — nothing to check "
+                        "the tone convention against",sizeof(b_check));
+    else if(line_near(bpow,track_fs,cw,2.5*QO100_FSK_SHIFT_HZ,&off,&sn))
+      cw_tone_verdict(off);
+    else
+      g_strlcpy(b_check,"Lower CW beacon not heard — tone convention "
+                        "unchecked",sizeof(b_check));
+    if(b_check[0]!='\0') log_info("qo100: %s\n",b_check);
+  } else if(say && b_locked && b_settled) {
     double mid=(double)(QO100_BEACON_MIDDLE-rx->frequency_a);
     double c=0.0, w=0.0;
     int nb=0;
@@ -1420,7 +1579,7 @@ static void beacon_frame(RECEIVER *rx) {
   //    does not change all session. Asking the spectrum instead is not a coin:
   //    three lines a shift apart mean the middle one has a neighbour, and a
   //    beacon has two tones, not three.
-  if(b_locked) {
+  if(b_locked && !track_bpsk) {
     b_tone_win++;
     if(tone_other) b_tone_dn++;
     else if(fabs(residual-b_expect+QO100_KEYED_FROM_REST_HZ)<QO100_FSK_TOL_HZ)
@@ -1885,11 +2044,11 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   // Refusing it in words matters more than refusing it quietly — the operator
   // has selected it for the level reference line, where it is the right answer,
   // and a lock that simply never acquired would look like a broken lock.
-  if(!qo100_beacon_has_carrier(radio->qo100_beacon_sel)) {
+  if(!qo100_beacon_lockable(radio->qo100_beacon_sel)) {
     g_mutex_lock(&bmtx);
     beacon_reset_locked();
     g_strlcpy(b_status,
-              "The WB beacon is DVB-S2 \342\200\224 no carrier to lock to; pick a CW beacon",
+              "The WB beacon is DVB-S2 \342\200\224 no carrier to lock to; pick a CW or the middle beacon",
               sizeof(b_status));
     g_mutex_unlock(&bmtx);
     return;
@@ -1900,11 +2059,14 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   // The line to MEASURE, which is not the published one: see
   // qo100_beacon_track_frequency().
   long long beacon=qo100_beacon_track_frequency(radio->qo100_beacon_sel);
-  if(rx!=track_rx || track_fs!=rx->sample_rate || track_beacon!=beacon) {
+  gboolean bpsk=qo100_beacon_is_bpsk(radio->qo100_beacon_sel);
+  if(rx!=track_rx || track_fs!=rx->sample_rate || track_beacon!=beacon ||
+     bpsk!=track_bpsk) {
     track_rx=rx;
     track_fs=rx->sample_rate;
     track_beacon=beacon;
-    beacon_reset_locked();
+    track_bpsk=bpsk;       // ...which decides what is even measured, so a change
+    beacon_reset_locked(); // of source starts the whole loop again
   }
 
   for(int k=0;k<n_frames;k++) {

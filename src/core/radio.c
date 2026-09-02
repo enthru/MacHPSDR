@@ -1779,7 +1779,10 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.qo100_beacon_lock");
   if(value!=NULL) r->qo100_beacon_lock=atoi(value);
   value=getProperty("radio.qo100_beacon_sel");
-  if(value!=NULL) r->qo100_beacon_sel=atoi(value);
+  if(value!=NULL) {                       // an index off a props file is bounded
+    gint sel=atoi(value);
+    r->qo100_beacon_sel=(sel>=0 && sel<=QO100_BEACON_SEL_MAX)?sel:0;
+  }
   value=getProperty("radio.qo100_lnb_lo");
   if(value!=NULL) r->qo100_lnb_lo=atoll(value);
   value=getProperty("radio.qo100_tx_lo");

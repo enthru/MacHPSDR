@@ -160,10 +160,17 @@ static void lock_cb(GtkWidget *w, gpointer data) {
   status_refresh();
 }
 
+// Row -> QO100_BEACON_SEL_*, since the rows are in frequency order and the
+// middle beacon's value was appended rather than inserted (it is persisted).
+static const gint beacon_rows[]={QO100_BEACON_SEL_LOWER,QO100_BEACON_SEL_MIDDLE,
+                                 QO100_BEACON_SEL_UPPER,QO100_BEACON_SEL_WB};
+
 static void beacon_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
   (void)pspec;
   RADIO *r=(RADIO *)data;
-  r->qo100_beacon_sel=(gint)gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
+  guint row=gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
+  r->qo100_beacon_sel=(row<G_N_ELEMENTS(beacon_rows))?beacon_rows[row]
+                                                     :QO100_BEACON_SEL_LOWER;
   qo100_beacon_reset();                 // re-acquire against the new beacon
   if(r->active_receiver!=NULL) r->active_receiver->qo100_ref_dbm=-1000.0;
   status_refresh();
@@ -303,17 +310,26 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   GtkWidget *b_lbl=gtk_label_new("Reference beacon:");
   gtk_widget_set_halign(b_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),b_lbl,0,row,1,1);
-  // The two CW beacons plus the wideband one. The narrow transponder's MIDDLE
-  // beacon is not offered at all: it is 400 bd BPSK and has no carrier to
-  // measure. The wideband beacon has none either, being DVB-S2, and the lock
-  // says so and refuses it — it is here for the level reference line below,
-  // where it is the right choice and the only beacon within reach of the span
-  // while the operator is on that transponder (see qo100_beacon_frequency()).
-  const char *b_opts[]={"Lower, 10489.500 MHz (CW)","Upper, 10490.000 MHz (CW)",
+  // All four beacons. The MIDDLE one is 400 bd BPSK, i.e. a suppressed carrier
+  // with no line to peak-search — the loop makes one by squaring, and it is the
+  // source that cannot be one 400 Hz shift out, since a BPSK spectrum carries no
+  // tone convention. The wideband beacon is DVB-S2 and the lock refuses it in
+  // words: it is here for the level reference line below, where it is the right
+  // choice and the only beacon within reach of the span while the operator is on
+  // that transponder (see qo100_beacon_frequency()).
+  // The rows are in FREQUENCY order and the selection value is not the row:
+  // QO100_BEACON_SEL_MIDDLE was appended (3) so an existing props file keeps
+  // meaning what it meant, and a table is cheaper than migrating everyone's
+  // settings. Same shape as radio_dialog.c's audio-backend rows.
+  const char *b_opts[]={"Lower, 10489.500 MHz (CW)",
+                        "Middle, 10489.750 MHz (BPSK \342\200\224 no tone convention)",
+                        "Upper, 10490.000 MHz (CW)",
                         "Wideband, 10491.500 MHz (DVB-S2 \342\200\224 level reference only)",NULL};
   GtkWidget *b_dd=gtk_drop_down_new_from_strings(b_opts);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(b_dd),
-                             (r->qo100_beacon_sel>=0 && r->qo100_beacon_sel<=2)?r->qo100_beacon_sel:0);
+  guint b_row=0;
+  for(guint i=0;i<G_N_ELEMENTS(beacon_rows);i++)
+    if(beacon_rows[i]==r->qo100_beacon_sel) { b_row=i; break; }
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(b_dd),b_row);
   gtk_widget_set_halign(b_dd,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),b_dd,1,row++,1,1);
   g_signal_connect(b_dd,"notify::selected",G_CALLBACK(beacon_cb),r);
