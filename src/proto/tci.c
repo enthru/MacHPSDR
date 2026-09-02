@@ -1665,6 +1665,31 @@ void tci_notify_state(RECEIVER *rx) {
 
 // --- outbound binary streams (audio thread taps in receiver.c) --------------
 
+// Clipping is a fact about the SIGNAL, not about the stream, so say it out loud
+// rather than only bounding it: the same overload is clipping the operator's
+// speaker and any recording they make, and the cure is AGC-G, not anything
+// here.  One line per 5 s window, and only while something is actually being
+// clipped.  Counters are plain statics touched from the RX audio threads (one
+// per receiver): a torn count costs a wrong percentage in a diagnostic, which
+// is not worth an atomic on the audio path.
+static void tci_audio_clip_account(guint32 clipped, guint32 total) {
+  static gint64 window_us = 0;
+  static guint64 n_clip = 0, n_tot = 0;
+  gint64 now = g_get_monotonic_time();
+  n_clip += clipped;
+  n_tot  += total;
+  if (window_us == 0) { window_us = now; return; }
+  if (now - window_us < 5000000) return;
+  if (n_clip > 0 && n_tot > 0)
+    log_info("tci: RX audio over full scale -- %.1f%% of samples clipped to +/-1.0 in the last "
+             "%.0f s. The stream is float32 normalised to 1.0 and clients convert it to 16-bit; "
+             "turn AGC-G down (the same overload clips the speaker and the recorder)\n",
+             100.0 * (double)n_clip / (double)n_tot, (double)(now - window_us) / 1e6);
+  window_us = now;
+  n_clip = 0;
+  n_tot = 0;
+}
+
 // Build the complete on-wire WS frame once (WS binary header + 64-byte TCI
 // header + interleaved float32 down-cast from `interleaved`) and broadcast to
 // every client subscribed to this rx's stream (`audio` picks audio_mask vs
@@ -1711,9 +1736,45 @@ static void tci_stream_broadcast(int data_type, int rx_index, int sample_rate, i
   st32le(th + 24, (guint32)data_type);          // data_type
   st32le(th + 28, (guint32)channels);           // channels
 
+  // TCI float32 is normalised to +/-1.0 full scale, and a client turns it
+  // straight back into 16-bit PCM.  JTDX's does it with no saturation --
+  // `dest[i] = int16_t(0x7FFF * source[i*2])` -- so a sample of 1.5 does not
+  // arrive loud, it arrives with the SIGN FLIPPED.  This receiver's demod
+  // buffer is not bounded: every other consumer clamps on its way out (the
+  // sound card and the protocol path in process_rx_buffer(), the recorder's
+  // clamp16()) and this tap alone handed it over raw.  Measured off the live
+  // radio on QO-100 at S8: peak 4.93, RMS 1.07, and 38.75 % of every block past
+  // full scale -- so a third of the samples reached the client wrapped, which
+  // turns strong carriers into broadband noise.  JTDX drew an empty band and
+  // decoded nothing while this app's own FT8 panel, fed from the same buffer,
+  // drew four solid traces.
+  //
+  // IQ is left alone: it is bounded by the ADC scaling and a clamp there would
+  // silently disguise a scaling bug rather than fix a client.
   float *fp = (float *)(th + TCI_HDR_BYTES);
-  if (fsrc != NULL) memcpy(fp, fsrc, (size_t)nfloats * sizeof(float));
-  else for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
+  if (audio) {
+    guint32 clipped = 0;
+    if (fsrc != NULL) {
+      for (guint32 i = 0; i < nfloats; i++) {
+        float v = fsrc[i];
+        if (v >  1.0f) { v =  1.0f; clipped++; }
+        else if (v < -1.0f) { v = -1.0f; clipped++; }
+        fp[i] = v;
+      }
+    } else {
+      for (guint32 i = 0; i < nfloats; i++) {
+        double v = interleaved[i];
+        if (v >  1.0) { v =  1.0; clipped++; }
+        else if (v < -1.0) { v = -1.0; clipped++; }
+        fp[i] = (float)v;
+      }
+    }
+    tci_audio_clip_account(clipped, nfloats);
+  } else if (fsrc != NULL) {
+    memcpy(fp, fsrc, (size_t)nfloats * sizeof(float));
+  } else {
+    for (guint32 i = 0; i < nfloats; i++) fp[i] = (float)interleaved[i];
+  }
 
   g_mutex_lock(&clients_mutex);
   for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
