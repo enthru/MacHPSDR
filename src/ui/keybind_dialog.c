@@ -235,6 +235,13 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
   GtkWidget *page=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
   GtkWidget *columns=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   GtkWidget *column[2];
+  /* Every frame gets the width of the widest one, so the groups are the same
+     size whatever their longest label happens to be ("Tune down one step" made
+     Tuning half again as wide as Mode).  The group is owned by the page rather
+     than unref'd here: which end of a size group holds the reference is exactly
+     the kind of thing that is right until it is not, and a page-owned object
+     dies with the page. */
+  GtkSizeGroup *frame_width=gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
   int second=column_break();
   GtkWidget *group=NULL;
   const char *current_group=NULL;
@@ -260,6 +267,7 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
     gtk_box_append(GTK_BOX(columns),column[c]);
   }
   gtk_box_append(GTK_BOX(page),columns);
+  g_object_set_data_full(G_OBJECT(page),"frame-width",frame_width,g_object_unref);
 
   for(i=0;i<keybind_action_count;i++) {
     GtkWidget *label,*button,*clear;
@@ -273,12 +281,18 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
       group=gtk_grid_new();
       sui_style_group(group);
       gtk_frame_set_child(GTK_FRAME(frame),group);
+      gtk_size_group_add_widget(frame_width,frame);
       gtk_box_append(GTK_BOX(column[col]),frame);
       group_row=0;
     }
 
+    /* The label cell takes all the slack, so with every frame the same width
+       the shortcut button and its "x" land on the same two columns in every
+       group -- one straight edge down each side of the page instead of a ragged
+       one that follows the longest action name. */
     label=gtk_label_new(keybind_actions[i].label);
     sui_label_left(label);
+    gtk_widget_set_hexpand(label,TRUE);
     gtk_grid_attach(GTK_GRID(group),label,0,group_row,1,1);
 
     button=gtk_button_new_with_label(UNBOUND_TEXT);
