@@ -136,6 +136,10 @@ static char     status_line[96] = "stopped";
 // last writer wins. RX-out is resampled 48k->this; TX-in is resampled this->48k.
 static volatile gint audio_stream_rate = TCI_AUDIO_RATE;
 
+// Union over clients of the rx indices subscribed to RX audio. Maintained by
+// client_set_audio(); read as one atomic by tci_audio_subscribed().
+static volatile gint audio_rx_mask = 0;
+
 // Store a little-endian uint32 (TCI is LE; target hosts are LE, but stay explicit).
 static inline void st32le(guint8 *p, guint32 v) {
   p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; p[2] = (v >> 16) & 0xff; p[3] = (v >> 24) & 0xff;
@@ -565,6 +569,25 @@ static void client_set_iq(TCI_CLIENT *c, int rx_index, gboolean on) {
 }
 
 // Same for the RX audio subscription, bounded for the same reason.
+// Re-push the WDSP panel gain for a receiver whose audio-subscription state just
+// changed. Subscribing forces that channel to unity (receiver_panel_gain), and
+// nothing else re-pushes the gain, so without this the change would not take
+// until the operator next touched the volume. GTK thread, hence the idle.
+static gboolean tci_repush_gain_idle(gpointer data) {
+  RECEIVER *rx = (RECEIVER *)data;
+  if (!receiver_is_live(rx) || rx->channel < 0) return G_SOURCE_REMOVE;
+  receiver_set_volume(rx);      // panel gain: unity while a client listens
+  // ...and the same three the decode selector re-pushes for the same reason:
+  // bypass_stream_dsp() has just changed answer, and nothing else pushes the
+  // Run flags it decides. Without these, NR/ANF/SNB and the squelch would keep
+  // rewriting or gating the waveform sent to a client until the operator
+  // happened to touch one of them.
+  update_noise(rx);
+  receiver_notch_sync(rx);
+  set_squelch(rx);
+  return G_SOURCE_REMOVE;
+}
+
 static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
   if (rx_index >= MAX_RECEIVERS) return;
   gint old = g_atomic_int_get(&c->audio_mask);
@@ -573,6 +596,33 @@ static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
   if (nw == old) return;
   g_atomic_int_set(&c->audio_mask, nw);
   g_atomic_int_add(&audio_sub_count, __builtin_popcount((guint)(nw ^ old)) * (on ? 1 : -1));
+
+  // Recompute the union of every client's subscriptions. It is read by
+  // tci_audio_subscribed() from the audio and GTK threads, so it is one atomic
+  // rather than a walk of the client table under a lock.
+  gint all = 0;
+  g_mutex_lock(&clients_mutex);
+  for (int i = 0; i < TCI_MAX_CLIENTS; i++)
+    if (clients[i].fd >= 0) all |= g_atomic_int_get(&clients[i].audio_mask);
+  g_mutex_unlock(&clients_mutex);
+  gint was = g_atomic_int_get(&audio_rx_mask);
+  g_atomic_int_set(&audio_rx_mask, all);
+
+  for (int idx = 0; idx < MAX_RECEIVERS; idx++) {
+    if (((was ^ all) & (1 << idx)) == 0) continue;
+    RECEIVER *rx = tci_rx_at(idx);
+    if (rx != NULL) g_idle_add(tci_repush_gain_idle, rx);
+  }
+}
+
+// TRUE when some client is streaming this receiver's audio. The stream is not a
+// speaker, so this makes the receiver hand it a full-level signal: see
+// receiver_panel_gain().
+gboolean tci_audio_subscribed(RECEIVER *rx) {
+  if (!g_atomic_int_get(&server_running) || rx == NULL) return FALSE;
+  int idx = tci_rx_index(rx);
+  if (idx < 0 || idx >= MAX_RECEIVERS) return FALSE;
+  return (g_atomic_int_get(&audio_rx_mask) & (1 << idx)) != 0;
 }
 
 // --- arbitrary-ratio audio resampler (windowed-sinc) ------------------------
@@ -1860,6 +1910,75 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
 // Phase C: demodulated RX audio (interleaved stereo doubles, `nstereo` frames at
 // `sample_rate`, natively 48 kHz). Per-rx (multi-RX). If a client asked for a
 // non-48k stream rate the block is resampled per channel first.
+// --- output limiter ---------------------------------------------------------
+//
+// The stream must be usable without the operator setting anything up for it,
+// which means the level cannot be theirs to get wrong: the receiver's audio is
+// whatever the demodulator and AGC-G produce, and on this radio that has been
+// measured at a peak of 4.93 with AGC on and pinned against the ceiling with
+// AGC off.  Clamping bounds it but leaves a square wave; asking the operator to
+// trim AF GAIN makes a network stream depend on a speaker control.  So the feed
+// carries its own gain: peak-following, attenuating fast enough that nothing
+// reaches the clamp and recovering slowly enough that a decoder's slot sees an
+// essentially steady gain (10 s release; measured at 1.1 dB across the rest of
+// a 15 s FT8 slot once settled).
+//
+// Measured against a recorded slot with the overload put back (x6, i.e. what
+// this radio produced with AGC-G where it was): clamping alone loses a decode
+// (4 of the 5 the healthy recording gives), the limiter returns all 5, holds
+// the peak at exactly the 0.500 target and clips nothing.
+//
+// It is NOT an AGC and must not become one -- no per-slot levelling, no
+// compression -- because a decoder reads the waveform.  It only stops the
+// signal leaving the format's range, and it can lift a quiet receiver by at
+// most TCI_LIM_MAX_GAIN so that switching the radio's own AGC off does not
+// leave a client with nothing.
+#define TCI_LIM_TARGET    0.50     // peak we aim the stream at (-6 dBFS)
+#define TCI_LIM_MAX_GAIN  10.0     // never lift by more than 20 dB
+#define TCI_LIM_REL_S     10.0     // rise this slowly (seconds)
+
+static double lim_gain[MAX_RECEIVERS];     // audio thread of that receiver only
+static gboolean lim_init = FALSE;
+
+// Returns the gain to END this block on; the caller ramps from the previous one
+// so a change never lands as a step.
+static double tci_limiter_step(int idx, const double *audio, int nstereo, double *from) {
+  if (!lim_init) {
+    for (int i = 0; i < MAX_RECEIVERS; i++) lim_gain[i] = 1.0;
+    lim_init = TRUE;
+  }
+  double peak = 0.0;
+  for (int i = 0; i < nstereo * 2; i++) {
+    double a = fabs(audio[i]);
+    if (a > peak) peak = a;
+  }
+  double g = lim_gain[idx];
+  double want = (peak > 1e-9) ? TCI_LIM_TARGET / peak : TCI_LIM_MAX_GAIN;
+  if (want > TCI_LIM_MAX_GAIN) want = TCI_LIM_MAX_GAIN;
+
+  // The attack has to be taken WHOLE and on this block, because the peak that
+  // demands it is inside this block: ramping into a reduction lets the front of
+  // the block through at the old gain, and it is exactly the loud one. Measured
+  // on a recorded slot with the overload put back (x6): ramping the attack over
+  // 100 ms still let the stream reach a peak of 3.17 and clip, while taking it
+  // in one step holds the peak at 0.500 with nothing clipped. A step DOWN in
+  // gain is what every limiter does and is not audible as a click; the release
+  // is the half that must stay slow, and it is ramped across the block.
+  double g1;
+  if (want < g) {
+    g1 = want;
+    *from = want;                      // flat across the block, no ramp-in
+  } else {
+    double dur = (double)nstereo / 48000.0;
+    double a = 1.0 - exp(-dur / TCI_LIM_REL_S);
+    g1 = g + (want - g) * a;
+    *from = g;
+  }
+  if (g1 < 1e-6) g1 = 1e-6;
+  lim_gain[idx] = g1;
+  return g1;
+}
+
 void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate) {
   if (!g_atomic_int_get(&server_running)) return;
   if (g_atomic_int_get(&audio_sub_count) <= 0) return;
@@ -1867,17 +1986,24 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
   int idx = tci_rx_index(rx);
   if (idx < 0 || idx >= MAX_RECEIVERS) return;
 
-  // A client is a listener, so it gets the listen gain -- which WDSP has
-  // normally applied already and has NOT when a decoder forced the panel to
-  // unity.  Without this the stream had no level control at all in that case
-  // (AF GAIN did not reach it, and with AGC off nothing did); see
-  // receiver_stream_gain().
-  const double g = receiver_stream_gain(rx);
+  // The receiver hands this tap a full-level signal (the panel gain is forced to
+  // unity while a client is subscribed, exactly as for a decoder), so AF GAIN
+  // and Mute do not reach the stream at all -- they are the speaker's. What
+  // bounds it is the limiter above.
+  double g0 = 1.0;
+  double g1 = tci_limiter_step(idx, audio, nstereo, &g0);
+  float *lin = g_new(float, (size_t)nstereo * 2);
+  for (int i = 0; i < nstereo; i++) {
+    double g = g0 + (g1 - g0) * ((double)i / (double)nstereo);
+    lin[2*i]     = (float)(audio[2*i]     * g);
+    lin[2*i + 1] = (float)(audio[2*i + 1] * g);
+  }
 
   int target = g_atomic_int_get(&audio_stream_rate);
   if (target <= 0 || target == sample_rate) {
-    tci_stream_broadcast_gain(TCI_STREAM_RX_AUDIO, idx, sample_rate, 2, audio, NULL,
-                              (guint32)nstereo * 2u, TRUE, g);
+    tci_stream_broadcast_gain(TCI_STREAM_RX_AUDIO, idx, sample_rate, 2, NULL, lin,
+                              (guint32)nstereo * 2u, TRUE, 1.0);
+    g_free(lin);
     return;
   }
 
@@ -1888,7 +2014,8 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
 
   int cap = (int)((gint64)nstereo * target / sample_rate) + 4;
   float *inL = g_new(float, nstereo), *inR = g_new(float, nstereo);
-  for (int i = 0; i < nstereo; i++) { inL[i] = (float)(audio[2*i] * g); inR[i] = (float)(audio[2*i+1] * g); }
+  for (int i = 0; i < nstereo; i++) { inL[i] = lin[2*i]; inR[i] = lin[2*i+1]; }
+  g_free(lin);
   float *outL = g_new(float, cap), *outR = g_new(float, cap);
   int nL = tci_resamp_run(L, inL, nstereo, outL, cap);
   int nR = tci_resamp_run(R, inR, nstereo, outR, cap);

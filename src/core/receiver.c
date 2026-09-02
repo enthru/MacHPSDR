@@ -713,13 +713,18 @@ static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
 // The operator's rx->nr*/anf/nb/snb/notch selections are left untouched (the VFO
 // still shows them) — only the WDSP Run flags are suppressed, so everything returns
 // the instant the mode leaves DIGU/DIGL and no decoder is running.
+//   3. A TCI client is streaming this receiver's audio — the same case as (2)
+//      with the decoder on the other end of a socket. It is the reason the
+//      predicate is receiver_audio_tapped() and not decoder_taps_audio(): a
+//      client asking for audio is asking for the signal, not for the operator's
+//      listening preferences, and NR/ANF in particular rewrite the waveform a
+//      decoder needs. (In DIGU/DIGL rule 1 already covered it.) AGC stays in —
+//      it is shared with the speaker, and taking it out here would leave the
+//      operator's own audio unregulated; a stream that must bypass AGC needs a
+//      WDSP channel of its own, which this is not.
 static inline gboolean bypass_stream_dsp(RECEIVER *rx) {
   if(rx->mode_a==DIGU || rx->mode_a==DIGL) return TRUE;
-#ifdef DECODERS
-  return decoder_taps_audio(rx);
-#else
-  return FALSE;
-#endif
+  return receiver_audio_tapped(rx);
 }
 
 void update_noise(RECEIVER *rx) {
@@ -2522,35 +2527,27 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
 // so it must decode regardless of the volume slider or mute. The listen
 // volume/mute is applied to the audible output in software in
 // process_rx_buffer() for that case. See receiver_set_volume().
-gdouble receiver_panel_gain(RECEIVER *rx) {
+// TRUE when this receiver's demodulated audio is consumed by something that is
+// not the operator's speaker: an in-tree decoder, or a TCI client streaming it.
+// Both need the signal at the level the demodulator produced, independent of
+// the listen volume and of Mute — those belong to the speaker, and the listen
+// gain is applied to the audible copy in software instead (process_rx_buffer).
+//
+// For a network client this is the difference between a stream that works out
+// of the box and one the operator has to set up: with only the decoder case
+// here, AF GAIN silently scaled what a TCI client received and Mute silenced
+// it, so a client's level depended on a knob that has nothing to do with it.
+gboolean receiver_audio_tapped(RECEIVER *rx) {
+  if(rx==NULL) return FALSE;
 #ifdef DECODERS
-  if(decoder_taps_audio(rx)) return 1.0;
+  if(decoder_taps_audio(rx)) return TRUE;
 #endif
-  return rx->mute ? 0.0 : rx->volume;
+  return tci_audio_subscribed(rx);
 }
 
-// The gain a network listener's copy of this audio still needs applied.
-//
-// rx->audio_output_buffer is WDSP's output *after* receiver_panel_gain(), so a
-// stream tapped from it normally needs nothing — except in the one case that
-// gain was forced to unity for a decoder, where the listen gain has been moved
-// into software and the buffer is running at whatever the demodulator produces.
-// A network client is a listener, not the decoder, and taking the raw buffer
-// left it with no level control at all: with a decoder running, AF GAIN did not
-// reach the TCI stream and only AGC-G did — and with AGC switched off, nothing
-// did. Measured on QO-100: AGC on gave a peak of 4.93 with 38 % of the samples
-// past full scale, AGC off pinned 46.9 % of them against the clamp. The
-// in-tree decoders don't care (they read floats with no ceiling); a client
-// converting to 16-bit gets a square wave.
-//
-// Mute is deliberately NOT applied: it means "not in my speaker", and a client
-// that asked for the stream is not the speaker.
-gdouble receiver_stream_gain(RECEIVER *rx) {
-  if(rx==NULL) return 1.0;
-#ifdef DECODERS
-  if(decoder_taps_audio(rx)) return rx->volume;
-#endif
-  return 1.0;
+gdouble receiver_panel_gain(RECEIVER *rx) {
+  if(receiver_audio_tapped(rx)) return 1.0;
+  return rx->mute ? 0.0 : rx->volume;
 }
 
 static void process_rx_buffer(RECEIVER *rx) {
@@ -2588,17 +2585,15 @@ static void process_rx_buffer(RECEIVER *rx) {
         }
       }
     }
-#ifdef DECODERS
-    // When a decoder is tapping this RX the WDSP channel runs at unity (see
-    // receiver_panel_gain) so the decoder always sees a full-level signal; apply the
-    // listen volume/mute to the audible output here instead, keeping the speaker
-    // behaviour unchanged.
-    if(decoder_taps_audio(rx)) {
+    // While a decoder or a TCI client is tapping this RX the WDSP channel runs at
+    // unity (see receiver_audio_tapped) so they always get a full-level signal;
+    // apply the listen volume/mute to the audible output here instead, keeping
+    // the speaker behaviour unchanged.
+    if(receiver_audio_tapped(rx)) {
       gdouble lg = rx->mute ? 0.0 : rx->volume;
       left_sample  *= lg;
       right_sample *= lg;
     }
-#endif
     // Clamp to full scale before the 16-bit conversion below.  FM has no audio
     // AGC and WDSP's NBFM de-emphasis boosts the low end hard (a 300 Hz tone at
     // rated deviation demodulates to ~3x full scale), so the demod output swings

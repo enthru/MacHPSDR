@@ -671,7 +671,7 @@ extern void receiver_set_volume(RECEIVER *rx);
 // software, after the SUBRX mix).  subrx.c uses it for the sub-channel, which
 // is the same receiver and must answer the same Mute.
 extern gdouble receiver_panel_gain(RECEIVER *rx);
-extern gdouble receiver_stream_gain(RECEIVER *rx);
+extern gboolean receiver_audio_tapped(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);
 extern void receiver_set_freetune(RECEIVER *rx, gboolean enable);

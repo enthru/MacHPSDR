@@ -76,6 +76,12 @@ extern void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample
 // audio_start. Called from the RX audio thread (receiver.c:process_rx_buffer).
 extern void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate);
 
+// TRUE while some client is streaming this receiver's RX audio. The receiver
+// asks this so it can hand the tap a full-level signal (receiver_panel_gain),
+// which is what keeps AF GAIN and Mute -- speaker controls -- out of a network
+// client's stream.
+extern gboolean tci_audio_subscribed(RECEIVER *rx);
+
 // Phase C — TX audio in: while a client streams TX audio and we transmit,
 // tci_tx_active() is TRUE and tci_tx_next_sample() yields the next mono mic
 // sample (0.0 on underrun). Consumed by transmitter.c:add_mic_sample(). Inert
