@@ -597,14 +597,19 @@ static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
   g_atomic_int_set(&c->audio_mask, nw);
   g_atomic_int_add(&audio_sub_count, __builtin_popcount((guint)(nw ^ old)) * (on ? 1 : -1));
 
-  // Recompute the union of every client's subscriptions. It is read by
-  // tci_audio_subscribed() from the audio and GTK threads, so it is one atomic
-  // rather than a walk of the client table under a lock.
+  // Recompute the union of every client's subscriptions, WITHOUT taking
+  // clients_mutex: clients_remove() calls this function while holding it, and
+  // GMutex is not recursive -- taking it again deadlocks that thread with the
+  // lock held, which then stops the accept thread, every broadcast and the GTK
+  // thread behind it. (Measured the hard way: one client disconnecting froze
+  // the whole application, so the next connection could not be answered.)
+  //
+  // No lock is needed. Every slot's audio_mask is an atomic, and a departing
+  // client's mask is cleared here before its fd is closed, so a slot that is
+  // being torn down contributes 0 whether or not we see the fd change.
   gint all = 0;
-  g_mutex_lock(&clients_mutex);
   for (int i = 0; i < TCI_MAX_CLIENTS; i++)
-    if (clients[i].fd >= 0) all |= g_atomic_int_get(&clients[i].audio_mask);
-  g_mutex_unlock(&clients_mutex);
+    all |= g_atomic_int_get(&clients[i].audio_mask);
   gint was = g_atomic_int_get(&audio_rx_mask);
   g_atomic_int_set(&audio_rx_mask, all);
 
