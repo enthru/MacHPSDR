@@ -183,23 +183,6 @@ void radio_refresh_skin(RADIO *r) {
   }
 }
 
-
-// GTK4: GtkGestureClick "pressed" handler (button read from the gesture).
-void radio_pressed_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
-  log_info("%s\n",__FUNCTION__);
-  guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
-  switch(button) {
-    case 1: // left button
-      break;
-    case 3: // right button
-      if(radio->dialog==NULL) {
-        //radio->dialog=create_radio_dialog(radio);
-        radio->dialog=create_configure_dialog(radio,0);
-      }
-      break;
-  }
-}
-
 /* Called on a region change from the dialog AND at startup, once from
    radio_restore_state (before the band stacks are read, so 60 m lands in the
    right table) and once from create_radio.  It must therefore be idempotent:

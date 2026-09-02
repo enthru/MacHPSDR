@@ -1072,18 +1072,6 @@ static gboolean receiver_click_leaked_from_dialog(void) {
 }
 #endif
 
-// Right-click action of the panadapter/waterfall: Configure, focused on this
-// RX's page (by name -- page merges no longer shift the integer index this used
-// to compute from rx_base).  Reached from the press in every mode but freetune,
-// where it waits for a release that did not drag the span.
-static void receiver_open_configure(RECEIVER *rx) {
-  if(radio->dialog!=NULL) return;
-  char page[16];
-  snprintf(page,sizeof(page),"RX-%d",rx->channel);
-  configure_dialog_open(radio,page);
-  update_receiver_dialog(rx);
-}
-
 void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, double ey, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
 #ifdef __APPLE__
@@ -1163,9 +1151,8 @@ void receiver_pressed_cb(GtkGestureClick *gesture, int n_press, double ex, doubl
       // (there it moves the cursor inside the frozen span instead).  The same
       // gesture in every mode: the operator does not switch pointer habits with
       // freetune, and outside it the drag is simply another way of doing what a
-      // left drag does.  The Configure dialog is not lost -- it opens on a right
-      // click that did not move the span, i.e. on the release instead of the
-      // press (receiver_released_cb).
+      // left drag does.  A right click that does NOT move the span does nothing
+      // -- it no longer opens Configure.
       rx->span_pressed=TRUE;
       rx->span_moved=FALSE;
       rx->span_last_x=(int)ex;
@@ -1604,9 +1591,36 @@ static gboolean key_is_q(guint keyval, guint keycode) {
   return found;
 }
 
+/* GTK4 hands a key press to the FOCUSED widget before it reaches a controller
+   sitting on the window in the bubble phase, and a focused GtkButton activates
+   on Space -- so one click anywhere in the bottom bar was enough to take the
+   space bar away from this handler for the rest of the session: it re-pressed
+   whichever button was clicked last, which for the Configure button meant that
+   binding Space to a shortcut opened the settings window instead of running the
+   action.  Every single-key shortcut had the same fate, not just Space.  The
+   controller therefore runs in the CAPTURE phase (main.c), ahead of the focus
+   chain -- and this test is what keeps that from swallowing typed text: while
+   the focus is in an editable field the handler declines the key at once and
+   lets it travel on to the field.  The main window really does contain text
+   fields (the FT8/CW/ACARS/HFDL panels ride in the second-RX slot), so this is
+   not a theoretical case. */
+static gboolean key_goes_to_text_field(GtkEventControllerKey *controller) {
+  GtkWidget *w=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+  GtkRoot *root=(w!=NULL)?gtk_widget_get_root(w):NULL;
+  GtkWidget *focus=(root!=NULL)?gtk_root_get_focus(root):NULL;
+  if(focus==NULL) return FALSE;
+  // A focused GtkEntry/GtkSpinButton/GtkSearchEntry delegates to its inner
+  // GtkText, which is the widget that actually holds the focus and is itself a
+  // GtkEditable.
+  if(GTK_IS_EDITABLE(focus))  return gtk_editable_get_editable(GTK_EDITABLE(focus));
+  if(GTK_IS_TEXT_VIEW(focus)) return gtk_text_view_get_editable(GTK_TEXT_VIEW(focus));
+  return FALSE;
+}
+
 // GTK4: GtkEventControllerKey "key-pressed" handler (returns TRUE if handled).
 gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   log_debug("Pressed: %s\n", gdk_keyval_name(keyval));
+  if(key_goes_to_text_field(controller)) return FALSE;
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
   // key_is_q() matches the physical Q key on any keyboard layout (e.g. Cmd-й on
@@ -1656,9 +1670,15 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
 // GTK4: GtkEventControllerKey "key-released" handler (void).
 void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   log_debug("Released: %s\n", gdk_keyval_name(keyval));
-  // Ends a hold-to-talk shortcut. It runs whatever else this key does, because
-  // a release that is skipped strands the transmitter keyed.
+  // Ends a hold-to-talk shortcut. It runs whatever else this key does -- and
+  // whatever has the focus -- because a release that is skipped strands the
+  // transmitter keyed, and only a press this handler accepted can have marked a
+  // shortcut held in the first place.
   keybind_key_released(keyval,keycode,state);
+  // The fixed keys below are the other half of a press that never happened when
+  // the operator is typing (see key_goes_to_text_field): a space typed into a
+  // text field must not take MOX down from under the MOX button.
+  if(key_goes_to_text_field(controller)) return;
   switch(keyval) {
     case GDK_KEY_space:
       // ...unless the operator has given the space bar a shortcut of its own:
@@ -1694,14 +1714,12 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
   int x=(int)ex;
   int moved=x-rx->last_x;
   if(button==3) {
-    // Freetune right-drag (see receiver_pressed_cb): a press that never moved
-    // the span is an ordinary right click and opens Configure here instead.
-    if(rx->span_pressed) {
-      gboolean dragged=rx->span_moved;
-      rx->span_pressed=FALSE;
-      rx->span_moved=FALSE;
-      if(!dragged) receiver_open_configure(rx);
-    }
+    // Ends a right-drag of the span (see receiver_pressed_cb). A right click
+    // that did not drag does nothing at all: it used to open Configure, which
+    // is a window landing over the band on a gesture the operator makes to move
+    // the span, and the Configure button is two clicks away.
+    rx->span_pressed=FALSE;
+    rx->span_moved=FALSE;
     return;
   }
   if(button==1) {

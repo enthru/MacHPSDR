@@ -766,6 +766,12 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   // GTK4: key events come from a controller attached to the window, not from
   // "key-press-event"/"key-release-event" signals (removed).
   GtkEventController *keys=gtk_event_controller_key_new();
+  // CAPTURE, not the default bubble phase: bubbling puts the FOCUSED widget
+  // first, and a focused GtkButton eats Space (it activates on it), so after one
+  // click on a bottom-bar button the space bar pressed that button again instead
+  // of reaching the shortcuts. receiver_key_pressed() declines the key while a
+  // text field has the focus, which is what keeps typing working from here.
+  gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
   g_signal_connect(keys, "key-pressed",  G_CALLBACK(receiver_key_pressed),  NULL);
   g_signal_connect(keys, "key-released", G_CALLBACK(receiver_key_released), NULL);
   gtk_widget_add_controller(main_window, keys);
