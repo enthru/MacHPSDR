@@ -29,7 +29,8 @@
 #define GRP_MODE     "Mode"
 #define GRP_TUNING   "Tuning"
 #define GRP_VFO      "VFO"
-#define GRP_DSP      "Audio / DSP"
+#define GRP_AUDIO    "Audio"
+#define GRP_DSP      "DSP"
 #define GRP_MODULATION "Modulation"
 
 /* The `id` is what lands in the props file, so it is never derived from the
@@ -68,7 +69,18 @@ const KEYBIND_ACTION keybind_actions[] = {
   { "xit",         "XIT on/off",           GRP_VFO, NULL, KB_XIT,       FALSE },
   { "xit_clear",   "XIT clear",            GRP_VFO, NULL, KB_XIT_CLEAR, FALSE },
 
-  { "mute",        "Mute",                 GRP_DSP, NULL, KB_MUTE, FALSE },
+  /* The gain rows move by ONE NOTCH of the control they mirror -- the same
+     0.01 of AF/squelch and 1 dB of AGC-G a scroll wheel over the VFO row gives
+     -- so a held key with the keyboard's own repeat behaves like a wheel and a
+     single press is the smallest step the operator can already make by hand. */
+  { "mute",         "Mute",             GRP_AUDIO, "Mute this receiver's audio", KB_MUTE, FALSE },
+  { "volume_up",    "Volume +",         GRP_AUDIO, "AF gain, one step (hold to run it up)", KB_VOLUME_UP,   FALSE },
+  { "volume_down",  "Volume -",         GRP_AUDIO, "AF gain, one step down", KB_VOLUME_DOWN, FALSE },
+  { "agc_gain_up",  "AGC gain +",       GRP_AUDIO, "AGC-G, 1 dB", KB_AGC_GAIN_UP,   FALSE },
+  { "agc_gain_down","AGC gain -",       GRP_AUDIO, "AGC-G, 1 dB down", KB_AGC_GAIN_DOWN, FALSE },
+  { "squelch_up",   "Squelch +",        GRP_AUDIO, "Squelch threshold up one step (a threshold above zero IS squelch on)", KB_SQUELCH_UP,   FALSE },
+  { "squelch_down", "Squelch -",        GRP_AUDIO, "Squelch threshold down one step; zero is squelch off", KB_SQUELCH_DOWN, FALSE },
+
   { "agc",         "AGC speed",            GRP_DSP, "Cycle off/long/slow/med/fast", KB_AGC,  FALSE },
   { "nb",          "Noise blanker",        GRP_DSP, "Cycle off/NB/NB2", KB_NB,   FALSE },
   { "nr",          "Noise reduction",      GRP_DSP, "Cycle off/NR/NR2/NR3/NR4", KB_NR,   FALSE },

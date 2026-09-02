@@ -74,8 +74,15 @@ enum {
   KB_RIT_CLEAR,
   KB_XIT,
   KB_XIT_CLEAR,
-  /* Audio / DSP */
+  /* Audio */
   KB_MUTE,
+  KB_VOLUME_UP,
+  KB_VOLUME_DOWN,
+  KB_AGC_GAIN_UP,
+  KB_AGC_GAIN_DOWN,
+  KB_SQUELCH_UP,
+  KB_SQUELCH_DOWN,
+  /* DSP */
   KB_AGC,
   KB_NB,
   KB_NR,

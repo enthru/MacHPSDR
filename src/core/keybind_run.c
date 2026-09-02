@@ -64,6 +64,36 @@ static void kb_pan(RECEIVER *rx, int delta) {
   rx->pan=p;
 }
 
+static void kb_volume(RECEIVER *rx, double delta) {
+  rx->volume+=delta;
+  if(rx->volume>1.0) rx->volume=1.0;
+  if(rx->volume<0.0) rx->volume=0.0;
+  receiver_set_volume(rx);
+  update_vfo(rx);
+}
+
+/* AGC-G runs -20..120 dB, the range the VFO row's bar is drawn over. */
+static void kb_agc_gain(RECEIVER *rx, double delta) {
+  rx->agc_gain+=delta;
+  if(rx->agc_gain>120.0) rx->agc_gain=120.0;
+  if(rx->agc_gain<-20.0) rx->agc_gain=-20.0;
+  receiver_set_agc_gain(rx);
+  update_vfo(rx);
+}
+
+/* There is no separate squelch on/off anywhere in this application: set_squelch()
+   derives `squelch_enable` from the threshold being above zero, so running the
+   level down to nothing IS switching it off, and a shortcut that flipped a flag
+   of its own would be the second implementation this table refuses.  It is also
+   the mode-aware choke point that remembers the level per mode. */
+static void kb_squelch(RECEIVER *rx, double delta) {
+  rx->squelch+=delta;
+  if(rx->squelch>1.0) rx->squelch=1.0;
+  if(rx->squelch<0.0) rx->squelch=0.0;
+  set_squelch(rx);
+  update_vfo(rx);
+}
+
 /* The partner of each sideband pair; anything else has no other sideband and
    is left alone rather than being turned into an unrelated mode. */
 static int kb_other_sideband(int mode) {
@@ -203,6 +233,16 @@ void keybind_run(int action, gboolean pressed) {
       receiver_set_volume(rx);
       update_vfo(rx);
       break;
+    /* The three gain rows step by exactly one notch of the VFO-row control they
+       mirror (vfo.c's scroll handlers) and push with that control's own setter;
+       update_vfo() then redraws the level bar, so the shortcut and the pointer
+       cannot disagree about where the gain is. */
+    case KB_VOLUME_UP:      kb_volume(rx,+0.01);     break;
+    case KB_VOLUME_DOWN:    kb_volume(rx,-0.01);     break;
+    case KB_AGC_GAIN_UP:    kb_agc_gain(rx,+1.0);    break;
+    case KB_AGC_GAIN_DOWN:  kb_agc_gain(rx,-1.0);    break;
+    case KB_SQUELCH_UP:     kb_squelch(rx,+0.01);    break;
+    case KB_SQUELCH_DOWN:   kb_squelch(rx,-0.01);    break;
     case KB_AGC:
       rx->agc=(rx->agc>=AGC_FAST)?AGC_OFF:rx->agc+1;
       if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_agc[rx->mode_a]=rx->agc;
