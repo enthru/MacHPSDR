@@ -185,6 +185,14 @@ int main(int argc, char **argv) {
   // asserted is that the 20 dB is gone, not which one ends up on top.
   check("AGC fast: the two are levelled", fabs(on) < 4.0, "%.1f dB apart", on);
 
+  // Close the channel this harness opened. Not tidiness: under LeakSanitizer an
+  // open channel IS a leak, and everything the RXA chain allocated is still
+  // reachable from it -- which is how this started failing on Linux CI the
+  // moment NR3 began holding a RNNoise state per channel (25ceb52), for 672
+  // bytes out of rnnoise_init. nr_offline, the other harness that opens a
+  // channel, has always closed it.
+  CloseChannel(CH);
+
   printf("\n%s\n", failures ? "FAILED" : "all cases passed");
   return failures ? 1 : 0;
 }
