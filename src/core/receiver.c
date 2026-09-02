@@ -639,6 +639,7 @@ log_info("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate
 
   SetInputBuffsize(rx->channel,rx->dsp_in_block);
   SetDSPBuffsize(rx->channel,rx->dsp_size);
+  receiver_pretap_alloc(rx);      // dsp_size just moved; the tap ring is sized from it
 
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
@@ -935,6 +936,11 @@ void receiver_destroy(RECEIVER *rx) {
   destroy_anbEXT(rx->channel);
   destroy_nobEXT(rx->channel);
   CloseChannel(rx->channel);
+  // The pre-AGC tap's ring belongs to this receiver and WDSP held a pointer to
+  // it; the channel is closed now, so nothing can be inside xrxa() with it.
+  g_free(rx->pretap_ring);  rx->pretap_ring=NULL;
+  g_free(rx->pretap_out);   rx->pretap_out=NULL;
+  rx->pretap_cap=0;
 
   // 6. The widget tree.  Everything visual hangs off rx->table (see
   //    create_visual), including the waterfall's GpuImage and its pixbuf, so
@@ -2550,6 +2556,79 @@ gdouble receiver_panel_gain(RECEIVER *rx) {
   return rx->mute ? 0.0 : rx->volume;
 }
 
+// (Re)allocate this channel's pre-AGC tap and hand it to WDSP. Called wherever
+// the DSP block size is decided, because dsp_size MOVES with the span (the same
+// rule that governs SetDSPBuffsize) and the ring is measured in DSP passes.
+//
+// Ordering: the tap is cleared in WDSP BEFORE the old ring is freed, and both
+// call sites hold delete_rx_mutex, which the DSP thread also holds around a
+// block -- so nothing can be inside xrxa() with the pointer being freed.
+void receiver_pretap_alloc(RECEIVER *rx) {
+  if(rx==NULL || rx->channel<0) return;
+  int cap=rx->dsp_size*4;                 // a few DSP passes of slack
+  if(cap<4096) cap=4096;
+  SetRXAPreAgcTap(rx->channel,NULL,0);
+  g_free(rx->pretap_ring);
+  g_free(rx->pretap_out);
+  rx->pretap_ring=g_new0(gdouble,2*(size_t)cap);
+  rx->pretap_out =g_new0(gdouble,2*(size_t)cap);
+  rx->pretap_cap =cap;
+  rx->pretap_r   =0;
+  SetRXAPreAgcTap(rx->channel,rx->pretap_ring,cap);
+}
+
+// Hand one block of this receiver's audio to any TCI client.
+//
+// Preferring the pre-AGC tap is the whole point of it: a client asked for the
+// signal, and the AGC is the operator's listening choice -- it is shared with
+// the speaker, so it cannot simply be switched off, and with it in the path a
+// strong station rides the gain down over every weak one in the same slot,
+// which is exactly what a decoder cannot undo. NR/ANF/SNB/NB and the squelch
+// are already held off for a subscriber (bypass_stream_dsp), so what a client
+// now receives is demodulation and the passband filter and nothing else.
+//
+// The channel's own output is still the fallback: the tap is at the DSP rate,
+// and that is 48 kHz for every mode but WFM, where set_mode raises it.
+static void rx_tci_audio_publish(RECEIVER *rx) {
+  // MACHPSDR_TCI_PRETAP=0 sends the channel's own output instead, i.e. what a
+  // client got before the tap existed. One variable at a time when an operator
+  // reports that a stream sounds wrong -- the same reason MACHPSDR_DSP_FEED
+  // and MACHPSDR_FRONTEND exist.
+  static int pretap_off=-1;
+  if(pretap_off<0) {
+    const char *e=g_getenv("MACHPSDR_TCI_PRETAP");
+    pretap_off=(e!=NULL && (*e=='0' || *e=='n' || *e=='N'))?1:0;
+    if(pretap_off) log_info("rx_tci_audio_publish: MACHPSDR_TCI_PRETAP=0: the TCI stream comes off the channel output, AGC included\n");
+  }
+  if(!pretap_off && rx->pretap_ring!=NULL && rx->dsp_rate==48000 && tci_audio_subscribed(rx)) {
+    long w=GetRXAPreAgcTapPos(rx->channel);
+    long avail=w-rx->pretap_r;
+    if(avail<=0) return;
+    if(avail>rx->pretap_cap) {            // reader fell behind: keep the newest
+      rx->pretap_r=w-rx->pretap_cap;
+      avail=rx->pretap_cap;
+    }
+    while(avail>0) {
+      int idx=(int)(rx->pretap_r%rx->pretap_cap);
+      int n=rx->pretap_cap-idx;
+      if(n>avail) n=(int)avail;
+      // I carries the audio; Q is its analytic partner, not a second channel,
+      // so both output channels get I rather than one ear getting a 90-degree
+      // copy of the other.
+      for(int i=0;i<n;i++) {
+        gdouble v=rx->pretap_ring[2*(idx+i)];
+        rx->pretap_out[2*i]=v;
+        rx->pretap_out[2*i+1]=v;
+      }
+      tci_audio_feed(rx,rx->pretap_out,n,48000);
+      rx->pretap_r+=n;
+      avail-=n;
+    }
+    return;
+  }
+  tci_audio_feed(rx,rx->audio_output_buffer,rx->output_samples,48000);
+}
+
 static void process_rx_buffer(RECEIVER *rx) {
   gdouble left_sample,right_sample;
   short left_audio_sample, right_audio_sample;
@@ -2645,9 +2724,10 @@ static void process_rx_buffer(RECEIVER *rx) {
 
   // Tap the clean demodulated audio (pre listen-volume) for recording.
   recorder_audio(rx, rx->audio_output_buffer, rx->output_samples);
-  // TCI (Phase C): stream the same 48 kHz demod audio to any audio_start client.
-  // No-op with no audio subscribers (single atomic read).
-  tci_audio_feed(rx, rx->audio_output_buffer, rx->output_samples, 48000);
+  // TCI (Phase C): stream this receiver's audio to any audio_start client --
+  // from the pre-AGC tap when there is one. No-op with no subscribers (single
+  // atomic read inside).
+  rx_tci_audio_publish(rx);
 
 #ifdef FT8
   // Decoder tap: feed the active receiver's demodulated audio to the selected
@@ -3635,6 +3715,10 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
 
   rx->sample_rate=sample_rate;
   rx->dsp_rate=48000;
+
+  // Pre-AGC tap for the TCI stream (see rx_tci_audio_publish). Allocated here
+  // and re-allocated by receiver_change_sample_rate, since dsp_size moves.
+  receiver_pretap_alloc(rx);
   rx->output_rate=48000;
 
   switch(radio->discovered->protocol) {

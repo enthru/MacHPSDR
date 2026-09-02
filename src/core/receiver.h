@@ -117,6 +117,16 @@ typedef struct _receiver {
 
   guint32 audio_sequence;
   gdouble *audio_output_buffer;
+  // Pre-AGC tap of this channel (wdsp/RXA.c). A network client is handed the
+  // signal from here rather than the channel's output, so the AGC -- which is
+  // the operator's listening choice, shared with the speaker -- is not in what
+  // a decoder on the other end receives. Ring written by WDSP on the DSP
+  // thread, read by process_rx_buffer on the same thread; pretap_out is the
+  // interleaved stereo block handed to the stream.
+  gdouble *pretap_ring;
+  gdouble *pretap_out;
+  int      pretap_cap;      // complex samples
+  long     pretap_r;        // this reader's position in the ring
   gint audio_buffer_size;
   guchar *audio_buffer;
   gfloat *pixel_samples;
@@ -672,6 +682,7 @@ extern void receiver_set_volume(RECEIVER *rx);
 // is the same receiver and must answer the same Mute.
 extern gdouble receiver_panel_gain(RECEIVER *rx);
 extern gboolean receiver_audio_tapped(RECEIVER *rx);
+extern void receiver_pretap_alloc(RECEIVER *rx);
 extern void receiver_set_agc_gain(RECEIVER *rx);
 extern void receiver_set_ctun(RECEIVER *rx);
 extern void receiver_set_freetune(RECEIVER *rx, gboolean enable);

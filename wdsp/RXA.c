@@ -611,6 +611,25 @@ void xrxa (int channel)
 	xrnnr (rxa[channel].rnnr.p, 0);
 	xsbnr (rxa[channel].sbnr.p, 0);
 	xbandpass (rxa[channel].bp1.p, 0);
+	// Pre-AGC tap: the signal is demodulated and filtered here, and the AGC on
+	// the next line is the first thing that would change its dynamics.  See
+	// SetRXAPreAgcTap in RXA.h.
+	if (rxa[channel].pretap != NULL && rxa[channel].pretap_cap > 0)
+	{
+		int n   = ch[channel].dsp_size;
+		int cap = rxa[channel].pretap_cap;
+		if (n > cap) n = cap;
+		{
+			int w     = (int)(rxa[channel].pretap_w % cap);
+			int first = cap - w;
+			if (first > n) first = n;
+			memcpy (rxa[channel].pretap + 2 * w, rxa[channel].midbuff, first * sizeof (complex));
+			if (n > first)
+				memcpy (rxa[channel].pretap, rxa[channel].midbuff + 2 * first,
+				        (n - first) * sizeof (complex));
+			rxa[channel].pretap_w += n;
+		}
+	}
 	xwcpagc (rxa[channel].agc.p);
 	xanf (rxa[channel].anf.p, 1);
 	xanr (rxa[channel].anr.p, 1);
@@ -626,6 +645,19 @@ void xrxa (int channel)
 	xpanel (rxa[channel].panel.p);
 	xamsq (rxa[channel].amsq.p);
 	xresample (rxa[channel].rsmpout.p);
+}
+
+void SetRXAPreAgcTap (int channel, double* ring, int cap)
+{
+	rxa[channel].pretap     = NULL;         // stop the copy before moving the size
+	rxa[channel].pretap_cap = cap;
+	rxa[channel].pretap_w   = 0;
+	rxa[channel].pretap     = ring;
+}
+
+long GetRXAPreAgcTapPos (int channel)
+{
+	return rxa[channel].pretap_w;
 }
 
 void setInputSamplerate_rxa (int channel)

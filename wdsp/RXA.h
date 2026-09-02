@@ -62,6 +62,15 @@ struct _rxa
 	double* inbuff;
 	double* outbuff;
 	double* midbuff;
+	// Pre-AGC tap.  xrxa() copies the signal into this ring at the point it has
+	// been demodulated and passband-filtered but has NOT yet been through the
+	// AGC (nor the post-AGC noise reduction), which is what a consumer that is
+	// not the operator's speaker wants: the signal, without the listening chain.
+	// NULL means untapped and no copy is made.  The ring is written by the DSP
+	// thread and read by whoever set it, using pretap_w as the sequence number.
+	double* pretap;         // ring of pretap_cap complex samples, or NULL
+	int     pretap_cap;     // capacity in complex samples
+	long    pretap_w;       // total complex samples ever written (monotonic)
 	int mode;
 	double meter[RXA_METERTYPE_LAST];
 	CRITICAL_SECTION* pmtupdate[RXA_METERTYPE_LAST];
@@ -207,5 +216,15 @@ extern void RXAbp1Set (int channel);
 extern void RXAbpsnbaCheck (int channel, int mode, int notch_run);
 
 extern void RXAbpsnbaSet (int channel);
+
+// Pre-AGC tap.  `ring` holds `cap` complex samples and must stay allocated until
+// the channel is closed or the tap is cleared with a NULL ring; clearing is
+// enough to stop the copy, but the memory may only be freed once nothing can be
+// inside xrxa() with the old pointer (in practice: after CloseChannel).
+extern __declspec (dllexport) void SetRXAPreAgcTap (int channel, double* ring, int cap);
+
+// Total complex samples ever written to that ring.  A reader keeps its own read
+// position and takes the difference; more than `cap` behind means it lost data.
+extern __declspec (dllexport) long GetRXAPreAgcTapPos (int channel);
 
 #endif

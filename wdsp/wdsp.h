@@ -357,6 +357,14 @@ extern void destroy_resampleFV (void* ptr);
 extern void SetRXAPanelRun (int channel, int run);
 extern void SetRXAPanelSelect (int channel, int select);
 extern void SetRXAPanelGain1 (int channel, double gain);
+
+// Pre-AGC tap (wdsp/RXA.c): `ring` receives the signal as it stands after
+// demodulation and the passband filter, before the AGC and everything after it.
+// `cap` is in complex samples; GetRXAPreAgcTapPos returns the monotonic count
+// ever written, so a reader keeps its own position and takes the difference.
+// Pass a NULL ring to stop the copy; free the memory only after CloseChannel.
+extern void SetRXAPreAgcTap (int channel, double *ring, int cap);
+extern long GetRXAPreAgcTapPos (int channel);
 extern void SetRXAPanelGain2 (int channel, double gainI, double gainQ);
 extern void SetRXAPanelPan (int channel, double pan);
 extern void SetRXAPanelCopy (int channel, int copy);
