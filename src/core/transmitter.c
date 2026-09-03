@@ -527,6 +527,8 @@ void transmitter_save_state(TRANSMITTER *tx) {
   setPropertyDouble(name,tx->drive);
   sprintf(name,"transmitter[%d].tune_percent",tx->channel);
   setPropertyDouble(name,tx->tune_percent);
+  sprintf(name,"transmitter[%d].dac_backoff_db",tx->channel);
+  setPropertyDouble(name,tx->dac_backoff_db);
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   sprintf(value,"%d",tx->tune_use_drive);
   setProperty(name,value);
@@ -688,6 +690,17 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].tune_percent",tx->channel);
   value=getProperty(name);
   if(value) tx->tune_percent=propToDouble(value);
+  sprintf(name,"transmitter[%d].dac_backoff_db",tx->channel);
+  value=getProperty(name);
+  /* Bounded like anything else out of a props file: this one scales every
+     sample that reaches the DAC, and a positive value would drive it past
+     full scale rather than backing it off. */
+  if(value) {
+    double b=propToDouble(value);
+    if(!(b<=0.0)) b=0.0;          /* NaN-safe: every comparison with NaN is false */
+    if(b<TX_DAC_BACKOFF_MIN_DB) b=TX_DAC_BACKOFF_MIN_DB;
+    tx->dac_backoff_db=b;
+  }
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   value=getProperty(name);
   if(value) tx->tune_use_drive=atoi(value);
@@ -1187,6 +1200,16 @@ int transmitter_get_mode(TRANSMITTER *tx) {
   return tx_mode;
 }
 
+/* Where the transmitter goes: the ONE copy of this sum.
+   It was written out three times -- here for protocol 1, inline in
+   protocol2.c's high-priority builder, and again in
+   soapy_protocol_set_tx_frequency() -- and all three asked `rx->ctun` and none
+   of them asked `rx->freetune`.  Freetune is ctun that may also slide the span
+   centre, so the listening frequency is `ctun_frequency` in both; with the test
+   half-written the transmitter ignored the cursor and went out on the span
+   centre instead, i.e. it sat in ONE place however far the operator tuned.
+   The same shape of bug as the per-mode filter save: a list written out per
+   case, and the next case gets left off it. */
 long long transmitter_get_frequency(TRANSMITTER *tx) {
   long long f = 0;
   RECEIVER *rx=radio->transmitter->rx;
@@ -1194,7 +1217,7 @@ long long transmitter_get_frequency(TRANSMITTER *tx) {
     if(rx->split) {
       f=rx->frequency_b-rx->lo_b+rx->error_b+radio_ppm_correction(rx->frequency_b-rx->lo_b);
     } else {
-      if(rx->ctun) {
+      if(rx->ctun || rx->freetune) {
         f=rx->ctun_frequency-rx->lo_a+rx->error_a+radio_ppm_correction(rx->ctun_frequency-rx->lo_a);
       } else {
         f=rx->frequency_a-rx->lo_a+rx->error_a+radio_ppm_correction(rx->frequency_a-rx->lo_a);
@@ -1903,6 +1926,16 @@ log_info("create_transmitter: channel=%d\n",channel);
       tx->iq_output_rate=(soapy_tx_dac_rate()/tx->mic_dsp_rate)*tx->mic_dsp_rate;
       tx->buffer_size=1024;
       tx->output_samples=1024*(tx->iq_output_rate/tx->mic_sample_rate);
+      // WDSP's ALC pins the modulated peak just under full scale -- measured at
+      // 0.980 on every transmission, at every Drive setting, because Drive moves
+      // the device's ANALOGUE gain and nothing here ever scaled the samples.
+      // That is the right level for a device whose DAC is the last stage before
+      // the analogue chain, and the wrong one for an AD9361, which runs its own
+      // interpolation filters after the DAC and needs room for their overshoot.
+      // Per device, for the same reason the ADC rates are: a HackRF's 8-bit DAC
+      // pays for every dB of backoff in quantisation noise and gets none.
+      tx->dac_backoff_db=0.0;
+      if(strcmp(radio->discovered->name,"plutosdr")==0) tx->dac_backoff_db=-10.0;
       break;
 #endif
   }

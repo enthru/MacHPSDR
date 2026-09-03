@@ -317,6 +317,27 @@ static void rx_push_hw_frequency(RECEIVER *rx, gboolean force) {
   }
 }
 
+// The transmitter follows the operator's cursor while the key is down, and the
+// push above cannot carry it: under ctun/freetune the sum it watches
+// (frequency_a - lo_a + error_a) does not move when the CURSOR moves, so it
+// returns early and the TX frequency keeps whatever rxtx() set at key-up.
+// Tuning mid-over therefore changed the receiver's idea of the frequency and
+// left the transmitter where it was -- on every protocol but 1, whose output
+// thread rebuilds the sum each pass.  Only while transmitting: off key the TX
+// frequency is set by rxtx() anyway, and a SoapySDR setFrequency is a device
+// round trip that has no business happening once per tuning step.
+static void tx_push_hw_frequency(RECEIVER *rx) {
+  if(radio->transmitter==NULL || radio->transmitter->rx!=rx) return;
+  if(!isTransmitting(radio)) return;
+  if(radio->discovered->protocol==PROTOCOL_2) {
+    protocol2_high_priority();
+#ifdef SOAPYSDR
+  } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    soapy_protocol_set_tx_frequency(radio->transmitter);
+#endif
+  }
+}
+
 void frequency_changed(RECEIVER *rx) {
 
     // Diversity mixer hidden rx synced to the rx which is
@@ -408,6 +429,8 @@ void frequency_changed(RECEIVER *rx) {
     rx_push_hw_frequency(rx,TRUE);
     rx->band_a=get_band_from_frequency(rx->frequency_a);
   }
+
+  tx_push_hw_frequency(rx);
 
   // An AF notch is stored as an offset from the demod centre, so its absolute
   // frequency changes with every tuning step and must be re-pushed to WDSP.

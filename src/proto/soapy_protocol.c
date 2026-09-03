@@ -250,6 +250,15 @@ static float tx_peak;
 // before they reach the driver.
 static long long tx_clipped;
 static gint64 tx_key_us;
+// Linear form of tx->dac_backoff_db, applied to every sample on its way to the
+// DAC.  Kept as a scalar the sample loop can multiply by: recomputing pow()
+// per sample at 2.3 MS/s is not a thing to do on the TX path.  Written on the
+// GTK thread (the control, and activate_tx), read by whichever thread clocks
+// the TX exchange -- a benign single-word race in the same class as the level
+// meters, since a torn read cannot happen for a float on any target here and
+// the worst case is one block at the previous level.
+static float tx_backoff_scale=1.0f;
+static double tx_backoff_db=0.0;
 static float *output_buffer;
 static int output_buffer_index;
 
@@ -1357,6 +1366,11 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
     // of the clamp so the transmission summary still exposes an overshoot.
     if(isfinite(isample) && fabsf(isample)>tx_peak) tx_peak=fabsf(isample);
     if(isfinite(qsample) && fabsf(qsample)>tx_peak) tx_peak=fabsf(qsample);
+    // Backoff first, clamp second: the clamp is the driver's missing saturation
+    // and has to see the value that will actually be converted.  tx_peak above
+    // is deliberately the level WDSP produced, so the summary still reports the
+    // modulator's own headroom rather than the backed-off copy of it.
+    if(tx_backoff_scale!=1.0f) { isample*=tx_backoff_scale; qsample*=tx_backoff_scale; }
     // The driver's conversion has no saturation.  Both full-scale endpoints
     // are safe, but an overshoot is not.  A non-finite sample is never
     // meaningful RF and must not be handed to a float-to-integer cast either.
@@ -1550,6 +1564,9 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   }
   // Make sure the hardware TX gain matches the drive slider before we key up.
   soapy_protocol_set_tx_drive(tx->drive);
+  // ...and the digital level matches the backoff setting, which the operator
+  // may have changed with the transmitter down.
+  soapy_protocol_set_tx_backoff(tx->dac_backoff_db);
   tx_written=0;
   tx_peak=0.0f;
   tx_dropped=0;
@@ -1569,8 +1586,9 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   {
     double got=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_TX,tx->dac);
     double gain=SoapySDRDevice_getGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id);
-    log_info("%s: DAC rate %.0f Hz (WDSP is producing %d), TX gain %.1f dB of %.1f..%.1f, drive %.0f%%\n",
-             __FUNCTION__,got,soapy_tx_sample_rate,gain,tx_gain_min,tx_gain_max,tx->drive);
+    log_info("%s: DAC rate %.0f Hz (WDSP is producing %d), TX gain %.1f dB of %.1f..%.1f, drive %.0f%%, "
+             "DAC backoff %.1f dB\n",
+             __FUNCTION__,got,soapy_tx_sample_rate,gain,tx_gain_min,tx_gain_max,tx->drive,tx_backoff_db);
     long long diff=(long long)fabs(got-(double)soapy_tx_sample_rate);
     if(got>0.0 && diff*10000LL>=(long long)soapy_tx_sample_rate) {
       log_error("%s: the DAC is clocked at %.0f Hz while WDSP produces %d -- the transmitted "
@@ -1609,9 +1627,9 @@ void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
     const gint64 us=g_get_monotonic_time()-tx_key_us;
     const double secs=(double)us/1.0e6;
     log_info("%s: transmitted %.2f s, %lld sample(s) to the DAC (%.0f/s), %lld refused, "
-             "%lld clipped, peak %.3f\n",
+             "%lld clipped, peak %.3f (%.3f at the DAC, backoff %.1f dB)\n",
              __FUNCTION__,secs,tx_written,secs>0.0?(double)tx_written/secs:0.0,
-             tx_dropped,tx_clipped,(double)tx_peak);
+             tx_dropped,tx_clipped,(double)tx_peak,(double)tx_peak*tx_backoff_scale,tx_backoff_db);
     if(tx_written==0) {
       log_error("%s: nothing was written to the DAC during that transmission -- the TX exchange "
                 "was never clocked (no microphone and no pump, or WDSP produced no output)\n",__FUNCTION__);
@@ -1620,6 +1638,19 @@ void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
                 "nothing (check mic gain/source, or drive if this was Tune)\n",__FUNCTION__,tx_written);
     }
   }
+}
+
+// Digital backoff: how far below what WDSP produced the samples reach the DAC.
+// This is NOT the drive slider, which moves the device's analogue gain and
+// leaves the samples alone -- both exist because they fail differently.  Too
+// much analogue gain is a nonlinear PA; too little digital backoff is a DAC and
+// the filters behind it clipping, which no amount of turning the drive down can
+// undo because the damage is already in the samples.
+void soapy_protocol_set_tx_backoff(double db) {
+  if(!(db<=0.0)) db=0.0;                                  /* NaN-safe */
+  if(db<TX_DAC_BACKOFF_MIN_DB) db=TX_DAC_BACKOFF_MIN_DB;
+  tx_backoff_db=db;
+  tx_backoff_scale=(float)pow(10.0,db/20.0);
 }
 
 // Map the 0..100 drive slider onto the hardware TX gain range.
@@ -1791,22 +1822,11 @@ void soapy_protocol_set_tx_frequency(TRANSMITTER *tx) {
   if(soapy_device!=NULL) {
     RECEIVER* rx=tx->rx;
     if(rx!=NULL) {
-      if(rx->split) {
-        f=rx->frequency_b-rx->lo_b+rx->error_b;
-        f+=(double)radio_ppm_correction(rx->frequency_b-rx->lo_b);
-      } else {
-        if(rx->ctun) {
-          f=rx->ctun_frequency-rx->lo_a+rx->error_a;
-          f+=(double)radio_ppm_correction(rx->ctun_frequency-rx->lo_a);
-        } else {
-          f=rx->frequency_a-rx->lo_a+rx->error_a;
-          f+=(double)radio_ppm_correction(rx->frequency_a-rx->lo_a);
-        }
-      }
-      if(tx->xit_enabled) {
-        f+=(double)tx->xit;
-      }
-//g_print("%s: %f\n",__FUNCTION__,f);
+      // Split/ctun/freetune + converter LO + error + ppm + XIT: one sum, one
+      // implementation (transmitter_get_frequency).  The copy that used to live
+      // here asked rx->ctun and never rx->freetune, so with freetune on, the
+      // transmitter stayed on the span centre wherever the operator tuned.
+      f=(double)transmitter_get_frequency(tx);
       rc=SoapySDRDevice_setFrequency(soapy_device,SOAPY_SDR_TX,tx->dac,f,NULL);
       if(rc!=0) {
         log_info("%s: SoapySDRDevice_setFrequency(TX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));

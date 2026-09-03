@@ -512,26 +512,12 @@ void protocol2_high_priority(void) {
       // tx
       if(radio->transmitter->rx!=NULL) {
         RECEIVER *rx=radio->transmitter->rx;
-        {   // rx is radio->transmitter->rx, already non-NULL above; bare block
-            // keeps txFrequency unconditionally assigned (was a redundant
-            // if(rx!=NULL) that left txFrequency uninitialised on the dead else)
-          if(rx->split) {
-            txFrequency=rx->frequency_b-rx->lo_b+rx->error_b;
-            txFrequency+=radio_ppm_correction(rx->frequency_b-rx->lo_b);
-          } else {
-            if(rx->ctun) {
-              txFrequency=rx->ctun_frequency-rx->lo_a+rx->error_a;
-              txFrequency+=radio_ppm_correction(rx->ctun_frequency-rx->lo_a);
-            } else {
-              txFrequency=rx->frequency_a-rx->lo_a+rx->error_a;
-              txFrequency+=radio_ppm_correction(rx->frequency_a-rx->lo_a);
-            }
-          }
-
-          if(radio->transmitter->xit_enabled) {
-            txFrequency+=radio->transmitter->xit;
-          }
-        }
+        // Split/ctun/freetune, the converter LO and its error, ppm and XIT are
+        // all one sum, and it lives in transmitter_get_frequency() -- this file
+        // used to carry its own copy, which is how freetune came to be handled
+        // in none of the three.  The CW sidetone offset below stays here: it is
+        // protocol 2's own convention, not part of "where the operator tuned".
+        txFrequency=transmitter_get_frequency(radio->transmitter);
         switch(radio->transmitter->rx->mode_a) {
           case CWU:
             txFrequency+=radio->cw_keyer_sidetone_frequency;
