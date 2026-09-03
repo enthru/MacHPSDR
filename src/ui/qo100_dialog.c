@@ -350,7 +350,11 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
 
   GtkWidget *lk_hint=gtk_label_new(
     "The correction is written into the receive band's LO error, so it survives a\n"
-    "restart. The uplink converter is a different box and is never touched by it.\n"
+    "restart. It corrects the RECEIVE path only: what it measures is the\n"
+    "downconverter's drift, which the uplink does not share even when the same\n"
+    "transceiver does both, so the transmit band's LO is never touched by it.\n"
+    "While the converter is warming the loop trims every couple of seconds; once\n"
+    "it has settled it leaves the radio alone for longer.\n"
     "The selected beacon is always the correction source. For a CW selection the\n"
     "middle BPSK beacon confirms the acquisition, but never replaces it. Select\n"
     "Middle explicitly to correct from its unambiguous BPSK centre. The CW lock\n"

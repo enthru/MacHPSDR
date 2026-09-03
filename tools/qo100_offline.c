@@ -1516,6 +1516,52 @@ int main(int argc, char **argv) {
     }
   }
 
+  // ---- 22g'. ...and the COLD start, which is the case the rate limiter was
+  //           blindest to. QO100_TRIM_HZ_S is an error multiplied by a time, and
+  //           the error it was told was the one measured now -- so a small
+  //           reading bought a long wait even while the converter was adding
+  //           hertz per second to it, and the wait was exactly what made the
+  //           reading big again. Two rates and two decoder states, because the
+  //           fault showed in different places in each: ungated it was a
+  //           standing offset (45 Hz at 10 Hz/s, half of it the damping gain
+  //           left uncancelled by a feed-forward that assumed a gain of 1), and
+  //           with FT8 selected it was the slot gate holding a 20 Hz step
+  //           through 90 Hz of slide -- 145 Hz of movement inside a slot and
+  //           8.7 s between corrections.
+  //           The bounds are the sawtooth the cadence itself costs: a loop
+  //           correcting every T against a drift d cannot do better than d*T,
+  //           so at the 1.5-2.5 s this settles at, 6 Hz/s is ~15 Hz and 10 Hz/s
+  //           ~25. Anything much above that is the loop falling behind again.
+  {
+    const double rates[2]={6.0,10.0};
+    const double gap_bound[2]={4.0,4.0};
+    const double track_bound[2]={25.0,35.0};
+    for(int g=0;g<2;g++) {
+      for(int k=0;k<2;k++) {
+        bands_init();
+        gboolean locked=FALSE;
+        ft8_gate=(g==1);
+        lo_drift_hz_s=rates[k];
+        // A converter whose own offset is already trimmed out, which is what a
+        // restart onto a saved errorLO is: everything after this is the warming.
+        // ...and `res` here is lo_error+errorLO, i.e. what the loop has
+        // APPLIED -- not the error left over, which is what worst_track is.
+        // Against a converter that never stops drifting the two are different
+        // numbers and only the second one is a verdict.
+        run_loop(5.0,0.02,blocks*6,&locked,FS,10489540000LL);
+        lo_drift_hz_s=0.0;
+        ft8_gate=FALSE;
+        snprintf(d,sizeof(d),"%.0f Hz/s%s: %.1f Hz off the beacon at worst, "
+                 "%.1f s between corrections, %d retunes, locked=%d",
+                 rates[k],(g==1)?" with FT8":"",worst_track,worst_gap,
+                 retunes,locked);
+        check("a warming converter is trimmed every couple of seconds",
+              locked && worst_gap<gap_bound[k] && worst_track<track_bound[k], d);
+        qo100_beacon_reset();
+      }
+    }
+  }
+
   // ---- 22h. the dial's INDEPENDENT check, and its negative control. Nothing
   //           on the CW beacon can settle which of its two tones the published
   //           figure names: the loop reads the same +/-2 Hz on the wrong line

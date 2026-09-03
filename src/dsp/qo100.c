@@ -1153,16 +1153,122 @@ static gboolean qo100_decoder_slot(RECEIVER *rx, double *slot, double *quiet) {
 // drift forward, and how much of the measured error to take now. It is the trim
 // rate limiter's own wait, and a whole slot ON TOP of it for a step big enough
 // that the gate below makes it wait for one.
+// The largest step the decoder gate lets through without waiting for the quiet
+// tail of a slot. It is a rate, not a constant: what waiting costs is the slide
+// the converter adds in the meantime, so a step no bigger than that buys the
+// decoder nothing (the reasoning is at qo100_may_retune_now, which is the one
+// place this is enforced -- this file must not hold two answers to the same
+// question, or the feed-forward horizon below aims fifteen seconds ahead for a
+// correction that in fact goes out on the next measurement).
+// ...and how long the decoder gate would hold this step for, which is the same
+// question asked from the other end (see qo100_may_retune_now, which is the
+// only place it is enforced -- two answers to it in one file is how the
+// feed-forward came to aim fifteen seconds ahead of a correction that in fact
+// went out on the next measurement, and overshot by 50 Hz doing it).
+// 0 means "now".
+static double qo100_gate_wait_s(RECEIVER *rx, double act) {
+  double slot=0.0, quiet=0.0;
+  if(fabs(act)>QO100_COARSE_HZ) return 0.0;      // acquisition never waits
+  if(!qo100_decoder_slot(rx,&slot,&quiet)) return 0.0;
+  double ph=fmod(qo100_clock(),slot);
+  if(ph>=quiet) return 0.0;                      // in the quiet tail already
+  double wait=quiet-ph;
+  // What holding costs is the SLIDE the converter adds before that tail --
+  // which to ft8_lib, demodulating each candidate at one fixed frequency, is
+  // the same harm as the step and usually more of it. So the threshold is a
+  // rate, not the constant it was: below it the decoder is better off with the
+  // step now. Late in a slot the wait is short and almost nothing goes through;
+  // early in one, at 6 Hz/s, it is 80 Hz of slide and almost everything does.
+  double trim=QO100_FT8_TRIM_HZ;
+  if(fabs(b_slope)*wait>trim) trim=fabs(b_slope)*wait;
+  if(fabs(act)<=trim) return 0.0;
+  return wait;
+}
+
+// The rate limiter's own wait, in one place, because the horizon below and the
+// limiter itself must not disagree about it.
+//
+// QO100_TRIM_HZ_S is an error multiplied by a time, and the error it was told
+// was the one measured NOW -- true only of a converter that is standing still.
+// A warming one adds |slope| Hz per second of waiting, so what a wait of t
+// really buys is (|act| + |slope|*t)*t, and solving that for the same budget is
+// the whole of "on a cold start correct as often as possible, it is all
+// drifting". At a settled LNB (0.05 Hz/s) it changes the answer by half a
+// second; at 6 Hz/s it turns a 4 s wait into the floor, and that 4 s was 24 Hz
+// of slide -- measured as 28.9 Hz of movement inside an FT8 slot against the
+// 11.5 the loop manages when it does not wait.
+static double qo100_trim_wait_s(double act, double slope, double floor_s) {
+  double a=fabs(act), d=fabs(slope), need;
+  if(a<=0.0 && d<=0.0)   need=QO100_FF_S;
+  else if(d<=0.0)        need=QO100_TRIM_HZ_S/a;
+  else                   need=(-a+sqrt(a*a+4.0*d*QO100_TRIM_HZ_S))/(2.0*d);
+  if(need<floor_s) need=floor_s;
+  if(need>QO100_MAX_HOLD_S) need=QO100_MAX_HOLD_S;   // the ceiling: a gate may
+  return need;                                       // delay a correction, never
+}                                                    // cancel one
+
 static double qo100_next_chance_s(RECEIVER *rx, double act) {
   double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
                                                  :QO100_MIN_APPLY_S;
-  double need=(fabs(act)>0.0)?QO100_TRIM_HZ_S/fabs(act):QO100_FF_S;
-  if(need<floor_s) need=floor_s;
-  double slot=0.0;
-  if(fabs(act)>QO100_FT8_TRIM_HZ && fabs(act)<=QO100_COARSE_HZ &&
-     qo100_decoder_slot(rx,&slot,NULL))
-    need+=slot;
+  double need=qo100_trim_wait_s(act,b_slope,floor_s);
+  double wait=qo100_gate_wait_s(rx,act);
+  if(wait>need) need=wait;
   return need;
+}
+
+// The damping gain, and the feed-forward that has to be told what it is.
+//
+// The gain is a bet that another chance is coming shortly: take half, measure
+// again a second later, take half of what is left. When the next chance is a
+// whole decoder slot away that bet is off and the loop takes the whole of the
+// error, which is what QO100_GAIN's own comment is about.
+//
+// The feed-forward then has to CANCEL the lag that gain leaves behind, and
+// "half the wait" only does that when the gain is 1. Work the equilibrium out:
+// with a converter drifting d Hz/s and a realised period T, the error grows
+// d*T between corrections, so the loop settles where its step equals that --
+//   g*e + ff = d*T.
+// The dial should be right in the MIDDLE of the interval it is about to hold
+// for, i.e. e* = d*T/2, so the sweep is +/- d*T/2 about zero rather than
+// 0..d*T on one side of it. Substituting gives ff = d*T*(1 - g/2), which is
+// the familiar d*T/2 at g = 1 and half as much again at g = 0.5. Shipped with
+// the g = 1 form in both cases, the half-gain branch settled at TWICE its
+// target: measured against qo100_offline with an LNB warming at 6 Hz/s and no
+// decoder gating the loop, a permanent -22 Hz with the loop trimming happily
+// every 2.5 s -- "the correction is applied and it is still off" -- against
+// d*T/2 = 7.6 Hz. That standing lag is proportional to the drift, so it is
+// worst on exactly the cold start it is least wanted on.
+static double qo100_damping_gain(double chance) {
+  return (chance>2.0*QO100_AVG_MS/1000.0)?1.0:QO100_GAIN;
+}
+// ...and the wait the rate limiter asks for is not the interval that actually
+// elapses, because the loop can only act ON A MEASUREMENT: the first one after
+// the wait expires is the post-retune hold plus a whole number of averaging
+// windows away. Ungated that turns a 2 s wait into a 2.55 s period, and a
+// feed-forward told 2 s leaves the other fifth of the drift standing.
+static double qo100_realised_period_s(double wait_s) {
+  const double hold=1.0/(double)QO100_HOLD_DIV;
+  const double avg =QO100_AVG_MS/1000.0;
+  double k=ceil((wait_s-hold)/avg);
+  if(k<0.0) k=0.0;
+  return hold+k*avg;
+}
+// A measurement is not a reading of NOW either: it integrates QO100_AVG_MS, so
+// it reports where the beacon was in the middle of that window. The median's
+// own staleness is taken out against b_med_t[], but every entry in there is
+// half an averaging window old by construction, and under a drift that is a
+// bias the window cannot see.
+//
+// Both go into the same equilibrium. With the loop settled, a step of
+// g*(e - d*a/2) + ff must equal the d*T the interval adds, so
+//   e* = d*a/2 + (d*T - ff)/g,
+// and asking for e* = d*T/2 -- the sweep centred on zero -- gives
+//   ff = d*[T - g*(T - a)/2].
+// which is the old d*T/2 at g = 1 and a = 0, and half as much again at g = 0.5.
+static double qo100_feed_forward(double slope, double chance) {
+  double t=qo100_realised_period_s(chance);
+  double a=QO100_AVG_MS/1000.0;
+  return slope*(t-0.5*qo100_damping_gain(chance)*(t-a));
 }
 
 // Where the middle beacon's spectrum is CENTRED, in baseband Hz, out of the same
@@ -1401,11 +1507,19 @@ static gboolean qo100_may_retune_now(RECEIVER *rx, double act, double since_s) {
   // where an FT8 tone is 6.25 Hz wide. That is what a bent trace on the
   // waterfall is. A trim of a few hertz CANCELS that slide; it is not a
   // discontinuity, and the decoder is better off with it than without it.
-  if(fabs(act)<=QO100_FT8_TRIM_HZ) return TRUE;
-  double slot=0.0, quiet=0.0;
-  if(!qo100_decoder_slot(rx,&slot,&quiet)) return TRUE;
-  double utc=qo100_clock();                              // UTC seconds
-  return fmod(utc,slot)>=quiet;
+  //
+  // ...and how big "a few hertz" is belongs to the DRIFT, not to a constant.
+  // What holding costs is the slide the converter adds before the next quiet
+  // tail, so a step no bigger than that buys the decoder nothing at all: it is
+  // paying a discontinuity of `act` to avoid a slide of at least as much. On a
+  // cold LNB at 6 Hz/s a slot is 90 Hz of slide, so a 20 Hz trim held back for
+  // one is the worse of the two by a factor of four -- and, because the error
+  // then grows past QO100_COARSE_HZ inside the same slot, the gate ended up
+  // letting through only the large steps it exists to prevent. Measured
+  // against qo100_offline with FT8 selected and the fixed threshold: worst
+  // audio movement inside a slot 104 Hz at 6 Hz/s and 143 at 10, with up to
+  // 12.8 s between corrections.
+  return qo100_gate_wait_s(rx,act)<=0.0;
 }
 
 // The median of the recent fine residuals -- used to REJECT outliers, not to
@@ -2308,10 +2422,12 @@ static void beacon_frame(RECEIVER *rx) {
   // the wait itself shrinks as the error it is derived from grows (161.9 Hz of
   // audio swept inside a slot at 6 Hz/s, against 11.9 for half). The wait is
   // asked for rather than assumed: QO100_FF_S was "about how long until the next
-  // trim", which is only true when nothing is holding the loop back. Half the
-  // wait puts the dial in the middle of the error the interval sweeps through
-  // (+/-d*W/2) instead of at one end of it (0..d*W). It needs `act`, so both
-  // branches below compute their own.
+  // trim", which is only true when nothing is holding the loop back. The point
+  // of it is to put the dial in the middle of the error the interval sweeps
+  // through (+/-d*W/2) instead of at one end of it (0..d*W) -- which is what
+  // qo100_feed_forward() works out, and how much of the wait that is depends on
+  // the damping gain it is paired with. It needs `act`, so both branches below
+  // compute their own.
   // A COARSE step belongs to acquisition and to nothing else. Once the loop is
   // SETTLED the dial is within a few hertz of the beacon, so a reading a
   // hundred hertz out is not an offset that has appeared -- it is a neighbour,
@@ -2324,7 +2440,7 @@ static void beacon_frame(RECEIVER *rx) {
   if(fabs(residual)>QO100_COARSE_HZ && !b_settled) {
     act=residual;                       // a real offset, measured directly
     chance=qo100_next_chance_s(rx,act);
-    ff=slope*0.5*chance;
+    ff=qo100_feed_forward(slope,chance);
   } else {
     // b_expect is deliberately NOT moved by this return. It is the anchor the
     // slew guard above measures against -- where the beacon was last seen to
@@ -2348,7 +2464,7 @@ static void beacon_frame(RECEIVER *rx) {
     double med=median_of(b_med,b_med_n);
     act=med+slope*(now_s-b_med_t[b_med_n/2]);
     chance=qo100_next_chance_s(rx,act);
-    ff=slope*0.5*chance;
+    ff=qo100_feed_forward(slope,chance);
 
     // ...and it is only acted on when it stands out of the window's OWN
     // scatter. A median is an estimate and the spread of the readings behind it
@@ -2403,11 +2519,9 @@ static void beacon_frame(RECEIVER *rx) {
   // itself costs the operator something (see QO100_MIN_APPLY_S).
   if(fabs(act)<=QO100_COARSE_HZ) {
     double since=b_since_apply/(double)track_fs;
-    double need=(fabs(act)>0.0)?QO100_TRIM_HZ_S/fabs(act):1.0e9;
     double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
                                                    :QO100_MIN_APPLY_S;
-    if(need<floor_s) need=floor_s;
-    if(need>QO100_MAX_HOLD_S) need=QO100_MAX_HOLD_S;   // the ceiling, again
+    double need=qo100_trim_wait_s(act,slope,floor_s);
     if(since<need) {
       b_expect=residual;
       b_expect_samples=0.0;
@@ -2432,7 +2546,7 @@ static void beacon_frame(RECEIVER *rx) {
   // 170 Hz off. What made the half safe is still there -- the estimate is the
   // median of seven seconds and has to beat that window's own scatter -- so the
   // loop that only gets one chance takes the whole of it.
-  double gain=(chance>2.0*QO100_AVG_MS/1000.0)?1.0:QO100_GAIN;
+  double gain=qo100_damping_gain(chance);
   double step=(fabs(act)>QO100_COARSE_HZ)?act:(act*gain+ff);
   if(step> QO100_MAX_STEP_HZ) step= QO100_MAX_STEP_HZ;
   if(step<-QO100_MAX_STEP_HZ) step=-QO100_MAX_STEP_HZ;
