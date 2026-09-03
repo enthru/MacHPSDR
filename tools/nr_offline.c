@@ -248,16 +248,18 @@ static void select_nr(int nr) {
 static double *tap_ring;        /* what WDSP writes into */
 static int     tap_cap;
 static long    tap_r;           /* the app's own read cursor */
+static int     tap_blk;         /* the DSP block the ring was sized for */
 static double *tapbuf;          /* what this harness reads out, I only */
 static long    tap_n;
 
 static void tap_install(int block) {
-  int cap = block*4;
+  int cap = block*6;                                  /* as receiver_pretap_alloc */
   if(cap < 4096) cap = 4096;
   SetRXAPreAgcTap(CH, NULL, 0);
   free(tap_ring);
   tap_ring = calloc((size_t)cap*2, sizeof(double));
   tap_cap  = cap;
+  tap_blk  = block;
   if(!tapbuf) tapbuf = malloc(sizeof(double)*NS);
   SetRXAPreAgcTap(CH, tap_ring, cap);
   tap_r = GetRXAPreAgcTapPos(CH);
@@ -275,7 +277,12 @@ static void tap_drain(void) {
   long w = GetRXAPreAgcTapPos(CH);
   long avail = w - tap_r;
   if(avail <= 0) return;
-  if(avail > tap_cap) { tap_r = w - tap_cap; avail = tap_cap; }
+  /* Two blocks of the ring stay clear of the reader, as in the app: the writer
+   * is not waiting for this loop, so "the reader may hold the whole ring" means
+   * the writer's next block lands on what is being copied. */
+  long room = tap_cap - 2L*tap_blk;
+  if(room < tap_blk) room = tap_cap;
+  if(avail > room) { tap_r = w - room; avail = room; }
   while(avail > 0) {
     int idx = (int)(tap_r % tap_cap);
     int n   = tap_cap - idx;
@@ -355,28 +362,55 @@ typedef struct { double voice, floor_, snr; } RESULT;
  * well as the geometry, and a threshold inside that spread fails at random. The
  * defect it exists to catch is nowhere near it: a mismatched geometry reads
  * +1.2 dB and +11.0 dB, i.e. a residual LOUDER than the reference -- a
- * different signal, not a drifting one. -12 dB keeps 12 dB of clearance from
- * the worst run observed and 13 dB from the fault, which is what a threshold
- * has to do; widening it further would start to mean nothing. */
+ * different signal, not a drifting one.
+ *
+ * That spread is not spread, though -- it is one localised wobble scored over
+ * the whole ten seconds, and scoring it that way was still costing CI runs:
+ * "NR4: 1024 -> 5120 is the same audio" reached -11.8 dB against the -12.0 dB
+ * threshold here, which is the same failure the tap assertion below was having
+ * and for the same reason (see median_second_residual).  Both are scored on the
+ * MEDIAN one-second residual now.  The threshold stays at -12 dB, because what
+ * it has to clear is the fault at +1.2 dB and not the wobble, and the wobble no
+ * longer reaches it: the median second reads -2980 dB on code that is right. */
 static double *saved;
 static void save_out(void) {
   if(!saved) saved = malloc(sizeof(double)*NS);
   memcpy(saved, outbuf, sizeof(double)*NS);
 }
-/* residual of one buffer against another, in dB below the reference */
-static double buf_residual_db(const double *a, const double *ref, long len) {
-  double sd = 0.0, sr = 0.0;
-  for(long n=SETTLE;n<len;n++) {
-    double d = a[n] - ref[n];
-    sd += d*d; sr += ref[n]*ref[n];
+/* The MEDIAN of the one-second residuals, which is the only honest way to score
+ * a comparison that has to tell "bit-exact" from "not there at all".
+ *
+ * The chain is not reproducible run to run.  Two identical runs of it -- same
+ * binary, same input, same open channel, nothing rebuilt in between -- come out
+ * bit-identical about five times in six here, and the sixth differs inside ONE
+ * window of three DSP blocks somewhere in the ten seconds, by about 1e-6
+ * relative, with every sample either side of that window bit-exact.  Measured
+ * with an off-versus-off control, which is how it was established that this is
+ * the chain wobbling and not NR3 leaking; it shows on macOS and never on the
+ * x86-64 CI runner, which is what an FFTW_PATIENT plan chosen by timing looks
+ * like.  Three blocks of error against ten seconds of signal is a TOTAL
+ * residual of about -22 dB -- so the total cannot be scored tightly, and this
+ * assertion was written at -100 dB and duly failed about one CI run in three.
+ *
+ * The median can be scored tightly, because the two things it has to separate
+ * sit at opposite ends of it: a block that reaches the tap reaches EVERY second
+ * of it, and the wobble reaches one.  The negative control below is the same
+ * measurement on the audio, which NR3 really does reach. */
+static double median_second_residual(const double *a, const double *ref, long len) {
+  double sec[SECS + 2];
+  int m = 0;
+  for(long n0 = SETTLE; n0 + FS <= len && m < SECS + 2; n0 += FS) {
+    double sd = 0.0, sr = 0.0;
+    for(long n = n0; n < n0 + FS; n++) {
+      double d = a[n] - ref[n];
+      sd += d*d; sr += ref[n]*ref[n];
+    }
+    sec[m++] = (sr <= 0.0) ? 0.0
+             : 10.0*log10((sd > 0.0 ? sd : 1e-300)/sr);
   }
-  if(sr <= 0.0) return 0.0;
-  return 10.0*log10((sd > 0.0 ? sd : 1e-300)/sr);
-}
-
-/* residual of outbuf against the saved run, in dB below the saved run */
-static double residual_db(void) {
-  return buf_residual_db(outbuf, saved, NS);
+  if(m == 0) return 0.0;
+  qsort(sec, (size_t)m, sizeof(double), cmpd);
+  return sec[m/2];
 }
 
 static RESULT measure(int nr, int block) {
@@ -441,7 +475,7 @@ int main(int argc, char **argv) {
     channel_open(BLK_WIDE);                   /* 384000 -> 1920000 */
     channel_resize(BLK_NARROW);
     measure(nr, BLK_NARROW);
-    double d = residual_db();
+    double d = median_second_residual(outbuf, saved, NS);
     snprintf(name, sizeof name, "%s: 5120 -> 1024 is the same audio", nrname(nr));
     check(name, d < -12.0, "residual %.1f dB", d);
     CloseChannel(CH);
@@ -453,7 +487,7 @@ int main(int argc, char **argv) {
     channel_open(BLK_NARROW);                 /* 1920000 -> 384000 */
     channel_resize(BLK_WIDE);
     measure(nr, BLK_WIDE);
-    d = residual_db();
+    d = median_second_residual(outbuf, saved, NS);
     snprintf(name, sizeof name, "%s: 1024 -> 5120 is the same audio", nrname(nr));
     check(name, d < -12.0, "residual %.1f dB", d);
     CloseChannel(CH);
@@ -577,11 +611,13 @@ int main(int argc, char **argv) {
     memcpy(tapref, tapbuf, sizeof(double)*(size_t)n_ref);
     save_out();
     run_chain(NR_RNN, blk);
-    double dtap = buf_residual_db(tapbuf, tapref, tap_n < n_ref ? tap_n : n_ref);
-    double daud = residual_db();
-    check("NR3 does not reach the tap", dtap < -100.0, "residual %.1f dB", dtap);
+    long lim = tap_n < n_ref ? tap_n : n_ref;
+    double dtap = median_second_residual(tapbuf, tapref, lim);
+    double daud = median_second_residual(outbuf, saved, NS);
+    check("NR3 does not reach the tap", dtap < -100.0,
+          "median second %.1f dB", dtap);
     check("negative control: it did reach the audio", daud > -20.0,
-          "residual %.1f dB", daud);
+          "median second %.1f dB", daud);
     tap_remove();
     CloseChannel(CH);
   }
