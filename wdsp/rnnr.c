@@ -55,7 +55,18 @@ void flush_rnnr (RNNR a)
 	memset (a->inbuf, 0, a->bufcap * sizeof (float));
 	memset (a->outbuf, 0, a->bufcap * sizeof (float));
 	a->outbuf_n = a->frame_size;
-	if (a->st) rnnoise_init (a->st, NULL);
+	// Recreate rather than rnnoise_init(): upstream's init memsets the state and
+	// calloc()s the three GRU buffers afresh, so the pointers it would have to
+	// free are gone by the time it allocates -- calling it to reset leaks 672
+	// bytes every time. That is per flush, i.e. per mode change, per span change
+	// and per NR3 switch-on, and it is what LeakSanitizer reports out of
+	// agc_offline on CI. rnnoise/ is unmodified upstream, so the fix belongs
+	// here; a flush is rare and this is three small allocations.
+	if (a->st)
+	{
+		rnnoise_destroy (a->st);
+		a->st = rnnoise_create (NULL);
+	}
 }
 
 // The two ring buffers, sized from the block.  Split out of create_rnnr so
