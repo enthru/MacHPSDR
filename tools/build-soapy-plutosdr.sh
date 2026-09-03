@@ -279,6 +279,71 @@ PATCH
 }
 patch_tx_lo_lifecycle
 
+# A Pluto retains the AD9361 TX LO state across client connections.  Waiting
+# until setupStream() to power it down is therefore too late: opening a network
+# context and constructing the rest of the radio can take seconds, during which
+# a LO left on by a crashed/older client remains on air.  Put TX in a safe state
+# in the driver constructor, at the first instant the new context has exposed
+# the PHY, and again in the destructor before releasing that context.  The app
+# also holds TX at minimum gain, so this is the hard on/off half of the guard.
+patch_tx_safe_open_close() {
+  local f="$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp"
+  [ -f "$f" ] || { echo "error: $f missing; cannot patch" >&2; exit 1; }
+  if grep -q 'MACHPSDR safe TX on open' "$f"; then
+    echo "==> SoapyPlutoSDR already patched (safe TX open/close)"
+    return
+  fi
+  python3 - "$f" <<'PATCH'
+import sys
+p=sys.argv[1]
+s=open(p).read()
+
+old_ctor='''\tif (dev == nullptr || rx_dev == nullptr || tx_dev == nullptr) {
+\t\tSoapySDR_logf(SOAPY_SDR_ERROR, "no device found in this context.");
+\t\tthrow std::runtime_error("no device found in this context");
+\t}
+
+\tthis->setAntenna(SOAPY_SDR_RX, 0, "A_BALANCED");
+'''
+new_ctor='''\tif (dev == nullptr || rx_dev == nullptr || tx_dev == nullptr) {
+\t\tSoapySDR_logf(SOAPY_SDR_ERROR, "no device found in this context.");
+\t\tthrow std::runtime_error("no device found in this context");
+\t}
+
+\t/* MACHPSDR safe TX on open: a Pluto retains this state between IIO
+\t   clients.  Power it down at the first instant this context can address
+\t   the PHY, before any slower radio/stream configuration begins. */
+\tiio_channel_attr_write_bool(
+\t\tiio_device_find_channel(dev, "altvoltage1", true), "powerdown", true);
+
+\tthis->setAntenna(SOAPY_SDR_RX, 0, "A_BALANCED");
+'''
+assert s.count(old_ctor)==1, "constructor device block not as expected"
+s=s.replace(old_ctor,new_ctor,1)
+
+old_dtor='''SoapyPlutoSDR::~SoapyPlutoSDR(void){
+
+\tlong long samplerate=0;
+'''
+new_dtor='''SoapyPlutoSDR::~SoapyPlutoSDR(void){
+
+\t/* MACHPSDR safe TX on close: do not leave RF enabled if no TX stream was
+\t   ever opened, or if teardown bypassed closeStream(). */
+\tif (dev != nullptr)
+\t\tiio_channel_attr_write_bool(
+\t\t\tiio_device_find_channel(dev, "altvoltage1", true), "powerdown", true);
+
+\tlong long samplerate=0;
+'''
+assert s.count(old_dtor)==1, "destructor block not as expected"
+s=s.replace(old_dtor,new_dtor,1)
+
+open(p,'w').write(s)
+PATCH
+  echo "==> patched SoapyPlutoSDR: TX is safe from context open through close"
+}
+patch_tx_safe_open_close
+
 # OSX_FRAMEWORK=OFF is load-bearing: libiio's macOS build defaults to producing
 # an iio.framework, which no consumer here looks for and dylibbundler does not
 # handle.  The rest is trimming — this build exists to be dlopen'd by one

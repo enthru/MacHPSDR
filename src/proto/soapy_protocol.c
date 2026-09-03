@@ -281,6 +281,28 @@ static gboolean tx_stream_active=FALSE;
 static double tx_gain_min=0.0;
 static double tx_gain_max=47.0;
 
+/* Put the analogue TX chain at its quietest setting whenever it is not keyed.
+   This is a second safety barrier behind stream/LO deactivation.  In
+   particular, unpatched/system SoapyPlutoSDR releases turn the TX LO on from
+   setupStream(), and a Pluto remembers its previous attenuation while a new
+   network context is being opened.  Never leave that LO sitting at the
+   driver's default (0 dB, i.e. full output) while the rest of the radio is
+   still being constructed. */
+static void soapy_tx_hold_safe(void) {
+  if(soapy_device==NULL || radio==NULL || !radio->can_transmit) return;
+  SoapySDRRange grange=SoapySDRDevice_getGainRange(soapy_device,SOAPY_SDR_TX,0);
+  tx_gain_min=grange.minimum;
+  tx_gain_max=grange.maximum;
+  int rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,0,tx_gain_min);
+  if(rc!=0) {
+    log_error("%s: could not set the idle TX gain to %.1f dB: %s\n",
+              __FUNCTION__,tx_gain_min,SoapySDR_errToStr(rc));
+  } else {
+    log_info("%s: TX held at minimum gain %.1f dB until key-up (range %.1f..%.1f)\n",
+             __FUNCTION__,tx_gain_min,tx_gain_min,tx_gain_max);
+  }
+}
+
 SoapySDRDevice *get_soapy_device(void) {
   return soapy_device;
 }
@@ -983,6 +1005,11 @@ void soapy_protocol_create_transmitter(TRANSMITTER *tx) {
 
 log_info("soapy_protocol_create_transmitter: dac=%d\n",tx->dac);
 
+  // Do this before bandwidth/rate/stream setup: some Pluto drivers enable the
+  // TX LO as a side effect of setupStream(), so the hardware must already be
+  // at maximum attenuation when that happens.
+  soapy_tx_hold_safe();
+
   soapy_tx_sample_rate=tx->iq_output_rate;
 
 log_info("soapy_protocol_create_transmitter: setting bandwidth=%f\n",bandwidth);
@@ -1065,9 +1092,6 @@ log_info("soapy_protocol_create_transmitter: TX stream MTU=%d (%.1f ms at %d), w
   // Learn the hardware TX gain range so the drive slider (0..100) can be mapped
   // onto it.  On HackRF the overall TX gain spans VGA (0..47 dB) plus the RF amp
   // (+14 dB at the top), so raising drive raises gain and eventually the amp.
-  SoapySDRRange grange=SoapySDRDevice_getGainRange(soapy_device,SOAPY_SDR_TX,tx->dac);
-  tx_gain_min=grange.minimum;
-  tx_gain_max=grange.maximum;
 log_info("soapy_protocol_create_transmitter: tx gain range=%f..%f\n",tx_gain_min,tx_gain_max);
 
   if(radio->local_microphone) {
@@ -1142,6 +1166,9 @@ log_info("soapy_protocol_init: SoapySDRDevice_make\n");
     log_info("%s: SoapySDRDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     _exit(-1);
   }
+  // Earliest point at which the application can touch the hardware.  Keep TX
+  // attenuated throughout receiver/transmitter construction.
+  soapy_tx_hold_safe();
   SoapySDRKwargs_clear(&args);
 }
 
@@ -1627,14 +1654,29 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   if(soapy_device==NULL) return;
   output_buffer_index=0;
   if(!tx_stream_active) {
+    // Program the requested attenuation BEFORE activateStream turns on Pluto's
+    // TX LO.  The old order briefly keyed it at the driver's/default gain and
+    // only then moved it to Drive.
+    double drive=tx->drive;
+    if(drive<0.0) drive=0.0;
+    if(drive>100.0) drive=100.0;
+    double gain=tx_gain_min+((tx_gain_max-tx_gain_min)*(drive/100.0));
+    radio->dac[0].gain=gain;
+    int grc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id,gain);
+    if(grc!=0) {
+      log_error("%s: refusing to key because TX gain %.1f dB could not be set: %s\n",
+                __FUNCTION__,gain,SoapySDR_errToStr(grc));
+      soapy_tx_hold_safe();
+      return;
+    }
     int rc=SoapySDRDevice_activateStream(soapy_device,tx_stream,0,0LL,0);
     if(rc!=0) {
       log_info("soapy_protocol_activate_tx: activateStream failed: %s\n",SoapySDR_errToStr(rc));
+      soapy_tx_hold_safe();
+      return;
     }
     tx_stream_active=TRUE;
   }
-  // Make sure the hardware TX gain matches the drive slider before we key up.
-  soapy_protocol_set_tx_drive(tx->drive);
   // ...and the digital level matches the backoff setting, which the operator
   // may have changed with the transmitter down.
   soapy_protocol_set_tx_backoff(tx->dac_backoff_db);
@@ -1683,6 +1725,9 @@ void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
     tx_thread_id=NULL;
   }
   if(tx_stream_active) {
+    // Attenuate first, then turn the LO off.  Even a driver whose deactivate is
+    // only a buffer flush is left in the safe state.
+    soapy_tx_hold_safe();
     SoapySDRDevice_deactivateStream(soapy_device,tx_stream,0,0LL);
     tx_stream_active=FALSE;
   }
@@ -1731,7 +1776,10 @@ void soapy_protocol_set_tx_drive(double drive) {
   if(drive>100.0) drive=100.0;
   double g=tx_gain_min+((tx_gain_max-tx_gain_min)*(drive/100.0));
   radio->dac[0].gain=g;
-  int rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id,g);
+  // Moving Drive while receiving only changes the cached key-up value.  Keep
+  // the physical device at maximum attenuation until activate_tx.
+  double applied=tx_stream_active?g:tx_gain_min;
+  int rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id,applied);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_setGain failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
   }
@@ -1824,6 +1872,7 @@ log_info("%s: tearing down old device/streams\n",__FUNCTION__);
     log_info("%s: SoapySDRDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     return FALSE;
   }
+  soapy_tx_hold_safe();
 
 log_info("%s: re-making streams and re-applying settings\n",__FUNCTION__);
 
@@ -1939,7 +1988,10 @@ void soapy_protocol_set_gain(ADC *adc) {
 void soapy_protocol_set_tx_gain(DAC *dac) {
   int rc;
 log_info("%s: dac=%d gain=%f\n",__FUNCTION__,dac->id,dac->gain);
-  rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,dac->id,dac->gain);
+  // Configuration is restored while the radio is still connecting.  Preserve
+  // the requested value in dac->gain, but do not apply it to unkeyed hardware.
+  double applied=tx_stream_active?dac->gain:tx_gain_min;
+  rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,dac->id,applied);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_setGain failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
   }
