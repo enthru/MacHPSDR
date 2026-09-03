@@ -714,18 +714,21 @@ static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
 // The operator's rx->nr*/anf/nb/snb/notch selections are left untouched (the VFO
 // still shows them) — only the WDSP Run flags are suppressed, so everything returns
 // the instant the mode leaves DIGU/DIGL and no decoder is running.
-//   3. A TCI client is streaming this receiver's audio — the same case as (2)
-//      with the decoder on the other end of a socket. It is the reason the
-//      predicate is receiver_audio_tapped() and not decoder_taps_audio(): a
-//      client asking for audio is asking for the signal, not for the operator's
-//      listening preferences, and NR/ANF in particular rewrite the waveform a
-//      decoder needs. (In DIGU/DIGL rule 1 already covered it.) AGC stays in —
-//      it is shared with the speaker, and taking it out here would leave the
-//      operator's own audio unregulated; a stream that must bypass AGC needs a
-//      WDSP channel of its own, which this is not.
+// A TCI client subscribing is deliberately NOT one of these cases, though it
+// was for one commit. NR and ANF do rewrite the waveform a decoder wants, but
+// they are the operator's own listening choice on their own receiver, and a
+// network client is not entitled to switch them off: with the extension in
+// place, a client connecting silently took NR out of the operator's speaker,
+// which is what it did to this radio's owner the moment a test client
+// connected. The stream is taken before the AGC and the operator decides the
+// rest of the chain; in DIGU/DIGL rule 1 covers the case that matters anyway.
 static inline gboolean bypass_stream_dsp(RECEIVER *rx) {
   if(rx->mode_a==DIGU || rx->mode_a==DIGL) return TRUE;
-  return receiver_audio_tapped(rx);
+#ifdef DECODERS
+  return decoder_taps_audio(rx);
+#else
+  return FALSE;
+#endif
 }
 
 void update_noise(RECEIVER *rx) {

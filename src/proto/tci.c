@@ -576,15 +576,10 @@ static void client_set_iq(TCI_CLIENT *c, int rx_index, gboolean on) {
 static gboolean tci_repush_gain_idle(gpointer data) {
   RECEIVER *rx = (RECEIVER *)data;
   if (!receiver_is_live(rx) || rx->channel < 0) return G_SOURCE_REMOVE;
-  receiver_set_volume(rx);      // panel gain: unity while a client listens
-  // ...and the same three the decode selector re-pushes for the same reason:
-  // bypass_stream_dsp() has just changed answer, and nothing else pushes the
-  // Run flags it decides. Without these, NR/ANF/SNB and the squelch would keep
-  // rewriting or gating the waveform sent to a client until the operator
-  // happened to touch one of them.
-  update_noise(rx);
-  receiver_notch_sync(rx);
-  set_squelch(rx);
+  // Panel gain only. Subscribing does NOT touch NR/ANF/SNB or the squelch: they
+  // are the operator's settings on the operator's receiver, and a client is not
+  // entitled to change what comes out of their speaker.
+  receiver_set_volume(rx);
   return G_SOURCE_REMOVE;
 }
 
