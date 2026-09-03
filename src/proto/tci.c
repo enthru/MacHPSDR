@@ -33,6 +33,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "main.h"       // main_window, for the level warning (needs RADIO)
 #include "mode.h"
 #include "ext.h"
 #include "vfo.h"
@@ -1974,6 +1975,81 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
 static double lim_gain[MAX_RECEIVERS];     // audio thread of that receiver only
 static gboolean lim_init = FALSE;
 
+// A stream too quiet to decode, said out loud.
+//
+// The limiter can only LIFT by TCI_LIM_MAX_GAIN, and what it is lifting is
+// whatever this receiver's AGC produced.  Switch the AGC off -- which is a fixed
+// gain, not no gain -- or wind AGC-G down, and a weak band leaves the stream
+// tens of dB below the level a decoder is written for.  The client then simply
+// stops decoding: JTDX draws a saturated waterfall with no contrast and reports
+// nothing, and there is no way to tell that from a dead band.  Nobody is going
+// to connect those two facts unaided, so the application does it.
+//
+// Trips when the gain has been pinned at the ceiling AND the stream has stayed
+// below TCI_LVL_FLOOR continuously for TCI_LVL_HOLD_S with a client subscribed;
+// re-arms the moment the level recovers, so this reports a condition and not a
+// moment.  Same shape as audio_sink_warn(): one dialog, raised through
+// g_idle_add because this runs on the RX audio thread.
+#define TCI_LVL_FLOOR   0.02       // -34 dBFS peak: below this a decoder struggles
+#define TCI_LVL_HOLD_S  20.0       // longer than an FT8 slot, so a gap cannot trip it
+static gint64  lvl_low_since[MAX_RECEIVERS];
+static gint    lvl_warned[MAX_RECEIVERS];
+
+typedef struct { int rx; double peak_in, gain, peak_out; } TCI_LEVEL_WARNING;
+
+static gboolean tci_level_warning_idle(gpointer data) {
+  TCI_LEVEL_WARNING *w = (TCI_LEVEL_WARNING *)data;
+  if (main_window != NULL) {
+    char detail[800];
+    g_snprintf(detail, sizeof detail,
+      "Receiver %d is sending a TCI client audio whose peak is %.1f dB below "
+      "full scale, and the stream's own level control is already at its maximum "
+      "lift of %.0f dB. It cannot make the stream any louder.\n\n"
+      "A decoder on the other end (WSJT-X, JTDX, a skimmer) will show a flat, "
+      "featureless waterfall and decode nothing, which looks exactly like a "
+      "dead band.\n\n"
+      "The stream's level is whatever this receiver's AGC produces. The usual "
+      "cause is the AGC switched OFF -- which is a fixed gain, not no gain -- "
+      "or AGC-G wound a long way down. Set AGC to Slow or Long and bring AGC-G "
+      "back up. The AF GAIN slider and Mute are the speaker's and never reach "
+      "the stream, so there is nothing to check there.\n\n"
+      "Run with MACHPSDR_TCI_LEVEL=1 for the figures every five seconds.",
+      w->rx, (w->peak_out > 0.0) ? 20.0*log10(w->peak_out) : -999.0,
+      20.0*log10((double)TCI_LIM_MAX_GAIN));
+
+    GtkAlertDialog *dialog = gtk_alert_dialog_new("TCI audio is too quiet to decode");
+    gtk_alert_dialog_set_detail(dialog, detail);
+    const char *buttons[] = { "OK", NULL };
+    gtk_alert_dialog_set_buttons(dialog, buttons);
+    gtk_alert_dialog_set_default_button(dialog, 0);
+    gtk_alert_dialog_show(dialog, GTK_WINDOW(main_window));
+    g_object_unref(dialog);
+  }
+  g_free(w);
+  return G_SOURCE_REMOVE;
+}
+
+static void tci_level_check(int idx, double peak_in, double gain) {
+  const double peak_out = peak_in * gain;
+  const gboolean pinned = (gain >= TCI_LIM_MAX_GAIN * 0.999);
+  const gint64 now = g_get_monotonic_time();
+  if (!pinned || peak_out >= TCI_LVL_FLOOR) {       // healthy: re-arm
+    lvl_low_since[idx] = 0;
+    g_atomic_int_set(&lvl_warned[idx], 0);
+    return;
+  }
+  if (lvl_low_since[idx] == 0) { lvl_low_since[idx] = now; return; }
+  if ((double)(now - lvl_low_since[idx]) < TCI_LVL_HOLD_S * 1e6) return;
+  if (!g_atomic_int_compare_and_exchange(&lvl_warned[idx], 0, 1)) return;
+  log_error("tci audio rx%d: peak %.4g at maximum lift x%.0f gives %.1f dBFS -- "
+            "too quiet for a decoder; this receiver's AGC is off or AGC-G is very low\n",
+            idx, peak_in, (double)TCI_LIM_MAX_GAIN,
+            (peak_out > 0.0) ? 20.0*log10(peak_out) : -999.0);
+  TCI_LEVEL_WARNING *w = g_new0(TCI_LEVEL_WARNING, 1);
+  w->rx = idx; w->peak_in = peak_in; w->gain = gain; w->peak_out = peak_out;
+  g_idle_add(tci_level_warning_idle, w);
+}
+
 // Returns the gain to END this block on; the caller ramps from the previous one
 // so a change never lands as a step.
 static double tci_limiter_step(int idx, const double *audio, int nstereo, double *from) {
@@ -2026,6 +2102,36 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
   // bounds it is the limiter above.
   double g0 = 1.0;
   double g1 = tci_limiter_step(idx, audio, nstereo, &g0);
+
+  // What the stream is actually carrying: the peak going in and the gain the
+  // limiter answered with. Those two numbers are the whole diagnosis when a
+  // client's waterfall looks wrong, and MACHPSDR_TCI_LEVEL=1 prints them every
+  // five seconds; tci_level_check() is the unattended half, which says so
+  // without being asked.
+  {
+    double pk = 0.0, sq = 0.0;
+    for (int i = 0; i < nstereo * 2; i++) {
+      double a = fabs(audio[i]);
+      if (a > pk) pk = a;
+      sq += audio[i] * audio[i];
+    }
+    tci_level_check(idx, pk, g1);
+    static int lvl = -1;
+    static gint64 lvl_last[MAX_RECEIVERS];
+    if (lvl < 0) lvl = (g_getenv("MACHPSDR_TCI_LEVEL") != NULL) ? 1 : 0;
+    if (lvl) {
+      gint64 now = g_get_monotonic_time();
+      if (now - lvl_last[idx] > 5000000) {
+        lvl_last[idx] = now;
+        double rms = sqrt(sq / (double)(nstereo * 2));
+        log_info("tci audio rx%d: in peak %.4g rms %.4g (%.1f dB crest), gain %.4g "
+                 "(max %.4g), out peak %.4g -> %.1f dBFS\n",
+                 idx, pk, rms, (rms > 0.0) ? 20.0*log10(pk/rms) : 0.0,
+                 g1, (double)TCI_LIM_MAX_GAIN, pk*g1,
+                 (pk*g1 > 0.0) ? 20.0*log10(pk*g1) : -999.0);
+      }
+    }
+  }
   float *lin = g_new(float, (size_t)nstereo * 2);
   for (int i = 0; i < nstereo; i++) {
     double g = g0 + (g1 - g0) * ((double)i / (double)nstereo);

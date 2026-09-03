@@ -2579,6 +2579,38 @@ gdouble receiver_panel_gain(RECEIVER *rx) {
   return rx->mute ? 0.0 : rx->volume;
 }
 
+// Is the pre-AGC tap in use?  It is NOT the default, and the reason is worth
+// stating because the tap was the default for two commits and cost the operator
+// their FT8 over TCI.
+//
+// The stream comes off the channel's own output, AGC included, because that is
+// the signal every decoder on the other end is written against -- Thetis and
+// PowerSDR feed VAC from there, SDR Console and SDRuno do, Expert's own TCI
+// does, and WSJT-X's documentation asks for the radio's AGC to be left ON.  The
+// worry the tap was built for -- a strong station riding the gain down over a
+// weak one in the same slot -- is a FAST-AGC worry; at slow or long the time
+// constants are hundreds of milliseconds against a fifteen-second slot.
+//
+// And what actually has to be kept out of a decoder's input is kept out anyway,
+// by bypass_stream_dsp(): in DIGU/DIGL -- which is where a digital-mode client
+// listens -- NB/NB2, NR/NR2/NR3/NR4, ANF, SNB, the manual notches and the
+// squelch are all forced off already, leaving demodulation, the passband filter
+// and the AGC.  The tap bought nothing there and lost 40 dB of level, because
+// the stream limiter (tci.c) is sized for what the AGC produces.
+//
+// MACHPSDR_TCI_PRETAP=1 turns it back on for anyone who wants the raw signal.
+// Off, the ring is never installed, so xrxa() does not run the tap's memcpy and
+// FIR on every DSP pass of every receiver either.
+static gboolean tci_pretap_enabled(void) {
+  static int on=-1;
+  if(on<0) {
+    const char *e=g_getenv("MACHPSDR_TCI_PRETAP");
+    on=(e!=NULL && (*e=='1' || *e=='y' || *e=='Y' || *e=='t' || *e=='T'))?1:0;
+    if(on) log_info("tci_pretap_enabled: MACHPSDR_TCI_PRETAP=1: the TCI stream comes off the pre-AGC tap\n");
+  }
+  return on?TRUE:FALSE;
+}
+
 // (Re)allocate this channel's pre-AGC tap and hand it to WDSP. Called wherever
 // the DSP block size is decided, because dsp_size MOVES with the span (the same
 // rule that governs SetDSPBuffsize) and the ring is measured in DSP passes.
@@ -2606,6 +2638,14 @@ gdouble receiver_panel_gain(RECEIVER *rx) {
 // rate, so the ring is ~120 ms plus two blocks whatever the span.
 void receiver_pretap_alloc(RECEIVER *rx) {
   if(rx==NULL || rx->channel<0) return;
+  if(!tci_pretap_enabled()) {          // clear WDSP's copy before freeing ours
+    SetRXAPreAgcTap(rx->channel,NULL,0);
+    g_free(rx->pretap_ring); rx->pretap_ring=NULL;
+    g_free(rx->pretap_out);  rx->pretap_out=NULL;
+    rx->pretap_cap=0;
+    rx->pretap_r=0;
+    return;
+  }
   int mult=GetDSPMult(rx->channel);
   if(mult<2) mult=2;
   int cap=rx->dsp_size*(mult+2);
@@ -2633,16 +2673,6 @@ void receiver_pretap_alloc(RECEIVER *rx) {
 // The channel's own output is still the fallback: the tap is at the DSP rate,
 // and that is 48 kHz for every mode but WFM, where set_mode raises it.
 static void rx_tci_audio_publish(RECEIVER *rx) {
-  // MACHPSDR_TCI_PRETAP=0 sends the channel's own output instead, i.e. what a
-  // client got before the tap existed. One variable at a time when an operator
-  // reports that a stream sounds wrong -- the same reason MACHPSDR_DSP_FEED
-  // and MACHPSDR_FRONTEND exist.
-  static int pretap_off=-1;
-  if(pretap_off<0) {
-    const char *e=g_getenv("MACHPSDR_TCI_PRETAP");
-    pretap_off=(e!=NULL && (*e=='0' || *e=='n' || *e=='N'))?1:0;
-    if(pretap_off) log_info("rx_tci_audio_publish: MACHPSDR_TCI_PRETAP=0: the TCI stream comes off the channel output, AGC included\n");
-  }
   // Branch on the tap being live IN WDSP, not on the ring being allocated here:
   // those are two different facts and they used to disagree for a fresh
   // receiver (create_rxa clears the channel's copy, so a ring installed before
@@ -2650,7 +2680,7 @@ static void rx_tci_audio_publish(RECEIVER *rx) {
   // empty tap falls THROUGH to the channel output below rather than returning:
   // a client given the AGC in its stream has a complaint, a client given
   // nothing has no way to tell that from a dead radio.
-  if(!pretap_off && rx->pretap_ring!=NULL && GetRXAPreAgcTapCap(rx->channel)>0
+  if(rx->pretap_ring!=NULL && GetRXAPreAgcTapCap(rx->channel)>0
      && rx->dsp_rate==48000 && tci_audio_subscribed(rx)) {
     long w=GetRXAPreAgcTapPos(rx->channel);
     long avail=w-rx->pretap_r;
