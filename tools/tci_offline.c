@@ -1,9 +1,10 @@
-// Offline TCI harness.  Two things: how cw_msg's four fields are split and put
-// back together, and how the WebSocket codec frames and reassembles a message.
+// Offline TCI harness. Three things: how cw_msg's four fields are split and put
+// back together, how the WebSocket codec frames and reassembles a message, and
+// the units used by the binary stream header.
 //
 //   tci_offline --selftest
 //
-// Why these two when the rest of the TCI server has no test: every other command
+// Why these when the rest of the TCI server has no test: every other command
 // in tci.c either mirrors a value the radio already holds (readable by
 // inspection, and wrong in an obvious way if it breaks) or needs a live client
 // to mean anything.  These two need neither a radio nor a client -- the codec is
@@ -25,8 +26,8 @@
 //     both are exactly what a well-meaning "simplify this to strtok_r" would
 //     break while every other TCI command kept working.
 //
-// The parser is pure (glib only) and the codec reaches no further than a socket,
-// so this links tci_cw.o + tci_ws.o -- no server, no RADIO, no GTK.
+// The parsers are pure (glib only) and the codec reaches no further than a
+// socket, so this links tci_cw.o + tci_ws.o -- no server, no RADIO, no GTK.
 
 #include "net_compat.h"   // must precede glib: winsock2 before windows.h
 #include <stdio.h>
@@ -39,12 +40,22 @@
 
 #include "tci_cw.h"
 #include "tci_ws.h"
+#include "tci_stream.h"
 
 #if !defined(SHUT_WR)
   #define SHUT_WR SD_SEND        // Winsock spells the half-close differently
 #endif
 
 static int failures = 0;
+
+static void check_size(const char *what, size_t got, size_t expect) {
+  gboolean ok = got == expect;
+  printf("%-44s %-6s %zu\n", what, ok ? "PASS" : "FAIL", got);
+  if (!ok) {
+    printf("%52s expected %zu\n", "", expect);
+    failures++;
+  }
+}
 
 static void check(const char *what, const char *token, const char *expect) {
   char *got = tci_cw_msg_text(token);
@@ -280,6 +291,16 @@ int main(int argc, char **argv) {
   check_ws("300-byte binary uses the 16-bit length", 0x2, NULL, w_binary_16bit_len);
   check_ws("a length past the cap is refused", -1, NULL, w_oversize);
   check_ws("a truncated frame is refused, not guessed", -1, NULL, w_truncated);
+
+  printf("\n-- TCI stream: length is real samples, not payload bytes --\n");
+  check_size("declared length clips padded JTDX payload",
+             tci_stream_float_count(2048, 4096 * sizeof(float)), 2048);
+  check_size("short payload is never read past its end",
+             tci_stream_float_count(2048, 1000 * sizeof(float)), 1000);
+  check_size("2048 stereo samples occupy 1024 at 48 kHz",
+             (size_t)tci_stream_mic_samples(2048, 2, 48000, 48000), 1024);
+  check_size("stream duration converts from 12 to 48 kHz",
+             (size_t)tci_stream_mic_samples(2048, 2, 12000, 48000), 4096);
 
   printf("\n%s\n", failures == 0 ? "all cases passed" : "FAILURES ABOVE");
   return failures == 0 ? 0 : 1;

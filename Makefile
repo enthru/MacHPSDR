@@ -910,15 +910,15 @@ wefax_offline$(EXE): tools/wefax_offline.c wefax_decoder.o image_save.o log.o
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
 
 # Headless TCI harness.  tci.c as a whole needs a live client to mean anything,
-# but two pieces of it do not: the cw_msg field split (an INTERPRETATION of an
+# but three pieces of it do not: the cw_msg field split (an INTERPRETATION of an
 # ambiguous part of the spec, and a command that puts Morse on the air) and the
-# WebSocket codec (bytes chosen by whoever connected).  Links tci_cw.o and
-# tci_ws.o -- glib and sockets, no RADIO, no GTK, which is why both were split
-# out; the codec is driven over a socketpair.
+# WebSocket codec (bytes chosen by whoever connected), and binary-stream unit
+# conversion. Links tci_cw.o and tci_ws.o -- glib and sockets, no RADIO, no GTK;
+# the codec is driven over a socketpair.
 #   make tci-offline && ./tci_offline --selftest
 .PHONY: tci-offline
 tci-offline: tci_offline$(EXE)
-tci_offline$(EXE): tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o
+tci_offline$(EXE): tools/tci_offline.c src/proto/tci_stream.h tci_cw.o tci_ws.o net_compat.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o \
 	  $(shell pkg-config --libs glib-2.0) $(WIN_NET_LIBS)

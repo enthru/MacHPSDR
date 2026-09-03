@@ -49,6 +49,7 @@
 // RFC 6455 framing + the Upgrade handshake: sockets and glib only, no radio.
 // Split out for the same reason, and it carries TCI_SEND_FLAGS.
 #include "tci_ws.h"
+#include "tci_stream.h"
 #ifdef SSTV
   #include "cw_encoder.h"   // cw_tx_send_text / cw_tx_abort (CW keyer, SSTV-flag)
 #endif
@@ -65,9 +66,9 @@
 #define TCI_STREAM_TX_AUDIO  2    // TciStreamType::TX_AUDIO_STREAM
 #define TCI_STREAM_TX_CHRONO 3    // TciStreamType::TX_CHRONO
 #define TCI_HDR_BYTES        64
-// TCI 1.9 defaults for the TX-audio handshake: the block size a chrono asks for
-// at 48 kHz (AUDIO_STREAM_SAMPLES, range 100..2048) and how much audio the
-// client wants queued ahead (TX_STREAM_AUDIO_BUFFERING, ms).
+// TCI 1.9 defaults for the TX-audio handshake: the number of real samples a
+// chrono asks for (interleaved across its two channels; 2048 means 1024 stereo
+// frames), and how much audio the client wants queued ahead.
 #define TCI_TX_SAMPLES_DEF   2048
 #define TCI_TX_SAMPLES_MIN   100
 #define TCI_TX_SAMPLES_MAX   2048
@@ -113,6 +114,9 @@ static int      tx_ring_head = 0;             // next write
 static int      tx_ring_tail = 0;             // next read
 static gint64   tx_audio_last_us = 0;         // monotonic time of last TX-audio frame
 static gint     tx_frames_in = 0;             // atomic: TX-audio frames accepted, ever
+static gint     tx_ring_dropped = 0;           // atomic: input samples lost to a full ring
+static gint     tx_ring_underruns = 0;         // atomic: zeroes inserted while TCI is armed
+static gint     tx_chrono_dropped = 0;         // atomic: requests not sent due to socket contention
 
 // TX_CHRONO state. A client that keys with `trx:<n>,true,tci;` is telling us it
 // will supply the modulator audio -- and per TCI 1.9 it then waits for us to ask
@@ -143,6 +147,11 @@ static volatile gint audio_rx_mask = 0;
 // Store a little-endian uint32 (TCI is LE; target hosts are LE, but stay explicit).
 static inline void st32le(guint8 *p, guint32 v) {
   p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; p[2] = (v >> 16) & 0xff; p[3] = (v >> 24) & 0xff;
+}
+
+static inline guint32 ld32le(const guint8 *p) {
+  return ((guint32)p[0]) | ((guint32)p[1] << 8) |
+         ((guint32)p[2] << 16) | ((guint32)p[3] << 24);
 }
 
 // ---------------------------------------------------------------------------
@@ -709,7 +718,10 @@ static void tx_ring_push_locked(const float *p, int n) {
   int head = tx_ring_head;
   for (int i = 0; i < n; i++) {
     int next = (head + 1) % TCI_TX_RING;
-    if (next == g_atomic_int_get(&tx_ring_tail)) break;   // ring full: drop the rest
+    if (next == g_atomic_int_get(&tx_ring_tail)) {
+      g_atomic_int_add(&tx_ring_dropped, n - i);
+      break;
+    }
     tx_ring[head] = p[i];
     g_atomic_int_set(&tx_ring_head, next);
     head = next;
@@ -721,10 +733,11 @@ static void tx_ring_push_locked(const float *p, int n) {
 // add_mic_sample() to drain. Everything else is ignored.
 static void tci_ingest_binary(const guint8 *buf, size_t len) {
   if (len < TCI_HDR_BYTES + 4) return;
-  guint32 srate   = ((guint32)buf[ 4]) | ((guint32)buf[ 5]<<8) | ((guint32)buf[ 6]<<16) | ((guint32)buf[ 7]<<24);
-  guint32 fmt     = ((guint32)buf[ 8]) | ((guint32)buf[ 9]<<8) | ((guint32)buf[10]<<16) | ((guint32)buf[11]<<24);
-  guint32 dtype   = ((guint32)buf[24]) | ((guint32)buf[25]<<8) | ((guint32)buf[26]<<16) | ((guint32)buf[27]<<24);
-  guint32 channels= ((guint32)buf[28]) | ((guint32)buf[29]<<8) | ((guint32)buf[30]<<16) | ((guint32)buf[31]<<24);
+  guint32 srate    = ld32le(buf + 4);
+  guint32 fmt      = ld32le(buf + 8);
+  guint32 declared = ld32le(buf + 20);
+  guint32 dtype    = ld32le(buf + 24);
+  guint32 channels = ld32le(buf + 28);
   // Announce what arrives BEFORE any of the refusals below, and rate-limited
   // because it is otherwise one line per audio frame.  The whole point is to
   // separate "the client sends nothing" from "the client sends something we
@@ -739,10 +752,12 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   const gint64 now_us = g_get_monotonic_time();
   if (now_us - last_seen_log >= 5000000) {
     last_seen_log = now_us;
-    log_info("tci: binary frame in: stream type %u, format %u, %u Hz, %u channel(s), %zu bytes"
+    log_info("tci: binary frame in: stream type %u, format %u, %u Hz, %u channel(s), "
+             "length %u, %zu payload bytes"
              " (TX audio is type %d, format %d)\n",
              (unsigned)dtype, (unsigned)fmt, (unsigned)srate, (unsigned)channels,
-             len - TCI_HDR_BYTES, TCI_STREAM_TX_AUDIO, TCI_SAMPLE_FLOAT32);
+             (unsigned)declared, len - TCI_HDR_BYTES,
+             TCI_STREAM_TX_AUDIO, TCI_SAMPLE_FLOAT32);
   }
   if (dtype != TCI_STREAM_TX_AUDIO) return;
   // TCI 1.9's SampleType enum stops at FLOAT32 = 3, but at least one widely
@@ -762,12 +777,17 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
   if (channels < 1) channels = 1;
   if (now_us - last_accept_log >= 5000000) {
     last_accept_log = now_us;
-    log_info("tci: TX audio in: %u Hz, %u channel(s), %zu bytes\n",
-             (unsigned)srate, (unsigned)channels, len - TCI_HDR_BYTES);
+    log_info("tci: TX audio in: %u Hz, %u channel(s), length %u, %zu payload bytes\n",
+             (unsigned)srate, (unsigned)channels, (unsigned)declared,
+             len - TCI_HDR_BYTES);
   }
 
   const float *s = (const float *)(buf + TCI_HDR_BYTES);
-  size_t nfloats = (len - TCI_HDR_BYTES) / sizeof(float);
+  // The header length is authoritative. JTDX 2.2.159 sends a WebSocket buffer
+  // twice as large as the declared interleaved audio and only fills the first
+  // half. Consuming the whole payload therefore produced a valid block
+  // followed by stale/zero padding: exactly the observed interrupted signal.
+  size_t nfloats = tci_stream_float_count(declared, len - TCI_HDR_BYTES);
   size_t stride  = channels;                          // take the left channel
   size_t nmono   = nfloats / stride;
   if (nmono == 0) return;
@@ -2076,7 +2096,8 @@ static void tci_send_chrono(guint32 nsamples) {
   for (int i = 0; i < TCI_MAX_CLIENTS; i++) {
     if (clients[i].fd < 0) continue;
     if (!g_atomic_int_get(&clients[i].tx_chrono)) continue;
-    client_send_framed_try(&clients[i], frame, flen);
+    if (!client_send_framed_try(&clients[i], frame, flen))
+      g_atomic_int_inc(&tx_chrono_dropped);
   }
   g_mutex_unlock(&clients_mutex);
 }
@@ -2090,21 +2111,40 @@ static void tci_set_tx_chrono(TCI_CLIENT *c, gboolean on) {
   if (g_atomic_int_get(&c->tx_chrono) == (on ? 1 : 0)) return;
   g_atomic_int_set(&c->tx_chrono, on ? 1 : 0);
   if (on) {
-    g_atomic_int_inc(&tx_chrono_clients);
-    g_atomic_int_set(&tx_chrono_at_arm, g_atomic_int_get(&tx_frames_in));
+    int previous = g_atomic_int_add(&tx_chrono_clients, 1);
+    if (previous == 0) {
+      // Never let delayed samples from the preceding over leak into this one.
+      g_mutex_lock(&tx_ring_mutex);
+      g_atomic_int_set(&tx_ring_head, 0);
+      g_atomic_int_set(&tx_ring_tail, 0);
+      memset(&rs_tx, 0, sizeof(rs_tx));
+      tx_audio_last_us = 0;
+      g_mutex_unlock(&tx_ring_mutex);
+      g_atomic_int_set(&tx_ring_dropped, 0);
+      g_atomic_int_set(&tx_ring_underruns, 0);
+      g_atomic_int_set(&tx_chrono_dropped, 0);
+      g_atomic_int_set(&tx_chrono_at_arm, g_atomic_int_get(&tx_frames_in));
+    }
     log_info("tci: client (fd=%d) keyed with source=tci -- asking it for TX audio, "
              "%d sample(s) per tick at %d Hz, %d ms of buffering\n",
              c->fd, g_atomic_int_get(&tx_chrono_samples),
              g_atomic_int_get(&audio_stream_rate), g_atomic_int_get(&tx_chrono_buffer_ms));
   } else {
-    g_atomic_int_dec_and_test(&tx_chrono_clients);
+    gboolean last = g_atomic_int_dec_and_test(&tx_chrono_clients);
     // The one line that names the fault when a client keys and stays silent.
     // Without it the operator sees a transmitter that runs perfectly and puts
     // nothing on the air, and there is nothing in any log to read.
-    if (g_atomic_int_get(&tx_frames_in) == g_atomic_int_get(&tx_chrono_at_arm)) {
+    if (last && g_atomic_int_get(&tx_frames_in) == g_atomic_int_get(&tx_chrono_at_arm)) {
       log_error("tci: the client keyed with source=tci and then sent no TX audio at all "
                 "-- it was asked for it (TX_CHRONO), so it either does not answer chrono "
                 "ticks or it is streaming to something else\n");
+    }
+    if (last) {
+      log_info("tci: TX audio summary: %d frame(s), %d dropped chrono request(s), "
+               "%d ring overflow sample(s), %d underrun sample(s)\n",
+               g_atomic_int_get(&tx_frames_in) - g_atomic_int_get(&tx_chrono_at_arm),
+               g_atomic_int_get(&tx_chrono_dropped), g_atomic_int_get(&tx_ring_dropped),
+               g_atomic_int_get(&tx_ring_underruns));
     }
   }
 }
@@ -2120,8 +2160,9 @@ static void tci_tx_chrono_disarm_all(void) {
 
 // One TX buffer has been clocked into the transmitter (add_mic_sample). Turn
 // that into chrono ticks at the same rate. `nsamples` is in the 48 kHz mic
-// domain; a chrono asks for tx_chrono_samples samples of the STREAM rate, which
-// is not the same clock when a client asked for 8/12/24 kHz.
+// domain; a chrono asks for tx_chrono_samples real samples interleaved across
+// two channels at the STREAM rate. That is not the same count as mono time
+// samples, and it is a different clock when a client asks for 8/12/24 kHz.
 //
 // The accumulator is a plain static: the TX chain is clocked by exactly one
 // thread at a time (the mic thread or the protocol's TX pump), and the arm path
@@ -2138,8 +2179,8 @@ void tci_tx_chrono_tick(int nsamples) {
   const int want = g_atomic_int_get(&tx_chrono_samples);
   const int rate = g_atomic_int_get(&audio_stream_rate);
   if (want <= 0 || rate <= 0) return;
-  // 48 kHz mic samples covered by one tick's worth of stream samples.
-  int per = (int)(((gint64)want * TCI_AUDIO_RATE) / rate);
+  // 48 kHz mono mic samples covered by one tick's two-channel stream block.
+  int per = tci_stream_mic_samples((guint32)want, 2, (guint32)rate, TCI_AUDIO_RATE);
   if (per < 1) per = 1;
 
   if (!primed) {
@@ -2180,6 +2221,8 @@ float tci_tx_next_sample(void) {
   if (tail != g_atomic_int_get(&tx_ring_head)) {
     s = tx_ring[tail];
     g_atomic_int_set(&tx_ring_tail, (tail + 1) % TCI_TX_RING);
+  } else if (g_atomic_int_get(&tx_chrono_clients) > 0) {
+    g_atomic_int_inc(&tx_ring_underruns);
   }
   return s;
 }
