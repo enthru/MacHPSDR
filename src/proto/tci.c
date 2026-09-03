@@ -1995,9 +1995,10 @@ static void tci_audio_source_account(int idx, double peak, double gain) {
   if (now - window_us < 5000000) return;
   if (w_peak > 1.0)
     log_info("tci: RX audio source over full scale -- peak %.2f in the last %.0f s "
-             "(turn the level down by %.0f dB). The stream is bounded by its own "
-             "limiter (x%.3g here) so a client is unaffected, but the same overload "
-             "clips the speaker and the recorder, and the cure is AGC-G\n",
+             "(turn the level down by %.0f dB). The feed's limiter is holding the "
+             "stream inside the format (x%.3g here), which it can do for a signal "
+             "the AGC has levelled; the same overload reaches the speaker and the "
+             "recorder unbounded, and the cure for all of it is AGC-G\n",
              w_peak, (double)(now - window_us) / 1e6,
              20.0 * log10(w_peak), w_gain);
   (void)idx;
@@ -2018,10 +2019,26 @@ static gboolean lim_init = FALSE;
 // decoding, and from either end that is indistinguishable from a dead band.
 //
 // This is a HAZARD, not something that has been observed here: the fault that
-// prompted it was the opposite one (an overload reaching the stream, which
-// tci_audio_source_account above now names).  It is asymmetric on purpose --
-// too loud the limiter fixes and only reports, too quiet it cannot fix, so that
-// is the one the operator has to be told about.
+// prompted it was the opposite one, an overload reaching the stream.
+//
+// And the limiter does not answer that one either, which is worth being exact
+// about because it was got wrong twice while working this out.  It is a BOUND,
+// not a level control.  On a signal the AGC has already levelled it does its job
+// and nothing else -- measured on a recorded slot with this radio's overload put
+// back (x6): peak held at exactly 0.500, nothing clipped, all 5 decodes
+// returned, gain moving 1.1 dB across the rest of the slot.  On a signal whose
+// dynamic range nothing is managing it becomes the damage: the attenuation goes
+// in as a WHOLE step inside the block that demands it and comes back over 10 s,
+// so the gain walks tens of dB across a fifteen-second slot and modulates the
+// envelope the decoder is reading.  That is what the pre-AGC tap produced, and
+// it is why the stream comes off the channel output -- what makes it decodable
+// is the AGC, not this.
+//
+// So neither direction is something the limiter rescues.  What separates them is
+// that a signal past full scale still reaches the speaker and the recorder, so
+// it is reported and left to AGC-G (tci_audio_source_account), while a stream
+// too quiet to decode has no symptom anywhere at all -- and that is the one that
+// needs saying to the operator's face.
 //
 // Trips when the gain has been pinned at the ceiling AND the stream has stayed
 // below TCI_LVL_FLOOR continuously for TCI_LVL_HOLD_S with a client subscribed;
