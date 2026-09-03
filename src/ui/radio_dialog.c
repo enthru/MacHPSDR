@@ -569,7 +569,7 @@ static void dac0_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 
 static void iqswap_changed_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
-  r->iqswap=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  radio_iqswap_set(r,gtk_check_button_get_active(GTK_CHECK_BUTTON(widget)));
 }
 
 // ---- I/Q Player (fake device) file chooser -------------------------------
@@ -751,7 +751,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   else if (iqswap_applies) {
     GtkWidget *iqswap=gtk_check_button_new_with_label("Swap I & Q");
     gtk_grid_attach(GTK_GRID(model_grid),iqswap,x,0,1,1);
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(iqswap),radio->iqswap);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(iqswap),radio_iqswap_get(radio));
     g_signal_connect(iqswap,"toggled",G_CALLBACK(iqswap_changed_cb),radio);
   }
   x++;

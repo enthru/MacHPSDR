@@ -302,6 +302,8 @@ static gpointer fake_thread_fn(gpointer data) {
         fake_replay_cap = n;
       }
 
+      // This is a live GTK control, read by this worker thread.
+      const gboolean iqswap=radio_iqswap_get(r);
       for(int s = 0; s < n; s++) {
         double i_sample, q_sample;
 
@@ -324,7 +326,7 @@ static gpointer fake_thread_fn(gpointer data) {
           // Live "Swap I & Q" (mirrors the spectrum) for inverted-sideband
           // recordings — driven by the radio-dialog checkbox (radio->iqswap),
           // so it can be toggled while playing.
-          if(r->iqswap) { double tmp = ii; ii = qq; qq = tmp; }
+          if(iqswap) { double tmp = ii; ii = qq; qq = tmp; }
           // Band-limit to the recording's own bandwidth: kills the resampling
           // images (the "mirror") so the panadapter shows the file's spectrum.
           if(aa_fs != sr) aa_design(0.49*(iq_rate<sr?iq_rate:sr), sr);

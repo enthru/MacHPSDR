@@ -1438,6 +1438,8 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
   }
   
   if(isTransmitting(radio)) {
+    // The radio dialog remains live while this worker runs.
+    const gboolean iqswap=radio_iqswap_get(radio);
     if(radio->classE) {
       for(j=0;j<tx->output_samples;j++) {
         tx->inI[j]=tx->iq_output_buffer[j*2];
@@ -1488,7 +1490,7 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
           // Soapy TX streams as CF32: send the normalised WDSP output floats
           // directly (do NOT quantise through ROUNDHTZ, which would collapse
           // the +/-1.0 range to just -1/0/+1).
-          if(radio->iqswap) {
+          if(iqswap) {
             soapy_protocol_iq_samples((float)tx->iq_output_buffer[(j*2)+1],(float)tx->iq_output_buffer[j*2]);
           } else {
             soapy_protocol_iq_samples((float)tx->iq_output_buffer[j*2],(float)tx->iq_output_buffer[(j*2)+1]);

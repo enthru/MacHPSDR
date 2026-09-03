@@ -3424,10 +3424,10 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {
-    r->iqswap=TRUE;
+    radio_iqswap_set(r,TRUE);
   } else {
 #endif
-    r->iqswap=FALSE;
+    radio_iqswap_set(r,FALSE);
 #ifdef SOAPYSDR
   }
 #endif

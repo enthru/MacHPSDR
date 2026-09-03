@@ -419,7 +419,7 @@ log_info("radio_save_state: %s\n",filename);
   sprintf(value,"%d",rigctl_port_base);
   setProperty("rigctl_port_base",value);
 */
-  sprintf(value,"%d",radio->iqswap);
+  sprintf(value,"%d",radio_iqswap_get(radio));
   setProperty("radio.iqswap",value);
 
   setProperty("radio.iq_player_file",radio->iq_player_file);
@@ -710,7 +710,7 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->rds_rbds=atoi(value);
 
   value=getProperty("radio.iqswap");
-  if(value) radio->iqswap=atoi(value);
+  if(value) radio_iqswap_set(radio,atoi(value));
 
   value=getProperty("radio.iq_player_file");
   if(value) g_strlcpy(radio->iq_player_file,value,sizeof(radio->iq_player_file));

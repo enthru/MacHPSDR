@@ -385,7 +385,11 @@ typedef struct _radio {
 
   int region;
 
-  gboolean iqswap;
+  // Changed by the GTK thread while the Soapy/fake RX and TX worker threads
+  // read it.  Access through radio_iqswap_{get,set}(): a plain gboolean here
+  // made the live "Swap I & Q" control a data race, so an optimised worker was
+  // allowed to keep using the value it saw when it started.
+  gint iqswap;
 
   // I/Q Player (fake device): path of the WAV recording to loop, chosen in
   // Configure -> Radio. Empty => synthetic noise+tones. Persisted.
@@ -419,6 +423,14 @@ typedef struct _radio {
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
 
 } RADIO;
+
+static inline gboolean radio_iqswap_get(const RADIO *r) {
+  return g_atomic_int_get(&r->iqswap) != 0;
+}
+
+static inline void radio_iqswap_set(RADIO *r,gboolean enabled) {
+  g_atomic_int_set(&r->iqswap,enabled ? TRUE : FALSE);
+}
 
 extern int radio_restart(void *data);
 extern int radio_start(void *data);
