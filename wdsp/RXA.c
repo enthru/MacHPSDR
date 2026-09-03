@@ -421,6 +421,27 @@ void create_rxa (int channel)
 		&rxa[channel].agc.p->gain);						// pointer for gain computation
 
 	// bandpass filter
+	// The tap's working buffer and its own copy of the passband filter (see the
+	// bp_tap comment in RXA.h and the tap block in xrxa below).
+	rxa[channel].tapbuff = (double *) malloc0 (2 * ch[channel].dsp_size * sizeof (complex));
+	rxa[channel].bp_tap.p = create_bandpass (
+		1,												// run
+		0,												// position
+		ch[channel].dsp_size,							// buffer size
+		2048,											// number of coefficients
+		0,												// flag for minimum phase
+		rxa[channel].tapbuff,							// input buffer
+		rxa[channel].tapbuff,							// output buffer
+		-4150.0,										// lower filter frequency
+		-150.0,											// upper filter frequency
+		ch[channel].dsp_rate,							// sample rate
+		1,												// wintype
+		1.0);											// gain: the tap is taken
+														// before the NR blocks, so
+														// the signal is still
+														// analytic and needs none
+														// of bp1's factor of 2
+
 	rxa[channel].bp1.p = create_bandpass (
 		1,												// run - used only with ( AM || ANF || ANR || EMNR)
 		0,												// position
@@ -527,6 +548,8 @@ void destroy_rxa (int channel)
 	destroy_speak (rxa[channel].speak.p);
 	destroy_cbl (rxa[channel].cbl.p);
 	destroy_siphon (rxa[channel].sip1.p);
+	destroy_bandpass (rxa[channel].bp_tap.p);
+	_aligned_free (rxa[channel].tapbuff);
 	destroy_bandpass (rxa[channel].bp1.p);
 	destroy_meter (rxa[channel].agcmeter.p);
 	destroy_wcpagc (rxa[channel].agc.p);
@@ -583,6 +606,7 @@ void flush_rxa (int channel)
 	flush_sbnr (rxa[channel].sbnr.p);
 	flush_wcpagc (rxa[channel].agc.p);
 	flush_meter (rxa[channel].agcmeter.p);
+	flush_bandpass (rxa[channel].bp_tap.p);
 	flush_bandpass (rxa[channel].bp1.p);
 	flush_siphon (rxa[channel].sip1.p);
 	flush_cbl (rxa[channel].cbl.p);
@@ -610,6 +634,41 @@ void xrxa (int channel)
 	xfmsq (rxa[channel].fmsq.p);
 	xbpsnbain (rxa[channel].bpsnba.p, 1);
 	xbpsnbaout (rxa[channel].bpsnba.p, 1);
+
+	// --- the tap forks HERE, on demodulated audio -------------------------
+	//
+	// One copy goes on down the chain below -- SNB, the EQ, ANF/ANR/EMNR/NR3/NR4,
+	// bp1 and the AGC, i.e. everything the operator has chosen to hear. The
+	// other is filtered by the tap's own bandpass and handed to whoever asked
+	// for the stream, so a client gets the signal and the operator keeps their
+	// receiver: switching NR on no longer has to mean switching it off for the
+	// speaker, which is what the first version of this cost the operator
+	// mid-session.
+	//
+	// It needs a filter of its own because bp1 is one object at a fixed position
+	// with overlap state and a gain that compensates for the NR ahead of it
+	// having made the signal real; running it twice would corrupt both. The copy
+	// costs a memcpy and one FIR, and only while something is subscribed.
+	if (rxa[channel].pretap != NULL && rxa[channel].pretap_cap > 0)
+	{
+		int n   = ch[channel].dsp_size;
+		int cap = rxa[channel].pretap_cap;
+		memcpy (rxa[channel].tapbuff, rxa[channel].midbuff, n * sizeof (complex));
+		xbandpass (rxa[channel].bp_tap.p, 0);
+		if (n > cap) n = cap;
+		{
+			int w     = (int)(rxa[channel].pretap_w % cap);
+			int first = cap - w;
+			if (first > n) first = n;
+			memcpy (rxa[channel].pretap + 2 * w, rxa[channel].tapbuff, first * sizeof (complex));
+			if (n > first)
+				memcpy (rxa[channel].pretap, rxa[channel].tapbuff + 2 * first,
+				        (n - first) * sizeof (complex));
+			rxa[channel].pretap_w += n;
+		}
+	}
+	// ----------------------------------------------------------------------
+
 	xsnba (rxa[channel].snba.p);
 	xeqp (rxa[channel].eqp.p);
 	xanf (rxa[channel].anf.p, 0);
@@ -618,25 +677,6 @@ void xrxa (int channel)
 	xrnnr (rxa[channel].rnnr.p, 0);
 	xsbnr (rxa[channel].sbnr.p, 0);
 	xbandpass (rxa[channel].bp1.p, 0);
-	// Pre-AGC tap: the signal is demodulated and filtered here, and the AGC on
-	// the next line is the first thing that would change its dynamics.  See
-	// SetRXAPreAgcTap in RXA.h.
-	if (rxa[channel].pretap != NULL && rxa[channel].pretap_cap > 0)
-	{
-		int n   = ch[channel].dsp_size;
-		int cap = rxa[channel].pretap_cap;
-		if (n > cap) n = cap;
-		{
-			int w     = (int)(rxa[channel].pretap_w % cap);
-			int first = cap - w;
-			if (first > n) first = n;
-			memcpy (rxa[channel].pretap + 2 * w, rxa[channel].midbuff, first * sizeof (complex));
-			if (n > first)
-				memcpy (rxa[channel].pretap, rxa[channel].midbuff + 2 * first,
-				        (n - first) * sizeof (complex));
-			rxa[channel].pretap_w += n;
-		}
-	}
 	xwcpagc (rxa[channel].agc.p);
 	xanf (rxa[channel].anf.p, 1);
 	xanr (rxa[channel].anr.p, 1);
@@ -728,6 +768,7 @@ void setDSPSamplerate_rxa (int channel)
 	setSamplerate_emnr (rxa[channel].emnr.p, ch[channel].dsp_rate);
 	setSamplerate_rnnr (rxa[channel].rnnr.p, ch[channel].dsp_rate);
 	setSamplerate_sbnr (rxa[channel].sbnr.p, ch[channel].dsp_rate);
+	setSamplerate_bandpass (rxa[channel].bp_tap.p, ch[channel].dsp_rate);
 	setSamplerate_bandpass (rxa[channel].bp1.p, ch[channel].dsp_rate);
 	setSamplerate_wcpagc (rxa[channel].agc.p, ch[channel].dsp_rate);
 	setSamplerate_meter (rxa[channel].agcmeter.p, ch[channel].dsp_rate);
@@ -794,6 +835,10 @@ void setDSPBuffsize_rxa (int channel)
 	setSize_rnnr (rxa[channel].rnnr.p, ch[channel].dsp_size);
 	setBuffers_sbnr (rxa[channel].sbnr.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_sbnr (rxa[channel].sbnr.p, ch[channel].dsp_size);
+	_aligned_free (rxa[channel].tapbuff);
+	rxa[channel].tapbuff = (double *) malloc0 (2 * ch[channel].dsp_size * sizeof (complex));
+	setBuffers_bandpass (rxa[channel].bp_tap.p, rxa[channel].tapbuff, rxa[channel].tapbuff);
+	setSize_bandpass (rxa[channel].bp_tap.p, ch[channel].dsp_size);
 	setBuffers_bandpass (rxa[channel].bp1.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_bandpass (rxa[channel].bp1.p, ch[channel].dsp_size);
 	setBuffers_wcpagc (rxa[channel].agc.p, rxa[channel].midbuff, rxa[channel].midbuff);
@@ -1012,8 +1057,30 @@ void RXAbpsnbaSet (int channel)
 ********************************************************************************************************/
 
 PORT
+// Give the tap's filter the same edges bp1 just got. Same body as
+// SetRXABandpassFreqs, against bp_tap: the tap is a second, independent
+// instance and nothing else would ever move its passband.
+static void set_bp_tap_freqs (int channel, double f_low, double f_high)
+{
+	double* impulse;
+	BANDPASS a = rxa[channel].bp_tap.p;
+	if ((f_low != a->f_low) || (f_high != a->f_high))
+	{
+		impulse = fir_bandpass (a->nc, f_low, f_high, a->samplerate,
+			a->wintype, 1, a->gain / (double)(2 * a->size));
+		setImpulse_fircore (a->p, impulse, 0);
+		_aligned_free (impulse);
+		EnterCriticalSection (&ch[channel].csDSP);
+		a->f_low = f_low;
+		a->f_high = f_high;
+		setUpdate_fircore (a->p);
+		LeaveCriticalSection (&ch[channel].csDSP);
+	}
+}
+
 void RXASetPassband (int channel, double f_low, double f_high)
 {
+	set_bp_tap_freqs			(channel, f_low, f_high);
 	SetRXABandpassFreqs			(channel, f_low, f_high);
 	SetRXASNBAOutputBandwidth	(channel, f_low, f_high);
 	RXANBPSetFreqs				(channel, f_low, f_high);

@@ -62,15 +62,17 @@ struct _rxa
 	double* inbuff;
 	double* outbuff;
 	double* midbuff;
-	// Pre-AGC tap.  xrxa() copies the signal into this ring at the point it has
-	// been demodulated and passband-filtered but has NOT yet been through the
-	// AGC (nor the post-AGC noise reduction), which is what a consumer that is
-	// not the operator's speaker wants: the signal, without the listening chain.
+	// The stream tap.  xrxa() forks the signal into this ring the moment it is
+	// demodulated -- before SNB, the EQ, ANF/ANR/EMNR/NR3/NR4 and the AGC -- and
+	// filters the copy with bp_tap below.  That is what a consumer which is not
+	// the operator's speaker wants: the signal, with none of the listening
+	// chain, and without taking any of it away from the operator.
 	// NULL means untapped and no copy is made.  The ring is written by the DSP
 	// thread and read by whoever set it, using pretap_w as the sequence number.
 	double* pretap;         // ring of pretap_cap complex samples, or NULL
 	int     pretap_cap;     // capacity in complex samples
 	long    pretap_w;       // total complex samples ever written (monotonic)
+	double* tapbuff;        // the tap's own working buffer (dsp_size complex)
 	int mode;
 	double meter[RXA_METERTYPE_LAST];
 	CRITICAL_SECTION* pmtupdate[RXA_METERTYPE_LAST];
@@ -94,6 +96,14 @@ struct _rxa
 	{
 		BANDPASS p;
 	} bp1;
+	// The tap's own passband filter. bp1 cannot be shared: it is one object at a
+	// fixed position whose gain compensates for the NR blocks ahead of it having
+	// made the signal real, and the tap is taken BEFORE those. Same coefficients,
+	// its own overlap state, gain 1.0.
+	struct
+	{
+		BANDPASS p;
+	} bp_tap;
 	struct
 	{
 		NOTCHDB p;
@@ -217,7 +227,7 @@ extern void RXAbpsnbaCheck (int channel, int mode, int notch_run);
 
 extern void RXAbpsnbaSet (int channel);
 
-// Pre-AGC tap.  `ring` holds `cap` complex samples and must stay allocated until
+// The stream tap.  `ring` holds `cap` complex samples and must stay allocated until
 // the channel is closed or the tap is cleared with a NULL ring; clearing is
 // enough to stop the copy, but the memory may only be freed once nothing can be
 // inside xrxa() with the old pointer (in practice: after CloseChannel).
