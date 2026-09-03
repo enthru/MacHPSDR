@@ -880,8 +880,22 @@ Development and testing has been run on macOS Sierra 10.12.6 and High Sierra
 10.13.6. Prerequisites are installed with [Homebrew](https://brew.sh/).
 
 ```bash
-brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+brew install pkgconf fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
 ```
+
+> **`pkgconf` is not optional, and Homebrew will not pull it in for you.** It
+> provides `pkg-config`, which the `Makefile` asks for GTK's compiler and linker
+> flags — but it is a *build-only* dependency of the `gtk4` formula, and a
+> bottle installs none of those. Leave it out and the build stops with two lines
+> that look like a missing GTK rather than a missing tool:
+>
+> ```
+> /bin/sh: pkg-config: command not found
+> src/core/main.c:21:10: fatal error: 'gtk/gtk.h' file not found
+> ```
+>
+> (`gnome-icon-theme` is the old name of `adwaita-icon-theme`; Homebrew still
+> accepts it, but installs the latter.)
 
 ```bash
 git clone https://github.com/enthru/MacHPSDR.git machpsdr
@@ -962,7 +976,8 @@ Development and testing has been run on Ubuntu and Arch Linux. The build now
 requires **GTK 4** (`libgtk-4-dev` / `gtk4`); GTK 3 is no longer supported.
 
 ```bash
-sudo apt-get install libfftw3-dev libpulse-dev libsoundio-dev \
+sudo apt-get install build-essential pkg-config \
+                     libfftw3-dev libpulse-dev libsoundio-dev \
                      libasound2-dev libgtk-4-dev libsoapysdr-dev libliquid-dev
 ```
 
