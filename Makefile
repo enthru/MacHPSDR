@@ -143,12 +143,17 @@ ft8_lib/fft/kiss_fft.c ft8_lib/fft/kiss_fftr.c \
 ft8_lib/common/monitor.c
 FT8_HEADERS= \
 ft8_decoder.h ft8_encoder.h ft8_qso.h ft8_panel.h ft8_dialog.h ft8_udp.h ft8_pskreporter.h ft8_waterfall.h ft8_dxcc.h
-FT8_OBJS= \
-ft8_decoder.o ft8_encoder.o ft8_qso.o ft8_panel.o ft8_dialog.o ft8_udp.o ft8_pskreporter.o ft8_waterfall.o ft8_dxcc.o \
+# The vendored half on its own: tools/ft8_offline.c links the decoder against
+# ft8_lib without any of the app's FT8 objects (they reach GTK and the global
+# RADIO through ft8_encoder/qso/panel).
+FT8_LIB_OBJS= \
 ft8_lib/ft8/constants.o ft8_lib/ft8/crc.o ft8_lib/ft8/decode.o \
 ft8_lib/ft8/encode.o ft8_lib/ft8/ldpc.o ft8_lib/ft8/message.o ft8_lib/ft8/text.o \
 ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \
 ft8_lib/common/monitor.o
+FT8_OBJS= \
+ft8_decoder.o ft8_encoder.o ft8_qso.o ft8_panel.o ft8_dialog.o ft8_udp.o ft8_pskreporter.o ft8_waterfall.o ft8_dxcc.o \
+$(FT8_LIB_OBJS)
 endif
 
 # SSTV receive decoder (analogue image, Scottie/Martin) + WEFAX / HF radiofax
@@ -877,6 +882,24 @@ sstv_offline$(EXE): tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_sav
 	  sstv_encoder.o sstv_decoder.o image_save.o log.o \
 	  $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0) -lm
 
+# Headless FT8/FT4 harness: a synthesised band -- known messages in known slots
+# -- through ft8_decoder.c, scored against what was transmitted.  FT8 had no
+# offline test at all, and the property it guards cannot be seen by inspection:
+# the decode windows OVERLAP by design (a recording is not aligned to UTC), so
+# every transmission is decodable in two or three of them and each window
+# decoded it again -- the same message listed under two consecutive slot labels.
+# It also pins which slot a decode is attributed to, which the QSO engine
+# inverts its transmit parity from.  Links the decoder against the vendored
+# ft8_lib and stubs PSK Reporter (a network client wired to the global RADIO).
+#   make ft8-offline && ./ft8_offline --selftest
+.PHONY: ft8-offline
+ft8-offline: ft8_offline$(EXE)
+ft8_offline$(EXE): tools/ft8_offline.c ft8_decoder.o log.o $(FT8_LIB_OBJS)
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
+	  $(FT8_INCLUDES) $(shell pkg-config --cflags glib-2.0) -o $@ tools/ft8_offline.c \
+	  ft8_decoder.o log.o $(FT8_LIB_OBJS) \
+	  $(shell pkg-config --libs glib-2.0) -lm
+
 # Headless CW harness: the encoder's audio straight back into the decoder, plus
 # the keyer driven on a mock clock through its own test hook.  It is the only
 # thing guarding three properties that cannot be checked by inspection — that the
@@ -1057,6 +1080,9 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
 CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE)
+ifeq ($(FT8_INCLUDE),FT8)
+CHECK_BINS+=ft8_offline$(EXE)
+endif
 ifeq ($(HFDL_INCLUDE),HFDL)
 CHECK_BINS+=hfdl_offline$(EXE) acars_offline$(EXE)
 endif
@@ -1125,9 +1151,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

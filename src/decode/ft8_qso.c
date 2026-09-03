@@ -72,6 +72,7 @@ static gboolean have_pending = FALSE;
 static gboolean need_arm = FALSE;      // (re)arm the scheduler on the next poll
 
 static char   last_utc[8] = "";       // decoder slot label last processed
+static int    last_n = 0;             // how many of that slot's decodes were handled
 static gboolean prev_active = FALSE;   // ft8_tx_active() on the previous poll
 static int    cycles = 0;             // our TX completions since last progress
 static gboolean logged = FALSE;        // this QSO already written to the log
@@ -443,9 +444,14 @@ static gboolean qso_poll(gpointer data) {
   FT8_DECODE d[64];
   char utc[8] = "";
   int n = ft8_decoder_get_decodes(d, 64, utc);
-  if (n > 0 && utc[0] && strcmp(utc, last_utc) != 0) {
+  // The decoder's list grows within a slot (overlapping decode windows), so a
+  // decode is new when it sits past the count last handled — not merely when the
+  // slot label changes.  Each is acted on exactly once either way.
+  int first = (strcmp(utc, last_utc) == 0) ? last_n : 0;
+  if (n > first && utc[0]) {
     snprintf(last_utc, sizeof(last_utc), "%s", utc);
-    for (int i = 0; i < n && state != ST_IDLE; i++) handle_decode(&d[i]);
+    last_n = n;
+    for (int i = first; i < n && state != ST_IDLE; i++) handle_decode(&d[i]);
   }
 
   // 2) React to the end of one of our transmissions.
@@ -508,6 +514,7 @@ void ft8_qso_start_cq(void) {
   logged = FALSE;
   prepared_msg[0] = '\0';
   last_utc[0] = '\0';
+  last_n = 0;
   cycles = 0;
   state = ST_CALLING_CQ;
   tx_enabled = TRUE;
@@ -536,6 +543,7 @@ void ft8_qso_answer(const FT8_DECODE *d) {
   logged = FALSE;
   prepared_msg[0] = '\0';
   last_utc[0] = '\0';
+  last_n = 0;
   cycles = 0;
   state = ST_ANS_SENT_GRID;
   tx_enabled = TRUE;

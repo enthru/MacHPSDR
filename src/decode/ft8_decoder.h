@@ -21,8 +21,12 @@
  * FT8 receive decoder.
  *
  * Taps the active receiver's demodulated 48 kHz audio, decimates it to the
- * 12 kHz mono stream the ft8_lib codec expects, buffers one 15-second UTC
- * time slot, and decodes it in a background thread on each slot boundary.
+ * 12 kHz mono stream the ft8_lib codec expects, and decodes the most recent
+ * slot-length window of it in a background thread every couple of seconds.
+ * The windows OVERLAP (a recording is not aligned to UTC, and a clock can be
+ * off), so the same transmission is decodable in several of them; which slot a
+ * decode belongs to is worked out from where it sits in the audio, and a
+ * transmission already published for that slot is not published again.
  * The decoder is enabled automatically whenever the active receiver's mode is
  * DIGU (see receiver_mode_changed()).
  *
@@ -65,10 +69,32 @@ extern void ft8_decoder_set_protocol(int ft4);
 // from the RX/audio thread.  No-op unless the decoder is enabled.
 extern void ft8_decoder_add_audio(const gdouble *samples, int nframes);
 
-// Copy the most recent slot's decode list (thread-safe).  Returns the count,
+// Copy the current slot's decode list (thread-safe).  Returns the count,
 // filling up to max entries.  utc7 (>=8 bytes), if non-NULL, receives the
 // "hhmmss" of the slot those decodes belong to.
+//
+// The list GROWS within a slot: the decode windows overlap, so a station that
+// only comes through in a later window is appended to the ones already there,
+// and the list is reset only when a newer slot decodes.  A consumer that
+// displays or acts on each decode once therefore remembers the (utc, count) it
+// last saw and takes the entries past that count — taking the whole list on a
+// change of utc alone drops everything a later window added.
 extern int ft8_decoder_get_decodes(FT8_DECODE *out, int max, char *utc7);
+
+// Harness seams (tools/ft8_offline.c), never called by the application.
+// ft8_decoder_set_clock() replaces g_get_real_time() as the source of "when did
+// this window end", which is where every decode's slot label and dt come from —
+// without it a harness cannot feed a minute of audio in a fraction of a second.
+// ft8_decoder_sync() blocks until the worker has finished the window in hand,
+// so a harness can feed at full speed without windows being skipped as busy.
+// ft8_decoder_dup_count() reports how many decodes have been dropped as already
+// published for their slot since the decoder was enabled — without it a harness
+// cannot tell a run where the overlapping windows really did see the same
+// transmission twice from one where the window grid happened to catch each
+// transmission only once, and the duplicate check goes untested either way.
+extern void  ft8_decoder_set_clock(gint64 (*fn)(void));
+extern void  ft8_decoder_sync(void);
+extern guint ft8_decoder_dup_count(void);
 
 // Fill `out` with a power spectrum (dB) of the most recent FT8-band audio taken
 // from the decoder's 12 kHz ring, covering 0..~3000 Hz (the FT8 audio passband).

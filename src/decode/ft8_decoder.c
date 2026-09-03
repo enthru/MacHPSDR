@@ -45,22 +45,31 @@
 #define FT8_SLOT_SEC    15               // FT8 time slot (s)
 #define SLOT_SAMPLES    (FT8_RATE * FT8_SLOT_SEC)         // decode window (180000)
 #define RING_CAP        (FT8_RATE * (FT8_SLOT_SEC + 1))   // ring: one window + margin
-// Decode the most recent window this often.  The Costas search only tolerates a
-// transmission starting within the first ~3 s of the window, so a recorded/looped
-// I/Q file (not aligned to real UTC) — and, defensively, a slightly-off system
-// clock — need overlapping windows rather than a single hard UTC-slot cut.  A hop
-// shorter than that tolerance guarantees every complete transmission in the ring
-// lands decodably in at least one window.
-#define DECODE_HOP      (FT8_RATE * 2)                    // ~2 s between decodes (FT8)
+// Decode the most recent window this often.  A recorded or looped I/Q file is not
+// aligned to real UTC, and a system clock can be off, so the windows OVERLAP
+// instead of cutting the audio at slot boundaries.
+//
+// The hop is not a taste: it is bounded by how far into a window a transmission
+// may start and still be found.  ft8_lib's candidate search sweeps time_offset
+// over −10..+19 SYMBOLS, and a transmission must also fit whole (a truncated one
+// is dropped — see decode_slot), which caps it at window − waveform.  So the
+// usable band of start positions is 0 .. 2.36 s for FT8 (12.64 s of waveform in
+// a 15 s window, the symbol sweep reaching 2.96 s and not binding) and 0 ..
+// 0.89 s for FT4, where the sweep DOES bind: 19 symbols of 48 ms.  A hop wider
+// than that band leaves phases at which no window sees a transmission whole and
+// in range, and the transmission is simply lost — which is what a 1 s FT4 hop
+// against a 0.89 s band did, on about one transmission in twenty.  The sweep in
+// tools/ft8_offline.c walks a whole grid period of start positions for exactly
+// this reason.
 #define MAX_DECODES     64               // per-window cap we surface to the UI
 
 // ---- protocol (0 = FT8, 1 = FT4), set by ft8_decoder_set_protocol() ---------
 // FT4 has a 7.5 s slot and a ~5 s waveform, so its decode window, decode cadence
-// and minimum-audio guard are all half/shorter than FT8's.  SLOT_SAMPLES/RING_CAP
+// and minimum-audio guard are all shorter than FT8's.  SLOT_SAMPLES/RING_CAP
 // above stay sized for the longer FT8 window (the FT4 window fits inside them).
 static volatile int proto = 0;
 static int slot_samples(void) { return proto ? FT8_RATE * 15 / 2 : FT8_RATE * 15; }  // 90000 / 180000
-static int decode_hop(void)   { return proto ? FT8_RATE * 1     : FT8_RATE * 2; }     // 1 s / 2 s
+static int decode_hop(void)   { return proto ? FT8_RATE * 3 / 4 : FT8_RATE * 2; }     // 0.75 s / 2 s
 
 // ft8_lib decode tuning (mirrors the reference decoder in demo/decode_ft8.c)
 #define KMIN_SCORE      10
@@ -85,18 +94,70 @@ static long   last_decode_w = 0;          // ring_w at the previous decode trigg
 // ---- hand-off to the worker ------------------------------------------------
 static GMutex   work_mutex;
 static GCond    work_cond;
+static GCond    done_cond;                // worker -> ft8_decoder_sync()
 static gboolean work_ready = FALSE;
 static gboolean running = FALSE;
 static float    work_buf[SLOT_SAMPLES];
 static int      work_len = 0;
-static time_t   work_slot_time = 0;       // UTC time the window ended
+static gint64   work_end_us = 0;          // UTC time of the window's LAST sample
 static GThread *worker = NULL;
 
+// Every decode's slot label and dt are derived from the window's end time, so a
+// harness has to be able to drive that clock: tools/ft8_offline.c feeds a minute
+// of audio in a fraction of a second, and the wall clock would drop every window
+// of it into the same slot.  NULL — the application — means g_get_real_time().
+static gint64 (*clock_fn)(void) = NULL;
+static gint64 now_us(void) { return clock_fn ? clock_fn() : g_get_real_time(); }
+
 // ---- decode result list (worker writes, UI reads) --------------------------
+// The list ACCUMULATES one slot's decodes and is reset when a newer slot
+// arrives.  Overlapping windows (see decode_hop) see the same transmission two
+// or three times over, and a weak station that only comes through in a later
+// window has to be APPENDED to what is already on display rather than replace
+// it — so a consumer tracks (utc, count) and takes the entries past the count
+// it last saw.
 static GMutex      list_mutex;
 static FT8_DECODE  results[MAX_DECODES];
 static int         result_count = 0;
 static char        result_utc[8] = "";
+static time_t      result_slot = 0;
+static gboolean    have_slot = FALSE;
+
+// Cross-window duplicate suppression.  A transmission decodes in EVERY window
+// that holds it whole — two or three of them at a 2 s hop — so without this the
+// same message is listed twice under two consecutive slot labels, which is
+// exactly what the operator saw.  The key is (payload, slot): the payload
+// carries both callsigns, so the same 77 bits in the same slot is the same
+// transmission and not a second station.  No ageing — an entry can only
+// false-match when its slot comes round again a day later, by which time this
+// ring has turned over many times.
+#define DUP_RING 256
+typedef struct {
+  uint8_t  payload[FTX_PAYLOAD_LENGTH_BYTES];
+  time_t   slot;
+  gboolean used;
+} DUP_ENTRY;
+static DUP_ENTRY dup_ring[DUP_RING];
+static int       dup_w = 0;
+static guint     dup_hits = 0;            // suppressed repeats, for the harness
+
+// TRUE if this payload has already been published for this slot; otherwise it is
+// recorded and FALSE returned.  Worker thread only.
+static gboolean dup_seen(const uint8_t *payload, time_t slot) {
+  for (int i = 0; i < DUP_RING; i++) {
+    if (!dup_ring[i].used) continue;
+    if (dup_ring[i].slot == slot &&
+        memcmp(dup_ring[i].payload, payload, FTX_PAYLOAD_LENGTH_BYTES) == 0) {
+      dup_hits++;
+      return TRUE;
+    }
+  }
+  dup_ring[dup_w].used = TRUE;
+  dup_ring[dup_w].slot = slot;
+  memcpy(dup_ring[dup_w].payload, payload, FTX_PAYLOAD_LENGTH_BYTES);
+  dup_w = (dup_w + 1) % DUP_RING;
+  return FALSE;
+}
 
 // ===========================================================================
 // Callsign hash table — required by ftx_message_decode() to resolve the
@@ -267,9 +328,19 @@ static float measure_snr(const float *sig, int len, float f0, float t0,
 // ===========================================================================
 // Decode one accumulated slot buffer into the results[] list (worker thread).
 // ===========================================================================
-static void decode_slot(const float *sig, int len, time_t slot_start) {
+static void decode_slot(const float *sig, int len, gint64 end_us) {
   // Age the callsign table once per decode cycle, where upstream does it.
   hashtable_cleanup(CALLSIGN_HASH_MAX_AGE);
+
+  // Where this window sits in UTC.  Everything below is derived from it: the
+  // window slides on a 2 s hop and is NOT slot-aligned, so "the clock at decode
+  // time" is not the slot a transmission was sent in.
+  const double slot_len   = proto ? 7.5 : 15.0;
+  const double tx_nominal = 0.5;          // a transmission starts 0.5 s into its slot
+  const double win_end    = (double)end_us / 1.0e6;
+  const double win_start  = win_end - (double)len / (double)FT8_RATE;
+  const int    n_sym      = proto ? FT4_NN : FT8_NN;
+  const int    nsps       = (int)(FT8_RATE * (proto ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD));
 
   monitor_config_t cfg = {
     .f_min = 100.0f,
@@ -293,27 +364,58 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
   ftx_candidate_t candidate_list[KMAX_CANDIDATES];
   int num_candidates = ftx_find_candidates(wf, KMAX_CANDIDATES, candidate_list, KMIN_SCORE);
 
-  // Duplicate suppression across candidates within this slot.
+  // Duplicate suppression across the candidates of THIS window (the cross-window
+  // ring below is the one that spans several).
   ftx_message_t decoded[MAX_DECODES];
   ftx_message_t *decoded_hashtable[MAX_DECODES];
   for (int i = 0; i < MAX_DECODES; i++) decoded_hashtable[i] = NULL;
 
   FT8_DECODE local[MAX_DECODES];
+  time_t     local_slot[MAX_DECODES];
   int n = 0;
-
-  struct tm tm_slot;
-  gmtime_r(&slot_start, &tm_slot);
 
   for (int idx = 0; idx < num_candidates && n < MAX_DECODES; idx++) {
     const ftx_candidate_t *cand = &candidate_list[idx];
     float freq_hz = (mon.min_bin + cand->freq_offset + (float)cand->freq_sub / wf->freq_osr) / mon.symbol_period;
-    float time_sec = (cand->time_offset + (float)cand->time_sub / wf->time_osr) * mon.symbol_period;
+    // ONE SYMBOL PERIOD is subtracted here, and it is not a fudge: the monitor's
+    // analysis frame is nfft = 2 symbols long and ENDS at its block boundary, so
+    // the block a symbol scores best in is the one whose window is centred on it
+    // — a whole symbol after the symbol itself starts.  ft8_lib's own demo omits
+    // the term because it only prints the number; here it is the anchor
+    // measure_snr() cuts its per-symbol DFTs at, so being 0.16 s (FT8) / 0.048 s
+    // (FT4) late made every one of them straddle two symbols and read the signal
+    // bin as noise: EVERY measured SNR came out at the −24 dB clamp, and the
+    // only rows that did not were the ones falling back to the Costas score.
+    // Measured with tools/ft8_offline.c, which transmits at a known dt.
+    float time_sec = (cand->time_offset + (float)cand->time_sub / wf->time_osr - 1.0f)
+                     * mon.symbol_period;
 
     ftx_message_t message;
     ftx_decode_status_t status;
     if (!ftx_decode_candidate(wf, cand, KLDPC_ITERS, &message, &status)) {
       continue;
     }
+
+    // Only a transmission lying WHOLE inside this window is published.  A
+    // truncated one decodes too — ft8_lib simply skips the symbols it does not
+    // have and the LDPC fills them in — but its SNR cannot be measured (the
+    // fallback then reports the Costas score as decibels, which read ~14 dB
+    // optimistic) and its dt is off by whatever is missing.  With a hop shorter
+    // than the slack between the waveform and the window (2.36 s for FT8,
+    // 2.46 s for FT4) every complete transmission lands whole in at least one
+    // window, so a truncated view is never the only view.  The exception is
+    // audio at the very end of a recording, which no later window can cover.
+    int start0 = (int)lroundf(time_sec * FT8_RATE);
+    if (start0 < 0 || start0 + n_sym * nsps > len) continue;
+
+    // The slot a transmission belongs to comes from WHERE IT SITS IN THE AUDIO,
+    // never from the clock at decode time.  The window that holds a transmission
+    // whole usually ends after the NEXT slot boundary, so labelling by "now" put
+    // every decode one slot late — and with it inverted the QSO engine's slot
+    // parity, which answers in the opposite slot to the one it read.
+    double tx_start = win_start + time_sec;
+    double slot_beg = floor((tx_start - tx_nominal) / slot_len + 0.5) * slot_len;
+    time_t slot_t   = (time_t)llround(slot_beg);
 
     // Check the per-slot duplicate hash table.
     int idx_hash = message.hash % MAX_DECODES;
@@ -339,12 +441,20 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
       continue;
     }
 
+    // ...and against every window that already published this transmission.
+    if (dup_seen(message.payload, slot_t)) continue;
+
+    struct tm tm_slot;
+    gmtime_r(&slot_t, &tm_slot);
+    local_slot[n] = slot_t;
     FT8_DECODE *d = &local[n++];
     snprintf(d->utc, sizeof(d->utc), "%02d%02d%02d",
              tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
     // Measure a real WSJT-X-style SNR from the known tone sequence (FT8 8-GFSK or
-    // FT4 4-GFSK); fall back to the Costas sync-score approximation only if the
-    // message runs off the buffer.
+    // FT4 4-GFSK).  The Costas sync-score fallback is now only reachable on a
+    // degenerate window with no measurable noise: the case it was written for —
+    // a message running off the end of the buffer — is dropped above, because
+    // that number is not a signal report and read ~14 dB optimistic.
     float snr;
     if (proto) {
       uint8_t tones[FT4_NN];
@@ -356,7 +466,7 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
       snr = measure_snr(sig, len, freq_hz, time_sec, tones, FT8_NN, 8, FT8_SYMBOL_PERIOD);
     }
     d->snr = isnan(snr) ? (cand->score * 0.5f - 20.0f) : snr;
-    d->dt = time_sec - 0.5f;   // reference the slot's nominal TX start (~0.5 s)
+    d->dt = (float)(tx_start - tx_nominal - slot_beg);   // vs the slot's nominal TX start
     d->freq = freq_hz;
     snprintf(d->text, sizeof(d->text), "%s", text);
 
@@ -387,29 +497,47 @@ static void decode_slot(const float *sig, int len, time_t slot_start) {
 
   monitor_free(&mon);
 
-  // Publish under the list mutex — but only when this window actually decoded
-  // something.  Overlapping windows land on quiet stretches between FT8 slots;
-  // keeping the previous non-empty list there means the readout holds the last
-  // decodes until the next batch arrives instead of blanking every ~2 s.
-  if (n > 0) {
-    g_mutex_lock(&list_mutex);
-    result_count = n;
-    memcpy(results, local, n * sizeof(FT8_DECODE));
-    snprintf(result_utc, sizeof(result_utc), "%02d%02d%02d",
-             tm_slot.tm_hour, tm_slot.tm_min, tm_slot.tm_sec);
-    g_mutex_unlock(&list_mutex);
-  }
+  // Publish what is new, grouped by the slot each decode belongs to.  A window
+  // holds one slot's transmissions in practice (two whole waveforms do not fit),
+  // but the grouping does not assume it.  Nothing is published for a window that
+  // decoded nothing new: overlapping windows land on the quiet stretches between
+  // transmissions, and the readout has to hold the last decodes rather than
+  // blank every 2 s.
+  for (int i = 0; i < n; ) {
+    int j = i;
+    while (j < n && local_slot[j] == local_slot[i]) j++;
+    time_t slot_t = local_slot[i];
+    int added = 0;
 
-  if (n > 0) {
-    log_info("ft8: %s decoded %d messages (%d candidates)\n",
-            result_utc, n, num_candidates);
-    for (int i = 0; i < n; i++) {
-      log_info("  %s  %+3.0f dB  %4.0f Hz  %s\n",
-              local[i].utc, local[i].snr, local[i].freq, local[i].text);
+    g_mutex_lock(&list_mutex);
+    if (!have_slot || slot_t > result_slot) {   // a newer slot replaces the list
+      result_count = 0;
+      result_slot  = slot_t;
+      have_slot    = TRUE;
+      snprintf(result_utc, sizeof(result_utc), "%s", local[i].utc);
     }
-    // Feed the decoded spots to the PSK Reporter network (no-op unless enabled
-    // and the station call/grid are set).
-    ft8_pskreporter_report(local, n, slot_start);
+    if (slot_t == result_slot) {                // same slot: append to it
+      for (int k = i; k < j && result_count < MAX_DECODES; k++) {
+        results[result_count++] = local[k];
+        added++;
+      }
+    }
+    g_mutex_unlock(&list_mutex);
+
+    if (added > 0) {
+      log_info("ft8: %s decoded %d messages (%d candidates)\n",
+              local[i].utc, added, num_candidates);
+      for (int k = i; k < i + added; k++) {
+        log_info("  %s  %+3.0f dB  %4.0f Hz  %s\n",
+                local[k].utc, local[k].snr, local[k].freq, local[k].text);
+      }
+      // Feed the decoded spots to the PSK Reporter network (no-op unless enabled
+      // and the station call/grid are set).  Only the new ones: before the
+      // cross-window duplicate check every station was spotted two or three
+      // times per slot.
+      ft8_pskreporter_report(&local[i], added, slot_t);
+    }
+    i = j;
   }
 }
 
@@ -428,17 +556,18 @@ static gpointer ft8_worker(gpointer data) {
       g_cond_wait(&work_cond, &work_mutex);
     }
     if (!running) break;
-    int len = work_len;
-    time_t st = work_slot_time;
+    int    len = work_len;
+    gint64 end = work_end_us;
     // Decode with the lock released so the RX thread can keep filling.
     g_mutex_unlock(&work_mutex);
 
     if (len > mon_min_samples()) {
-      decode_slot(work_buf, len, st);
+      decode_slot(work_buf, len, end);
     }
 
     g_mutex_lock(&work_mutex);
     work_ready = FALSE;
+    g_cond_signal(&done_cond);
   }
   g_mutex_unlock(&work_mutex);
   return NULL;
@@ -450,6 +579,7 @@ static gpointer ft8_worker(gpointer data) {
 void ft8_decoder_init(void) {
   g_mutex_init(&work_mutex);
   g_cond_init(&work_cond);
+  g_cond_init(&done_cond);
   g_mutex_init(&list_mutex);
   hashtable_init();
   running = TRUE;
@@ -458,12 +588,36 @@ void ft8_decoder_init(void) {
 
 void ft8_decoder_set_enabled(gboolean en) {
   if (en && !enabled) {
-    // Fresh start: clear the decimation phase and the ring.
+    // Fresh start: clear the decimation phase, the ring, and everything that
+    // remembers what has already been decoded and published.
     dec_count = 0;
     ring_w = 0;
     last_decode_w = 0;
+    memset(dup_ring, 0, sizeof(dup_ring));
+    dup_w = 0;
+    dup_hits = 0;
+    g_mutex_lock(&list_mutex);
+    result_count = 0;
+    result_utc[0] = '\0';
+    have_slot = FALSE;
+    g_mutex_unlock(&list_mutex);
   }
   enabled = en;
+}
+
+// ---- harness seams (tools/ft8_offline.c) -----------------------------------
+void ft8_decoder_set_clock(gint64 (*fn)(void)) {
+  clock_fn = fn;
+}
+
+guint ft8_decoder_dup_count(void) {
+  return dup_hits;
+}
+
+void ft8_decoder_sync(void) {
+  g_mutex_lock(&work_mutex);
+  while (running && work_ready) g_cond_wait(&done_cond, &work_mutex);
+  g_mutex_unlock(&work_mutex);
 }
 
 gboolean ft8_decoder_is_enabled(void) {
@@ -497,14 +651,12 @@ void ft8_decoder_add_audio(const gdouble *samples, int nframes) {
         work_buf[i] = ring[(start + i) % RING_CAP];
       }
       work_len = ss;
-      // Label with the slot boundary nearest the window end (cosmetic + drives
-      // the QSO engine's slot-parity).  Work in ms and round to the nearest second
-      // so FT4's half-second (7.5 s) boundaries map back to the right slot index
-      // in slot_even_from_utc() (ft8_qso.c) — floored seconds would be off-by-one.
-      long   slot_ms = proto ? 7500L : 15000L;
-      gint64 now_ms  = g_get_real_time() / 1000;
-      gint64 bound   = (now_ms / slot_ms) * slot_ms;
-      work_slot_time = (time_t)((bound + 500) / 1000);
+      // Stamp the window with the UTC time of its LAST sample; decode_slot()
+      // works every decode's slot and dt back from there.  It is "now" plus the
+      // receive chain's own latency (~0.1-0.2 s of WDSP ring and audio path),
+      // which biases dt late by that much — the same bias WSJT-X carries, and
+      // three orders below the slot rounding.
+      work_end_us = now_us();
       work_ready = TRUE;
       g_cond_signal(&work_cond);
       last_decode_w = ring_w;

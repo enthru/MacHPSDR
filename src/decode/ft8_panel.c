@@ -78,6 +78,7 @@ static GtkWidget    *txbtn[6] = { NULL };  // Tx1..Tx6 message buttons
 static guint         refresh_id = 0;
 
 static char          disp_utc[8] = "";     // last slot appended to the list
+static int           disp_n = 0;           // how many of that slot's decodes went in
 
 // ---- station config callbacks ----------------------------------------------
 // Callsign and grid live in the FT8 configuration page (Configure -> FT8), not
@@ -146,7 +147,7 @@ static void erase_clicked(GtkButton *b, gpointer data) {
   // new slot re-populates the list; the top block stays clean until then.
   FT8_DECODE tmp[64];
   char utc[8] = "";
-  ft8_decoder_get_decodes(tmp, 64, utc);
+  disp_n = ft8_decoder_get_decodes(tmp, 64, utc);
   snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 }
 
@@ -237,13 +238,18 @@ static gboolean refresh(gpointer data) {
   char utc[8] = "";
   int n = ft8_decoder_get_decodes(d, 64, utc);
 
-  // Append each new slot's decodes to a rolling band-activity list.
-  if (n > 0 && utc[0] && strcmp(utc, disp_utc) != 0) {
+  // Append each slot's decodes to a rolling band-activity list.  The decoder's
+  // list GROWS within a slot (the decode windows overlap, so a station can turn
+  // up in a later one), so what is new is the entries past the count we last
+  // took — appending on a change of utc alone would drop the late arrivals.
+  int first = (strcmp(utc, disp_utc) == 0) ? disp_n : 0;
+  if (n > first && utc[0]) {
     snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
+    disp_n = n;
 
     const char *mycall = radio->station_call;
     long long dial = (radio && radio->active_receiver) ? radio->active_receiver->frequency_a : 0;
-    for (int i = 0; i < n; i++) {
+    for (int i = first; i < n; i++) {
       gboolean tome = mycall[0] && d[i].call_to[0] &&
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
       gboolean iscq = strncmp(d[i].call_to, "CQ", 2) == 0;
@@ -346,6 +352,7 @@ static void on_destroy(GtkWidget *w, gpointer data) {
   enable_btn = NULL; auto_chk = NULL; offset_spin = NULL; free_entry = NULL;
   for (int i = 0; i < 6; i++) txbtn[i] = NULL;
   disp_utc[0] = '\0';
+  disp_n = 0;
 }
 
 // ---- construction ----------------------------------------------------------
