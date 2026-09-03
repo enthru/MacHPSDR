@@ -701,6 +701,16 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // through with no wait at all.
 #define QO100_MIN_APPLY_S        2.0
 #define QO100_TRIM_HZ_S         10.0
+// A freshly started converter is a special case even before the seven-reading
+// window can prove a slope. On air its measurement wobbles enough for one
+// backwards reading to erase b_slope, at which point the ordinary error-based
+// limiter mistakes the now-small residual for a settled LNB and stretches the
+// cadence again. Keep the limiter at its two-second floor during warm-up; the
+// median/scatter and beacon-identity gates still decide whether a reading is
+// trustworthy, so this changes WHEN an earned trim may run, not WHAT may move
+// the radio.
+#define QO100_WARMUP_S         600.0
+#define QO100_WARMUP_APPLY_S     2.0
 // ...and with a decoder running the floor is one MEASUREMENT, not two seconds.
 // The loop cannot act faster than it measures anyway, and while the converter
 // is warming, every trim it skips is drift left in the audio -- see the gate
@@ -1207,10 +1217,17 @@ static double qo100_trim_wait_s(double act, double slope, double floor_s) {
   return need;                                       // delay a correction, never
 }                                                    // cancel one
 
+static double qo100_warmup_wait_s(double need) {
+  if(track_fs>0 && b_stream_samples<(double)track_fs*QO100_WARMUP_S &&
+     need>QO100_WARMUP_APPLY_S)
+    need=QO100_WARMUP_APPLY_S;
+  return need;
+}
+
 static double qo100_next_chance_s(RECEIVER *rx, double act) {
   double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
                                                  :QO100_MIN_APPLY_S;
-  double need=qo100_trim_wait_s(act,b_slope,floor_s);
+  double need=qo100_warmup_wait_s(qo100_trim_wait_s(act,b_slope,floor_s));
   double wait=qo100_gate_wait_s(rx,act);
   if(wait>need) need=wait;
   return need;
@@ -1530,7 +1547,9 @@ static gboolean qo100_may_retune_now(RECEIVER *rx, double act, double since_s) {
 // made it jump; a reading more than QO100_MED_TOL_HZ from the median of the last
 // five seconds is not the converter, which drifts hertz per MINUTE.
 static double median_of(const double *v, int n) {
-  double t[QO100_MED_N];
+  // Large enough for the pairwise slopes of a complete QO100_MED_N window.
+  // Most callers pass only the window itself.
+  double t[QO100_MED_N*(QO100_MED_N-1)/2];
   memcpy(t,v,sizeof(double)*(size_t)n);
   for(int i=1;i<n;i++) {                       // insertion sort, n is 5
     double x=t[i]; int j=i-1;
@@ -2397,22 +2416,32 @@ static void beacon_frame(RECEIVER *rx) {
   // the beacon was at that instant and it starts falling behind again the same
   // second -- and with a slot gate at 6 Hz/s the error grows past
   // QO100_COARSE_HZ inside every slot, so EVERY correction was that kind.
-  // It is the median of the consecutive rates, believed only when every one of
-  // them agrees with it in sign: a converter drifting is a run of readings all
-  // moving the same way, and jitter, however wide, is not. Nothing here takes a
-  // bare gradient off two endpoints -- that is one wild reading away from
-  // claiming any rate you like.
+  // It is the median of ALL pairwise rates (Theil-Sen), rather than consecutive
+  // rates whose signs must all agree. The latter worked for a synthetic carrier
+  // but failed on air: one backwards wobble erased a real cold-start trend and
+  // the loop fell back to settled cadence after its first couple of trims. A
+  // pairwise median tolerates those reversals and cannot be decided by one wild
+  // endpoint. The trend still has to travel farther across the window than the
+  // detrended readings scatter, which keeps stationary fading from inventing a
+  // warm-up rate.
   double slope=0.0;
   if(b_med_n>=QO100_MED_N) {
-    double diff[QO100_MED_N-1];
-    int nd=0;
-    for(int i=1;i<b_med_n;i++) {
-      double dt=b_med_t[i]-b_med_t[i-1];
-      if(dt>0.0) diff[nd++]=(b_med[i]-b_med[i-1])/dt;
+    double rates[QO100_MED_N*(QO100_MED_N-1)/2];
+    int nr=0;
+    for(int i=0;i<b_med_n;i++) for(int j=i+1;j<b_med_n;j++) {
+      double dt=b_med_t[j]-b_med_t[i];
+      if(dt>0.0) rates[nr++]=(b_med[j]-b_med[i])/dt;
     }
-    if(nd>0) {
-      slope=median_of(diff,nd);
-      for(int i=0;i<nd;i++) if(diff[i]*slope<=0.0) { slope=0.0; break; }
+    if(nr>0) {
+      slope=median_of(rates,nr);
+      double lo_r=1e18, hi_r=-1e18;
+      for(int i=0;i<b_med_n;i++) {
+        double r=b_med[i]-slope*(b_med_t[i]-b_med_t[0]);
+        if(r<lo_r) lo_r=r;
+        if(r>hi_r) hi_r=r;
+      }
+      double span=b_med_t[b_med_n-1]-b_med_t[0];
+      if(fabs(slope)*span<=hi_r-lo_r) slope=0.0;
     }
   }
   b_slope=slope;                        // ...for the guards, which run earlier
@@ -2521,7 +2550,7 @@ static void beacon_frame(RECEIVER *rx) {
     double since=b_since_apply/(double)track_fs;
     double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
                                                    :QO100_MIN_APPLY_S;
-    double need=qo100_trim_wait_s(act,slope,floor_s);
+    double need=qo100_warmup_wait_s(qo100_trim_wait_s(act,slope,floor_s));
     if(since<need) {
       b_expect=residual;
       b_expect_samples=0.0;

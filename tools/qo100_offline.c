@@ -1562,6 +1562,31 @@ int main(int argc, char **argv) {
     }
   }
 
+  // ---- 22g''. A cold converter is not a laboratory carrier. On the real
+  //            transponder the measured line wanders from fading and FFT-bin
+  //            placement while the LNB itself has a strong trend. Requiring
+  //            every one-second difference to have the same sign erases that
+  //            trend as soon as one reading wobbles backwards; after a couple
+  //            of early trims the loop then falls back to its settled cadence
+  //            and can leave the cold LNB alone for a minute. The trend must
+  //            survive realistic measurement wobble without turning the
+  //            stationary-wobble case above into a retune storm.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    lo_drift_hz_s=6.0;
+    lo_wobble_hz=12.0;
+    run_loop(5.0,0.02,blocks*12,&locked,FS,10489540000LL);
+    lo_wobble_hz=0.0;
+    lo_drift_hz_s=0.0;
+    snprintf(d,sizeof(d),"6 Hz/s with +/-12 Hz measurement wobble: %.1f Hz off, "
+             "%.1f s between corrections, %d retunes, locked=%d",
+             worst_track,worst_gap,retunes,locked);
+    check("a noisy cold-start trend keeps the fast cadence",
+          locked && worst_gap<4.0 && worst_track<35.0, d);
+    qo100_beacon_reset();
+  }
+
   // ---- 22h. the dial's INDEPENDENT check, and its negative control. Nothing
   //           on the CW beacon can settle which of its two tones the published
   //           figure names: the loop reads the same +/-2 Hz on the wrong line
