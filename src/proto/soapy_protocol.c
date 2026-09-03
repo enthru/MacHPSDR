@@ -929,6 +929,55 @@ log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
   log_info( "%s: receive_thread: id=%p\n",__FUNCTION__,receive_thread_id[channel]);
 }
 
+/* The TX twin of soapy_rx_stream_args, and it exists for a measured reason.
+ *
+ * SoapyPlutoSDR's tx_streamer hardcodes a 4096-sample buffer and reads the
+ * `bufflen` argument on the RECEIVE side only -- 1.78 ms of DAC data at
+ * 2.304 MS/s, pushed one non-cyclic iio_buffer at a time.  Every push on the
+ * network and USB backends is a request/response round trip, so the DAC runs
+ * dry between them and what comes out is the waveform chopped at the push rate.
+ * Measured on a networked Pluto: a carrier streamed from here carried a comb of
+ * sidebands out to +/-92 kHz at -21 dBc, while the same hardware generating the
+ * same tone with its own FPGA DDS -- no host samples at all -- was clean to
+ * -54 dBc.  Nothing in this application could see it: writeStream accepts every
+ * sample it is offered whatever the DAC is doing, and SoapyPlutoSDR's
+ * readStreamStatus is SOAPY_SDR_NOT_SUPPORTED, so the transmission summary read
+ * "0 refused" throughout.
+ *
+ * tools/build-soapy-plutosdr.sh patches the driver to read the argument; a
+ * bundle built before that patch, or a system driver, simply ignores it.
+ *
+ * ~36 ms, the same figure the receive side settled on by sweep -- and for the
+ * same reason: past that a longer buffer holds the socket longer, so a stall
+ * inside one costs more than the extra depth buys.
+ */
+static void soapy_tx_stream_args(SoapySDRKwargs *args, int rate) {
+  long bufflen=0;
+  const char *env=getenv("MACHPSDR_SOAPY_TX_BUFFLEN");
+
+  if(env!=NULL) {
+    bufflen=atol(env);
+    if(bufflen<0) bufflen=0;
+    if(bufflen>(1L<<22)) bufflen=(1L<<22);
+  } else if(rate>0) {
+    /* Unlike the receive side this is NOT restricted to a network device: the
+       USB backend is request/response too, and the DAC has no second chance at
+       a sample that arrived late.  A device whose driver ignores the argument
+       is unaffected either way. */
+    const long target=(long)(((long long)rate*36)/1000);
+    bufflen=((target+8191)/8192)*8192;
+    if(bufflen<8192) bufflen=8192;
+    if(bufflen>(1L<<20)) bufflen=(1L<<20);
+  }
+  if(bufflen>0) {
+    char temp[32];
+    snprintf(temp,sizeof(temp),"%ld",bufflen);
+    SoapySDRKwargs_set(args,"bufflen",temp);
+    log_info("%s: asking for a %ld-sample TX buffer (%.1f ms at %d)\n",
+             __FUNCTION__,bufflen,1000.0*(double)bufflen/(double)(rate>0?rate:1),rate);
+  }
+}
+
 void soapy_protocol_create_transmitter(TRANSMITTER *tx) {
   int rc;
 
@@ -975,25 +1024,36 @@ log_info("soapy_protocol_create_transmitter: setting samplerate=%f\n",(double)so
 
   size_t channel=tx->dac;
 log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=%ld\n",(long)channel);
+  SoapySDRKwargs tx_args={0};
+  soapy_tx_stream_args(&tx_args,soapy_tx_sample_rate);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
-  rc=SoapySDRDevice_setupStream(soapy_device,&tx_stream,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,NULL);
+  rc=SoapySDRDevice_setupStream(soapy_device,&tx_stream,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,&tx_args);
   if(rc!=0) {
-    log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream (RX) failed: %s\n",SoapySDR_errToStr(rc));
-    _exit(-1);
-  }
-#else
-  tx_stream=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,NULL);
-  if(tx_stream==NULL) {
     log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream (TX) failed: %s\n",SoapySDR_errToStr(rc));
     _exit(-1);
   }
+#else
+  tx_stream=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,&tx_args);
+  if(tx_stream==NULL) {
+    // setupStream answers with the pointer here, so there is no rc to report --
+    // it used to print SoapySDR_errToStr(rc) on whatever the previous call left.
+    log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream (TX) failed: %s\n",SoapySDRDevice_lastError());
+    _exit(-1);
+  }
 #endif
+  SoapySDRKwargs_clear(&tx_args);
 
-  max_tx_samples=SoapySDRDevice_getStreamMTU(soapy_device,tx_stream);
+  const int tx_mtu=(int)SoapySDRDevice_getStreamMTU(soapy_device,tx_stream);
+  max_tx_samples=tx_mtu;
   if(max_tx_samples>(2*tx->fft_size)) {
     max_tx_samples=2*tx->fft_size;
   }
-log_info("soapy_protocol_create_transmitter: max_tx_samples=%d\n",max_tx_samples);
+  // The MTU is the readback of the buffer the driver actually built, so it is
+  // how "did bufflen take effect?" is answered -- a driver that ignores the
+  // argument reports whatever it chose for itself, and there is no error.
+log_info("soapy_protocol_create_transmitter: TX stream MTU=%d (%.1f ms at %d), write block=%d\n",
+         tx_mtu,1000.0*(double)tx_mtu/(double)(soapy_tx_sample_rate>0?soapy_tx_sample_rate:1),
+         soapy_tx_sample_rate,max_tx_samples);
   // Idempotent: a reconnect re-runs this, so release the previous buffer first.
   if(output_buffer!=NULL) {
     free(output_buffer);

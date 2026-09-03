@@ -120,6 +120,78 @@ clone https://github.com/analogdevicesinc/libiio.git        "$IIO_TAG"    libiio
 clone https://github.com/analogdevicesinc/libad9361-iio.git "$AD9361_TAG" libad9361-iio
 clone https://github.com/pothosware/SoapyPlutoSDR.git       "$PLUTO_TAG"  SoapyPlutoSDR
 
+# THE ONE UPSTREAM PATCH, and it is not cosmetic.
+#
+# SoapyPlutoSDR reads the `bufflen` stream argument in rx_streamer and NOT in
+# tx_streamer, whose ctor hardcodes `buf_size = 4096`.  On a 2.304 MS/s Pluto
+# that is 1.78 ms of DAC data, pushed one non-cyclic iio_buffer at a time; over
+# a network (or USB) backend, where every push is a request/response round trip,
+# the DAC runs dry between pushes and the emitted signal is chopped at the push
+# rate.  Measured on the operator's networked Pluto: a carrier streamed from the
+# host carried a comb of sidebands out to +/-92 kHz at -21 dBc, while the SAME
+# hardware told to generate the SAME tone with its own FPGA DDS -- not one
+# sample from the host -- was clean to -54 dBc.  That pair is the whole
+# argument: the transmitter is fine and the delivery is not.
+#
+# The patch is the RX branch's own code moved to the TX ctor, so a caller can
+# ask for a buffer that covers the link's latency (soapy_tx_stream_args in
+# soapy_protocol.c does).  Idempotent, because clone() skips a tree that is
+# already there.
+patch_tx_bufflen() {
+  local f="$WORK/SoapyPlutoSDR/PlutoSDR_Streaming.cpp"
+  [ -f "$f" ] || { echo "error: $f missing; cannot patch" >&2; exit 1; }
+  if grep -q 'MACHPSDR tx bufflen' "$f"; then
+    echo "==> SoapyPlutoSDR already patched (tx bufflen)"
+    return
+  fi
+  grep -q '^	buf_size = 4096;$' "$f" || {
+    echo "error: SoapyPlutoSDR's tx_streamer no longer says 'buf_size = 4096'." >&2
+    echo "       The pin moved or upstream changed; re-read the patch before bumping PLUTO_TAG." >&2
+    exit 1; }
+  python3 - "$f" <<'PATCH'
+import sys
+p=sys.argv[1]
+s=open(p).read()
+old="\tbuf_size = 4096;\n"
+new=("\tbuf_size = 4096;\n"
+     "\t/* MACHPSDR tx bufflen: upstream honours this argument on RX only, and a\n"
+     "\t   4096-sample TX buffer is 1.78 ms at 2.304 MS/s -- less than one\n"
+     "\t   request/response round trip on a networked Pluto, so the DAC starves\n"
+     "\t   between pushes and the emission is chopped at the push rate. */\n"
+     "\tif (args.count(\"bufflen\") != 0) {\n"
+     "\t\ttry {\n"
+     "\t\t\tsize_t bufferLength = std::stoi(args.at(\"bufflen\"));\n"
+     "\t\t\tif (bufferLength > 0)\n"
+     "\t\t\t\tbuf_size = bufferLength;\n"
+     "\t\t}\n"
+     "\t\tcatch (const std::invalid_argument &){}\n"
+     "\t}\n")
+assert s.count(old)==1, "expected exactly one 'buf_size = 4096;'"
+open(p,'w').write(s.replace(old,new,1))
+PATCH
+  # And make the TX MTU tell the truth about it.  getStreamMTU's TX branch is a
+  # hardcoded `return 4096;`, so the buffer the driver really built is not
+  # observable from outside -- which would leave "did the argument take effect?"
+  # unanswerable from a log line, exactly the trap CLAUDE.md's rate-readback
+  # rules exist to avoid.  A getter on tx_streamer and the real number here.
+  python3 - "$WORK/SoapyPlutoSDR/SoapyPlutoSDR.hpp" "$f" <<'PATCH2'
+import sys
+hpp,cpp=sys.argv[1],sys.argv[2]
+h=open(hpp).read()
+oldh="\t\tint send(const void * const *buffs,const size_t numElems,int &flags,const long long timeNs,const long timeoutUs );\n\t\tint flush();\n"
+newh=oldh+"\t\t/* MACHPSDR: the buffer really built, so the caller can see whether\n\t\t   its bufflen was honoured. */\n\t\tsize_t get_buf_size() const { return buf_size; }\n"
+assert h.count(oldh)==1, "tx_streamer public section not as expected"
+open(hpp,'w').write(h.replace(oldh,newh,1))
+c=open(cpp).read()
+oldc="\tif (IsValidTxStreamHandle(handle)) {\n\t\treturn 4096;\n\t}\n"
+newc="\tif (IsValidTxStreamHandle(handle)) {\n\t\treturn this->tx_stream->get_buf_size();   /* MACHPSDR: was a hardcoded 4096 */\n\t}\n"
+assert c.count(oldc)==1, "getStreamMTU TX branch not as expected"
+open(cpp,'w').write(c.replace(oldc,newc,1))
+PATCH2
+  echo "==> patched SoapyPlutoSDR: tx_streamer honours bufflen, TX MTU reports it"
+}
+patch_tx_bufflen
+
 # OSX_FRAMEWORK=OFF is load-bearing: libiio's macOS build defaults to producing
 # an iio.framework, which no consumer here looks for and dylibbundler does not
 # handle.  The rest is trimming — this build exists to be dlopen'd by one
