@@ -365,6 +365,7 @@ extern void SetRXAPanelGain1 (int channel, double gain);
 // ever written, so a reader keeps its own position and takes the difference.
 // Pass a NULL ring to stop the copy; free the memory only after CloseChannel.
 extern void SetRXAPreAgcTap (int channel, double *ring, int cap);
+extern int  GetRXAPreAgcTapCap (int channel);   // 0 = no tap installed on the channel
 extern long GetRXAPreAgcTapPos (int channel);
 extern void SetRXAPanelGain2 (int channel, double gainI, double gainQ);
 extern void SetRXAPanelPan (int channel, double pan);

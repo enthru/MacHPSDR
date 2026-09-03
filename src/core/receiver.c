@@ -2586,9 +2586,29 @@ gdouble receiver_panel_gain(RECEIVER *rx) {
 // Ordering: the tap is cleared in WDSP BEFORE the old ring is freed, and both
 // call sites hold delete_rx_mutex, which the DSP thread also holds around a
 // block -- so nothing can be inside xrxa() with the pointer being freed.
+//
+// The DEPTH has to cover the reader's lag behind the writer, and that lag is
+// WDSP's to set, not ours: wdspmain() runs dexchange() -- which releases
+// Sem_OutReady -- and only THEN xrxa(), where the tap is written, while
+// create_iobuffs() primes that semaphore with dsp_mult-1 credits.  A feeder
+// that is not throttled by a real-time source therefore gets dsp_mult-1 blocks
+// ahead and stays there, and the reader sits that far behind the writer for the
+// rest of the session -- which is exactly what tools/nr_offline.c does.  A ring
+// of four passes against a lag of four is no ring at all: the writer's next
+// block lands on the oldest sample the reader is still copying.  Nothing has
+// been seen doing that in the app, whose feeder is real-time and settles a pass
+// or so behind; the margin costs a few kilobytes, and its absence would show as
+// one torn block in a client's audio, i.e. as nothing anybody could report.
+//
+// dsp_mult + 2 passes, read back from the channel rather than assumed.  The two
+// terms trade off, so this cannot run away: the depth is RX_RING_TARGET_MS of
+// INPUT time (rx_ring_depth_for), i.e. dsp_mult * dsp_size <= 120 ms at the DSP
+// rate, so the ring is ~120 ms plus two blocks whatever the span.
 void receiver_pretap_alloc(RECEIVER *rx) {
   if(rx==NULL || rx->channel<0) return;
-  int cap=rx->dsp_size*4;                 // a few DSP passes of slack
+  int mult=GetDSPMult(rx->channel);
+  if(mult<2) mult=2;
+  int cap=rx->dsp_size*(mult+2);
   if(cap<4096) cap=4096;
   SetRXAPreAgcTap(rx->channel,NULL,0);
   g_free(rx->pretap_ring);
@@ -2623,31 +2643,50 @@ static void rx_tci_audio_publish(RECEIVER *rx) {
     pretap_off=(e!=NULL && (*e=='0' || *e=='n' || *e=='N'))?1:0;
     if(pretap_off) log_info("rx_tci_audio_publish: MACHPSDR_TCI_PRETAP=0: the TCI stream comes off the channel output, AGC included\n");
   }
-  if(!pretap_off && rx->pretap_ring!=NULL && rx->dsp_rate==48000 && tci_audio_subscribed(rx)) {
+  // Branch on the tap being live IN WDSP, not on the ring being allocated here:
+  // those are two different facts and they used to disagree for a fresh
+  // receiver (create_rxa clears the channel's copy, so a ring installed before
+  // OpenChannel was forgotten by the channel and remembered here).  And an
+  // empty tap falls THROUGH to the channel output below rather than returning:
+  // a client given the AGC in its stream has a complaint, a client given
+  // nothing has no way to tell that from a dead radio.
+  if(!pretap_off && rx->pretap_ring!=NULL && GetRXAPreAgcTapCap(rx->channel)>0
+     && rx->dsp_rate==48000 && tci_audio_subscribed(rx)) {
     long w=GetRXAPreAgcTapPos(rx->channel);
     long avail=w-rx->pretap_r;
-    if(avail<=0) return;
-    if(avail>rx->pretap_cap) {            // reader fell behind: keep the newest
-      rx->pretap_r=w-rx->pretap_cap;
-      avail=rx->pretap_cap;
-    }
-    while(avail>0) {
-      int idx=(int)(rx->pretap_r%rx->pretap_cap);
-      int n=rx->pretap_cap-idx;
-      if(n>avail) n=(int)avail;
-      // I carries the audio; Q is its analytic partner, not a second channel,
-      // so both output channels get I rather than one ear getting a 90-degree
-      // copy of the other.
-      for(int i=0;i<n;i++) {
-        gdouble v=rx->pretap_ring[2*(idx+i)];
-        rx->pretap_out[2*i]=v;
-        rx->pretap_out[2*i+1]=v;
+    if(avail>0) {
+      // Keep two blocks of the ring clear of the reader.  The writer is not
+      // waiting for this loop -- it is a block ahead and copying into the ring
+      // as we read -- so "the reader may hold the whole ring" means the
+      // writer's next block overwrites the oldest sample still being copied.
+      // One block of headroom is exactly enough only if the reader is
+      // instantaneous; two is enough for one that is merely descheduled, and
+      // the cost of the margin is that a reader which has fallen that far
+      // behind drops sooner, which it was going to do anyway.
+      long room=rx->pretap_cap-2L*rx->dsp_size;
+      if(room<rx->dsp_size) room=rx->pretap_cap; // degenerate geometry: old behaviour
+      if(avail>room) {                    // reader fell behind: keep the newest
+        rx->pretap_r=w-room;
+        avail=room;
       }
-      tci_audio_feed(rx,rx->pretap_out,n,48000);
-      rx->pretap_r+=n;
-      avail-=n;
+      while(avail>0) {
+        int idx=(int)(rx->pretap_r%rx->pretap_cap);
+        int n=rx->pretap_cap-idx;
+        if(n>avail) n=(int)avail;
+        // I carries the audio; Q is its analytic partner, not a second channel,
+        // so both output channels get I rather than one ear getting a
+        // 90-degree copy of the other.
+        for(int i=0;i<n;i++) {
+          gdouble v=rx->pretap_ring[2*(idx+i)];
+          rx->pretap_out[2*i]=v;
+          rx->pretap_out[2*i+1]=v;
+        }
+        tci_audio_feed(rx,rx->pretap_out,n,48000);
+        rx->pretap_r+=n;
+        avail-=n;
+      }
+      return;
     }
-    return;
   }
   tci_audio_feed(rx,rx->audio_output_buffer,rx->output_samples,48000);
 }
@@ -4187,6 +4226,13 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
   // in props; keep rx->dsp_rate in sync so set_mode's guard reflects reality
   // (otherwise a restored WFM rate would make it skip the needed raise).
   rx->dsp_rate=48000;
+
+  // Re-size the tap ring now that the channel exists: its depth comes from the
+  // iobuff ring's, and GetDSPMult can only answer once create_iobuffs has run
+  // inside OpenChannel.  The allocation earlier in this function is what the
+  // receiver would otherwise keep for the whole session if the operator never
+  // changed span -- and a receiver that never changes span is the common one.
+  receiver_pretap_alloc(rx);
 
   // Modified per pihpsdr commit d9af51206087959083feddcb325443d9368dad8c
   // The channel's input geometry, not the span's -- receiver_build_feed above

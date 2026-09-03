@@ -69,6 +69,16 @@ struct _rxa
 	// chain, and without taking any of it away from the operator.
 	// NULL means untapped and no copy is made.  The ring is written by the DSP
 	// thread and read by whoever set it, using pretap_w as the sequence number.
+	//
+	// pretap_w is the ONLY thing ordering the two threads, so it is published
+	// with a release and read with an acquire (xrxa and GetRXAPreAgcTapPos).  A
+	// plain long is not enough on a weakly-ordered machine: nothing stops the
+	// store that says "n more samples are there" becoming visible before the
+	// memcpy that put them there, and the reader would then copy out whatever
+	// the ring held a lap earlier.  Not observed -- it was written while
+	// chasing something else, which turned out to be the chain's own numerical
+	// wobble (see tools/nr_offline.c) -- but arm64 is weak enough to do it and
+	// the barrier is free on the DSP thread's once-a-block path.
 	double* pretap;         // ring of pretap_cap complex samples, or NULL
 	int     pretap_cap;     // capacity in complex samples
 	long    pretap_w;       // total complex samples ever written (monotonic)
@@ -235,6 +245,7 @@ extern __declspec (dllexport) void SetRXAPreAgcTap (int channel, double* ring, i
 
 // Total complex samples ever written to that ring.  A reader keeps its own read
 // position and takes the difference; more than `cap` behind means it lost data.
+extern __declspec (dllexport) int  GetRXAPreAgcTapCap (int channel);
 extern __declspec (dllexport) long GetRXAPreAgcTapPos (int channel);
 
 #endif

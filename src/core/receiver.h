@@ -120,9 +120,12 @@ typedef struct _receiver {
   // Pre-AGC tap of this channel (wdsp/RXA.c). A network client is handed the
   // signal from here rather than the channel's output, so the AGC -- which is
   // the operator's listening choice, shared with the speaker -- is not in what
-  // a decoder on the other end receives. Ring written by WDSP on the DSP
-  // thread, read by process_rx_buffer on the same thread; pretap_out is the
-  // interleaved stereo block handed to the stream.
+  // a decoder on the other end receives. Ring written by WDSP inside xrxa() on
+  // the CHANNEL's own thread and read by process_rx_buffer on the feeding
+  // thread -- two threads, with nothing but the ring's own slack between them,
+  // which is why receiver_pretap_alloc sizes it from the iobuff depth and the
+  // reader keeps the writer's next block clear. pretap_out is the interleaved
+  // stereo block handed to the stream.
   gdouble *pretap_ring;
   gdouble *pretap_out;
   int      pretap_cap;      // complex samples

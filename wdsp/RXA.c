@@ -695,7 +695,10 @@ void xrxa (int channel)
 			if (n > first)
 				memcpy (rxa[channel].pretap, rxa[channel].tapbuff + 2 * first,
 				        (n - first) * sizeof (complex));
-			rxa[channel].pretap_w += n;
+			// Release: the samples above must be visible to the reader before
+			// the count that says they exist.  See the note in RXA.h.
+			__atomic_store_n (&rxa[channel].pretap_w,
+			                  rxa[channel].pretap_w + n, __ATOMIC_RELEASE);
 		}
 	}
 	// ----------------------------------------------------------------------
@@ -729,13 +732,26 @@ void SetRXAPreAgcTap (int channel, double* ring, int cap)
 {
 	rxa[channel].pretap     = NULL;         // stop the copy before moving the size
 	rxa[channel].pretap_cap = cap;
-	rxa[channel].pretap_w   = 0;
+	__atomic_store_n (&rxa[channel].pretap_w, 0L, __ATOMIC_RELEASE);
 	rxa[channel].pretap     = ring;
+}
+
+// Is the tap live on WDSP's side?  Not the same question as "did the caller
+// allocate a ring": create_rxa() clears these fields, so a ring installed before
+// OpenChannel is forgotten by the channel and remembered by the caller, and a
+// reader that branches on its own pointer then waits for a count that will never
+// move.  Ask the side that does the writing.
+int GetRXAPreAgcTapCap (int channel)
+{
+	return (rxa[channel].pretap != NULL) ? rxa[channel].pretap_cap : 0;
 }
 
 long GetRXAPreAgcTapPos (int channel)
 {
-	return rxa[channel].pretap_w;
+	// Acquire, to pair with the release in xrxa(): without it the reader's loads
+	// out of the ring are free to be hoisted above this one and it copies the
+	// lap before.
+	return __atomic_load_n (&rxa[channel].pretap_w, __ATOMIC_ACQUIRE);
 }
 
 void setInputSamplerate_rxa (int channel)
