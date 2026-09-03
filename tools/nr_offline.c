@@ -28,7 +28,16 @@
  *     it ends up on.  Both the noise reduction and the voice level have to
  *     match it, which is the assertion the missing setters fail;
  *   - that NR3 stands down, WITHOUT bp1's 2.0 gain being left behind, on a
- *     channel that is not at 48 kHz.
+ *     channel that is not at 48 kHz;
+ *   - NR3's depth control, both that it goes monotonically from no reduction to
+ *     all of it and that its dry side is FRAME-ALIGNED with its wet side.
+ *     rnnoise_process_frame lags its input by one whole 480-sample frame
+ *     (measured: an impulse fed at sample 9700 came out at 10180), so the dry
+ *     copy has to be held back by one frame or the mix comb-filters.  A
+ *     1050 Hz tone is 10.5 cycles per frame, i.e. exactly antiphase one frame
+ *     out, which turns that mistake into a collapse at depth 0.5 instead of
+ *     something subtle: aligned it reads +0.01 dB against depth 0, and with the
+ *     dry deliberately taken from the current frame it reads -36.7 dB.
  *
  * One fix here is deliberately NOT asserted, because every way of measuring it
  * through the chain turned out flakier than the thing it measures: RNNoise's
@@ -123,9 +132,11 @@ static void make_signal(double level, double nlev) {
   static const double vowF[3][3] = {{ 730,1090,2440},   /* a */
                                     { 270,2290,3010},   /* i */
                                     { 300, 870,2240}};  /* u */
-  sigI = malloc(sizeof(double)*NS);
-  sigQ = malloc(sizeof(double)*NS);
-  outbuf = calloc(NS, sizeof(double));
+  if(!sigI) {
+    sigI = malloc(sizeof(double)*NS);
+    sigQ = malloc(sizeof(double)*NS);
+    outbuf = calloc(NS, sizeof(double));
+  }
 
   double phase[64] = {0};
   for(int i=0;i<64;i++) phase[i] = 2.0*M_PI*urand();
@@ -171,6 +182,16 @@ static void make_signal(double level, double nlev) {
 
     sigI[n] = level*(vi + nlev*(urand()+urand()+urand()+urand()-2.0));
     sigQ[n] = level*(vq + nlev*(urand()+urand()+urand()+urand()-2.0));
+  }
+}
+
+/* A steady tone, for the wet/dry alignment case.  1050 Hz because 480 samples
+ * of it is 10.5 cycles: one frame of misalignment is a sign flip. */
+static void make_tone(double level, double f) {
+  for(long n=0;n<NS;n++) {
+    double th = 2.0*M_PI*f*(double)n/FS;
+    sigI[n] = level*cos(th);
+    sigQ[n] = level*sin(th);
   }
 }
 
@@ -313,8 +334,9 @@ int main(int argc, char **argv) {
   /* 0.001 of full scale with as much noise again: about 13 dB of in-band SNR at
    * the demodulator -- a signal worth switching NR on for, and weak enough that
    * a block doing nothing is visible.  NR_NOISE overrides it by hand. */
-  { const char *e = getenv("NR_NOISE");
-    make_signal(0.001, e ? atof(e) : 1.0); }
+  static double noise = 1.0;
+  { const char *e = getenv("NR_NOISE"); if(e) noise = atof(e); }
+  make_signal(0.001, noise);
 
   RESULT ctlN[5];
 
@@ -371,6 +393,51 @@ int main(int argc, char **argv) {
     check(name, d < -12.0, "residual %.1f dB", d);
     CloseChannel(CH);
   }
+
+  /* ---- the depth control ---- */
+  printf("\n-- NR3 depth (the wet/dry mix) --\n");
+  channel_open(BLK_NARROW);
+  {
+    double snr[5], v[5];
+    for(int k=0;k<=4;k++) {
+      SetRXARNNRdepth(CH, k/4.0);
+      RESULT r = measure(NR_RNN, BLK_NARROW);
+      snr[k] = r.snr - ctlN[NR_OFF].snr;
+      v[k] = 20.0*log10(r.voice / ctlN[NR_OFF].voice);
+    }
+    check("depth 0 reduces nothing", fabs(snr[0]) < 2.0, "%+.1f dB of SNR", snr[0]);
+    check("depth 100 is the full reduction", snr[4] > 5.0, "%+.1f dB of SNR", snr[4]);
+    /* Steeply nonlinear on purpose: a linear mix floors the noise at (1-depth),
+     * so the reduction is 2.5 dB at a quarter and all of it only at the end.
+     * Monotonic is the assertion; the shape is arithmetic. */
+    check("and it is monotonic in between",
+          snr[1] > snr[0] && snr[2] > snr[1] && snr[3] > snr[2] && snr[4] > snr[3],
+          "%+.1f %+.1f %+.1f %+.1f %+.1f dB", snr[0], snr[1], snr[2], snr[3], snr[4]);
+    (void)v;   /* the voice level across the sweep is not asserted here -- see
+                * the note in the header on why a synthesised voice cannot test
+                * that; on real speech it moved +0.9 dB from depth 0 to 100 */
+    SetRXARNNRdepth(CH, 1.0);
+  }
+  CloseChannel(CH);
+
+  /* the alignment, on the tone that makes a one-frame error a collapse */
+  make_tone(0.01, 1050.0);
+  channel_open(BLK_NARROW);
+  {
+    double lvl[5];
+    for(int k=0;k<=4;k++) {
+      SetRXARNNRdepth(CH, k/4.0);
+      RESULT r = measure(NR_RNN, BLK_NARROW);
+      lvl[k] = 20.0*log10(r.voice / 1e-30);
+    }
+    double worst = 0.0;
+    for(int k=1;k<=4;k++) { double d = lvl[k]-lvl[0]; if(fabs(d) > fabs(worst)) worst = d; }
+    check("dry and wet are frame-aligned (1050 Hz tone)", fabs(worst) < 1.0,
+          "depth 0.25..1.00 within %+.2f dB of depth 0 (misaligned: -36.7)", worst);
+    SetRXARNNRdepth(CH, 1.0);
+  }
+  CloseChannel(CH);
+  make_signal(0.001, noise);   /* put the speech back for what follows */
 
   /* ---- the sample rate.  RNNoise's 480-sample frame IS 10 ms at 48 kHz and
    * nothing else, so away from 48 kHz (WFM runs the chain at the span) the

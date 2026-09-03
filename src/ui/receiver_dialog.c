@@ -48,6 +48,7 @@
 #include "main.h"
 #include "rigctl.h"
 #include "tci.h"
+#include "subrx.h"
 
 #define BAND_COLUMNS 5
 #define MODE_COLUMNS 4
@@ -620,30 +621,41 @@ static void notch_default_width_cb(GtkWidget *widget, gpointer data) {
   rx->notch_default_width=gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
 }
 
+static void nr3_depth_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->nr3_depth=gtk_range_get_value(GTK_RANGE(widget));
+  SetRXARNNRdepth(rx->channel,rx->nr3_depth/100.0);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
+}
 static void nr4_reduction_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_reduction=gtk_range_get_value(GTK_RANGE(widget));
   SetRXASBNRreductionAmount(rx->channel,(float)rx->nr4_reduction);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
 }
 static void nr4_smoothing_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_smoothing=gtk_range_get_value(GTK_RANGE(widget));
   SetRXASBNRsmoothingFactor(rx->channel,(float)rx->nr4_smoothing);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
 }
 static void nr4_whitening_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_whitening=gtk_range_get_value(GTK_RANGE(widget));
   SetRXASBNRwhiteningFactor(rx->channel,(float)rx->nr4_whitening);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
 }
 static void nr4_rescale_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_rescale=gtk_range_get_value(GTK_RANGE(widget));
   SetRXASBNRnoiseRescale(rx->channel,(float)rx->nr4_rescale);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
 }
 static void nr4_postfilter_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->nr4_postfilter=gtk_range_get_value(GTK_RANGE(widget));
   SetRXASBNRpostFilterThreshold(rx->channel,(float)rx->nr4_postfilter);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_update_nr(rx);
 }
 
 static void panadapter_phase_source_changed_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
@@ -1187,6 +1199,30 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_frame_set_child(GTK_FRAME(equalizer_frame),equalizer_grid);
   gtk_widget_set_halign(equalizer_frame,GTK_ALIGN_START);
   gtk_box_append(GTK_BOX(audio_eq_box),equalizer_frame);
+
+  // NR3 (RNNoise) has exactly one control and it is a wet/dry mix: the network
+  // applies its whole mask or none, and on a signal it does not read as speech
+  // -- weak SSB through a transponder is not what it was trained on -- that is
+  // the voice going with the noise.  100 % is what it has always done.
+  {
+    GtkWidget *nr3_frame=gtk_frame_new("Noise Reduction (NR3)");
+    GtkWidget *nr3_grid=gtk_grid_new();
+    sui_style_group(nr3_grid);
+    gtk_widget_set_halign(nr3_frame,GTK_ALIGN_FILL);
+    GtkWidget *l=gtk_label_new("Depth (%):");
+    gtk_label_set_xalign(GTK_LABEL(l),0.0);
+    gtk_grid_attach(GTK_GRID(nr3_grid),l,0,0,1,1);
+    GtkWidget *s=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->nr3_depth,0.0,100.0,1.0,10.0,0.0));
+    gtk_widget_set_size_request(s,160,25);
+    gtk_widget_set_hexpand(s,TRUE);
+    gtk_widget_set_tooltip_text(s,"How much of RNNoise's output is mixed in. "
+      "100 % is all-RNNoise; lower it when it thins the voice out.");
+    sui_scale_show_value(s,0);
+    gtk_grid_attach(GTK_GRID(nr3_grid),s,1,0,1,1);
+    g_signal_connect(G_OBJECT(s),"value_changed",G_CALLBACK(nr3_depth_cb),rx);
+    gtk_frame_set_child(GTK_FRAME(nr3_frame),nr3_grid);
+    gtk_box_append(GTK_BOX(audio_eq_box),nr3_frame);
+  }
 
   // NR4 (libspecbleach) tuning: live sliders so the operator can dial the
   // spectral denoiser in on real signals (defaults are conservative).

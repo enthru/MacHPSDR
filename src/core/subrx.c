@@ -219,16 +219,32 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
   SetRXAEMNRPosition(subrx->channel, rx->nr_agc);
   SetRXAEMNRgainMethod(subrx->channel, rx->nr2_gain_method);
   SetRXAEMNRnpeMethod(subrx->channel, rx->nr2_npe_method);
-  SetRXAEMNRRun(subrx->channel, rx->nr2);
   SetRXAEMNRaeRun(subrx->channel, rx->nr2_ae);
 
   SetRXAANRVals(subrx->channel, 64, 16, 16e-4, 10e-7); // defaults
+  subrx_update_nr(rx);
+}
+
+// Everything about the sub-channel's noise reduction that can change while it
+// is running.  It is a separate function because the NR3 depth and the five
+// NR4 knobs were pushed only at create_subrx time: moving a slider changed
+// VFO A and left VFO B on whatever the block's own constructor had chosen,
+// which on the same signal in the other ear is not a subtlety.
+void subrx_update_nr(RECEIVER *rx) {
+  SUBRX *subrx=(SUBRX *)rx->subrx;
+  if(subrx==NULL) return;
+  SetRXAEMNRRun(subrx->channel, rx->nr2);
   SetRXAANRRun(subrx->channel, rx->nr);
   SetRXARNNRRun(subrx->channel, rx->nr3);
+  SetRXARNNRdepth(subrx->channel, rx->nr3_depth/100.0);
   SetRXASBNRRun(subrx->channel, rx->nr4);
+  SetRXASBNRreductionAmount(subrx->channel, (float)rx->nr4_reduction);
+  SetRXASBNRsmoothingFactor(subrx->channel, (float)rx->nr4_smoothing);
+  SetRXASBNRwhiteningFactor(subrx->channel, (float)rx->nr4_whitening);
+  SetRXASBNRnoiseRescale(subrx->channel, (float)rx->nr4_rescale);
+  SetRXASBNRpostFilterThreshold(subrx->channel, (float)rx->nr4_postfilter);
   SetRXAANFRun(subrx->channel, rx->anf);
   SetRXASNBARun(subrx->channel, rx->snb);
-
 }
 
 void subrx_iq_buffer(RECEIVER *rx) {
@@ -271,6 +287,7 @@ void subrx_update_noise(RECEIVER *rx) {
   if(subrx==NULL) return;
   SetEXTANBRun(subrx->channel, rx->nb);
   SetEXTNOBRun(subrx->channel, rx->nb2);
+  subrx_update_nr(rx);
 }
 
 // Reached from receiver_set_volume(), i.e. from every volume AND mute change.

@@ -46,7 +46,7 @@ SBNR create_sbnr (int channel, int run, int position, int size, int rate, double
 	a->out = out;
 	sbnr_open_denoiser (a);
 	a->reduction_amount = 10.f;
-	a->smoothing_factor = 0.f;
+	a->smoothing_factor = 40.f;   // see rx->nr4_smoothing in receiver.c
 	a->whitening_factor = 0.f;
 	a->noise_rescale = 2.f;
 	a->post_filter_threshold = -10.f;

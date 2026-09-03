@@ -740,6 +740,7 @@ void update_noise(RECEIVER *rx) {
   SetRXAANRRun(rx->channel, bypass ? 0 : rx->nr);
   SetRXAEMNRRun(rx->channel, bypass ? 0 : rx->nr2);
   SetRXARNNRRun(rx->channel, bypass ? 0 : rx->nr3);
+  SetRXARNNRdepth(rx->channel, rx->nr3_depth/100.0);
   SetRXASBNRRun(rx->channel, bypass ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);
@@ -3921,8 +3922,20 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
   rx->nr3=FALSE;
   rx->nr4=FALSE;
   // NR4 defaults (match create_sbnr in wdsp/sbnr.c)
+  // RNNoise applies its whole mask or none, and on a signal it does not read as
+  // speech that is the voice going with the noise; 100 % is what it always did.
+  rx->nr3_depth=100.0;
   rx->nr4_reduction=10.0;
-  rx->nr4_smoothing=0.0;
+  // Not 0: libspecbleach's own musical-noise control, and measured against a
+  // 13.5 s speech recording at 11 dB of in-band SNR it is free -- 0 -> 40 %
+  // takes the noise reduction from 23.3 dB to 28.0 and the flutter of the
+  // residual (the spread of its 20 ms RMS) from 3.14 dB to 2.64.  It plateaus
+  // above 40, and 40 leaves headroom before the spectrum starts being smeared
+  // in time, which that measurement cannot see.  Whitening stays 0: it buys
+  // smoothness by filling the gaps with shaped noise (15 % halves the flutter
+  // and costs 10 dB of reduction), which is a trade for the operator to make on
+  // the slider, not a default.
+  rx->nr4_smoothing=40.0;
   rx->nr4_whitening=0.0;
   rx->nr4_rescale=2.0;
   rx->nr4_postfilter=-10.0;
@@ -4199,6 +4212,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   SetRXAANRVals(rx->channel, 64, 16, 16e-4, 10e-7); // defaults
   SetRXAANRRun(rx->channel, bypass ? 0 : rx->nr);
   SetRXARNNRRun(rx->channel, bypass ? 0 : rx->nr3);
+  SetRXARNNRdepth(rx->channel, rx->nr3_depth/100.0);
   SetRXASBNRRun(rx->channel, bypass ? 0 : rx->nr4);
   SetRXASBNRreductionAmount(rx->channel, (float)rx->nr4_reduction);
   SetRXASBNRsmoothingFactor(rx->channel, (float)rx->nr4_smoothing);

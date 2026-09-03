@@ -37,6 +37,7 @@ typedef struct _rnnr
 	int rate;			// the CHANNEL's dsp rate; RNNoise is 48 kHz only
 	int frame_size;			// RNNoise frame (480)
 	double scale;			// pre-scale into RNNoise's operating range
+	double depth;			// 0..1 wet/dry mix; 1.0 is all-RNNoise
 	DenoiseState *st;
 	double *in;
 	double *out;
@@ -44,10 +45,12 @@ typedef struct _rnnr
 	float *inbuf;			// queued input awaiting a full 480 frame
 	int    inbuf_n;
 	float *outbuf;			// processed output awaiting emission
-	int    outbuf_n;
+	float *drybuf;			// the SAME samples unprocessed, frame-aligned
+	int    outbuf_n;		// both rings advance together
 	int    bufcap;			// capacity of inbuf/outbuf
 	float *frame_in;		// frame_size scratch
 	float *frame_out;
+	float *frame_dry;		// the input frame held back one frame (see xrnnr)
 } rnnr, *RNNR;
 
 extern RNNR create_rnnr (int channel, int run, int position, int size, int rate, double *in, double *out);
@@ -59,5 +62,6 @@ extern void setSamplerate_rnnr (RNNR a, int rate);
 extern void xrnnr (RNNR a, int pos);
 
 extern void SetRXARNNRRun (int channel, int run);
+extern void SetRXARNNRdepth (int channel, double depth);
 
 #endif //_rnnr_h

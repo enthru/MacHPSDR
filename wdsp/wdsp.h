@@ -88,6 +88,7 @@ extern void SetRXAEMNRnpeMethod (int channel, int method);
 extern void SetRXAEMNRPosition (int channel, int position);
 // NR3 (RNNoise, wdsp/rnnr.c) and NR4 (libspecbleach, wdsp/sbnr.c)
 extern void SetRXARNNRRun (int channel, int run);
+extern void SetRXARNNRdepth (int channel, double depth);
 extern void SetRXASBNRRun (int channel, int run);
 extern void SetRXASBNRreductionAmount (int channel, float amount);
 extern void SetRXASBNRsmoothingFactor (int channel, float factor);

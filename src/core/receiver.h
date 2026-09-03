@@ -269,6 +269,7 @@ typedef struct _receiver {
   gboolean nr3;
   gboolean nr4;
   // NR4 (libspecbleach) tunable parameters, per receiver, persisted.
+  gdouble nr3_depth;        // NR3 wet/dry mix, 0..100 % (100 = all RNNoise)
   gdouble nr4_reduction;    // reduction amount, 0..20 dB
   gdouble nr4_smoothing;    // smoothing factor, 0..100 %
   gdouble nr4_whitening;    // residual whitening, 0..100 %

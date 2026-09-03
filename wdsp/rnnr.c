@@ -30,6 +30,18 @@
 // setSamplerate_rnnr re-derive one from the other.
 #define RNNR_RATE 48000
 
+// RNNoise has no strength of its own: rnnoise_process_frame returns the whole
+// mask applied, and on a signal the network does not read as speech -- weak SSB
+// through a transponder is not what it was trained on -- that is the voice going
+// with the noise.  So the block carries a wet/dry mix, and the dry side has to
+// be delayed by exactly what the wet side costs or the two comb-filter each
+// other.  MEASURED, not assumed: rnnoise_process_frame's output lags its input
+// by one whole frame (an impulse fed at sample 9700 came out at 10180), because
+// frame_analysis windows the previous frame together with this one and
+// frame_synthesis overlap-adds.  So the dry frame pushed alongside frame_out is
+// the PREVIOUS input frame, which is what frame_dry holds.
+#define RNNR_DEFAULT_DEPTH 1.0
+
 static int rnnr_effective (RNNR a) { return a->want && a->rate == RNNR_RATE; }
 
 void setBuffers_rnnr (RNNR a, double *in, double *out)
@@ -77,6 +89,7 @@ static void rnnr_alloc_bufs (RNNR a)
 	a->bufcap = a->size + 4 * a->frame_size;
 	a->inbuf  = (float *) malloc0 (a->bufcap * sizeof (float));
 	a->outbuf = (float *) malloc0 (a->bufcap * sizeof (float));
+	a->drybuf = (float *) malloc0 (a->bufcap * sizeof (float));
 }
 
 RNNR create_rnnr (int channel, int run, int position, int size, int rate, double *in, double *out)
@@ -89,6 +102,7 @@ RNNR create_rnnr (int channel, int run, int position, int size, int rate, double
 	a->rate = rate;
 	a->frame_size = 480;			// RNNoise fixed frame
 	a->scale = RNNR_DEFAULT_SCALE;
+	a->depth = RNNR_DEFAULT_DEPTH;
 	a->st = rnnoise_create (NULL);
 	a->run = rnnr_effective (a);
 	a->in = in;
@@ -96,6 +110,7 @@ RNNR create_rnnr (int channel, int run, int position, int size, int rate, double
 	rnnr_alloc_bufs (a);
 	a->frame_in  = (float *) malloc0 (a->frame_size * sizeof (float));
 	a->frame_out = (float *) malloc0 (a->frame_size * sizeof (float));
+	a->frame_dry = (float *) malloc0 (a->frame_size * sizeof (float));
 	flush_rnnr (a);
 	return a;
 }
@@ -104,6 +119,7 @@ void setSize_rnnr (RNNR a, int size)
 {
 	if (a->size == size) return;
 	a->size = size;
+	_aligned_free (a->drybuf);
 	_aligned_free (a->outbuf);
 	_aligned_free (a->inbuf);
 	rnnr_alloc_bufs (a);
@@ -132,8 +148,10 @@ void setSamplerate_rnnr (RNNR a, int rate)
 void destroy_rnnr (RNNR a)
 {
 	rnnoise_destroy (a->st);
+	_aligned_free (a->frame_dry);
 	_aligned_free (a->frame_out);
 	_aligned_free (a->frame_in);
+	_aligned_free (a->drybuf);
 	_aligned_free (a->outbuf);
 	_aligned_free (a->inbuf);
 	_aligned_free (a);
@@ -154,7 +172,8 @@ void xrnnr (RNNR a, int pos)
 			a->inbuf[a->inbuf_n + i] = (float) (a->in[2 * i] * sc);
 		a->inbuf_n += n;
 
-		// 2. drain full 480-sample frames through RNNoise
+		// 2. drain full 480-sample frames through RNNoise, pushing the
+		//    frame-aligned dry copy alongside each processed frame
 		while (a->inbuf_n >= fs)
 		{
 			memcpy (a->frame_in, a->inbuf, fs * sizeof (float));
@@ -162,8 +181,10 @@ void xrnnr (RNNR a, int pos)
 			if (a->outbuf_n + fs <= a->bufcap)
 			{
 				memcpy (a->outbuf + a->outbuf_n, a->frame_out, fs * sizeof (float));
+				memcpy (a->drybuf + a->outbuf_n, a->frame_dry, fs * sizeof (float));
 				a->outbuf_n += fs;
 			}
+			memcpy (a->frame_dry, a->frame_in, fs * sizeof (float));
 			a->inbuf_n -= fs;
 			if (a->inbuf_n > 0)
 				memmove (a->inbuf, a->inbuf + fs, a->inbuf_n * sizeof (float));
@@ -179,20 +200,37 @@ void xrnnr (RNNR a, int pos)
 				a->out[2 * i] = 0.0;
 				a->out[2 * i + 1] = 0.0;
 			}
+			double w = a->depth;
 			for (i = 0; i < avail; i++)
 			{
-				a->out[2 * (deficit + i)] = (double) a->outbuf[i] / sc;
+				double dry = (double) a->drybuf[i];
+				double wet = (double) a->outbuf[i];
+				a->out[2 * (deficit + i)] = (dry + w * (wet - dry)) / sc;
 				a->out[2 * (deficit + i) + 1] = 0.0;
 			}
 			a->outbuf_n -= avail;
 			if (a->outbuf_n > 0)
+			{
 				memmove (a->outbuf, a->outbuf + avail, a->outbuf_n * sizeof (float));
+				memmove (a->drybuf, a->drybuf + avail, a->outbuf_n * sizeof (float));
+			}
 		}
 	}
 	else if (a->out != a->in)
 	{
 		memcpy (a->out, a->in, a->size * sizeof (complex));
 	}
+}
+
+PORT
+void SetRXARNNRdepth (int channel, double depth)
+{
+	RNNR a = rxa[channel].rnnr.p;
+	if (depth < 0.0) depth = 0.0;
+	if (depth > 1.0) depth = 1.0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	a->depth = depth;
+	LeaveCriticalSection (&ch[channel].csDSP);
 }
 
 PORT

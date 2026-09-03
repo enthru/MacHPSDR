@@ -407,6 +407,8 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].nr4",rx->channel);
   sprintf(value,"%d",rx->nr4);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].nr3_depth",rx->channel);
+  setPropertyDouble(name,rx->nr3_depth);
   sprintf(name,"receiver[%d].nr4_reduction",rx->channel);
   setPropertyDouble(name,rx->nr4_reduction);
   sprintf(name,"receiver[%d].nr4_smoothing",rx->channel);
@@ -779,6 +781,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].nr4",rx->channel);
   value=getProperty(name);
   if(value) rx->nr4=atoi(value);
+  sprintf(name,"receiver[%d].nr3_depth",rx->channel);
+  value=getProperty(name);
+  if(value) rx->nr3_depth=propToDouble(value);
   sprintf(name,"receiver[%d].nr4_reduction",rx->channel);
   value=getProperty(name);
   if(value) rx->nr4_reduction=propToDouble(value);
