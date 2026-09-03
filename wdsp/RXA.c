@@ -28,6 +28,34 @@ warren@wpratt.com
 
 struct _rxa rxa[MAX_CHANNELS];
 
+// The coefficient count for the tap's own bandpass (bp_tap, see RXA.h).
+//
+// fircore splits nc coefficients into nc/size partitions and REQUIRES nc >= size
+// -- SetRXABandpassNC says exactly that in its own note. Below it nfor comes out
+// 0, plan_fircore allocates a zero-length plan array, and xfircore then executes
+// whatever it reads out of that array: a NULL fftw plan, i.e. SIGSEGV inside
+// fftw_execute on the DSP thread.
+//
+// bp1 never meets it because RXASetNC hands it rx->fft_size, which is the
+// largest block this application ever opens a channel with. The tap was born
+// with a fixed 2048 and nothing moved it, while ch[].dsp_size follows the SPAN:
+// 5120 at a 192/384 kHz span, 2560 at 768 kHz, 1280 at 1536 kHz, 1024 at
+// 1920 kHz. So the tap crashed on the first block at any span whose block is
+// larger than 2048 -- and the ring is installed for every receiver whether or
+// not anything is subscribed, so this was a crash for any operator changing
+// span, not a stream feature failing.
+//
+// Raising nc to the block (nfor == 1) is the whole cure: it is the same
+// relationship bp1 has at the spans where fft_size == dsp_size.
+static int bp_tap_nc (int channel, int nc)
+{
+	if (nc < ch[channel].dsp_size) nc = ch[channel].dsp_size;
+	return nc;
+}
+
+// Applies it; defined beside the tap's other setter, down with RXASetPassband.
+static void set_bp_tap_nc (int channel, int nc);
+
 void create_rxa (int channel)
 {
 	rxa[channel].mode = RXA_LSB;
@@ -428,7 +456,10 @@ void create_rxa (int channel)
 		1,												// run
 		0,												// position
 		ch[channel].dsp_size,							// buffer size
-		2048,											// number of coefficients
+		bp_tap_nc (channel, 2048),						// number of coefficients:
+														// bp1's 2048, but never
+														// below the block (see
+														// bp_tap_nc)
 		0,												// flag for minimum phase
 		rxa[channel].tapbuff,							// input buffer
 		rxa[channel].tapbuff,							// output buffer
@@ -839,6 +870,11 @@ void setDSPBuffsize_rxa (int channel)
 	rxa[channel].tapbuff = (double *) malloc0 (2 * ch[channel].dsp_size * sizeof (complex));
 	setBuffers_bandpass (rxa[channel].bp_tap.p, rxa[channel].tapbuff, rxa[channel].tapbuff);
 	setSize_bandpass (rxa[channel].bp_tap.p, ch[channel].dsp_size);
+	// The block a span change just handed this channel may be larger than the
+	// tap's coefficient count, and that combination is a NULL plan on the next
+	// block (see bp_tap_nc).  Nothing else moves the tap's nc, so it is done
+	// here, where the size it must not fall below is set.
+	set_bp_tap_nc (channel, rxa[channel].bp_tap.p->nc);
 	setBuffers_bandpass (rxa[channel].bp1.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_bandpass (rxa[channel].bp1.p, ch[channel].dsp_size);
 	setBuffers_wcpagc (rxa[channel].agc.p, rxa[channel].midbuff, rxa[channel].midbuff);
@@ -1056,7 +1092,6 @@ void RXAbpsnbaSet (int channel)
 *																										*
 ********************************************************************************************************/
 
-PORT
 // Give the tap's filter the same edges bp1 just got. Same body as
 // SetRXABandpassFreqs, against bp_tap: the tap is a second, independent
 // instance and nothing else would ever move its passband.
@@ -1078,6 +1113,28 @@ static void set_bp_tap_freqs (int channel, double f_low, double f_high)
 	}
 }
 
+// The same for its coefficient count, and the reason it has to be reachable
+// from RXASetNC and from setDSPBuffsize_rxa is in bp_tap_nc, at the top of this
+// file: a tap whose nc is below the channel's block is a NULL fftw plan on the
+// next DSP pass, not a badly shaped filter.
+static void set_bp_tap_nc (int channel, int nc)
+{
+	double* impulse;
+	BANDPASS a = rxa[channel].bp_tap.p;
+	nc = bp_tap_nc (channel, nc);
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (nc != a->nc)
+	{
+		a->nc = nc;
+		impulse = fir_bandpass (a->nc, a->f_low, a->f_high, a->samplerate,
+			a->wintype, 1, a->gain / (double)(2 * a->size));
+		setNc_fircore (a->p, a->nc, impulse);
+		_aligned_free (impulse);
+	}
+	LeaveCriticalSection (&ch[channel].csDSP);
+}
+
+PORT
 void RXASetPassband (int channel, double f_low, double f_high)
 {
 	set_bp_tap_freqs			(channel, f_low, f_high);
@@ -1093,6 +1150,7 @@ void RXASetNC (int channel, int nc)
 	RXANBPSetNC					(channel, nc);
 	RXABPSNBASetNC				(channel, nc);
 	SetRXABandpassNC			(channel, nc);
+	set_bp_tap_nc				(channel, nc);		// bp1's twin follows bp1
 	// SetRXAEQNC					(channel, nc);
 	// SetRXAFMSQNC					(channel, nc);
 	// SetRXAFMNCde					(channel, nc);

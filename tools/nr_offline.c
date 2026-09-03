@@ -234,6 +234,58 @@ static void select_nr(int nr) {
   SetRXASBNRRun(CH, nr == NR_SB);
 }
 
+/* ------------------------------------------------------------- the tap ---
+ *
+ * The stream tap (SetRXAPreAgcTap): a ring WDSP fills inside xrxa with the
+ * signal as it is the moment it has been demodulated, filtered by a bandpass of
+ * the tap's own.  Installed here exactly as receiver_pretap_alloc does it,
+ * including on a span change, because that is what broke: the tap's filter is
+ * sized from dsp_size and its COEFFICIENT COUNT was not, and fircore answers
+ * nc < size with nfor = 0, a zero-length plan array and a NULL fftw plan -- a
+ * SIGSEGV on the DSP thread on the next block, not bad audio.  The ring is
+ * installed for every receiver whether or not anything is subscribed, so that
+ * was a crash for any operator changing span. */
+static double *tap_ring;        /* what WDSP writes into */
+static int     tap_cap;
+static long    tap_r;           /* the app's own read cursor */
+static double *tapbuf;          /* what this harness reads out, I only */
+static long    tap_n;
+
+static void tap_install(int block) {
+  int cap = block*4;
+  if(cap < 4096) cap = 4096;
+  SetRXAPreAgcTap(CH, NULL, 0);
+  free(tap_ring);
+  tap_ring = calloc((size_t)cap*2, sizeof(double));
+  tap_cap  = cap;
+  if(!tapbuf) tapbuf = malloc(sizeof(double)*NS);
+  SetRXAPreAgcTap(CH, tap_ring, cap);
+  tap_r = GetRXAPreAgcTapPos(CH);
+}
+
+static void tap_remove(void) {
+  SetRXAPreAgcTap(CH, NULL, 0);
+  free(tap_ring); tap_ring = NULL; tap_cap = 0;
+}
+
+/* Drain whatever the last DSP pass wrote.  Same walk as rx_tci_audio_publish:
+ * a monotonic write count, the reader dropped forward if it fell behind. */
+static void tap_drain(void) {
+  if(!tap_ring) return;
+  long w = GetRXAPreAgcTapPos(CH);
+  long avail = w - tap_r;
+  if(avail <= 0) return;
+  if(avail > tap_cap) { tap_r = w - tap_cap; avail = tap_cap; }
+  while(avail > 0) {
+    int idx = (int)(tap_r % tap_cap);
+    int n   = tap_cap - idx;
+    if(n > avail) n = (int)avail;
+    for(int i=0;i<n && tap_n<NS;i++) tapbuf[tap_n++] = tap_ring[2*(idx+i)];
+    tap_r  += n;
+    avail  -= n;
+  }
+}
+
 /* Runs the whole signal through and captures the demodulated audio. */
 static void run_chain(int nr, int block) {
   /* stop FIRST, then select, then start: with the channel running the DSP
@@ -244,6 +296,8 @@ static void run_chain(int nr, int block) {
   select_nr(nr);
   SetChannelState(CH, 0, 1);                          /* flush every block's state */
   SetChannelState(CH, 1, 0);
+  tap_n = 0;
+  if(tap_ring) tap_r = GetRXAPreAgcTapPos(CH);
   double *in  = malloc(sizeof(double)*2*block);
   double *out = malloc(sizeof(double)*2*block);
   long n = 0;
@@ -251,6 +305,7 @@ static void run_chain(int nr, int block) {
     for(int i=0;i<block;i++) { in[2*i] = sigQ[pos+i]; in[2*i+1] = sigI[pos+i]; }
     int err = 0;
     fexchange0(CH, in, out, &err);
+    tap_drain();                                      /* the pass is done: bfo=1 */
     for(int i=0;i<block && n<NS;i++) outbuf[n++] = out[2*i];
   }
   free(in); free(out);
@@ -264,18 +319,23 @@ static int cmpd(const void *a, const void *b) {
 /* Level of the syllables and of the gaps between them, from the sorted
  * short-term RMS -- alignment-free, so the latency each block adds (RNNoise a
  * frame, libspecbleach an STFT hop, the FIRs their own) cannot skew it. */
-static void levels(double *voice, double *floor_) {
+static void buf_levels(const double *b, long len, double *voice, double *floor_) {
   const int w = 960;                                  /* 20 ms */
   static double v[NS/960 + 2];
   long m = 0;
-  for(long n=SETTLE; n+w<NS; n+=w) {
+  for(long n=SETTLE; n+w<len; n+=w) {
     double s = 0.0;
-    for(int i=0;i<w;i++) s += outbuf[n+i]*outbuf[n+i];
+    for(int i=0;i<w;i++) s += b[n+i]*b[n+i];
     v[m++] = sqrt(s/w);
   }
+  if(m < 3) { *voice = *floor_ = 0.0; return; }
   qsort(v, m, sizeof(double), cmpd);
   *floor_ = v[(long)(0.10*m)];
   *voice  = v[(long)(0.90*m)];
+}
+
+static void levels(double *voice, double *floor_) {
+  buf_levels(outbuf, NS, voice, floor_);
 }
 
 typedef struct { double voice, floor_, snr; } RESULT;
@@ -303,15 +363,20 @@ static void save_out(void) {
   if(!saved) saved = malloc(sizeof(double)*NS);
   memcpy(saved, outbuf, sizeof(double)*NS);
 }
-/* residual of outbuf against the saved run, in dB below the saved run */
-static double residual_db(void) {
+/* residual of one buffer against another, in dB below the reference */
+static double buf_residual_db(const double *a, const double *ref, long len) {
   double sd = 0.0, sr = 0.0;
-  for(long n=SETTLE;n<NS;n++) {
-    double d = outbuf[n] - saved[n];
-    sd += d*d; sr += saved[n]*saved[n];
+  for(long n=SETTLE;n<len;n++) {
+    double d = a[n] - ref[n];
+    sd += d*d; sr += ref[n]*ref[n];
   }
   if(sr <= 0.0) return 0.0;
   return 10.0*log10((sd > 0.0 ? sd : 1e-300)/sr);
+}
+
+/* residual of outbuf against the saved run, in dB below the saved run */
+static double residual_db(void) {
+  return buf_residual_db(outbuf, saved, NS);
 }
 
 static RESULT measure(int nr, int block) {
@@ -463,6 +528,63 @@ int main(int argc, char **argv) {
           isfinite(sb.voice) && sb.voice > 0.0, "voice %.4g", sb.voice);
   }
   CloseChannel(CH);
+
+  /* ---- the stream tap, across every block a span change produces.
+   *
+   * It is not gated on a subscriber: receiver_pretap_alloc installs the ring on
+   * every receiver, so the tap's bandpass runs on every DSP pass at every span.
+   * Its coefficient count did not follow dsp_size, and fircore answers nc < size
+   * with nfor = 0 -- a zero-length plan array, then a NULL fftw plan inside
+   * xfircore.  That is a segmentation fault on the DSP thread the moment the
+   * operator selects a span whose block is larger than the tap's nc (2048), so
+   * the assertion below is in part the harness surviving at all. ---- */
+  printf("\n-- the stream tap, across every span's block --\n");
+  {
+    static const struct { int block; const char *span; } tier[] = {
+      { 5120, "192/384 kHz" }, { 2560, "768 kHz" },
+      { 1280, "1536 kHz"    }, { 1024, "1920 kHz" },
+    };
+    const int NT = (int)(sizeof tier / sizeof tier[0]);
+    channel_open(tier[0].block);
+    tap_install(tier[0].block);
+    for(int t=0;t<NT;t++) {
+      if(t) { channel_resize(tier[t].block); tap_install(tier[t].block); }
+      run_chain(NR_OFF, tier[t].block);
+      /* Whole passes only, and trailing the input by no more than the iobuff
+       * ring is deep (SetDSPMult(4) in channel_open): the DSP thread is still
+       * holding those when the last block goes in.  Measured: exactly four
+       * blocks short at every tier. */
+      const long want = (NS/tier[t].block)*(long)tier[t].block;
+      double v, f;
+      buf_levels(tapbuf, tap_n, &v, &f);
+      char name[80];
+      snprintf(name, sizeof name, "tap carries the audio at a %s span", tier[t].span);
+      check(name, tap_n > 0 && (tap_n % tier[t].block) == 0
+                  && (want - tap_n) <= 4L*tier[t].block
+                  && isfinite(v) && v > 0.0,
+            "block %d, %ld of %ld samples (%ld passes behind), voice %.4g",
+            tier[t].block, tap_n, want, (want-tap_n)/tier[t].block, v);
+    }
+
+    /* The fork is BEFORE the noise reduction, which is the whole point of the
+     * tap having a filter of its own: the operator's NR is theirs, and the
+     * stream must be the signal.  Asserted both ways round -- the tap must not
+     * move, and the audio must, or the pair proves nothing. */
+    const int blk = tier[NT-1].block;
+    static double tapref[NS];
+    run_chain(NR_OFF, blk);
+    long n_ref = tap_n;
+    memcpy(tapref, tapbuf, sizeof(double)*(size_t)n_ref);
+    save_out();
+    run_chain(NR_RNN, blk);
+    double dtap = buf_residual_db(tapbuf, tapref, tap_n < n_ref ? tap_n : n_ref);
+    double daud = residual_db();
+    check("NR3 does not reach the tap", dtap < -100.0, "residual %.1f dB", dtap);
+    check("negative control: it did reach the audio", daud > -20.0,
+          "residual %.1f dB", daud);
+    tap_remove();
+    CloseChannel(CH);
+  }
 
   printf("\n%s\n", failures ? "FAILED" : "all cases passed");
   return failures ? 1 : 0;
