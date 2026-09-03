@@ -801,7 +801,18 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   // Keep the historical DSP-sized reads for other drivers: a network driver
   // may advertise a very large MTU whose latency/working-set is undesirable,
   // and none has shown this HackRF transfer-tail behaviour.
-  const gboolean needs_whole_mtu=(strcmp(radio->discovered->name,"hackrf")==0);
+  // MACHPSDR_SOAPY_READ_MTU=0/1 forces the choice either way, so "did this
+  // change cause what I am looking at?" is one restart and one variable rather
+  // than a rebuild off an older commit.
+  gboolean needs_whole_mtu=(strcmp(radio->discovered->name,"hackrf")==0);
+  {
+    const char *e=g_getenv("MACHPSDR_SOAPY_READ_MTU");
+    if(e!=NULL) {
+      needs_whole_mtu=(atoi(e)!=0);
+      log_info("%s: MACHPSDR_SOAPY_READ_MTU=%s: %s\n",__FUNCTION__,e,
+               needs_whole_mtu?"reading whole transfers":"reading DSP-sized blocks");
+    }
+  }
   if(!needs_whole_mtu && read_block>(2*rx->fft_size)) read_block=2*rx->fft_size;
   int dsp_block=mtu;
   if(dsp_block>(2*rx->fft_size)) dsp_block=2*rx->fft_size;
