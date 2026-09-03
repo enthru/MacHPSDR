@@ -244,6 +244,12 @@ static long long tx_underflows;
 // One transmission, one log line: it cannot pace the TX loop.
 static long long tx_written;
 static float tx_peak;
+// SoapyPlutoSDR converts CF32 to its native signed 16-bit stream with a plain
+// cast after multiplying by 32767.999.  It does not saturate first, so any WDSP
+// overshoot outside +/-1 can wrap across the signed range and turn into a
+// discontinuity rather than a clipped peak.  Count and clamp those samples
+// before they reach the driver.
+static long long tx_clipped;
 static gint64 tx_key_us;
 static float *output_buffer;
 static int output_buffer_index;
@@ -1305,17 +1311,23 @@ void soapy_protocol_iq_samples(float isample,float qsample) {
   // what the CF32 TX stream expects.  Only write while actually transmitting
   // and while the TX stream has been activated.
   if(isTransmitting(radio) && tx_stream_active) {
+    // Peak of what WDSP handed us, before the device sees it.  Keep this ahead
+    // of the clamp so the transmission summary still exposes an overshoot.
+    if(isfinite(isample) && fabsf(isample)>tx_peak) tx_peak=fabsf(isample);
+    if(isfinite(qsample) && fabsf(qsample)>tx_peak) tx_peak=fabsf(qsample);
+    // The driver's conversion has no saturation.  Both full-scale endpoints
+    // are safe, but an overshoot is not.  A non-finite sample is never
+    // meaningful RF and must not be handed to a float-to-integer cast either.
+    const float hi=1.0f;
+    if(!isfinite(isample)) { isample=0.0f; tx_clipped++; }
+    else if(isample>hi)    { isample=hi;   tx_clipped++; }
+    else if(isample<-1.0f) { isample=-1.0f; tx_clipped++; }
+    if(!isfinite(qsample)) { qsample=0.0f; tx_clipped++; }
+    else if(qsample>hi)    { qsample=hi;   tx_clipped++; }
+    else if(qsample<-1.0f) { qsample=-1.0f; tx_clipped++; }
     output_buffer[output_buffer_index*2]=isample;
     output_buffer[(output_buffer_index*2)+1]=qsample;
     output_buffer_index++;
-    // Peak of what WDSP handed us, before the device sees it.  Two compares per
-    // sample; the alternative is being unable to tell a silent modulator from a
-    // silent transmitter without hardware on the other end.
-    {
-      const float ai=fabsf(isample), aq=fabsf(qsample);
-      if(ai>tx_peak) tx_peak=ai;
-      if(aq>tx_peak) tx_peak=aq;
-    }
     if(output_buffer_index>=max_tx_samples) {
       int written=0;
       while(written<max_tx_samples) {
@@ -1500,6 +1512,7 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   tx_peak=0.0f;
   tx_dropped=0;
   tx_underflows=0;
+  tx_clipped=0;
   tx_key_us=g_get_monotonic_time();
   // What the DAC is actually clocked at, asked for at key-up rather than only at
   // create_transmitter.  The two are not the same question: several drivers tie
@@ -1553,8 +1566,10 @@ void soapy_protocol_deactivate_tx(TRANSMITTER *tx) {
   {
     const gint64 us=g_get_monotonic_time()-tx_key_us;
     const double secs=(double)us/1.0e6;
-    log_info("%s: transmitted %.2f s, %lld sample(s) to the DAC (%.0f/s), %lld refused, peak %.3f\n",
-             __FUNCTION__,secs,tx_written,secs>0.0?(double)tx_written/secs:0.0,tx_dropped,(double)tx_peak);
+    log_info("%s: transmitted %.2f s, %lld sample(s) to the DAC (%.0f/s), %lld refused, "
+             "%lld clipped, peak %.3f\n",
+             __FUNCTION__,secs,tx_written,secs>0.0?(double)tx_written/secs:0.0,
+             tx_dropped,tx_clipped,(double)tx_peak);
     if(tx_written==0) {
       log_error("%s: nothing was written to the DAC during that transmission -- the TX exchange "
                 "was never clocked (no microphone and no pump, or WDSP produced no output)\n",__FUNCTION__);
