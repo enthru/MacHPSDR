@@ -66,6 +66,7 @@
 #define TCI_STREAM_TX_AUDIO  2    // TciStreamType::TX_AUDIO_STREAM
 #define TCI_STREAM_TX_CHRONO 3    // TciStreamType::TX_CHRONO
 #define TCI_HDR_BYTES        64
+#define TCI_AUDIO_CHANNELS   2    // the server advertises and requests stereo
 // TCI 1.9 defaults for the TX-audio handshake: the number of real samples a
 // chrono asks for (interleaved across its two channels; 2048 means 1024 stereo
 // frames), and how much audio the client wants queued ahead.
@@ -774,11 +775,20 @@ static void tci_ingest_binary(const guint8 *buf, size_t len) {
     }
     return;
   }
-  if (channels < 1) channels = 1;
+  // This server negotiates two interleaved channels and repeats that in every
+  // TX_CHRONO request. JTDX 2.2.159 does not initialise `channels` in either of
+  // its TX-audio construction paths, so the received field can be zero or
+  // stale heap data. Trusting it as 1 duplicated every stereo sample in time;
+  // trusting a larger garbage value discarded most of the block. Both destroy
+  // an FT8 waveform. The negotiated value, not that uninitialised field, is
+  // authoritative here.
+  guint32 wire_channels = channels;
+  channels = TCI_AUDIO_CHANNELS;
   if (now_us - last_accept_log >= 5000000) {
     last_accept_log = now_us;
-    log_info("tci: TX audio in: %u Hz, %u channel(s), length %u, %zu payload bytes\n",
-             (unsigned)srate, (unsigned)channels, (unsigned)declared,
+    log_info("tci: TX audio in: %u Hz, %u channel(s) negotiated (header says %u), "
+             "length %u, %zu payload bytes\n",
+             (unsigned)srate, (unsigned)channels, (unsigned)wire_channels, (unsigned)declared,
              len - TCI_HDR_BYTES);
   }
 
@@ -1304,7 +1314,7 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     client_send_text(c, "audio_stream_sample_type:float32;");
   } else if (!strcmp(name, "audio_stream_channels")) {
     // Also a fact: RX audio goes out as interleaved stereo.
-    client_send_text(c, "audio_stream_channels:2;");
+    client_send_text(c, "audio_stream_channels:" G_STRINGIFY(TCI_AUDIO_CHANNELS) ";");
   } else if (!strcmp(name, "audio_stream_samples")) {
     // How many samples a TX_CHRONO tick asks for (TCI 1.9: 100..2048, default
     // 2048 at 48 kHz).  Honoured rather than merely acknowledged -- it sets the
@@ -2088,7 +2098,7 @@ static void tci_send_chrono(guint32 nsamples) {
   st32le(th + 16, 0);                                    // crc
   st32le(th + 20, nsamples);                             // length: what we are asking for
   st32le(th + 24, TCI_STREAM_TX_CHRONO);                 // type
-  st32le(th + 28, 2);                                    // channels
+  st32le(th + 28, TCI_AUDIO_CHANNELS);                   // channels
   // A chrono carries no payload -- it is a timestamp, and the client answers it
   // with a TX_AUDIO_STREAM frame of its own.
 
@@ -2180,7 +2190,8 @@ void tci_tx_chrono_tick(int nsamples) {
   const int rate = g_atomic_int_get(&audio_stream_rate);
   if (want <= 0 || rate <= 0) return;
   // 48 kHz mono mic samples covered by one tick's two-channel stream block.
-  int per = tci_stream_mic_samples((guint32)want, 2, (guint32)rate, TCI_AUDIO_RATE);
+  int per = tci_stream_mic_samples((guint32)want, TCI_AUDIO_CHANNELS,
+                                   (guint32)rate, TCI_AUDIO_RATE);
   if (per < 1) per = 1;
 
   if (!primed) {
