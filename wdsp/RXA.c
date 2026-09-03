@@ -31,6 +31,13 @@ struct _rxa rxa[MAX_CHANNELS];
 void create_rxa (int channel)
 {
 	rxa[channel].mode = RXA_LSB;
+	// The tap belongs to whoever set it on the PREVIOUS life of this channel,
+	// and rxa[] is global: a channel closed and re-opened (closing a receiver
+	// and adding one takes the same index) would otherwise start with a pointer
+	// into memory its old owner has freed, and xrxa writes through it.
+	rxa[channel].pretap = NULL;
+	rxa[channel].pretap_cap = 0;
+	rxa[channel].pretap_w = 0;
 	rxa[channel].inbuff  = (double *) malloc0 (1 * ch[channel].dsp_insize  * sizeof (complex));
 	rxa[channel].outbuff = (double *) malloc0 (1 * ch[channel].dsp_outsize * sizeof (complex));
 	rxa[channel].midbuff = (double *) malloc0 (2 * ch[channel].dsp_size    * sizeof (complex));

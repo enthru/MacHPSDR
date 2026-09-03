@@ -267,10 +267,16 @@ typedef struct { double voice, floor_, snr; } RESULT;
  * nothing to do with the wiring, which is exactly the kind of threshold that
  * ends up widened until it proves nothing.
  *
- * -25 dB rather than bit-exactness because libspecbleach's adaptive state does
- * not come out identical through the two paths; the mismatched geometry it is
- * here to catch reads +1.2 dB and +11.0 dB, i.e. a residual LOUDER than the
- * reference -- a different signal, not a drifting one. */
+ * Not bit-exactness, because neither block reproduces itself bit for bit: on a
+ * FIXED input this residual was measured at -45.9, -50.0, -56.6, -63.5 and
+ * -2980.7 dB across five runs of one binary on one machine, and at -19.5 dB on
+ * a CI runner -- so it carries the numerical spread of the rebuilt filters as
+ * well as the geometry, and a threshold inside that spread fails at random. The
+ * defect it exists to catch is nowhere near it: a mismatched geometry reads
+ * +1.2 dB and +11.0 dB, i.e. a residual LOUDER than the reference -- a
+ * different signal, not a drifting one. -12 dB keeps 12 dB of clearance from
+ * the worst run observed and 13 dB from the fault, which is what a threshold
+ * has to do; widening it further would start to mean nothing. */
 static double *saved;
 static void save_out(void) {
   if(!saved) saved = malloc(sizeof(double)*NS);
@@ -350,7 +356,7 @@ int main(int argc, char **argv) {
     measure(nr, BLK_NARROW);
     double d = residual_db();
     snprintf(name, sizeof name, "%s: 5120 -> 1024 is the same audio", nrname(nr));
-    check(name, d < -25.0, "residual %.1f dB", d);
+    check(name, d < -12.0, "residual %.1f dB", d);
     CloseChannel(CH);
 
     channel_open(BLK_WIDE);                   /* the reference: opened wide */
@@ -362,7 +368,7 @@ int main(int argc, char **argv) {
     measure(nr, BLK_WIDE);
     d = residual_db();
     snprintf(name, sizeof name, "%s: 1024 -> 5120 is the same audio", nrname(nr));
-    check(name, d < -25.0, "residual %.1f dB", d);
+    check(name, d < -12.0, "residual %.1f dB", d);
     CloseChannel(CH);
   }
 
