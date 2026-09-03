@@ -1784,6 +1784,14 @@ static void tci_audio_drop_account(guint32 dropped, guint32 tried) {
   n_try  = 0;
 }
 
+// The counter above runs on the signal AFTER the feed's limiter, which exists to
+// make sure nothing ever reaches it -- so with the limiter working it reads zero
+// for ever, and an overload of the SOURCE became invisible through this path.
+// That overload still matters: it is the operator's speaker and their recording
+// being clipped, and the cure is AGC-G. So it is measured where it happens,
+// before the gain is applied (tci_audio_source_account, called from
+// tci_audio_feed), and this one stays as the backstop that says the limiter
+// itself failed.
 static void tci_audio_clip_account(guint32 clipped, guint32 total, double peak) {
   static gint64 window_us = 0;
   static guint64 n_clip = 0, n_tot = 0;
@@ -1972,6 +1980,32 @@ void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample_rate) 
 #define TCI_LIM_MAX_GAIN  10.0     // never lift by more than 20 dB
 #define TCI_LIM_REL_S     10.0     // rise this slowly (seconds)
 
+// What the receiver is handing the stream, before the limiter touches it.
+// A peak above 1.0 here is an overload of the signal itself: the limiter will
+// bound the STREAM, so a client hears nothing wrong, but the same samples are
+// going to the speaker and to the recorder where nothing bounds them. One line
+// per 5 s window, only while it is happening, and it names the cut in dB so the
+// operator does not have to find AGC-G by bisection with a band open.
+static void tci_audio_source_account(int idx, double peak, double gain) {
+  static gint64 window_us = 0;
+  static double w_peak = 0.0, w_gain = 1.0;
+  gint64 now = g_get_monotonic_time();
+  if (peak > w_peak) { w_peak = peak; w_gain = gain; }
+  if (window_us == 0) { window_us = now; return; }
+  if (now - window_us < 5000000) return;
+  if (w_peak > 1.0)
+    log_info("tci: RX audio source over full scale -- peak %.2f in the last %.0f s "
+             "(turn the level down by %.0f dB). The stream is bounded by its own "
+             "limiter (x%.3g here) so a client is unaffected, but the same overload "
+             "clips the speaker and the recorder, and the cure is AGC-G\n",
+             w_peak, (double)(now - window_us) / 1e6,
+             20.0 * log10(w_peak), w_gain);
+  (void)idx;
+  window_us = now;
+  w_peak = 0.0;
+  w_gain = 1.0;
+}
+
 static double lim_gain[MAX_RECEIVERS];     // audio thread of that receiver only
 static gboolean lim_init = FALSE;
 
@@ -1979,11 +2013,15 @@ static gboolean lim_init = FALSE;
 //
 // The limiter can only LIFT by TCI_LIM_MAX_GAIN, and what it is lifting is
 // whatever this receiver's AGC produced.  Switch the AGC off -- which is a fixed
-// gain, not no gain -- or wind AGC-G down, and a weak band leaves the stream
-// tens of dB below the level a decoder is written for.  The client then simply
-// stops decoding: JTDX draws a saturated waterfall with no contrast and reports
-// nothing, and there is no way to tell that from a dead band.  Nobody is going
-// to connect those two facts unaided, so the application does it.
+// gain, not no gain -- or wind AGC-G down, and a weak band can leave the stream
+// below the level a decoder is written for.  The client then simply stops
+// decoding, and from either end that is indistinguishable from a dead band.
+//
+// This is a HAZARD, not something that has been observed here: the fault that
+// prompted it was the opposite one (an overload reaching the stream, which
+// tci_audio_source_account above now names).  It is asymmetric on purpose --
+// too loud the limiter fixes and only reports, too quiet it cannot fix, so that
+// is the one the operator has to be told about.
 //
 // Trips when the gain has been pinned at the ceiling AND the stream has stayed
 // below TCI_LVL_FLOOR continuously for TCI_LVL_HOLD_S with a client subscribed;
@@ -2115,6 +2153,7 @@ void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_r
       if (a > pk) pk = a;
       sq += audio[i] * audio[i];
     }
+    tci_audio_source_account(idx, pk, g1);
     tci_level_check(idx, pk, g1);
     static int lvl = -1;
     static gint64 lvl_last[MAX_RECEIVERS];
