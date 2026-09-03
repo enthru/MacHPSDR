@@ -38,6 +38,11 @@ extern double ctcss_frequencies[CTCSS_FREQUENCIES];
    for context around the carrier, not for viewing PA linearity. */
 #define TX_MONITOR_SPAN_HZ 24000.0
 
+/* Floor of the SoapySDR DAC backoff (see TRANSMITTER.dac_backoff_db).  Far
+   enough down to sweep the linearity of a device that needs headroom, not so
+   far that a mis-set control silently takes the transmitter off the air. */
+#define TX_DAC_BACKOFF_MIN_DB (-30.0)
+
 /* Ceiling for the SoapySDR TX DAC rate (Hz).
 
    tx->iq_output_rate used to be radio->sample_rate outright, back when that
@@ -93,6 +98,15 @@ typedef struct _transmitter {
 
   gdouble drive;
   gdouble tune_percent;
+
+  /* SoapySDR only: how far below full scale the modulated I/Q is handed to the
+     DAC, in dB (0 = what WDSP produced, which its ALC pins just under 1.0).
+     The Drive slider moves the device's ANALOGUE gain and never touched the
+     digital level, so the DAC saw ~0.98 full scale at every drive setting.
+     An AD9361 wants headroom for the interpolation chain that follows its DAC;
+     an 8-bit HackRF DAC does not, and pays for backoff in quantisation noise,
+     so the default is per device (create_transmitter). */
+  gdouble dac_backoff_db;
   gboolean tune_use_drive;
   gint attenuation;
 

@@ -60,6 +60,7 @@ void soapy_protocol_rx_resume(void);
 void soapy_protocol_activate_tx(TRANSMITTER *tx);
 void soapy_protocol_deactivate_tx(TRANSMITTER *tx);
 void soapy_protocol_set_tx_drive(double drive);
+void soapy_protocol_set_tx_backoff(double db);
 void soapy_protocol_set_tx_frequency(TRANSMITTER *tx);
 void soapy_protocol_set_tx_antenna(TRANSMITTER *tx,int ant);
 void soapy_protocol_set_tx_gain(DAC *dac);

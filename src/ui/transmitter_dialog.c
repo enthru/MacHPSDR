@@ -41,6 +41,9 @@
 #include "audio.h"
 #include "band.h"
 #include "tx_panadapter.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 
 
 static GtkWidget *microphone_frame;
@@ -129,6 +132,16 @@ static void tune_value_changed_cb(GtkWidget *widget, gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   tx->tune_percent=gtk_range_get_value(GTK_RANGE(widget));
 }
+
+#ifdef SOAPYSDR
+static void dac_backoff_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->dac_backoff_db=gtk_range_get_value(GTK_RANGE(widget));
+  // Live, because this is a control an operator sweeps against a receiver: it
+  // is of no use if it only takes effect at the next key-up.
+  soapy_protocol_set_tx_backoff(tx->dac_backoff_db);
+}
+#endif
 
 static void tune_use_drive_cb(GtkWidget *widget,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
@@ -424,6 +437,38 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_check_button_set_active (GTK_CHECK_BUTTON (tune_use_drive), tx->tune_use_drive);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_use_drive,0,2,1,1);
   g_signal_connect(tune_use_drive,"toggled",G_CALLBACK(tune_use_drive_cb),tx);
+
+#ifdef SOAPYSDR
+  // SoapySDR only: on protocol 1/2 the drive level IS the digital level the
+  // radio is told to transmit at, and there is nothing here to back off.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    GtkWidget *dac_frame=gtk_frame_new("DAC Level");
+    GtkWidget *dac_grid=gtk_grid_new();
+    gtk_grid_set_row_homogeneous(GTK_GRID(dac_grid),TRUE);
+    gtk_grid_set_column_homogeneous(GTK_GRID(dac_grid),FALSE);
+    gtk_grid_set_column_spacing(GTK_GRID(dac_grid),10);
+    sui_style_group(dac_grid);
+    gtk_frame_set_child(GTK_FRAME(dac_frame),dac_grid);
+    gtk_box_append(GTK_BOX(col0),dac_frame);
+
+    GtkWidget *dac_label=gtk_label_new("Backoff (dB):");
+    gtk_grid_attach(GTK_GRID(dac_grid),dac_label,0,0,1,1);
+
+    GtkWidget *dac_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,
+                                                  TX_DAC_BACKOFF_MIN_DB,0.0,0.5);
+    gtk_widget_set_size_request(dac_scale,300,32);
+    gtk_range_set_value(GTK_RANGE(dac_scale),tx->dac_backoff_db);
+    sui_scale_show_value(dac_scale,1);
+    g_signal_connect(G_OBJECT(dac_scale),"value_changed",G_CALLBACK(dac_backoff_cb),tx);
+    gtk_grid_attach(GTK_GRID(dac_grid),dac_scale,1,0,1,1);
+    gtk_widget_set_tooltip_text(dac_scale,
+      "How far below full scale the modulated I/Q reaches the DAC.\n"
+      "Drive moves the device's ANALOGUE gain and leaves the samples alone; "
+      "WDSP's ALC pins them just under full scale whatever Drive says.\n"
+      "A device that runs interpolation filters after its DAC (AD9361/PlutoSDR) "
+      "needs headroom here or it clips before the analogue chain is even reached.");
+  }
+#endif
 
   GtkWidget *filter_frame=gtk_frame_new("TX Filter");
   GtkWidget *filter_grid=gtk_grid_new();
