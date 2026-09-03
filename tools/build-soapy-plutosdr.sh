@@ -192,6 +192,93 @@ PATCH2
 }
 patch_tx_bufflen
 
+# SoapyPlutoSDR 0.2.2 turns the TX LO on while setupStream() is called, but
+# deactivateStream() only flushes the host buffer.  The LO is not powered down
+# until closeStream(), which this application quite reasonably does only when
+# the radio is closed.  On an AD9361 that leaves LO leakage at the last transmit
+# frequency for the entire receive period after the first over.
+#
+# Make stream activation own the LO state: setup leaves it off, activate turns
+# it on, and deactivate turns it off after flushing.  This keeps the stream and
+# its (potentially large, network-latency-sized) IIO buffer allocated between
+# overs, while actually unkeying the RF hardware.
+patch_tx_lo_lifecycle() {
+  local f="$WORK/SoapyPlutoSDR/PlutoSDR_Streaming.cpp"
+  [ -f "$f" ] || { echo "error: $f missing; cannot patch" >&2; exit 1; }
+  if grep -q 'MACHPSDR TX LO lifecycle' "$f"; then
+    echo "==> SoapyPlutoSDR already patched (TX LO lifecycle)"
+    return
+  fi
+  python3 - "$f" <<'PATCH'
+import sys
+p=sys.argv[1]
+s=open(p).read()
+
+old_setup='''\t\tiio_channel_attr_write_bool(
+\t\t\tiio_device_find_channel(dev, "altvoltage1", true), "powerdown", false); // Turn ON TX LO
+'''
+new_setup='''\t\t/* MACHPSDR TX LO lifecycle: setup allocates the stream but must not
+\t\t   put an unkeyed transmitter on the air. */
+\t\tiio_channel_attr_write_bool(
+\t\t\tiio_device_find_channel(dev, "altvoltage1", true), "powerdown", true); // TX LO stays OFF until activate
+'''
+assert s.count(old_setup)==1, "TX setup powerdown block not as expected"
+s=s.replace(old_setup,new_setup,1)
+
+old_activate='''    std::lock_guard<pluto_spin_mutex> lock(rx_device_mutex);
+
+    if (IsValidRxStreamHandle(handle)) {
+        return this->rx_stream->start(flags, timeNs, numElems);
+    }
+
+    return 0;
+'''
+new_activate='''    // Scope the RX lock: TX has its own device lock.
+    {
+        std::lock_guard<pluto_spin_mutex> lock(rx_device_mutex);
+
+        if (IsValidRxStreamHandle(handle)) {
+            return this->rx_stream->start(flags, timeNs, numElems);
+        }
+    }
+
+    {
+        std::lock_guard<pluto_spin_mutex> lock(tx_device_mutex);
+
+        if (IsValidTxStreamHandle(handle)) {
+            /* MACHPSDR TX LO lifecycle: key the RF hardware with the stream. */
+            return iio_channel_attr_write_bool(
+                iio_device_find_channel(dev, "altvoltage1", true), "powerdown", false);
+        }
+    }
+
+    return 0;
+'''
+assert s.count(old_activate)==1, "activateStream block not as expected"
+s=s.replace(old_activate,new_activate,1)
+
+old_deactivate='''        if (IsValidTxStreamHandle(handle)) {
+            this->tx_stream->flush();
+            return 0;
+        }
+'''
+new_deactivate='''        if (IsValidTxStreamHandle(handle)) {
+            this->tx_stream->flush();
+            /* MACHPSDR TX LO lifecycle: deactivate must really unkey Pluto;
+               otherwise AD9361 LO leakage remains at the last TX frequency. */
+            return iio_channel_attr_write_bool(
+                iio_device_find_channel(dev, "altvoltage1", true), "powerdown", true);
+        }
+'''
+assert s.count(old_deactivate)==1, "TX deactivateStream block not as expected"
+s=s.replace(old_deactivate,new_deactivate,1)
+
+open(p,'w').write(s)
+PATCH
+  echo "==> patched SoapyPlutoSDR: TX LO follows stream activation"
+}
+patch_tx_lo_lifecycle
+
 # OSX_FRAMEWORK=OFF is load-bearing: libiio's macOS build defaults to producing
 # an iio.framework, which no consumer here looks for and dylibbundler does not
 # handle.  The rest is trimming — this build exists to be dlopen'd by one

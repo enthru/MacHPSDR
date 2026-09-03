@@ -76,7 +76,7 @@ you've dialled in.
 
 | Feature | Summary |
 |---|---|
-| **SoapySDR RX + TX** | Receive *and* transmit on SoapySDR devices — HackRF, RTL-SDR, LimeSDR, PlutoSDR (including one on another subnet, added by hand), SoapyRemote. Transmit is half-duplex on the HackRF/SoapySDR path, keyed from the mic or the built-in encoders, with the Drive slider setting output power *(keys up on real hardware without crashing; on-air signal quality still needs more testing — CW and PureSignal are not available on this path)*. |
+| **SoapySDR RX + TX** | Receive *and* transmit on SoapySDR devices — HackRF, RTL-SDR, LimeSDR, PlutoSDR (including one on another subnet, added by hand), SoapyRemote. Transmit is full-duplex by default on PlutoSDR and half-duplex on HackRF, keyed from the mic or the built-in encoders, with the Drive slider setting output power *(keys up on real hardware without crashing; on-air signal quality still needs more testing — CW and PureSignal are not available on this path)*. |
 | **macOS, Linux and Windows** | One tree, three platforms, each with a package that needs nothing installed on the target: `make app` for a self-contained `MacHPSDR.app`, `make appimage` for a single-file Linux **AppImage**, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes all three *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
 | **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
@@ -643,7 +643,8 @@ you've dialled in.
 
 ### SoapySDR / HackRF
 
-- **Transmit on HackRF / SoapySDR.** Half-duplex transmit over SoapySDR. Voice
+- **Transmit on HackRF / SoapySDR.** Full-duplex transmit on PlutoSDR and
+  half-duplex transmit on HackRF over SoapySDR. Voice
   modes require a microphone input; the Drive slider controls output power. CW and
   PureSignal are not available on this path. The TX IQ rate is rounded to a
   multiple of the DSP rate (96 kHz) so WDSP's internal buffers stay consistent —

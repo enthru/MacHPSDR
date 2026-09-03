@@ -4085,6 +4085,21 @@ log_info("create_receiver: fft_size=%d\n",rx->fft_size);
 
   receiver_restore_state(rx);
 
+#ifdef SOAPYSDR
+  // Pluto is a genuinely full-duplex AD9361 device.  Leaving DUP at the
+  // generic receiver default (or restoring an old `duplex=0` property) makes
+  // rxtx() stop this WDSP channel and tear the RX stream down at every key-up,
+  // even though SoapyPlutoSDR can keep RX and TX active together.  Make the
+  // hardware's normal mode full duplex out of the box.  The DUP button remains
+  // available, so an operator can still turn receive off during TX when local
+  // leakage or network capacity makes that preferable for the current session.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     radio->discovered->info.soapy.full_duplex &&
+     strcmp(radio->discovered->name,"plutosdr")==0) {
+    rx->duplex=TRUE;
+  }
+#endif
+
   // A receiver the caller asked to be hidden (a diversity *hidden* RX, or a
   // PureSignal feedback RX) must stay hidden even if this slot was persisted
   // with show_rx=1 from a session where it was a normal shown receiver.
