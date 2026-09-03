@@ -65,12 +65,11 @@ static SoapySDRStream *rx_stream[MAX_CHANNELS];
 static SoapySDRStream *tx_stream;
 static int soapy_rx_sample_rate;
 static int soapy_tx_sample_rate;
-static int max_samples;
-// The block size each receiver's buffers and resampler were built for.
-// max_samples above is a GLOBAL that the next receiver's create_receiver
-// rewrites from its own MTU and fft_size, so anything that rebuilds one
-// receiver's resampler later must use ITS size, not whatever the last receiver
-// left behind (the same trap the receive thread's `const int block` avoids).
+// Keep device reads and DSP work as separate geometries.  Some drivers need a
+// whole hardware transfer read at once, while handing that entire transfer to
+// DSP would make its output arrive in visible/audible bursts.
+static int rx_read_block[MAX_CHANNELS];
+// The smaller block each receiver's buffers and resampler were built for.
 static int rx_block[MAX_CHANNELS];
 // Set by each receive thread while it is parked on the rx_stream_active flag,
 // cleared while it may be inside readStream().  soapy_protocol_rx_pause() waits
@@ -782,27 +781,41 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   SoapySDRKwargs_clear(&stream_args);
 
   const int mtu=(int)SoapySDRDevice_getStreamMTU(soapy_device,rx_stream[channel]);
-  max_samples=mtu;
-  if(max_samples>(2*rx->fft_size)) {
-    max_samples=2*rx->fft_size;
-  }
-  rx_block[channel]=max_samples;
+  int read_block=mtu;
+  // SoapyHackRF delivers one 131072-sample transfer at a time.  Its CF32
+  // readStream path does not preserve that transfer completely when the caller
+  // repeatedly asks for a smaller, non-dividing block: measured at 2 MS/s,
+  // the old 10240-sample clamp delivered 98.9% of the stream even in the bare
+  // soapy_bench, while reading the advertised MTU delivered 100.0%.  Those
+  // missing tails are splices in I/Q, heard as the periodic chopped signal.
+  //
+  // Keep the historical DSP-sized reads for other drivers: a network driver
+  // may advertise a very large MTU whose latency/working-set is undesirable,
+  // and none has shown this HackRF transfer-tail behaviour.
+  const gboolean needs_whole_mtu=(strcmp(radio->discovered->name,"hackrf")==0);
+  if(!needs_whole_mtu && read_block>(2*rx->fft_size)) read_block=2*rx->fft_size;
+  int dsp_block=mtu;
+  if(dsp_block>(2*rx->fft_size)) dsp_block=2*rx->fft_size;
+  rx_read_block[channel]=read_block;
+  rx_block[channel]=dsp_block;
+  log_info("%s: stream MTU=%d, read block=%d%s, DSP block=%d\n",__FUNCTION__,
+           mtu,read_block,needs_whole_mtu?" (whole HackRF transfer)":"",dsp_block);
   // The FIFO has to swallow a whole delivery burst several times over, and the
   // burst is the device's REAL MTU -- 131072 samples on a HackRF, i.e. 65 ms at
   // 2 MS/s -- not the read size above, which is clamped to what one DSP block
   // wants.  Four of them, bounded so a driver claiming an enormous MTU cannot
   // ask for hundreds of megabytes.
   {
-    long long cap=4LL*(long long)((mtu>max_samples)?mtu:max_samples);
-    if(cap<4LL*max_samples) cap=4LL*max_samples;
+    long long cap=4LL*(long long)((mtu>read_block)?mtu:read_block);
+    if(cap<4LL*read_block) cap=4LL*read_block;
     if(cap>(1LL<<20)) cap=(1LL<<20);
     fifo_alloc(channel,(int)cap);
   }
-  rx->buffer=g_new(double,max_samples*2);
+  rx->buffer=g_new(double,dsp_block*2);
   // The freeing above cleared it; the builder allocates it to the size the real
   // stream rate calls for.
   rx->resampled_buffer_size=0;
-  soapy_build_resampler(rx,max_samples);
+  soapy_build_resampler(rx,dsp_block);
 }
 
 void soapy_protocol_start_receiver(RECEIVER *rx) {
@@ -835,13 +848,25 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   const int rate_before=soapy_rx_actual_rate;
   const double at=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_RX,rx->adc);
   int rate;
-  if(at>0.0 && fabs(at-(double)soapy_rx_sample_rate)<=(double)soapy_rx_sample_rate*1.0e-4) {
+  // HackRF has one clock shared by RX and TX, but SoapyHackRF caches the two
+  // requested rates separately.  create_transmitter() has just programmed the
+  // hardware to 1.92 MHz; getSampleRate(RX) still answers the cached 2 MHz, so
+  // the equality shortcut used to leave reception physically running at 96%
+  // of the rate the resampler expects.  Measured consequence: 46080 rather
+  // than 48000 audio frames/s and exactly 40 ms of inserted silence per second.
+  // Re-assert RX unconditionally on this half-duplex device.  The shortcut is
+  // retained for Pluto because setting an unchanged rate there re-sizes its
+  // already-created network stream buffer.
+  const gboolean force_rx_rate=(strcmp(radio->discovered->name,"hackrf")==0);
+  if(!force_rx_rate && at>0.0 &&
+     fabs(at-(double)soapy_rx_sample_rate)<=(double)soapy_rx_sample_rate*1.0e-4) {
     rate=(int)(at+0.5);
     soapy_rx_actual_rate=rate;
     log_info("%s: rate=%d (already there, not re-set)\n",__FUNCTION__,rate);
   } else {
     rate=soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
-    log_info("%s: rate=%d\n",__FUNCTION__,rate);
+    log_info("%s: rate=%d%s\n",__FUNCTION__,rate,
+             force_rx_rate?" (re-asserted after HackRF TX setup)":"");
   }
 
   size_t channel=rx->adc;
@@ -1057,10 +1082,24 @@ static gpointer dsp_thread(gpointer data) {
   const int block=rx_block[channel]>0?rx_block[channel]:2048;
   float *buffer=g_new(float,block*2);
   gint64 dropped_reported=g_get_monotonic_time();
+  gint64 next_block_us=0;
 log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,block);
   while(dsp_thread_running[channel]) {
     int elements=fifo_pop(channel,buffer,block);
     if(elements<=0) continue;
+    // A whole HackRF transfer reaches the FIFO every ~65 ms, but DSP and the
+    // analyzer need the smaller pieces at their sample-clock cadence.  Without
+    // this, all pieces are processed back-to-back and the waterfall advances
+    // only once per USB transfer even though no audio samples are missing.
+    // Never sleep to catch up after a genuine stall/reconfigure: reset the
+    // clock when it is more than two pieces behind.
+    if(rx_read_block[channel]>block && soapy_rx_actual_rate>0) {
+      const gint64 now=g_get_monotonic_time();
+      const gint64 span_us=((gint64)elements*1000000LL)/soapy_rx_actual_rate;
+      if(next_block_us==0 || now>next_block_us+2*span_us) next_block_us=now;
+      if(now<next_block_us) g_usleep((gulong)(next_block_us-now));
+      next_block_us+=span_us;
+    }
     {
       const gint64 now=g_get_monotonic_time();
       if(now-dropped_reported>=5000000) {
@@ -1080,6 +1119,10 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       g_mutex_unlock(&radio->delete_rx_mutex);
       continue;
     }
+    // The GTK control can change this while this worker is running.  Take one
+    // atomic snapshot per block, both to make a live toggle reliable and to
+    // keep the sample loops free of millions of atomic loads per second.
+    const gboolean iqswap=radio_iqswap_get(radio);
 #ifdef LIQUID
     if(ms_resamp[channel]!=NULL) {
       /* The stream is CF32 and liquid_float_complex is (re,im) floats, so the
@@ -1092,7 +1135,7 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       for(i=0;i<(int)ny;i++) {
         isample=(double)crealf(ms_out[channel][i]);
         qsample=(double)cimagf(ms_out[channel][i]);
-        if(radio->iqswap) add_iq_samples(rx,qsample,isample);
+        if(iqswap) add_iq_samples(rx,qsample,isample);
         else              add_iq_samples(rx,isample,qsample);
       }
       g_mutex_unlock(&radio->delete_rx_mutex);
@@ -1111,7 +1154,7 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       int out_elements=0;
       xresampleV(rx->buffer,rx->resampled_buffer,elements,&out_elements,rx->resampler);
       for(i=0;i<out_elements;i++) {
-        if(radio->iqswap) {
+        if(iqswap) {
           qsample=rx->resampled_buffer[i*2];
           isample=rx->resampled_buffer[(i*2)+1];
         } else {
@@ -1126,7 +1169,7 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       for(i=0;i<elements;i++) {
         isample=(double)buffer[i*2];
         qsample=(double)buffer[(i*2)+1];
-        if(radio->iqswap) {
+        if(iqswap) {
           add_iq_samples(rx,qsample,isample);
         } else {
           add_iq_samples(rx,isample,qsample);
@@ -1149,10 +1192,9 @@ static gpointer receive_thread(gpointer data) {
   long timeoutUs=100000L;
   int i;
   RECEIVER *rx=(RECEIVER *)data;
-  // Capture max_samples once: it is a global that the NEXT receiver's
-  // create_receiver rewrites, and readStream() must never be asked for more
-  // than this thread's own buffer holds.
-  const int block=max_samples;
+  // Capture this receiver's hardware read size once; it need not be the smaller
+  // block the DSP thread drains from the FIFO.
+  const int block=rx_read_block[rx->adc]>0?rx_read_block[rx->adc]:2048;
   float *buffer=g_new(float,block*2);
   void *buffs[]={buffer};
   int overruns=0;
