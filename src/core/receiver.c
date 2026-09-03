@@ -1645,6 +1645,13 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
     main_delete(NULL);
     return TRUE;
   }
+  // Nothing below this line means anything without a radio, and this controller
+  // is attached to the MAIN WINDOW in main.c -- which exists from start-up, i.e.
+  // through discovery and the device-selection dialog, before create_radio has
+  // run.  Space at the splash screen therefore reached set_mox(NULL, TRUE) and
+  // took the application down on the first field it read.  Cmd-Q above is the
+  // one shortcut that works without one, which is why it stays in front.
+  if(radio==NULL) return FALSE;
   // SDR#-style digit entry: a number key while hovering a VFO digit overwrites
   // that digit in place. Only consumes the key when the cursor is over a digit.
   if(vfo_type_digit(keyval)) {
@@ -1685,6 +1692,7 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
 // GTK4: GtkEventControllerKey "key-released" handler (void).
 void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   log_debug("Released: %s\n", gdk_keyval_name(keyval));
+  if(radio==NULL) return;                 // no radio yet: see receiver_key_pressed
   // Ends a hold-to-talk shortcut. It runs whatever else this key does -- and
   // whatever has the focus -- because a release that is skipped strands the
   // transmitter keyed, and only a press this handler accepted can have marked a
