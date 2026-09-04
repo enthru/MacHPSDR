@@ -17,6 +17,7 @@
 */
 
 #include <gtk/gtk.h>
+#include <math.h>
 #include <string.h>
 
 #include "receiver.h"
@@ -174,6 +175,18 @@ static void beacon_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
   qo100_beacon_reset();                 // re-acquire against the new beacon
   if(r->active_receiver!=NULL) r->active_receiver->qo100_ref_dbm=-1000.0;
   status_refresh();
+}
+
+// Entered in seconds with one decimal, kept in TENTHS on RADIO: the operator
+// reads "0.5 s", the loop wants an integer it can clamp without a rounding
+// argument. The spin button's own range enforces the bounds, and the store
+// clamps again because a props file is not the only way in.
+static void correct_ds_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  int ds=(int)llround(gtk_spin_button_get_value(GTK_SPIN_BUTTON(w))*10.0);
+  if(ds<QO100_CORRECT_DS_MIN) ds=QO100_CORRECT_DS_MIN;
+  if(ds>QO100_CORRECT_DS_MAX) ds=QO100_CORRECT_DS_MAX;
+  r->qo100_correct_ds=ds;
 }
 
 static void reacquire_cb(GtkWidget *w, gpointer data) {
@@ -334,6 +347,26 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),b_dd,1,row++,1,1);
   g_signal_connect(b_dd,"notify::selected",G_CALLBACK(beacon_cb),r);
 
+  GtkWidget *iv_lbl=gtk_label_new("Correction interval (s):");
+  gtk_widget_set_halign(iv_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),iv_lbl,0,row,1,1);
+  GtkWidget *iv=gtk_spin_button_new_with_range((double)QO100_CORRECT_DS_MIN/10.0,
+                                               (double)QO100_CORRECT_DS_MAX/10.0,0.1);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(iv),1);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(iv),(double)r->qo100_correct_ds/10.0);
+  gtk_widget_set_halign(iv,GTK_ALIGN_START);
+  gtk_widget_set_tooltip_text(iv,
+    "How often the lock may retune the radio, 0.1 s to 60 s. A retune is a step "
+    "in the audio and a hitch in the waterfall, so this is the trade: short keeps "
+    "the dial closest to the beacon while the LNB is warming, long leaves the "
+    "radio alone. It applies to TRIMS \342\200\224 a large offset measured while the loop is "
+    "still acquiring goes out at once, and the FT8/FT4 slot gate can still delay "
+    "a step to the quiet tail of a slot. The loop can only act on a measurement, "
+    "and a measurement is a second of stream, so the fastest it reaches is about "
+    "1.5 s however far below that this is set.");
+  gtk_grid_attach(GTK_GRID(grid),iv,1,row++,1,1);
+  g_signal_connect(iv,"value-changed",G_CALLBACK(correct_ds_cb),r);
+
   GtkWidget *re=gtk_button_new_with_label("Re-acquire");
   gtk_widget_set_halign(re,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),re,0,row++,2,1);
@@ -353,8 +386,8 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "restart. It corrects the RECEIVE path only: what it measures is the\n"
     "downconverter's drift, which the uplink does not share even when the same\n"
     "transceiver does both, so the transmit band's LO is never touched by it.\n"
-    "While the converter is warming the loop trims every couple of seconds; once\n"
-    "it has settled it leaves the radio alone for longer.\n"
+    "Corrections go out on the interval above and no faster; a large offset\n"
+    "measured while the loop is still acquiring is not held for it.\n"
     "The selected beacon is always the correction source. For a CW selection the\n"
     "middle BPSK beacon confirms the acquisition, but never replaces it. Select\n"
     "Middle explicitly to correct from its unambiguous BPSK centre. The CW lock\n"

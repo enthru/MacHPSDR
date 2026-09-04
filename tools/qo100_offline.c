@@ -97,6 +97,13 @@ static double   test_utc(void) { return mock_utc; }
 // ...and what the cadence came out as: the longest the loop ever went without
 // moving the radio, once it was tracking.
 static double   worst_gap;
+// ...and the SHORTEST one, which is the half of the cadence a maximum cannot
+// see: an interval is a floor as well as a ceiling, and a loop ignoring it
+// would still pass a "no gap longer than N" test.
+static double   best_gap;
+// The trim interval every run is given, in tenths of a second (RADIO's own
+// units). A case that is about the cadence sets it and puts it back.
+static int      correct_ds=QO100_CORRECT_DS_DEFAULT;
 // The MIDDLE beacon, 400 bd BPSK on 10489.750, as loud as this: it is what the
 // dial's independent check reads, and its spectrum is symmetric about its own
 // published frequency whichever way the CW beacon's two tones are named.
@@ -245,6 +252,11 @@ static RADIO *mk_radio(RECEIVER *rx) {
   r->qo100_beacon_lock=TRUE;
   r->qo100_beacon_sel=0;
   r->qo100_offset=QO100_TP_OFFSET;
+  // The shipped default, not a zeroed field: the trim interval is the
+  // operator's setting now, and g_new0 would hand the loop a 0 that the clamp
+  // turns into 0.1 s -- a cadence no station is configured for, quietly
+  // measuring something other than what is shipped.
+  r->qo100_correct_ds=correct_ds;
   return r;
 }
 
@@ -285,8 +297,13 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   worst_step=0.0;
   worst_gap=0.0;
   worst_slot_err=0.0;
+  best_gap=1e18;
   double err_lo=1e18, err_hi=-1e18;
   double last_move_t=-1.0;
+  gboolean moved_once=FALSE;              // best_gap is between two MOVES, and
+                                          // the first one has nothing to measure
+                                          // from -- last_move_t is seeded with
+                                          // the block it is noticed on.
   double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
   long long last_err=0;
   double pull_lo=1e18, pull_hi=-1e18;
@@ -317,7 +334,9 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       if(last_move_t<0.0) last_move_t=t;
       if(st>0.0) {
         if(t-last_move_t>worst_gap) worst_gap=t-last_move_t;
+        if(moved_once && t-last_move_t<best_gap) best_gap=t-last_move_t;
         last_move_t=t;
+        moved_once=TRUE;
       } else if(t-last_move_t>worst_gap) worst_gap=t-last_move_t;
     }
     last_err=rx->error_a;
@@ -1585,6 +1604,45 @@ int main(int argc, char **argv) {
     check("a noisy cold-start trend keeps the fast cadence",
           locked && worst_gap<4.0 && worst_track<35.0, d);
     qo100_beacon_reset();
+  }
+
+  // ---- 22g'''. THE INTERVAL IS THE OPERATOR'S, and this is what makes that a
+  //           fact rather than a label on a spin button. The cadence used to be
+  //           worked out by the loop -- a budget of error x time, a warm-up
+  //           window that overrode it, a separate floor under a decoder gate --
+  //           three rules interacting with nothing in the UI that could
+  //           overrule any of them, and an operator watching their dial sit
+  //           wrong had no control to reach for.
+  //           A cadence case needs BOTH ends: the longest gap says the loop is
+  //           not slower than it was told, and the shortest says it is not
+  //           faster -- an interval ignored altogether passes a maximum-only
+  //           test perfectly. The tolerance is one averaging window either way,
+  //           because the loop can only act on a measurement: the first one
+  //           after the interval expires is the post-retune hold plus a whole
+  //           number of QO100_AVG_MS windows away, so a 5 s setting realises as
+  //           5.5 s and nothing shorter can be asked of it.
+  //           A steady drift, so every interval has an error worth correcting
+  //           waiting for it -- against a converter standing still the loop is
+  //           right to do nothing and the case would measure the deadband.
+  {
+    const int    ds[3]  ={10,50,200};          // 1 s, 5 s, 20 s
+    const double lo_b[3]={0.9,4.9,19.9};
+    const double hi_b[3]={2.6,6.6,21.6};
+    for(int k=0;k<3;k++) {
+      bands_init();
+      gboolean locked=FALSE;
+      correct_ds=ds[k];
+      lo_drift_hz_s=2.0;
+      run_loop(5.0,0.02,blocks*((ds[k]>100)?40:12),&locked,FS,10489540000LL);
+      lo_drift_hz_s=0.0;
+      correct_ds=QO100_CORRECT_DS_DEFAULT;
+      snprintf(d,sizeof(d),"%.1f s asked: gaps %.1f..%.1f s, %d retunes, "
+               "%.1f Hz off the beacon at worst, locked=%d",
+               (double)ds[k]/10.0,best_gap,worst_gap,retunes,worst_track,locked);
+      check("the loop corrects on the interval the operator set",
+            locked && retunes>1 && best_gap>=lo_b[k] && worst_gap<=hi_b[k], d);
+      qo100_beacon_reset();
+    }
   }
 
   // ---- 22h. the dial's INDEPENDENT check, and its negative control. Nothing

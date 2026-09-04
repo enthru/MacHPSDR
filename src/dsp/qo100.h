@@ -233,6 +233,30 @@ extern long long qo100_beacon_track_frequency(int sel);
    real clock. Nothing in the application calls it. */
 extern void qo100_beacon_set_clock(double (*fn)(void));
 
+/* How often the lock is allowed to move the radio, in TENTHS of a second, and
+   the bounds the operator's setting is clamped to (0.1 s to a minute).
+   It replaces a cadence the loop worked out for itself from the error, the
+   measured drift and a warm-up window -- three interacting rules with nothing
+   in the UI that could overrule any of them. This is one number and it means
+   exactly what it says: a trim goes out when the interval has elapsed and the
+   loop has a reading it believes.
+   Two things it deliberately does NOT govern, because neither is a trim:
+   a COARSE step (an offset above QO100_COARSE_HZ on a lock that has not
+   settled) is acquisition and goes out at once, and the FT8/FT4 slot gate may
+   still hold a step back for the quiet tail of a slot -- delaying it, never
+   cancelling it (QO100_MAX_HOLD_S).
+   The floor of what is USEFUL is one measurement plus the post-retune hold --
+   QO100_AVG_MS of stream and QO100_HOLD_DIV of a second, about 1.5 s, measured
+   in tools/qo100_offline.c. Below that the interval simply means "every
+   measurement"; it is offered anyway because the alternative is a minimum the
+   operator has to discover by experiment. */
+#define QO100_CORRECT_DS_MIN     1   /* 0.1 s */
+#define QO100_CORRECT_DS_MAX   600   /* 60 s  */
+#define QO100_CORRECT_DS_DEFAULT 20  /* 2.0 s -- the floor the old adaptive
+                                        limiter used, so an existing station's
+                                        behaviour is unchanged until it is
+                                        changed on purpose */
+
 #define QO100_BEACON_SEL_LOWER  0
 #define QO100_BEACON_SEL_UPPER  1
 #define QO100_BEACON_SEL_WB     2

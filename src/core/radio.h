@@ -191,6 +191,11 @@ typedef struct _radio {
   long long qo100_lnb_lo;      // receive converter (LNB) local oscillator, Hz
   long long qo100_tx_lo;       // uplink converter local oscillator, Hz (0 = none)
   gboolean qo100_beacon_ref;   // draw a level reference line at the beacon's strength
+  gint     qo100_correct_ds;   // how often the lock may trim the LO, in TENTHS of a
+                               // second (QO100_CORRECT_DS_MIN..MAX). It is the
+                               // operator's number, not the loop's: the cadence
+                               // used to be derived from the error and the drift
+                               // and there was no way to overrule it.
   // DX cluster client (P4.2): telnet spot feed + panadapter overlay. Persisted.
   gboolean cluster_enable;      // connect to DX cluster
   gboolean cluster_spots_show;  // draw spot overlay on panadapter

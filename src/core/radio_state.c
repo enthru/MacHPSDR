@@ -241,6 +241,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.qo100_tx_lo",value);
   sprintf(value,"%d",radio->qo100_beacon_ref);
   setProperty("radio.qo100_beacon_ref",value);
+  sprintf(value,"%d",radio->qo100_correct_ds);
+  setProperty("radio.qo100_correct_ds",value);
   sprintf(value,"%d",radio->cluster_spots_show);
   setProperty("radio.cluster_spots_show",value);
   setProperty("radio.cluster_host",radio->cluster_host);

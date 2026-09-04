@@ -680,8 +680,6 @@ gboolean qo100_transponder_setup(RADIO *r) {
                                    // in sign happens to white noise once in eight
                                    // windows, and the loop then fed a made-up drift
                                    // forward -- 18 Hz of dial movement, measured
-#define QO100_FF_S             2.0   // drift fed forward this far, being about
-                                     // how long until the next trim
 #define QO100_SCATTER          0.5   // ...and only if the median beats this much
                                      // of the spread of the window behind it
 // A retune is NOT free. Measured on a Pluto with a live 768 kHz stream:
@@ -689,33 +687,20 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // and it runs on the GTK thread -- so every correction is a visible hitch in the
 // waterfall and a disturbance in the audio. (Over a network Pluto it is worse.)
 //
-// What that buys has to be worth it, and how much it buys is the ERROR, so the
-// wait is not a flat interval -- a flat one delays a five-hertz error exactly as
-// long as it delays half a hertz, which is merely slow. A trim is allowed once
-// the error and the time since the last one multiply out to QO100_TRIM_HZ_S:
+// How often it is worth paying that is THE OPERATOR'S CALL, and it is one
+// number: radio->qo100_correct_ds, in tenths of a second (Configure -> QO-100).
 //
-//     10 Hz -> 2 s (the floor)   3 Hz -> 3.3 s   1 Hz -> 10 s   0.5 Hz -> 20 s
+// What was here instead worked the cadence out for itself -- a budget of
+// error x time, a warm-up window that overrode it, and a separate floor while a
+// decoder was gating the loop -- three rules interacting, none of them visible
+// and none of them overrulable. An operator watching their dial sit wrong had
+// no control to reach for, which is the whole argument against it: a loop that
+// retunes somebody's radio should be told how often it may, not decide.
 //
-// with QO100_MIN_APPLY_S as a hard floor so a noisy minute cannot become a storm
-// of retunes. A COARSE reading is a real offset, not a trim, and goes straight
-// through with no wait at all.
-#define QO100_MIN_APPLY_S        2.0
-#define QO100_TRIM_HZ_S         10.0
-// A freshly started converter is a special case even before the seven-reading
-// window can prove a slope. On air its measurement wobbles enough for one
-// backwards reading to erase b_slope, at which point the ordinary error-based
-// limiter mistakes the now-small residual for a settled LNB and stretches the
-// cadence again. Keep the limiter at its two-second floor during warm-up; the
-// median/scatter and beacon-identity gates still decide whether a reading is
-// trustworthy, so this changes WHEN an earned trim may run, not WHAT may move
-// the radio.
-#define QO100_WARMUP_S         600.0
-#define QO100_WARMUP_APPLY_S     2.0
-// ...and with a decoder running the floor is one MEASUREMENT, not two seconds.
-// The loop cannot act faster than it measures anyway, and while the converter
-// is warming, every trim it skips is drift left in the audio -- see the gate
-// below for why that is the thing to spend retunes on.
-#define QO100_DECODER_APPLY_S    (QO100_AVG_MS/1000.0)
+// A COARSE reading -- an offset above QO100_COARSE_HZ on a lock that has not
+// settled -- is acquisition rather than a trim and still goes straight through.
+// The FT8/FT4 slot gate still delays a step to a quiet tail, and still may not
+// cancel one (QO100_MAX_HOLD_S).
 // A step at or below this is not a discontinuity, it is the CANCELLATION of one:
 // the converter has drifted that far since the last trim and the correction puts
 // the audio back where the decoder found it. Bigger than this and it is a jump
@@ -1195,39 +1180,24 @@ static double qo100_gate_wait_s(RECEIVER *rx, double act) {
   return wait;
 }
 
-// The rate limiter's own wait, in one place, because the horizon below and the
-// limiter itself must not disagree about it.
-//
-// QO100_TRIM_HZ_S is an error multiplied by a time, and the error it was told
-// was the one measured NOW -- true only of a converter that is standing still.
-// A warming one adds |slope| Hz per second of waiting, so what a wait of t
-// really buys is (|act| + |slope|*t)*t, and solving that for the same budget is
-// the whole of "on a cold start correct as often as possible, it is all
-// drifting". At a settled LNB (0.05 Hz/s) it changes the answer by half a
-// second; at 6 Hz/s it turns a 4 s wait into the floor, and that 4 s was 24 Hz
-// of slide -- measured as 28.9 Hz of movement inside an FT8 slot against the
-// 11.5 the loop manages when it does not wait.
-static double qo100_trim_wait_s(double act, double slope, double floor_s) {
-  double a=fabs(act), d=fabs(slope), need;
-  if(a<=0.0 && d<=0.0)   need=QO100_FF_S;
-  else if(d<=0.0)        need=QO100_TRIM_HZ_S/a;
-  else                   need=(-a+sqrt(a*a+4.0*d*QO100_TRIM_HZ_S))/(2.0*d);
-  if(need<floor_s) need=floor_s;
-  if(need>QO100_MAX_HOLD_S) need=QO100_MAX_HOLD_S;   // the ceiling: a gate may
-  return need;                                       // delay a correction, never
-}                                                    // cancel one
-
-static double qo100_warmup_wait_s(double need) {
-  if(track_fs>0 && b_stream_samples<(double)track_fs*QO100_WARMUP_S &&
-     need>QO100_WARMUP_APPLY_S)
-    need=QO100_WARMUP_APPLY_S;
-  return need;
+// The trim interval the operator set, in seconds. Clamped here as well as at
+// every entry point that writes it: this number divides into a feed-forward
+// horizon and a damping gain, so a zero out of a hand-edited props file would
+// not merely be a fast loop, it would be a division.
+static double qo100_correct_interval_s(void) {
+  int ds=(radio!=NULL)?radio->qo100_correct_ds:QO100_CORRECT_DS_DEFAULT;
+  if(ds<QO100_CORRECT_DS_MIN) ds=QO100_CORRECT_DS_MIN;
+  if(ds>QO100_CORRECT_DS_MAX) ds=QO100_CORRECT_DS_MAX;
+  return (double)ds/10.0;
 }
 
+// How long until the loop's next chance to move the radio: the operator's
+// interval, or the decoder gate's wait if that is longer. The control law's two
+// time-shaped decisions -- how far to feed the drift forward and how much of
+// the error to take now -- are both made of this number, so it has to be the
+// same one the limiter below enforces.
 static double qo100_next_chance_s(RECEIVER *rx, double act) {
-  double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
-                                                 :QO100_MIN_APPLY_S;
-  double need=qo100_warmup_wait_s(qo100_trim_wait_s(act,b_slope,floor_s));
+  double need=qo100_correct_interval_s();
   double wait=qo100_gate_wait_s(rx,act);
   if(wait>need) need=wait;
   return need;
@@ -2450,8 +2420,10 @@ static void beacon_frame(RECEIVER *rx) {
   // all: feeding the whole wait forward was measured and is unstable, because
   // the wait itself shrinks as the error it is derived from grows (161.9 Hz of
   // audio swept inside a slot at 6 Hz/s, against 11.9 for half). The wait is
-  // asked for rather than assumed: QO100_FF_S was "about how long until the next
-  // trim", which is only true when nothing is holding the loop back. The point
+  // asked for rather than assumed: it used to be a constant "about how long
+  // until the next trim", which is only true when nothing is holding the loop
+  // back -- it is the operator's interval now, and a decoder gate can still
+  // make the real wait longer than that. The point
   // of it is to put the dial in the middle of the error the interval sweeps
   // through (+/-d*W/2) instead of at one end of it (0..d*W) -- which is what
   // qo100_feed_forward() works out, and how much of the wait that is depends on
@@ -2465,7 +2437,7 @@ static void beacon_frame(RECEIVER *rx) {
   // undoing it. Anything beyond the slew allowance is already refused above,
   // and a run of refusals drops the lock, which is the honest way back to a
   // wide search.
-  double act, ff=0.0, chance=QO100_FF_S;
+  double act, ff=0.0, chance=qo100_correct_interval_s();
   if(fabs(residual)>QO100_COARSE_HZ && !b_settled) {
     act=residual;                       // a real offset, measured directly
     chance=qo100_next_chance_s(rx,act);
@@ -2544,18 +2516,17 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
 
-  // ...and a FINE step waits for the rate limit as well, because the retune
-  // itself costs the operator something (see QO100_MIN_APPLY_S).
+  // ...and a FINE step waits for the operator's interval as well, because the
+  // retune itself costs them something (see qo100_correct_interval_s). A COARSE
+  // step is acquisition and is not held for it.
   if(fabs(act)<=QO100_COARSE_HZ) {
     double since=b_since_apply/(double)track_fs;
-    double floor_s=qo100_decoder_slot(rx,NULL,NULL)?QO100_DECODER_APPLY_S
-                                                   :QO100_MIN_APPLY_S;
-    double need=qo100_warmup_wait_s(qo100_trim_wait_s(act,slope,floor_s));
+    double need=qo100_correct_interval_s();
     if(since<need) {
       b_expect=residual;
       b_expect_samples=0.0;
       snprintf(b_status,sizeof(b_status),
-               "Locked  %+.1f Hz  (trim in %.0f s)",act,need-since);
+               "Locked  %+.1f Hz  (trim in %.1f s)",act,need-since);
       return;
     }
   }

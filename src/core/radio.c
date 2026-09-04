@@ -1885,6 +1885,15 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->qo100_tx_lo=atoll(value);
   value=getProperty("radio.qo100_beacon_ref");
   if(value!=NULL) r->qo100_beacon_ref=atoi(value);
+  value=getProperty("radio.qo100_correct_ds");
+  if(value!=NULL) {
+    // Clamped, not trusted: a props file is a supported input and this number
+    // gates how often the loop is allowed to retune the radio.
+    int ds=atoi(value);
+    if(ds<QO100_CORRECT_DS_MIN) ds=QO100_CORRECT_DS_MIN;
+    if(ds>QO100_CORRECT_DS_MAX) ds=QO100_CORRECT_DS_MAX;
+    r->qo100_correct_ds=ds;
+  }
   value=getProperty("radio.cluster_enable");
   if(value!=NULL) r->cluster_enable=atoi(value);
   value=getProperty("radio.cluster_spots_show");
@@ -3663,6 +3672,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->qo100_lnb_lo = QO100_DEFAULT_LNB_LO;  // standard universal LNB, low band
   r->qo100_tx_lo = 0;            // 0 = the radio reaches 2.4 GHz without a converter
   r->qo100_beacon_ref = FALSE;
+  r->qo100_correct_ds = QO100_CORRECT_DS_DEFAULT;
 
   r->cluster_enable = FALSE;
   r->cluster_spots_show = TRUE;
