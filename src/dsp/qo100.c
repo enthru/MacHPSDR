@@ -621,10 +621,13 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // let it true the dial and keep tracking that working CW source.
 // Nothing about the CW path changes; only which beacon this loop is currently
 // looking for.
+#define QO100_BPSK_RETURN_MS 20000.0
+#define QO100_BPSK_RETURN_RUN     5
+#define QO100_BPSK_RETURN_SNR     (1.5*QO100_MIN_SNR)
 #define QO100_BPSK_STALL_MS 10000.0 // no accepted estimate, even if peaks reappear
 #define QO100_BOOT_DRY_MS   5000.0   // squared window empty this long => bootstrap
-// Once a fallback CW source is working, retain it until an explicit re-acquire
-// or source change. Settling the CW loop does not prove BPSK can hold a lock.
+// Probe the selected middle source while CW holds the dial. Returning needs
+// five independent confirmations after a 20 s CW recovery period.
 #define QO100_MID_MED_N          5   // readings behind a verdict (one per 5 s)
 #define QO100_MID_MIN_N          3   // ...and the fewest that may speak at all
 // Agreement is counted in MEASUREMENTS now, and each already integrates a second
@@ -740,6 +743,9 @@ static gboolean b_settled;           // residual small enough for the narrow win
 static gboolean b_verified;          // identity proved once by the 250/500 kHz plan
 static gboolean b_boot;              // acquiring a CW beacon to bring the converter
                                      // inside the BPSK window (see QO100_BOOT_*)
+static int      b_return_run;
+static double   b_return_samples;
+static double   b_return_last;
 static int      b_boot_sel;          // ...which CW beacon that is
 static int      b_run;               // consecutive agreeing frames
 static double   b_last;              // previous frame's residual, for the log's delta
@@ -1362,6 +1368,77 @@ static gboolean line_near(const double *pow_acc, int fs, double expect2,
   return TRUE;
 }
 
+// Search past a stronger unrelated squared carrier instead of letting the
+// first rejected peak hide the beacon. Shape and frequency-plan checks remain
+// mandatory; a shaped candidate without a CW witness is only a tracking fallback.
+static gboolean find_bpsk(const double *raw, const double *squared, int fs,
+                          double expected, double half, double *out,
+                          double *out_snr, gboolean *out_geometry, const char **out_how) {
+  static double work[QO100_FFT_N];
+  memcpy(work,squared,sizeof(work));
+  gboolean fallback=FALSE;
+  double fallback_found=0.0, fallback_snr=0.0;
+  *out_geometry=FALSE;
+  *out_snr=0.0;
+  for(int attempt=0;attempt<8;attempt++) {
+    double off=0.0, snr=0.0;
+    gboolean peak=line_near(work,fs,2.0*expected,2.0*half,&off,&snr);
+    if(snr>*out_snr) *out_snr=snr;
+    if(!peak) break;
+    double found=expected+0.5*off;
+    gboolean got=TRUE, geometry=FALSE;
+    const char *how="the middle BPSK beacon";
+    // Squaring makes a line from every carrier in the passband.  It is the
+    // middle beacon only if the unsquared spectrum at the same place is the
+    // expected broad BPSK hump, not another CW station.
+    if(got) {
+      double c=0.0,w=0.0;
+      int nb=0;
+      if(!middle_beacon_centre(raw,fs,found,QO100_MID_WIN_HZ,&c,&w,&nb) ||
+         fabs(c-found)>QO100_BPSK_CONFIRM_HZ || w<QO100_MID_MIN_WIDTH_HZ)
+        got=FALSE;
+    }
+    if(got) {
+      how="the middle BPSK beacon";
+      // A BPSK-shaped signal at the expected frequency is still not sufficient
+      // identity on its own. Confirm it against either edge CW beacon at its
+      // exact place in the NB frequency plan. The offset is taken from the
+      // measured BPSK centre, so the same LNB error cancels out.
+      double cw_off=0.0, cw_snr=0.0;
+      double lower=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_LOWER)-
+                                  QO100_BEACON_MIDDLE);
+      double upper=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_UPPER)-
+                                  QO100_BEACON_MIDDLE);
+      if(fabs(lower)+QO100_PAIR_TOL_HZ<(0.45*(double)fs) &&
+         line_near(raw,fs,lower,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
+        geometry=TRUE;
+        how="the middle BPSK beacon and lower CW beacon 250 kHz away";
+      } else if(fabs(upper)+QO100_PAIR_TOL_HZ<(0.45*(double)fs) &&
+                line_near(raw,fs,upper,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
+        geometry=TRUE;
+        how="the middle BPSK beacon and upper CW beacon 250 kHz away";
+      }
+    }
+    if(got && geometry) {
+      *out=found; *out_snr=snr; *out_geometry=TRUE; *out_how=how;
+      return TRUE;
+    }
+    if(got && !fallback) {
+      fallback=TRUE; fallback_found=found; fallback_snr=snr;
+    }
+    // Erase only this line's Hann main lobe in a private copy.
+    for(int i=0;i<QO100_FFT_N;i++) {
+      double f=(i<=QO100_FFT_N/2?i:i-QO100_FFT_N)*((double)fs/QO100_FFT_N);
+      double d=remainder(f-2.0*found,(double)fs);
+      if(fabs(d)<3.0*fs/QO100_FFT_N) work[i]=0.0;
+    }
+  }
+  if(fallback) {
+    *out=fallback_found; *out_snr=fallback_snr; *out_how="the middle BPSK beacon";
+  }
+  return fallback;
+}
+
 static double median_of(const double *v, int n);   // ...defined with the loop below
 static void spectrum_clear(void);
 // Which CW beacon is standing in for the middle one (QO100_BOOT_*).
@@ -1620,6 +1697,9 @@ static void beacon_reset_locked(void) {
   b_epoch++;                              // cancel any queued retune transaction
   bacc=0;
   spectrum_clear();
+  b_return_run=0;
+  b_return_samples=0.0;
+  b_return_last=0.0;
   b_run=0;
   b_last=0.0;
   b_run_ref=0.0;
@@ -1712,7 +1792,10 @@ void qo100_beacon_check(char *buf, int size) {
 void qo100_beacon_status(char *buf, int size) {
   if(buf==NULL || size<=0) return;
   g_mutex_lock(&bmtx);
-  g_strlcpy(buf,b_status,size);
+  if(b_boot)
+    snprintf(buf,(size_t)size,"CW fallback (%s): %s",boot_name(b_boot_sel),b_status);
+  else
+    g_strlcpy(buf,b_status,size);
   g_mutex_unlock(&bmtx);
 }
 
@@ -1826,22 +1909,34 @@ static void beacon_frame(RECEIVER *rx) {
   // Integrate this frame and stop here unless a full averaging window has been
   // collected: the measurement is made on a second of stream, not on 43 ms of
   // it. Everything downstream therefore runs about once a second.
-  if(use_bpsk) {
-    // z^2, before spectrum_add consumes the raw block. The plain spectrum is
-    // accumulated too: the middle beacon cannot be its own independent check,
-    // so when it is the source the CW beacon becomes one, and that is read off
-    // bpow (see the check below).
+  spectrum_add(bre,bim,bpow);
+  if(track_bpsk) {
+    // Channelize BEFORE squaring: unrelated carriers and full-span noise must
+    // not create cross-products over the suppressed BPSK carrier. The raw FFT
+    // remains available for the independent shape and CW geometry checks.
+    double centre=middle_expected+b_expect;
+    double width=(b_locked?QO100_TRACK_HZ:QO100_BPSK_ACQ_HZ)+1000.0;
     for(int i=0;i<QO100_FFT_N;i++) {
-      double r=bre[i], m=bim[i];
+      double f=(i<=QO100_FFT_N/2?i:i-QO100_FFT_N)*
+               ((double)track_fs/QO100_FFT_N);
+      double d=fabs(f-centre);
+      double gain=d<=width?1.0:(d>=width+1000.0?0.0:
+                              0.5+0.5*cos(M_PI*(d-width)/1000.0));
+      bsq_re[i]=gain*bre[i];
+      bsq_im[i]=-gain*bim[i];
+    }
+    fft_radix2(bsq_re,bsq_im,QO100_FFT_N);
+    for(int i=0;i<QO100_FFT_N;i++) {
+      double r=bsq_re[i]/QO100_FFT_N, m=-bsq_im[i]/QO100_FFT_N;
       bsq_re[i]=r*r-m*m;
       bsq_im[i]=2.0*r*m;
     }
     spectrum_add(bsq_re,bsq_im,bsqr);
   }
-  spectrum_add(bre,bim,bpow);
   b_avg_samples+=(double)QO100_FFT_N;
   if(b_avg_samples<(double)track_fs*(QO100_AVG_MS/1000.0)) return;
   double avg_samples=b_avg_samples;
+  if(b_boot) b_return_samples+=avg_samples;
 
   double found, snr=0.0;
   int bins=0, cands=0;
@@ -1877,44 +1972,9 @@ static void beacon_frame(RECEIVER *rx) {
   gboolean geometry=FALSE;
   gboolean got;
   if(use_bpsk) {
-    // The squared domain: everything doubles, including the search width and
-    // the error, and the answer comes back halved. There is no pairing and no
-    // tone question here -- that is the whole reason this source exists.
-    double off2=0.0;
-    got=line_near(bsqr,track_fs,2.0*(expected+b_expect),
-                     2.0*(tracking?QO100_TRACK_HZ:QO100_BPSK_ACQ_HZ),&off2,&snr);
-    found=expected+b_expect+0.5*off2;
-    // Squaring makes a line from every carrier in the passband.  It is the
-    // middle beacon only if the unsquared spectrum at the same place is the
-    // expected broad BPSK hump, not another CW station.
-    if(got) {
-      double c=0.0,w=0.0;
-      int nb=0;
-      if(!middle_beacon_centre(bpow,track_fs,found,QO100_MID_WIN_HZ,&c,&w,&nb) ||
-         fabs(c-found)>QO100_BPSK_CONFIRM_HZ || w<QO100_MID_MIN_WIDTH_HZ)
-        got=FALSE;
-    }
-    if(got) {
-      how="the middle BPSK beacon";
-      // A BPSK-shaped signal at the expected frequency is still not sufficient
-      // identity on its own. Confirm it against either edge CW beacon at its
-      // exact place in the NB frequency plan. The offset is taken from the
-      // measured BPSK centre, so the same LNB error cancels out.
-      double cw_off=0.0, cw_snr=0.0;
-      double lower=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_LOWER)-
-                                  QO100_BEACON_MIDDLE);
-      double upper=found+(double)(qo100_beacon_track_frequency(QO100_BEACON_SEL_UPPER)-
-                                  QO100_BEACON_MIDDLE);
-      if(fabs(lower)+QO100_PAIR_TOL_HZ<span_half &&
-         line_near(bpow,track_fs,lower,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
-        geometry=TRUE;
-        how="the middle BPSK beacon and lower CW beacon 250 kHz away";
-      } else if(fabs(upper)+QO100_PAIR_TOL_HZ<span_half &&
-                line_near(bpow,track_fs,upper,QO100_PAIR_TOL_HZ,&cw_off,&cw_snr)) {
-        geometry=TRUE;
-        how="the middle BPSK beacon and upper CW beacon 250 kHz away";
-      }
-    }
+    got=find_bpsk(bpow,bsqr,track_fs,expected+b_expect,
+                  tracking?QO100_TRACK_HZ:QO100_BPSK_ACQ_HZ,
+                  &found,&snr,&geometry,&how);
     bins=0;
     cands=got?1:0;
   } else {
@@ -1935,6 +1995,7 @@ static void beacon_frame(RECEIVER *rx) {
     got=FALSE;
   }
   if(!got) {
+    b_return_run=0;
     spectrum_clear();
     b_run=0;
     b_run_samples=0.0;
@@ -1957,7 +2018,7 @@ static void beacon_frame(RECEIVER *rx) {
                  ?boot_beacon_pick(rx->frequency_a,span_half,b_boot?b_boot_sel:-1):-1;
       if(boot>=0 &&
          b_dry_samples>(double)track_fs*(QO100_BOOT_DRY_MS/1000.0)) {
-        log_info("qo100: %s beacon not identified — acquiring and retaining the %s CW beacon\n",
+        log_info("qo100: %s beacon not identified — acquiring the %s CW beacon while monitoring the middle beacon\n",
                  use_bpsk?"middle BPSK":boot_name(b_boot_sel),boot_name(boot));
         beacon_reset_locked();
         b_boot=TRUE;
@@ -2098,6 +2159,42 @@ static void beacon_frame(RECEIVER *rx) {
       }
     }
   }
+
+  if(b_boot && middle_reachable) {
+    double mid_found=0.0, mid_snr=0.0;
+    gboolean mid_geometry=FALSE;
+    const char *mid_how="";
+    gboolean ready=b_locked && b_settled &&
+        b_return_samples>=track_fs*(QO100_BPSK_RETURN_MS/1000.0) &&
+        find_bpsk(bpow,bsqr,track_fs,middle_expected+(found-expected),
+                  QO100_TRACK_HZ,&mid_found,&mid_snr,&mid_geometry,&mid_how) &&
+        mid_geometry && mid_snr>=QO100_BPSK_RETURN_SNR &&
+        fabs((mid_found-middle_expected)-(found-expected))<QO100_TRACK_TOL_HZ;
+    double absolute_error=mid_found-middle_expected+b_applied;
+    if(ready && (b_return_run==0 ||
+                 fabs(absolute_error-b_return_last)<QO100_BPSK_CONFIRM_HZ))
+      b_return_run++;
+    else b_return_run=ready?1:0;
+    b_return_last=absolute_error;
+    if(say)
+      log_info("qo100: middle recovery probe: %d/%d confirmed measurements, peak %.1f\n",
+               b_return_run,QO100_BPSK_RETURN_RUN,mid_snr);
+    if(b_return_run>=QO100_BPSK_RETURN_RUN) {
+      double residual=mid_found-middle_expected;
+      beacon_reset_locked();
+      b_boot=FALSE;
+      b_locked=TRUE;
+      b_settled=fabs(residual)<QO100_SETTLED_HZ;
+      b_verified=TRUE;
+      b_expect=b_last=b_run_ref=b_residual=residual;
+      b_run=QO100_LOCK_RUN;
+      b_run_samples=track_fs*(QO100_AGREE_MS/1000.0);
+      g_strlcpy(b_status,"Returning to the middle BPSK beacon — five confirmed measurements",
+                sizeof(b_status));
+      log_info("qo100: %s (%+.1f Hz residual)\n",b_status,residual);
+      return;
+    }
+  } else b_return_run=0;
 
   spectrum_clear();
   b_since_apply+=avg_samples;
@@ -2686,6 +2783,7 @@ static void beacon_iq_process(RECEIVER *rx, const double *iq, int n_frames) {
       // the new reference frame and therefore ages its timers.
       if(b_hold>0) {
         b_hold--;
+        if(b_boot) b_return_samples+=1.0;
         b_stream_samples+=1.0;
         b_expect_samples+=1.0;
         b_since_apply+=1.0;

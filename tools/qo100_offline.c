@@ -113,6 +113,7 @@ static int      correct_ds=QO100_CORRECT_DS_DEFAULT;
 // published frequency whichever way the CW beacon's two tones are named.
 static double   mid_bpsk_amp;
 static gboolean mid_intermittent;
+static double mid_reappear_s;
 // ...and the world this file used to model, which is the one the application
 // assumed until the operator's own log argued it down: the beacon resting one
 // shift ABOVE its published frequency and keying down onto it. A loop built for
@@ -443,7 +444,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       generated_mid_amp=0.5;
     // Reproduce the log: initially acquired, then isolated appearances shorter
     // than the agreement window. None of the gaps lasts the 10 s loss timeout.
-    if(mid_intermittent && t>=20.0 && fmod(t-20.0,5.12)>=0.05)
+    if(mid_intermittent && t>=20.0 &&
+       (mid_reappear_s==0.0 || t<mid_reappear_s) && fmod(t-20.0,5.12)>=0.05)
       generated_mid_amp=0.0;
     if(generated_mid_amp>0.0) {
       // 400 bd, one random symbol per fs/400 samples, added to the same block:
@@ -1851,8 +1853,8 @@ int main(int argc, char **argv) {
           locked && fabs(res)<50.0, d);
     char ck[192];
     qo100_beacon_check(ck,sizeof(ck));
-    check("a working CW fallback is retained instead of blind BPSK handover",
-          locked && strstr(ck,"Middle beacon")!=NULL,ck);
+    check("CW bootstrap returns to the confirmed preferred middle beacon",
+          locked && strstr(ck,"Lower CW")!=NULL,ck);
     qo100_beacon_reset();
   }
 
@@ -1999,6 +2001,38 @@ int main(int argc, char **argv) {
              edge==0?"lower":"upper",sign*8,worst_track,worst_gap,worst_step);
     check("long CW ident still permits one-second-setting drift correction",
           locked && worst_track<40.0 && worst_gap<4.0 && worst_step<40.0,d);
+    qo100_beacon_reset();
+  }
+
+  // A CW carrier in the BPSK acquisition window has a stronger squared line.
+  // Rejecting it must continue the search instead of hiding the real beacon.
+  for(int weak=0;weak<=1;weak++) {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    intruder_hz=weak?0.0:260000.0;
+    intruder_amp=4.0;
+    double res=run_loop(3000.0,weak?8.0:0.05,blocks*4,&locked,768000,10489710000LL);
+    qo100_beacon_check(ck,sizeof(ck));
+    mid_bpsk_amp=0.0; intruder_hz=0.0; intruder_amp=0.5;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"error %+.1f Hz, locked=%d; %.80s",res,locked,ck);
+    check(weak?"filtered squaring acquires BPSK in wideband noise":
+               "a stronger unrelated squared carrier cannot hide BPSK",
+          locked && fabs(res)<30.0 && strstr(ck,"Lower CW")!=NULL,d);
+    qo100_beacon_reset();
+  }
+  {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0; mid_intermittent=TRUE; mid_reappear_s=50.0;
+    double res=run_loop(3000.0,0.05,blocks*16,&locked,768000,10489710000LL);
+    qo100_beacon_check(ck,sizeof(ck));
+    mid_bpsk_amp=0.0; mid_intermittent=FALSE; mid_reappear_s=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"error %+.1f Hz, locked=%d; %.80s",res,locked,ck);
+    check("middle beacon recovery returns synchronization from CW",
+          locked && fabs(res)<20.0 && strstr(ck,"Lower CW")!=NULL,d);
     qo100_beacon_reset();
   }
 
