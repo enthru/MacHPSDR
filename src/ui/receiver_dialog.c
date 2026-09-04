@@ -688,6 +688,11 @@ static void waterfall_automatic_cb(GtkWidget *widget, gpointer data) {
   rx->waterfall_automatic=rx->waterfall_automatic==1?0:1;
 }
 
+static void waterfall_auto_contrast_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->waterfall_auto_contrast=(int)gtk_range_get_value(GTK_RANGE(widget));
+}
+
 static void waterfall_ft8_marker_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->waterfall_ft8_marker=rx->waterfall_ft8_marker==TRUE?FALSE:TRUE;
@@ -1681,13 +1686,28 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_automatic,0,12,2,1);
   g_signal_connect(waterfall_automatic,"toggled",G_CALLBACK(waterfall_automatic_cb),rx);
 
+  GtkWidget *contrast_label=gtk_label_new("Auto Contrast (%):");
+  gtk_grid_attach(GTK_GRID(panadapter_grid),contrast_label,0,13,1,1);
+  GtkWidget *contrast_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,50,300,5);
+  gtk_widget_set_size_request(contrast_scale,200,30);
+  gtk_range_set_value(GTK_RANGE(contrast_scale),rx->waterfall_auto_contrast);
+  sui_scale_show_value(contrast_scale,0);
+  gtk_scale_add_mark(GTK_SCALE(contrast_scale),100,GTK_POS_BOTTOM,NULL);
+  gtk_widget_set_tooltip_text(contrast_scale,
+      "Higher values make signals brighter relative to the noise floor. "
+      "100% is the original contrast. Applies only to Waterfall Automatic.");
+  g_object_bind_property(waterfall_automatic,"active",contrast_scale,"sensitive",G_BINDING_SYNC_CREATE);
+  g_object_bind_property(waterfall_automatic,"active",contrast_label,"sensitive",G_BINDING_SYNC_CREATE);
+  g_signal_connect(contrast_scale,"value_changed",G_CALLBACK(waterfall_auto_contrast_cb),rx);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),contrast_scale,1,13,1,1);
+
   GtkWidget *waterfall_ft8_marker=gtk_check_button_new_with_label("Waterfall FT8 Marker");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (waterfall_ft8_marker), rx->waterfall_ft8_marker);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_ft8_marker,0,13,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_ft8_marker,0,14,2,1);
   g_signal_connect(waterfall_ft8_marker,"toggled",G_CALLBACK(waterfall_ft8_marker_cb),rx);
 
   GtkWidget *waterfall_theme_label=gtk_label_new("Color Theme:");
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_label,0,14,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_label,0,15,1,1);
 
   GtkStringList *wt_sl=gtk_string_list_new(NULL);
   for(i=0; i<get_theme_count(); i++) {
@@ -1695,7 +1715,7 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   }
   GtkWidget *waterfall_theme_combo=gtk_drop_down_new(G_LIST_MODEL(wt_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(waterfall_theme_combo),rx->waterfall_color_theme);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_combo,1,14,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),waterfall_theme_combo,1,15,1,1);
   g_signal_connect(waterfall_theme_combo,"notify::selected",G_CALLBACK(waterfall_theme_cb),rx);
 
   // CAT sits directly UNDER the Panadapter in the same (middle) column, so it

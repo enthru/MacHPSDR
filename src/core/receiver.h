@@ -408,6 +408,7 @@ typedef struct _receiver {
   gint waterfall_low;
   gint waterfall_high;
   gboolean waterfall_automatic;
+  gint waterfall_auto_contrast; // percent, 100 preserves the original auto scale
   gboolean waterfall_ft8_marker;
   gint64 waterfall_frequency;
   gint waterfall_sample_rate;

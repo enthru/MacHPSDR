@@ -139,6 +139,11 @@ you've dialled in.
   receiver, in the receiver settings dialog) sets the S-meter needle ballistics —
   0 makes it track instantly, higher values damp it like a mechanical meter
   (fast attack, slower decay); the default is 50 and it is remembered per receiver.
+  **Auto Contrast (%)**, below **Waterfall Automatic** in receiver settings,
+  adjusts signal contrast from 50 to 300% while keeping the average noise floor
+  at the same colour level. Try 150–200% for brighter stations; 100% preserves
+  the original appearance. It is remembered per receiver and applies only in
+  automatic mode, using the selected waterfall colour theme.
 
 - **Automatic spectrum levels.** A **Panadapter Automatic** check box in the
   receiver settings dialog's **Panadapter** section (right under the High/Low

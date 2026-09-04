@@ -288,6 +288,14 @@ void update_waterfall(RECEIVER *rx) {
         }
 
         // Нормализуем sample в диапазон 0-255
+        // The automatic mean sits 14 dB above low in an 80 dB range.
+        // Scale around that mean so contrast lifts signals without lifting
+        // the background too. Keep the original path exact at 100%.
+        if(rx->waterfall_automatic && rx->waterfall_auto_contrast!=100) {
+          float noise_floor=(float)rx->waterfall_low+14.0f;
+          sample=noise_floor+(sample-noise_floor)
+                 *CLAMP(rx->waterfall_auto_contrast,50,300)/100.0f;
+        }
         int level;
         if(sample < (float)rx->waterfall_low) {
             level = 0;
@@ -328,7 +336,7 @@ void update_waterfall(RECEIVER *rx) {
         }
     }
 
-    if(rx->waterfall_automatic) {
+    if(rx->waterfall_automatic && width>2) {
       rx->waterfall_low=(average/(width-2))-14;
       rx->waterfall_high=rx->waterfall_low+80;
     }

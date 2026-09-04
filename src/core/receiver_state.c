@@ -203,6 +203,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].waterfall_automatic",rx->channel);
   sprintf(value,"%d",rx->waterfall_automatic);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].waterfall_auto_contrast",rx->channel);
+  sprintf(value,"%d",rx->waterfall_auto_contrast);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].waterfall_ft8_marker",rx->channel);
   sprintf(value,"%d",rx->waterfall_ft8_marker);
   setProperty(name,value);
@@ -996,6 +999,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].waterfall_automatic",rx->channel);
   value=getProperty(name);
   if(value) rx->waterfall_automatic=atoi(value);
+  sprintf(name,"receiver[%d].waterfall_auto_contrast",rx->channel);
+  value=getProperty(name);
+  rx->waterfall_auto_contrast=value?CLAMP(atoi(value),50,300):100;
   sprintf(name,"receiver[%d].waterfall_ft8_marker",rx->channel);
   value=getProperty(name);
   if(value) rx->waterfall_ft8_marker=atoi(value);
