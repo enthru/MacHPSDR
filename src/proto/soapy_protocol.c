@@ -1673,6 +1673,9 @@ static gpointer dsp_thread(gpointer data) {
      dc_block_reset_req above. */
   DCBLOCK dcb;
   dc_block_init(&dcb,soapy_rx_actual_rate);
+  gboolean dc_on=FALSE;
+  int dc_logged_rate=-1;
+  gint64 dc_reported=g_get_monotonic_time();
 log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,block);
   while(dsp_thread_running[channel]) {
     int elements=fifo_pop(channel,buffer,block);
@@ -1695,8 +1698,28 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
          snapshot below is written to.  Switched off, the estimate is dropped
          rather than left to go stale, so switching it back on converges from
          zero instead of from an offset measured at some other gain. */
-      if(radio_dc_block_get(radio)) dc_block_run(&dcb,buffer,elements);
-      else                          dc_block_reset(&dcb);
+      const gboolean on=radio_dc_block_get(radio);
+      if(on) dc_block_run(&dcb,buffer,elements);
+      else   dc_block_reset(&dcb);
+      /* "Is it even running?" has to be answerable from the log, or the next
+         report is a screenshot and an argument.  The state is named when it
+         changes, and the ESTIMATE is named every 5 s: a removal that is on and
+         measuring nothing (an offset three orders below full scale) says the
+         line in the middle of the picture was never a DC offset, which is a
+         different fault and a different cure. */
+      if(on!=dc_on || rate!=dc_logged_rate) {
+        log_info("dc_block: adc %ld: DC spike removal %s (corner %.0f Hz at %d Hz)\n",
+                 (long)channel,on?"ON":"OFF",DC_BLOCK_CORNER_HZ,rate);
+        dc_on=on; dc_logged_rate=rate; dc_reported=g_get_monotonic_time();
+      }
+      if(on) {
+        const gint64 now=g_get_monotonic_time();
+        if(now-dc_reported>=5000000) {
+          log_debug("dc_block: adc %ld: offset now I %+.6f Q %+.6f of full scale\n",
+                    (long)channel,dcb.i,dcb.q);
+          dc_reported=now;
+        }
+      }
     }
     // A whole HackRF transfer reaches the FIFO every ~65 ms, but DSP and the
     // analyzer need the smaller pieces at their sample-clock cadence.  Without
