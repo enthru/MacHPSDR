@@ -257,6 +257,15 @@ static int rx_dsp_block(int sample_rate) {
 // 25600-sample block into exactly 1024.
 #define RX_ULTRAWIDE_DECIM 25
 
+/* How far inside the span edge the ctun/freetune cursor is kept, as a
+   percentage of half the span.  The same number on both gestures that can push
+   the two apart: the cursor walking into the edge under a left drag slides the
+   centre (receiver_move_a), and the centre walking under the cursor during a
+   right drag pushes the cursor (receiver_move_span).  Written once so they
+   cannot drift apart -- a cursor allowed nearer the edge than the other gesture
+   permits is one the next drag jumps back inwards. */
+#define RX_SPAN_EDGE_MARGIN_PCT 15
+
 // The decimation THIS span is fed through; 1 means "hand WDSP the span", which
 // is what every span up to RX_FEED_MAX_RATE gets -- there the single stage is
 // already cheap and a cascade in front of it would only add its own taps.
@@ -1290,7 +1299,7 @@ long long receiver_move_a(RECEIVER *rx, long long hz, gboolean round) {
         long long span_min  = rx->frequency_a - span_half;
         long long span_max  = rx->frequency_a + span_half;
 
-        long long threshold = span_half * 15 / 100;
+        long long threshold = span_half * RX_SPAN_EDGE_MARGIN_PCT / 100;
 
         if(rx->ctun_frequency > span_max - threshold) {
           long long shift = rx->ctun_frequency - (span_max - threshold);
@@ -1497,12 +1506,25 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
    `hz` carries receiver_move()'s sign convention: a drag to the right is
    positive and tunes DOWN.
 
-   The cursor rides along -- ctun_frequency moves with frequency_a -- so
-   ctun_offset, and with it the WDSP/NCO shift, is unchanged.  That is what makes
-   this the same gesture as ordinary VFO tuning: everything on the screen keeps
-   its place while the frequencies under it change, and the only work left is the
-   LO retune, which frequency_changed() already does for freetune when the centre
-   moves. */
+   With no ctun/freetune cursor the whole thing moves together: frequency_a is
+   the listening frequency, it sits at the centre, and ctun_frequency is carried
+   along so it is not stale when ctun is switched on later.
+
+   Under ctun or freetune the cursor KEEPS ITS FREQUENCY instead.  The waterfall
+   is rotated by the same delta when frequency_a moves (update_waterfall), so
+   every signal on the screen keeps its column while the span slides underneath
+   -- and a cursor moved with the centre would be the one thing on the display
+   that walks off the station being listened to, silently retuning the receiver
+   by a whole drag's worth of hertz.  Holding ctun_frequency still is what makes
+   the marker travel with the picture: its screen position is drawn from
+   ctun_offset, which frequency_changed() re-derives as ctun_frequency -
+   frequency_a.
+
+   Dragged far enough the cursor still has to come along, or it leaves the span
+   (and the WDSP/NCO shift with it).  It is pushed at the same
+   RX_SPAN_EDGE_MARGIN_PCT margin at which a left drag slides the centre, so the
+   marker stops where freetune's own tuning would have stopped it rather than
+   against the very edge with half its passband off-screen. */
 void receiver_move_span(RECEIVER *rx,long long hz) {
   if(rx==NULL || rx->locked || hz==0) return;
 
@@ -1516,19 +1538,36 @@ void receiver_move_span(RECEIVER *rx,long long hz) {
 
   long long delta=nf-rx->frequency_a;
   rx->frequency_a=nf;
-  rx->ctun_frequency+=delta;
 
   long long span_half=(long long)(rx->sample_rate/2);
+  long long tuned=rx->ctun_frequency;
+  if(rx->ctun || rx->freetune) {
+    /* The cursor stays on its station; only the span moves under it -- until it
+       comes within the edge margin, where it is pushed along. */
+    long long margin=span_half*RX_SPAN_EDGE_MARGIN_PCT/100;
+    long long lo=rx->frequency_a-span_half+margin;
+    long long hi=rx->frequency_a+span_half-margin;
+    if(rx->ctun_frequency<lo)      rx->ctun_frequency=lo;
+    else if(rx->ctun_frequency>hi) rx->ctun_frequency=hi;
+  } else {
+    rx->ctun_frequency+=delta;
+  }
+  tuned=rx->ctun_frequency-tuned;
+
   rx->ctun_min=rx->frequency_a-span_half;
   rx->ctun_max=rx->frequency_a+span_half;
 
-  /* A linked SAT/RSAT pair follows the same way it does under receiver_move();
-     no rounding, since the span itself is not being rounded to the tuning step
+  /* A linked SAT/RSAT pair follows the same way it does under receiver_move(),
+     i.e. by however far the LISTENING frequency moved -- which under ctun or
+     freetune is the cursor and not the span, and is zero for as long as the
+     cursor is still riding its station.  Moving B by the span's delta there
+     would slide the uplink across the transponder while the downlink sat still.
+     No rounding, since the span itself is not being rounded to the tuning step
      either (a drag is not a step). */
   switch(rx->split) {
     case SPLIT_SAT:
     case SPLIT_RSAT:
-      if(rx->vfo_linked) receiver_move_b(rx,delta,TRUE,FALSE);
+      if(rx->vfo_linked && tuned!=0) receiver_move_b(rx,tuned,TRUE,FALSE);
       break;
     default:
       break;
