@@ -1180,6 +1180,24 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       select->rx=rx;
       select->choice=1536000;
       g_signal_connect(sample_rate_1536,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
+
+      // 3072000 is past what the openHPSDR documents enumerate, but the DDC
+      // sample rate is carried as kHz in a 16 bit field, so the wire does not
+      // object and a radio that offers it can be asked for it.  Offered to
+      // every Protocol-2 radio for the same reason the rest of this list is:
+      // one that cannot do it simply keeps sending at the rate it can.
+      //
+      // It lands in the ULTRAWIDE tier (above RX_ULTRAWIDE_SPAN), which is
+      // what makes it exact: 3072000/48000 = 64 divides the 25600 sample
+      // block into 400, where the 5120 block of the wide tier would give 80
+      // and fail RX_MIN_AUDIO_BLOCK.
+      GtkWidget *sample_rate_3072=gtk_check_button_new_with_label("3072000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_3072),GTK_CHECK_BUTTON(sample_rate_1536));
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_3072), rx->sample_rate==3072000);
+      gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_3072,x,y++,1,1);
+      select=g_new0(SELECT,1);
+      select->rx=rx;
+      select->choice=3072000;
+      g_signal_connect(sample_rate_3072,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
     }
     break;
   }
