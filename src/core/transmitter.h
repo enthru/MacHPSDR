@@ -237,6 +237,10 @@ typedef struct _transmitter {
 
 extern TRANSMITTER *create_transmitter(int channel);
 extern void transmitter_init_analyzer(TRANSMITTER *tx);
+#ifdef SOAPYSDR
+// Call only with the microphone and TX pump stopped, while receiving.
+extern void transmitter_change_soapy_rate(TRANSMITTER *tx);
+#endif
 extern void transmitter_save_state(TRANSMITTER *tx);
 extern void transmitter_restore_state(TRANSMITTER *tx);
 extern void add_mic_sample(TRANSMITTER *tx,float sample);

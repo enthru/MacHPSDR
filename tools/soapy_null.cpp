@@ -159,6 +159,9 @@ public:
     // the stream eight times too fast.  Default 1 = no substitution.
     rate_mult = std::max(0.0, env_or(args, "rate_mult", "MACHPSDR_NULL_RATE_MULT", 1.0));
     if (rate_mult <= 0.0) rate_mult = 1.0;
+    // Pluto-like shared clock, for live device-rate transition tests.
+    shared_rate = env_or(args, "shared_rate", "MACHPSDR_NULL_SHARED_RATE", 0) != 0;
+    fail_rx_setup_rate = env_or(args, "fail_rx_setup_rate", "MACHPSDR_NULL_FAIL_RX_SETUP_RATE", 0);
 
     rx_state.resize(rx_channels);
     tx_state.resize(std::max<size_t>(tx_channels, 1));
@@ -279,6 +282,11 @@ public:
     // it), so an app that trusts its request rather than getSampleRate() gets
     // the whole fault and not just a wrong number in a log line.
     chan(direction, channel).rate = clampd(rate * rate_mult, 48e3, 20e6);
+    if (shared_rate) {
+      const double actual = chan(direction, channel).rate;
+      for (auto &state : rx_state) state.rate = actual;
+      for (auto &state : tx_state) state.rate = actual;
+    }
   }
   double getSampleRate(const int direction, const size_t channel) const override {
     return chan(direction, channel).rate;
@@ -357,6 +365,10 @@ public:
                                 const SoapySDR::Kwargs &) override {
     if (format != SOAPY_SDR_CF32 && format != SOAPY_SDR_CS16) {
       throw std::runtime_error("machpsdrnull: unsupported stream format " + format);
+    }
+    if (direction == SOAPY_SDR_RX && fail_rx_setup_rate > 0.0 &&
+        getSampleRate(direction, channels.empty() ? 0 : channels[0]) == fail_rx_setup_rate) {
+      throw std::runtime_error("machpsdrnull: injected RX setup failure");
     }
     NullStream *s = new NullStream();
     s->direction = direction;
@@ -548,6 +560,8 @@ private:
   double ampl = 0.1;
   double noise = 0.002;
   double rate_mult = 1.0;
+  bool shared_rate = false;
+  double fail_rx_setup_rate = 0.0;
 
   // Settings are per channel and mutated from the GTK thread while the receive
   // thread reads the rate; benign for a test source, and deliberately not

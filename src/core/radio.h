@@ -426,10 +426,8 @@ typedef struct _radio {
 
   // The ADC rate the operator has chosen for a SoapySDR device whose
   // radio->sample_rate is a real hardware rate; 0 = whatever the per-model
-  // table in create_radio picks. Applied at START-UP only (radio_restore_state
-  // puts it into sample_rate before anything is built), because on an AD9361
-  // one clock serves both directions: moving it live would move the TX rate
-  // under a transmitter whose whole geometry was sized for the old one.
+  // table in create_radio picks. Restored before building the streams at start;
+  // live changes rebuild RX streams and TX DSP together while not transmitting.
   int soapy_adc_rate;
   // What the per-model table in create_radio picked, kept because the choice
   // above overwrites sample_rate: without it "put it back the way it was" is

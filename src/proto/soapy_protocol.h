@@ -36,6 +36,12 @@ gboolean soapy_span_driven(void);
 int soapy_adc_rate_count(void);
 int soapy_adc_rate_at(int i);
 gboolean soapy_adc_rate_valid(DISCOVERED *d,int rate);
+// GTK thread only; 0 selects the device default. Refuses changes during TX.
+// On failure attempts to restore the old streams and reports a user-facing error.
+gboolean soapy_protocol_set_device_rate(int rate,GError **error);
+int soapy_rx_span_count(void);
+int soapy_rx_span_at(int i);
+int soapy_rx_span_max(int device_rate);
 
 /* The rate the TX DAC should run at.  Not radio->sample_rate: see the comment
    on the definition. */

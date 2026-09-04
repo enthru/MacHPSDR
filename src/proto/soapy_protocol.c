@@ -66,6 +66,7 @@ static SoapySDRStream *rx_stream[MAX_CHANNELS];
 static SoapySDRStream *tx_stream;
 static int soapy_rx_sample_rate;
 static int soapy_tx_sample_rate;
+static gboolean changing_device_rate=FALSE;
 // Keep device reads and DSP work as separate geometries.  Some drivers need a
 // whole hardware transfer read at once, while handing that entire transfer to
 // DSP would make its output arrive in visible/audible bursts.
@@ -556,6 +557,20 @@ static const int soapy_adc_rate_list[]={
 
 int soapy_adc_rate_count(void) { return (int)G_N_ELEMENTS(soapy_adc_rate_list); }
 
+// Shared by both settings pages and by the clamp on a device-rate decrease.
+static const int soapy_rx_spans[]={192000,384000,768000,1536000,1920000,4800000,9600000};
+int soapy_rx_span_count(void) { return (int)G_N_ELEMENTS(soapy_rx_spans); }
+int soapy_rx_span_at(int i) {
+  return i>=0 && i<soapy_rx_span_count()?soapy_rx_spans[i]:0;
+}
+int soapy_rx_span_max(int device_rate) {
+  int span=0;
+  for(int i=0;i<soapy_rx_span_count();i++) {
+    if(soapy_rx_spans[i]<=device_rate) span=soapy_rx_spans[i];
+  }
+  return span;
+}
+
 int soapy_adc_rate_at(int i) {
   if(i<0 || i>=(int)G_N_ELEMENTS(soapy_adc_rate_list)) return 0;
   return soapy_adc_rate_list[i];
@@ -973,6 +988,9 @@ static void slot_feed(RXSLOT *sl,const float *buffer,int elements,gboolean iqswa
    (delete_rx_mutex around the block, then rx->mutex inside full_rx_buffer) and
    the other order is a deadlock. */
 void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
+  // The device-rate transaction rebuilds all streams/resamplers together after
+  // receiver_change_sample_rate has resized the DSP and clamped wide spans.
+  if(changing_device_rate) return;
   const size_t slot_ch=(size_t)(rx->adc<MAX_CHANNELS?rx->adc:0);
   const int block=rx_block[slot_ch];
 
@@ -1143,7 +1161,7 @@ static void soapy_rx_stream_args(SoapySDRKwargs *args, int rate) {
   }
 }
 
-void soapy_protocol_create_receiver(RECEIVER *rx) {
+static gboolean soapy_create_receiver(RECEIVER *rx) {
   int rc;
 
   // Idempotent: a reconnect re-runs this on an existing receiver, so release
@@ -1164,9 +1182,9 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
   size_t slot_ch=(size_t)rx->adc;
   if(slot_ch>=MAX_CHANNELS) {
     log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)slot_ch,MAX_CHANNELS);
-    return;
+    return FALSE;
   }
-  if(slot_add(rx)==NULL) return;
+  if(slot_add(rx)==NULL) return FALSE;
   if(!slot_is_owner(rx)) {
     // A receiver sharing another one's ADC gets no stream, no threads and no
     // say over the hardware: it is handed the same raw block and does its own
@@ -1185,7 +1203,7 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
     g_mutex_unlock(&radio->delete_rx_mutex);
     log_info("%s: receiver %d shares adc %ld (%d-sample blocks, span %d)\n",
              __FUNCTION__,rx->channel,(long)slot_ch,shared_block,rx->sample_rate);
-    return;
+    return TRUE;
   }
 
   // What the hardware is told to run at -- the ADC rate for most devices, this
@@ -1215,7 +1233,8 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
-    _exit(-1);
+    SoapySDRKwargs_clear(&stream_args);
+    return FALSE;
   }
 #else
   rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
@@ -1224,7 +1243,8 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
     // pointer -- so the reason comes from the device.  It used to print
     // SoapySDR_errToStr(rc) on whatever rc the previous call happened to leave.
     log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
-    _exit(-1);
+    SoapySDRKwargs_clear(&stream_args);
+    return FALSE;
   }
 #endif
   SoapySDRKwargs_clear(&stream_args);
@@ -1283,16 +1303,21 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
     if(adc_slot[channel][i].rx!=NULL) soapy_build_resampler(adc_slot[channel][i].rx,dsp_block);
   }
   soapy_refresh_offsets(channel);
+  return TRUE;
 }
 
-void soapy_protocol_start_receiver(RECEIVER *rx) {
+void soapy_protocol_create_receiver(RECEIVER *rx) {
+  if(!soapy_create_receiver(rx)) _exit(-1);
+}
+
+static gboolean soapy_start_receiver(RECEIVER *rx) {
   int rc;
 
   if(!slot_is_owner(rx)) {
     // The stream and both threads belong to the receiver that owns this ADC and
     // are already running; this one is fed out of the same block.
     log_info("%s: receiver %d rides adc %d's stream\n",__FUNCTION__,rx->channel,rx->adc);
-    return;
+    return TRUE;
   }
 
 log_info("%s: activate_stream\n",__FUNCTION__);
@@ -1346,7 +1371,7 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   size_t channel=rx->adc;
   if(channel>=MAX_CHANNELS) {
     log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)channel,MAX_CHANNELS);
-    return;
+    return FALSE;
   }
   if(rate!=rate_before) {
     // The re-assert landed somewhere else than create_receiver's resampler was
@@ -1359,7 +1384,7 @@ log_info("%s: activate_stream\n",__FUNCTION__);
   rc=SoapySDRDevice_activateStream(soapy_device, rx_stream[channel], 0, 0LL, 0);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_activateStream failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
-    _exit(-1);
+    return FALSE;
   }
 
 log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
@@ -1370,7 +1395,7 @@ log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
   if(dsp_thread_id[channel]==NULL) {
     log_error("%s: g_thread_new failed for dsp_thread\n",__FUNCTION__);
     dsp_thread_running[channel]=FALSE;
-    _exit(-1);
+    return FALSE;
   }
   rx_thread_running[channel]=TRUE;
   running=TRUE;
@@ -1378,9 +1403,14 @@ log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
   if( ! receive_thread_id[channel] )
   {
     log_info("%s: g_thread_new failed for receive_thread\n",__FUNCTION__);
-    exit( -1 );
+    return FALSE;
   }
   log_info( "%s: receive_thread: id=%p\n",__FUNCTION__,receive_thread_id[channel]);
+  return TRUE;
+}
+
+void soapy_protocol_start_receiver(RECEIVER *rx) {
+  if(!soapy_start_receiver(rx)) _exit(-1);
 }
 
 /* The TX twin of soapy_rx_stream_args, and it exists for a measured reason.
@@ -1432,7 +1462,7 @@ static void soapy_tx_stream_args(SoapySDRKwargs *args, int rate) {
   }
 }
 
-void soapy_protocol_create_transmitter(TRANSMITTER *tx) {
+static gboolean soapy_create_transmitter(TRANSMITTER *tx,gboolean open_mic) {
   int rc;
 
 log_info("soapy_protocol_create_transmitter: dac=%d\n",tx->dac);
@@ -1489,7 +1519,8 @@ log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel
   rc=SoapySDRDevice_setupStream(soapy_device,&tx_stream,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,&tx_args);
   if(rc!=0) {
     log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream (TX) failed: %s\n",SoapySDR_errToStr(rc));
-    _exit(-1);
+    SoapySDRKwargs_clear(&tx_args);
+    return FALSE;
   }
 #else
   tx_stream=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_TX,SOAPY_SDR_CF32,&channel,1,&tx_args);
@@ -1497,7 +1528,8 @@ log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel
     // setupStream answers with the pointer here, so there is no rc to report --
     // it used to print SoapySDR_errToStr(rc) on whatever the previous call left.
     log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream (TX) failed: %s\n",SoapySDRDevice_lastError());
-    _exit(-1);
+    SoapySDRKwargs_clear(&tx_args);
+    return FALSE;
   }
 #endif
   SoapySDRKwargs_clear(&tx_args);
@@ -1526,13 +1558,18 @@ log_info("soapy_protocol_create_transmitter: TX stream MTU=%d (%.1f ms at %d), w
   // (+14 dB at the top), so raising drive raises gain and eventually the amp.
 log_info("soapy_protocol_create_transmitter: tx gain range=%f..%f\n",tx_gain_min,tx_gain_max);
 
-  if(radio->local_microphone) {
+  if(open_mic && radio->local_microphone) {
       if(audio_open_input(radio)!=0) {
         log_error("audio_open_input failed\n");
         radio->local_microphone=FALSE;
       }
     }
 
+  return TRUE;
+}
+
+void soapy_protocol_create_transmitter(TRANSMITTER *tx) {
+  if(!soapy_create_transmitter(tx,TRUE)) _exit(-1);
 }
 
 void soapy_protocol_start_transmitter(TRANSMITTER *tx) {
@@ -2059,7 +2096,7 @@ log_info("soapy tx_thread: exit\n");
 }
 
 void soapy_protocol_activate_tx(TRANSMITTER *tx) {
-  if(soapy_device==NULL) return;
+  if(soapy_device==NULL || tx_stream==NULL || changing_device_rate) return;
   output_buffer_index=0;
   if(!tx_stream_active) {
     // Program the requested attenuation BEFORE activateStream turns on Pluto's
@@ -2208,6 +2245,168 @@ log_info("%s\n",__FUNCTION__);
     }
   }
   running=FALSE;
+}
+
+// Join producers before closing streams or changing any receiver buffers. Keep
+// the ADC slot table intact: an owner may not be receiver[0], and promoting a
+// follower here would move the shared LO for no reason.
+static void soapy_rate_stop_streams(void) {
+  for(int ch=0;ch<MAX_CHANNELS;ch++) rx_thread_running[ch]=FALSE;
+  for(int ch=0;ch<MAX_CHANNELS;ch++) {
+    if(receive_thread_id[ch]!=NULL) {
+      g_thread_join(receive_thread_id[ch]);
+      receive_thread_id[ch]=NULL;
+    }
+    stop_dsp_thread(ch);
+    fifo_free(ch);
+    if(rx_stream[ch]!=NULL) {
+      SoapySDRDevice_deactivateStream(soapy_device,rx_stream[ch],0,0LL);
+      SoapySDRDevice_closeStream(soapy_device,rx_stream[ch]);
+      rx_stream[ch]=NULL;
+    }
+  }
+  rx_stream_active=FALSE;
+  running=FALSE;
+  if(tx_stream!=NULL) {
+    SoapySDRDevice_deactivateStream(soapy_device,tx_stream,0,0LL);
+    SoapySDRDevice_closeStream(soapy_device,tx_stream);
+    tx_stream=NULL;
+  }
+  tx_stream_active=FALSE;
+  output_buffer_index=0;
+}
+
+static gboolean soapy_rate_matches(int direction,int channel,int requested) {
+  const double actual=SoapySDRDevice_getSampleRate(soapy_device,direction,channel);
+  return isfinite(actual) && actual>0.0 &&
+         fabs(actual-requested)<=(double)requested*1.0e-4;
+}
+
+static gboolean soapy_rate_start_streams(void) {
+  TRANSMITTER *tx=radio->transmitter;
+  // Both directions share Pluto's clock. Configure TX first, as at startup,
+  // then RX, and verify BOTH readbacks after the last rate write.
+  if(radio->can_transmit && tx!=NULL) {
+    transmitter_change_soapy_rate(tx);
+    if(!soapy_create_transmitter(tx,FALSE)) return FALSE;
+    soapy_protocol_set_tx_antenna(tx,radio->dac[tx->dac].antenna);
+    soapy_protocol_set_tx_frequency(tx);
+  }
+  for(int ch=0;ch<MAX_CHANNELS;ch++) {
+    RECEIVER *owner=adc_slot[ch][0].rx;
+    if(owner!=NULL && !soapy_create_receiver(owner)) return FALSE;
+  }
+  for(int ch=0;ch<MAX_CHANNELS;ch++) {
+    RECEIVER *owner=adc_slot[ch][0].rx;
+    if(owner==NULL) continue;
+    if(!soapy_rate_matches(SOAPY_SDR_RX,ch,radio->sample_rate)) return FALSE;
+    soapy_protocol_set_rx_antenna(owner,radio->adc[ch].antenna);
+    soapy_protocol_set_automatic_gain(owner,radio->adc[ch].agc);
+    soapy_protocol_set_gain(&radio->adc[ch]);
+    soapy_protocol_set_rx_frequency(owner);
+    soapy_refresh_offsets(ch);
+    // Partial blocks contain samples from the old stream. Even an unchanged
+    // span must start with a new block after its input clock changes.
+    for(int i=0;i<MAX_ADC_RECEIVERS;i++) {
+      RECEIVER *rx=adc_slot[ch][i].rx;
+      if(rx!=NULL) rx->samples=0;
+    }
+  }
+  if(radio->can_transmit && tx!=NULL &&
+     !soapy_rate_matches(SOAPY_SDR_TX,tx->dac,tx->iq_output_rate)) return FALSE;
+  for(int ch=0;ch<MAX_CHANNELS;ch++) {
+    RECEIVER *owner=adc_slot[ch][0].rx;
+    if(owner!=NULL && !soapy_start_receiver(owner)) return FALSE;
+  }
+  return TRUE;
+}
+
+gboolean soapy_protocol_set_device_rate(int choice,GError **error) {
+  const GQuark domain=g_quark_from_static_string("soapy-device-rate");
+  if(radio==NULL || radio->discovered==NULL || soapy_device==NULL ||
+     radio->discovered->device!=DEVICE_SOAPYSDR || soapy_span_driven() ||
+     (choice!=0 && !soapy_adc_rate_valid(radio->discovered,choice))) {
+    g_set_error_literal(error,domain,1,"This device rate is not available.");
+    return FALSE;
+  }
+  const int rate=choice>0?choice:radio->soapy_adc_rate_default;
+  if(rate==radio->sample_rate) {
+    radio->soapy_adc_rate=choice;
+    return TRUE;
+  }
+  if(changing_device_rate || isTransmitting(radio) || tx_stream_active || tx_thread_id!=NULL) {
+    g_set_error_literal(error,domain,2,"Stop transmitting before changing the device rate.");
+    return FALSE;
+  }
+  const int max_span=soapy_rx_span_max(rate);
+  if(max_span==0) {
+    g_set_error_literal(error,domain,1,"The device rate is below the supported receiver spans.");
+    return FALSE;
+  }
+  const int old_rate=radio->sample_rate;
+  struct {
+    int span,band;
+    long long frequency,ctun_frequency,ctun_min,ctun_max;
+  } saved[MAX_RECEIVERS]={0};
+  for(int i=0;i<MAX_RECEIVERS;i++) {
+    RECEIVER *rx=radio->receiver[i];
+    if(rx==NULL) continue;
+    saved[i].span=rx->sample_rate;
+    saved[i].band=rx->band_a;
+    saved[i].frequency=rx->frequency_a;
+    saved[i].ctun_frequency=rx->ctun_frequency;
+    saved[i].ctun_min=rx->ctun_min;
+    saved[i].ctun_max=rx->ctun_max;
+  }
+  changing_device_rate=TRUE;
+  const gboolean microphone=radio->local_microphone;
+  if(microphone) audio_close_input(radio);
+  soapy_tx_hold_safe();
+  soapy_rate_stop_streams();
+  radio->sample_rate=rate;
+  for(int i=0;i<MAX_RECEIVERS;i++) {
+    RECEIVER *rx=radio->receiver[i];
+    if(rx!=NULL && rx->sample_rate>max_span) receiver_change_sample_rate(rx,max_span);
+  }
+  gboolean ok=soapy_rate_start_streams();
+  if(ok) {
+    radio->soapy_adc_rate=choice;
+    // Reuse normal tuning's shared-window clamp for followers which no longer
+    // fit after a rate decrease, including their CTUN cursor and VFO display.
+    for(int ch=0;ch<MAX_CHANNELS;ch++) {
+      RECEIVER *owner=adc_slot[ch][0].rx;
+      if(owner!=NULL) frequency_changed(owner);
+    }
+    log_info("%s: device rate %d -> %d applied without restarting the application\n",
+             __FUNCTION__,old_rate,rate);
+  } else {
+    log_error("%s: could not apply %d; restoring %d\n",__FUNCTION__,rate,old_rate);
+    soapy_rate_stop_streams();
+    radio->sample_rate=old_rate;
+    for(int i=0;i<MAX_RECEIVERS;i++) {
+      RECEIVER *rx=radio->receiver[i];
+      if(rx==NULL) continue;
+      if(rx->sample_rate!=saved[i].span) receiver_change_sample_rate(rx,saved[i].span);
+      rx->band_a=saved[i].band;
+      rx->frequency_a=saved[i].frequency;
+      rx->ctun_frequency=saved[i].ctun_frequency;
+      rx->ctun_min=saved[i].ctun_min;
+      rx->ctun_max=saved[i].ctun_max;
+    }
+    const gboolean restored=soapy_rate_start_streams();
+    if(!restored) soapy_rate_stop_streams();
+    else {
+      for(int i=0;i<MAX_RECEIVERS;i++) {
+        if(radio->receiver[i]!=NULL) frequency_changed(radio->receiver[i]);
+      }
+    }
+    g_set_error_literal(error,domain,3,restored?
+        "The device could not apply that rate. The previous rate has been restored.":
+        "The device could not apply that rate or restore reception. Reconnect the device.");
+  }
+  changing_device_rate=FALSE;
+  if(microphone && audio_open_input(radio)!=0) radio->local_microphone=FALSE;
+  return ok;
 }
 
 // Re-apply the stored RX frequency and gain a moment after streaming resumes.

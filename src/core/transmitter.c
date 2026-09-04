@@ -1743,6 +1743,25 @@ static void create_visual(TRANSMITTER *tx) {
   tx->panadapter=create_tx_panadapter(tx);
 }
 
+#ifdef SOAPYSDR
+void transmitter_change_soapy_rate(TRANSMITTER *tx) {
+  const int rate=(soapy_tx_dac_rate()/tx->mic_dsp_rate)*tx->mic_dsp_rate;
+  if(rate==tx->iq_output_rate) return;
+  SetChannelState(tx->channel,0,1);
+  tx->iq_output_rate=rate;
+  tx->output_samples=tx->buffer_size*(rate/tx->mic_sample_rate);
+  tx->mic_samples=0;
+  tx->iq_output_buffer=g_realloc_n(tx->iq_output_buffer,2*tx->output_samples,sizeof(gdouble));
+  tx->inI=g_realloc_n(tx->inI,tx->output_samples,sizeof(gfloat));
+  tx->inQ=g_realloc_n(tx->inQ,tx->output_samples,sizeof(gfloat));
+  tx->outMI=g_realloc_n(tx->outMI,tx->output_samples,sizeof(gfloat));
+  tx->outMQ=g_realloc_n(tx->outMQ,tx->output_samples,sizeof(gfloat));
+  SetDSPMult(2);
+  SetAllRates(tx->channel,tx->mic_sample_rate,tx->mic_dsp_rate,rate);
+  transmitter_init_analyzer(tx);
+}
+#endif
+
 void transmitter_init_analyzer(TRANSMITTER *tx) {
     int flp[] = {0};
     double keep_time = 0.1;

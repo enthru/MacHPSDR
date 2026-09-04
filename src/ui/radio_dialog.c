@@ -310,26 +310,53 @@ static void soapy_rx_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data)
 #endif
 
 #ifdef SOAPYSDR
-// The rate the DEVICE is clocked at, on the devices where radio->sample_rate is
-// that and not the widest span offered.  Stored and applied at start-up, never
-// live: on an AD9361 one clock serves receive and transmit, so moving it under a
-// running transmitter would move its emission with it (soapy_tx_dac_rate).
+static void soapy_span_rows_update(GtkDropDown *widget,RADIO *r) {
+  g_signal_handlers_block_by_func(widget,G_CALLBACK(soapy_rx_rate_cb),r);
+  GtkStringList *list=GTK_STRING_LIST(gtk_drop_down_get_model(widget));
+  gtk_string_list_splice(list,0,g_list_model_get_n_items(G_LIST_MODEL(list)),NULL);
+  n_span_rows=0;
+  RECEIVER *rx=radio_soapy_hw_receiver(r);
+  int active=-1;
+  for(int i=0;i<soapy_rx_span_count();i++) {
+    const int span=soapy_rx_span_at(i);
+    if(span>r->sample_rate) continue;
+    if(rx!=NULL && span==rx->sample_rate) active=n_span_rows;
+    rate_row_add(GTK_WIDGET(widget),span_rows,&n_span_rows,span);
+  }
+  gtk_drop_down_set_selected(widget,active>=0?(guint)active:GTK_INVALID_LIST_POSITION);
+  g_signal_handlers_unblock_by_func(widget,G_CALLBACK(soapy_rx_rate_cb),r);
+}
+
+static void soapy_adc_status_update(GtkDropDown *widget,RADIO *r) {
+  GtkLabel *status=g_object_get_data(G_OBJECT(widget),"adc-rate-status");
+  if(status==NULL) return;
+  char current[24],span[24],text[160];
+  sui_rate_label(current,sizeof(current),r->sample_rate);
+  sui_rate_label(span,sizeof(span),soapy_rx_span_max(r->sample_rate));
+  snprintf(text,sizeof(text),"Active device rate: %s. Maximum receiver span: %s.",current,span);
+  gtk_label_set_text(status,text);
+}
+
 static void soapy_adc_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
-  RADIO *radio=(RADIO *)data;
-  // Row 0 is "Default (<rate>)" and means "no choice of mine": stored as 0, so
-  // a table value corrected in a later build still reaches this operator. Every
-  // other row is the number it shows.
-  if(gtk_drop_down_get_selected(widget)==0) {
-    radio->soapy_adc_rate=0;
-    log_info("%s: device rate back to this device's default (%d); it takes effect on the next start\n",
-             __FUNCTION__,radio->soapy_adc_rate_default);
+  RADIO *r=(RADIO *)data;
+  const guint selected=gtk_drop_down_get_selected(widget);
+  if(selected==GTK_INVALID_LIST_POSITION || selected>=(guint)n_adc_rows) return;
+  const int rate=adc_rows[selected];
+  GError *error=NULL;
+  if(!soapy_protocol_set_device_rate(rate,&error)) {
+    guint old=0;
+    for(int i=0;i<n_adc_rows;i++) if(adc_rows[i]==r->soapy_adc_rate) old=i;
+    g_signal_handlers_block_by_func(widget,G_CALLBACK(soapy_adc_rate_cb),r);
+    gtk_drop_down_set_selected(widget,old);
+    g_signal_handlers_unblock_by_func(widget,G_CALLBACK(soapy_adc_rate_cb),r);
+    GtkLabel *status=g_object_get_data(G_OBJECT(widget),"adc-rate-status");
+    if(status!=NULL) gtk_label_set_text(status,error->message);
+    g_clear_error(&error);
     return;
   }
-  int rate=rate_row_value(widget,adc_rows,n_adc_rows);
-  if(rate<=0) return;
-  if(!soapy_adc_rate_valid(radio->discovered,rate)) return;
-  radio->soapy_adc_rate=rate;
-  log_info("%s: device rate %d chosen; it takes effect on the next start\n",__FUNCTION__,rate);
+  GtkDropDown *spans=g_object_get_data(G_OBJECT(widget),"span-selector");
+  if(spans!=NULL) soapy_span_rows_update(spans,r);
+  soapy_adc_status_update(widget,r);
 }
 #endif
 
@@ -902,31 +929,13 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   if(radio->discovered->device==DEVICE_SOAPYSDR &&
      strcmp(radio->discovered->name,"sdrplay")!=0) {
     GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
-    // All are exact multiples of 48000 by a factor that divides the I/Q block
-    // rx_iq_block() picks for them, so the 48k audio output rate stays exact (no
-    // drift/clicks): 5120 up to 1920000, 25600 above it.  2000000 (the old
-    // HackRF ADC rate) is deliberately NOT offered because 2000000/48000 is not
-    // an integer -> the audio pipeline would drift.  2400000 is left out for a
-    // second reason: it is in the ultrawide tier, where WFM runs at a
-    // twenty-fifth of the span (rx_wfm_dsp_rate), and 96 kHz is too narrow for
-    // broadcast FM -- 4800000 and 9600000 give 192 and 384 kHz.
-    const int rates[]={192000,384000,768000,1536000,1920000,4800000,9600000};
-    int rxrate=(radio->receiver[0]!=NULL)?radio->receiver[0]->sample_rate:radio->sample_rate;
-    int active=-1;
-    n_span_rows=0;
-    for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
-      // Up to the rate the DEVICE is clocked at -- which is now the operator's
-      // to raise (soapy_adc_rate_list), and why 4 800 000 and 9 600 000 are in
-      // that list: they are spans as well as clock rates.
-      if(rates[r]>radio->sample_rate) continue;
-      if(rates[r]==rxrate) active=n_span_rows;
-      rate_row_add(sample_rate_combo_box,span_rows,&n_span_rows,rates[r]);
-    }
-    if(active>=0) gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),active);
+    soapy_span_rows_update(GTK_DROP_DOWN(sample_rate_combo_box),radio);
+    g_object_set_data(G_OBJECT(model_grid),"span-selector",sample_rate_combo_box);
     g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(soapy_rx_rate_cb),radio);
     gtk_widget_set_tooltip_text(sample_rate_combo_box,
         "Span of every receiver: how wide a piece of the device's stream each one "
-        "sees. Wider costs DSP.");
+        "sees. Wider costs DSP. Limited by the ACTIVE device rate and the DSP "
+        "limit of 9600k. Changing Device rate updates the available spans immediately.");
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
   }
 
@@ -967,7 +976,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(adc_combo),active);
     g_signal_connect(adc_combo,"notify::selected",G_CALLBACK(soapy_adc_rate_cb),radio);
     gtk_widget_set_tooltip_text(adc_combo,
-        "How fast the device itself is clocked — TAKES EFFECT ON THE NEXT START.\n"
+        "Applied immediately while receiving, with a brief interruption.\n"
         "It is the window several receivers share: a second receiver can sit "
         "(this rate minus its own span)/2 either side of the first one's centre.\n"
         "What limits it is the link, not the radio: raise it and watch the log — "
@@ -976,6 +985,15 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         "On an AD9361 (PlutoSDR) one clock serves both directions, so this is "
         "also the transmit rate, and a transmission has to fit up the same link.");
     gtk_grid_attach(GTK_GRID(model_grid),adc_combo,x+1,1,1,1);
+    GtkWidget *adc_status=gtk_label_new(NULL);
+    sui_label_left(adc_status);
+    gtk_label_set_wrap(GTK_LABEL(adc_status),TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(adc_status),65);
+    gtk_grid_attach(GTK_GRID(model_grid),adc_status,0,2,x+2,1);
+    g_object_set_data(G_OBJECT(adc_combo),"adc-rate-status",adc_status);
+    g_object_set_data(G_OBJECT(adc_combo),"span-selector",
+                      g_object_get_data(G_OBJECT(model_grid),"span-selector"));
+    soapy_adc_status_update(GTK_DROP_DOWN(adc_combo),radio);
   }
 #endif
 

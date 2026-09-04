@@ -940,8 +940,44 @@ static void cat_baudrate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
   }
 }
 
+#ifdef SOAPYSDR
+static void soapy_span_grid_update(GtkWidget *grid,RECEIVER *rx) {
+  GtkWidget *child;
+  // Disconnect before removing grouped buttons: destroying one must not apply
+  // another button's rate as a side effect.
+  for(child=gtk_widget_get_first_child(grid);child!=NULL;child=gtk_widget_get_next_sibling(child)) {
+    SELECT *sel=g_object_get_data(G_OBJECT(child),"span-choice");
+    g_signal_handlers_disconnect_by_func(child,G_CALLBACK(sample_rate_cb),sel);
+  }
+  while((child=gtk_widget_get_first_child(grid))!=NULL) gtk_grid_remove(GTK_GRID(grid),child);
+  GtkWidget *first=NULL;
+  int row=0;
+  for(int i=0;i<soapy_rx_span_count();i++) {
+    const int rate=soapy_rx_span_at(i);
+    if(rate>radio->sample_rate) continue;
+    char label[24];
+    sui_rate_label(label,sizeof(label),rate);
+    GtkWidget *button=gtk_check_button_new_with_label(label);
+    if(first==NULL) first=button;
+    else gtk_check_button_set_group(GTK_CHECK_BUTTON(button),GTK_CHECK_BUTTON(first));
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(button),rx->sample_rate==rate);
+    gtk_grid_attach(GTK_GRID(grid),button,0,row++,1,1);
+    SELECT *sel=g_new0(SELECT,1);
+    sel->rx=rx;
+    sel->choice=rate;
+    g_object_set_data_full(G_OBJECT(button),"span-choice",sel,g_free);
+    g_signal_connect(button,"toggled",G_CALLBACK(sample_rate_cb),sel);
+  }
+}
+#endif
+
 void update_receiver_dialog(RECEIVER *rx) {
   int i;
+
+#ifdef SOAPYSDR
+  GtkWidget *span_grid=g_object_get_data(G_OBJECT(rx->audio_choice_b),"soapy-span-grid");
+  if(span_grid!=NULL) soapy_span_grid_update(span_grid,rx);
+#endif
 
   // re-scan audio devices so a device connected after launch (e.g. Bluetooth
   // headphones) shows up in the list without restarting the app
@@ -983,6 +1019,9 @@ void update_receiver_dialog(RECEIVER *rx) {
 GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   int i;
   SELECT *select;
+#ifdef SOAPYSDR
+  GtkWidget *soapy_span_grid=NULL;
+#endif
 
   // The page is a vbox: the two-column grid on top, then the full-width
   // Squelch/MNF row under it. Putting that row in the grid instead left a tall
@@ -1060,24 +1099,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       gtk_frame_set_child(GTK_FRAME(span_frame),span_grid);
       gtk_box_append(GTK_BOX(left_box),span_frame);
 
-      // The same list, and for the same reasons, as the Radio page's: every one
-      // an exact multiple of 48000 by a factor that divides the I/Q block.
-      const int rates[]={192000,384000,768000,1536000,1920000,4800000,9600000};
-      GtkWidget *first=NULL;
-      int y=0;
-      for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
-        if(rates[r]>radio->sample_rate) continue;
-        char buf[24];
-        sui_rate_label(buf,sizeof(buf),rates[r]);   // 9600k, not 9600000
-        GtkWidget *b=gtk_check_button_new_with_label(buf);
-        if(first==NULL) first=b; else gtk_check_button_set_group(GTK_CHECK_BUTTON(b),GTK_CHECK_BUTTON(first));
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(b),rx->sample_rate==rates[r]);
-        gtk_grid_attach(GTK_GRID(span_grid),b,0,y++,1,1);
-        SELECT *sel=g_new0(SELECT,1);
-        sel->rx=rx;
-        sel->choice=rates[r];
-        g_signal_connect(b,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)sel);
-      }
+      soapy_span_grid=span_grid;
+      soapy_span_grid_update(span_grid,rx);
       gtk_widget_set_tooltip_text(span_frame,
           soapy_protocol_rx_owns_hardware(rx)?
             "Width of this receiver's view of the band. The hardware runs at the "
@@ -1908,5 +1931,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     mnf_refresh(ui);
   }
 
+#ifdef SOAPYSDR
+  g_object_set_data(G_OBJECT(rx->audio_choice_b),"soapy-span-grid",soapy_span_grid);
+#endif
   return page;
 }
