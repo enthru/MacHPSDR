@@ -63,6 +63,7 @@ static double   f1a_from_s;
 // The ident shaped as the log reads it: whole seconds on one line, whole
 // seconds on the other, keying in between (see the hop expression).
 static gboolean f1a_shape;
+static double   long_key_s;
 // An LNB warms up and drifts while it does it: Hz per minute normally, and the
 // loop's own guards are written around a "fast 10 Hz/s". The ident test needs
 // it, because a loop that cannot measure during the ident is only visible as
@@ -393,6 +394,8 @@ static double run_loop(double lo_error, double noise, int max_blocks,
                   :((ph<6.0)?((fmod(t,0.2)<0.1)?key_hz:rest_hz)
                             :rest_hz);
       if(f1a_fade && ph>=9.0) beacon_amp=0.0;
+      if(long_key_s>0.0)
+        hop=fmod(t-f1a_from_s,2.0*long_key_s)<long_key_s?key_hz:rest_hz;
     }
     // What the radio is ACTUALLY tuned to right now: what the loop asked for
     // lag_blocks ago.
@@ -1970,6 +1973,32 @@ int main(int argc, char **argv) {
     beacon_sel=QO100_BEACON_SEL_LOWER;
     check("mixed F1A tones do not declare the tone convention wrong",
           locked && strstr(ck,"resting tone not established")!=NULL,ck);
+    qo100_beacon_reset();
+  }
+
+  // The SSB log contains whole 10-15 s stretches on the keyed tone only.
+  // A one-second trim setting must not turn into waiting for the ident to end.
+  for(int edge=0;edge<2;edge++) for(int sign=-1;sign<=1;sign+=2) {
+    bands_init(); gboolean locked=FALSE;
+    beacon_sel=generated_cw_sel=edge==0?QO100_BEACON_SEL_LOWER:QO100_BEACON_SEL_UPPER;
+    correct_ds=10;
+    f1a_shape=TRUE;
+    f1a_from_s=20.0;
+    long_key_s=15.0;
+    mid_bpsk_amp=0.5;
+    lo_drift_hz_s=sign*8.0;
+    run_loop(3000.0,0.05,blocks*20,&locked,768000,10489710000LL);
+    lo_drift_hz_s=0.0;
+    mid_bpsk_amp=0.0;
+    long_key_s=0.0;
+    f1a_from_s=0.0;
+    f1a_shape=FALSE;
+    correct_ds=QO100_CORRECT_DS_DEFAULT;
+    beacon_sel=generated_cw_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"%s, %+d Hz/s: max error %.1f Hz, gap %.2f s, step %.1f Hz",
+             edge==0?"lower":"upper",sign*8,worst_track,worst_gap,worst_step);
+    check("long CW ident still permits one-second-setting drift correction",
+          locked && worst_track<40.0 && worst_gap<4.0 && worst_step<40.0,d);
     qo100_beacon_reset();
   }
 

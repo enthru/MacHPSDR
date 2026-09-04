@@ -2079,8 +2079,24 @@ static void beacon_frame(RECEIVER *rx) {
     if(fabs(mid)+QO100_MID_WIN_HZ<span_half &&
        fabs(mid)>2.0*QO100_DC_GUARD_HZ &&
        middle_beacon_centre(bpow,track_fs,mid,QO100_MID_WIN_HZ,&c,&w,&nb) &&
-       w>=QO100_MID_MIN_WIDTH_HZ && fabs(c-mid)<QO100_TRACK_TOL_HZ)
-      common_drift=TRUE;
+       w>=QO100_MID_MIN_WIDTH_HZ) {
+      if(fabs(c-mid)<QO100_TRACK_TOL_HZ) {
+        common_drift=TRUE;
+      } else if(b_locked && b_verified &&
+                fabs(c-mid+QO100_KEYED_FROM_REST_HZ)<QO100_TRACK_TOL_HZ) {
+        // During a long ident the resting line can disappear for many seconds.
+        // The BPSK centre identifies the remaining line as the KEYED tone.
+        // Translate its precise measurement to the resting frequency instead
+        // of suspending drift correction for the duration of the ident.
+        // Never infer this from proximity to the old lock alone: a 400 Hz
+        // interferer without the independent reference must still be refused.
+        found-=QO100_KEYED_FROM_REST_HZ;
+        common_drift=TRUE;
+        tone_other=TRUE;
+        b_tone_up=FALSE;
+        how="the keyed CW tone confirmed by BPSK (400 Hz removed)";
+      }
+    }
   }
 
   spectrum_clear();
