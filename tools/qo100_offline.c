@@ -1665,13 +1665,10 @@ int main(int argc, char **argv) {
   // ---- 22h. the dial's INDEPENDENT check, and its negative control. Nothing
   //           on the CW beacon can settle which of its two tones the published
   //           figure names: the loop reads the same +/-2 Hz on the wrong line
-  //           as on the right one, which is how a dial 400 Hz off shipped for a
-  //           release. The middle beacon is 400 bd BPSK and symmetric about its
-  //           own published frequency, so where it is CENTRED says what the
-  //           dial is worth. The control is the world the IARU text describes
-  //           -- the beacon resting on its published tone -- where the loop
-  //           locks happily and everything the radio shows is 400 Hz high; a
-  //           check that cannot say so is decoration.
+  //           as on the right one. The middle beacon's centre must agree with
+  //           the CW resting tone to less than one keying shift. A synthetic
+  //           convention with the resting tone 400 Hz higher is a negative
+  //           control: refuse it rather than correcting every frequency wrongly.
   {
     char ck[192];
     for(int k=0;k<2;k++) {
@@ -1691,9 +1688,8 @@ int main(int argc, char **argv) {
         check("the middle beacon confirms a truthful dial",
               locked && strstr(ck,"the dial agrees")!=NULL, d);
       else
-        check("...and names the 400 Hz when the lock trues the wrong tone",
-              locked && strstr(ck,"-1 shift")!=NULL &&
-              strstr(ck,"LOW")!=NULL, d);
+        check("a CW tone 400 Hz from the BPSK reference is not acquired",
+              !locked && retunes==0 && fabs(res-3000.0)<1.0, d);
       qo100_beacon_reset();
     }
     // ...and the control on the whole-step half of it. Taking all of `act`
@@ -1845,6 +1841,10 @@ int main(int argc, char **argv) {
              res,retunes,locked,st);
     check("a converter outside the BPSK window is brought in on CW",
           locked && fabs(res)<50.0, d);
+    char ck[192];
+    qo100_beacon_check(ck,sizeof(ck));
+    check("a working CW fallback is retained instead of blind BPSK handover",
+          locked && strstr(ck,"Middle beacon")!=NULL,ck);
     qo100_beacon_reset();
   }
 
@@ -1891,6 +1891,24 @@ int main(int argc, char **argv) {
     beacon_sel=QO100_BEACON_SEL_LOWER;
     snprintf(d,sizeof(d),"%+.1f Hz remaining, %d retunes, locked=%d",res,retunes,locked);
     check("unconfirmed BPSK candidate cannot block CW fallback",locked && fabs(res)<50.0,d);
+    qo100_beacon_reset();
+  }
+
+  // The on-air report drifts about 40 Hz/s. Fixed slew limits prevented the
+  // median window from ever filling, leaving kilohertz of error while "locked".
+  for(int keyed=0;keyed<=1;keyed++) for(int sign=-1;sign<=1;sign+=2) {
+    bands_init(); gboolean locked=FALSE;
+    f1a_shape=keyed;
+    lo_drift_hz_s=sign*40.0;
+    mid_bpsk_amp=1.0;
+    run_loop(1500.0,0.05,blocks*8,&locked,768000,10489710000LL);
+    lo_drift_hz_s=0.0;
+    mid_bpsk_amp=0.0;
+    f1a_shape=FALSE;
+    snprintf(d,sizeof(d),"%+d Hz/s, keying=%d: max error %.1f Hz, locked=%d",
+             sign*40,keyed,worst_track,locked);
+    check("fast drift confirmed by both beacons stays bounded",
+          locked && worst_track<(keyed?180.0:150.0),d);
     qo100_beacon_reset();
   }
 
