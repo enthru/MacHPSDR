@@ -87,8 +87,6 @@ void radio_save_state(RADIO *radio) {
   char name[80];
   char value[80];
   int i;
-  gint x,y;
-  gint width,height;
   // 512 and snprintf, not 128 and sprintf: the home directory is unbounded
   // (a sandbox, a CI runner or a scratch HOME is routinely over 80 characters)
   // and on the SoapySDR branch the device NAME is interpolated too. This
@@ -465,19 +463,7 @@ log_info("radio_save_state: %s\n",filename);
 
   keybind_save_state();
 
-  // GTK4: no client-side window position; persist -1 (ignored on restore).
-  x=-1; y=-1;
-  sprintf(value,"%d",x);
-  setProperty("radio.x",value);
-  sprintf(value,"%d",y);
-  setProperty("radio.y",value);
-
-  width=gtk_widget_get_width(main_window);
-  height=gtk_widget_get_height(main_window);
-  sprintf(value,"%d",width);
-  setProperty("radio.width",value);
-  sprintf(value,"%d",height);
-  setProperty("radio.height",value);
+  main_save_geometry();
 
   // Save inter-receiver GtkPaned divider positions as fractions of each pane's
   // height, so they restore sensibly even if the window is a different size.

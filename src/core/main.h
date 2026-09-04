@@ -22,6 +22,8 @@
 
 extern GtkWidget *main_window;
 
+extern void main_save_geometry(void);
+
 extern gboolean main_delete(GtkWidget *widget);
 extern RADIO *radio;
 extern gboolean opengl;

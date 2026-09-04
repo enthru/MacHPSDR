@@ -40,6 +40,7 @@
 #include <wdsp.h>
 
 #ifdef __APPLE__
+#include <gdk/macos/gdkmacos.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
@@ -122,6 +123,59 @@ enum {
   STATUS_COLUMN,
   N_COLUMNS
 };
+
+/* GTK sizes are logical client sizes, whereas AppKit's saved frame also
+ * records the screen. Keep the native frame separately from GTK's size so
+ * AppKit can adjust placement when the monitor arrangement changes. */
+#ifdef __APPLE__
+static char *main_saved_frame;
+
+static id main_native_window(void) {
+  GdkSurface *surface=gtk_native_get_surface(GTK_NATIVE(main_window));
+  if(surface==NULL || !GDK_IS_MACOS_SURFACE(surface)) return nil;
+  return (id)gdk_macos_surface_get_native_window(GDK_MACOS_SURFACE(surface));
+}
+#endif
+
+void main_save_geometry(void) {
+  char value[32];
+  int width,height;
+  GtkWindow *window=GTK_WINDOW(main_window);
+  gtk_window_get_default_size(window,&width,&height);
+  g_snprintf(value,sizeof(value),"%d",width);
+  setProperty("radio.width",value);
+  g_snprintf(value,sizeof(value),"%d",height);
+  setProperty("radio.height",value);
+  setProperty("radio.maximized",gtk_window_is_maximized(window)?"1":"0");
+  setProperty("radio.fullscreen",gtk_window_is_fullscreen(window)?"1":"0");
+#ifdef __APPLE__
+  id native=main_native_window();
+  if(native && !gtk_window_is_maximized(window) && !gtk_window_is_fullscreen(window)) {
+    id frame=((id (*)(id,SEL))objc_msgSend)(native,sel_registerName("stringWithSavedFrame"));
+    const char *text=((const char *(*)(id,SEL))objc_msgSend)(frame,sel_registerName("UTF8String"));
+    g_free(main_saved_frame);
+    main_saved_frame=g_strdup(text);
+  }
+  if(main_saved_frame) setProperty("radio.macos_frame",main_saved_frame);
+#endif
+}
+
+static gboolean main_restore_geometry_tick(GtkWidget *widget,GdkFrameClock *clock,gpointer data) {
+  /* Run once after mapping: initial window placement must finish before we
+   * restore the native frame (including when the device picker was skipped). */
+#ifdef __APPLE__
+  id native=main_native_window();
+  if(native && main_saved_frame) {
+    id frame=((id (*)(id,SEL,const char *))objc_msgSend)(
+        (id)objc_getClass("NSString"),sel_registerName("stringWithUTF8String:"),main_saved_frame);
+    ((void (*)(id,SEL,id))objc_msgSend)(native,sel_registerName("setFrameFromString:"),frame);
+  }
+#endif
+  int state=GPOINTER_TO_INT(data);
+  if(state&1) gtk_window_maximize(GTK_WINDOW(widget));
+  if(state&2) gtk_window_fullscreen(GTK_WINDOW(widget));
+  return G_SOURCE_REMOVE;
+}
 
 gboolean main_delete (GtkWidget *widget) {
   if(radio!=NULL) {
@@ -571,8 +625,6 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
   char protocol[32];
   gchar title[128];
   char *value;
-  gint x=-1;
-  gint y=-1;
 
   if(d!=NULL && d->status==STATE_AVAILABLE) {
     switch(d->device) {
@@ -658,15 +710,6 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
 
     //launch_rigctl(radio);
 
-    // GTK4 removed client-side window positioning (gtk_window_move): the
-    // compositor owns placement, so radio.x/radio.y can no longer be restored.
-    // (void) them to keep the persisted values harmless.
-    value=getProperty("radio.x");
-    if(value!=NULL) x=atoi(value);
-    value=getProperty("radio.y");
-    if(value!=NULL) y=atoi(value);
-    (void)x; (void)y;
-
     int win_w=-1, win_h=-1;
     value=getProperty("radio.width");
     if(value!=NULL) win_w=atoi(value);
@@ -675,6 +718,18 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     if(win_w>0 && win_h>0) {
       gtk_window_set_default_size(GTK_WINDOW(main_window),win_w,win_h);
     }
+
+#ifdef __APPLE__
+    g_free(main_saved_frame);
+    main_saved_frame=g_strdup(getProperty("radio.macos_frame"));
+#endif
+    int window_state=0;
+    value=getProperty("radio.maximized");
+    if(value && atoi(value)) window_state|=1;
+    value=getProperty("radio.fullscreen");
+    if(value && atoi(value)) window_state|=2;
+    gtk_widget_add_tick_callback(main_window,main_restore_geometry_tick,
+                                 GINT_TO_POINTER(window_state),NULL);
 
     gtk_widget_set_cursor_from_name(main_window, "default");
 
