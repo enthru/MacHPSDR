@@ -849,6 +849,35 @@ static void spectrum_add(double *re, double *im, double *pow_acc) {
   for(int m=0;m<N;m++) pow_acc[m]+=re[m]*re[m]+im[m]*im[m];
 }
 
+// Align the squared BPSK carrier to the midpoint of this averaging window.
+// Squaring doubles the drift as well as the carrier frequency. Without this,
+// summing one second of power smears a weak drifting carrier across FFT bins.
+// Keep the midpoint frequency unchanged: the control loop already accounts for
+// that measurement age. CW/BPSK geometry still uses the untouched raw spectrum.
+static void bpsk_remove_drift(double *re, double *im, int fs,
+                              double start_samples, double slope) {
+  if(slope==0.0) return;
+  double count=ceil(fs*(QO100_AVG_MS/1000.0)/QO100_FFT_N)*QO100_FFT_N;
+  double h=1.0/fs;
+  double t=(start_samples-0.5*(count-1.0))*h;
+  double phase=-2.0*M_PI*slope*t*t;
+  double delta=-2.0*M_PI*slope*(2.0*t*h+h*h);
+  double delta2=-4.0*M_PI*slope*h*h;
+  double cr=cos(phase), ci=sin(phase);
+  double dr=cos(delta), di=sin(delta);
+  double ddr=cos(delta2), ddi=sin(delta2);
+  // Second-order oscillator: six trig calls per FFT block, not per sample.
+  for(int i=0;i<QO100_FFT_N;i++) {
+    double r=re[i], m=im[i];
+    re[i]=r*cr-m*ci;
+    im[i]=r*ci+m*cr;
+    double next=cr*dr-ci*di;
+    ci=cr*di+ci*dr; cr=next;
+    next=dr*ddr-di*ddi;
+    di=dr*ddi+di*ddr; dr=next;
+  }
+}
+
 // Locate the beacon within [lo_hz, hi_hz] of an ACCUMULATED power spectrum and
 // return its position in Hz. Caller holds bmtx.
 //
@@ -1931,6 +1960,7 @@ static void beacon_frame(RECEIVER *rx) {
       bsq_re[i]=r*r-m*m;
       bsq_im[i]=2.0*r*m;
     }
+    bpsk_remove_drift(bsq_re,bsq_im,track_fs,b_avg_samples,b_slope);
     spectrum_add(bsq_re,bsq_im,bsqr);
   }
   b_avg_samples+=(double)QO100_FFT_N;
@@ -2177,11 +2207,29 @@ static void beacon_frame(RECEIVER *rx) {
     else b_return_run=ready?1:0;
     b_return_last=absolute_error;
     if(say)
-      log_info("qo100: middle recovery probe: %d/%d confirmed measurements, peak %.1f\n",
-               b_return_run,QO100_BPSK_RETURN_RUN,mid_snr);
+      log_info("qo100: middle recovery probe: %d/%d confirmed measurements, peak %.1f, drift %+.1f Hz/s\n",
+               b_return_run,QO100_BPSK_RETURN_RUN,mid_snr,b_slope);
     if(b_return_run>=QO100_BPSK_RETURN_RUN) {
       double residual=mid_found-middle_expected;
-      beacon_reset_locked();
+      // Both references measure the same LNB error. Preserve the already
+      // measured drift and cadence across handover; resetting them would turn
+      // off BPSK drift compensation just when the weak beacon needs it most.
+      double shift=residual-(found-expected);
+      for(int i=0;i<b_med_n;i++) b_med[i]+=shift;
+      b_epoch++;
+      bacc=0;
+      spectrum_clear();
+      b_since_apply+=avg_samples;
+      b_return_run=0;
+      b_return_samples=0.0;
+      b_reject=b_stuck=0;
+      b_dry_samples=b_gone_samples=0.0;
+      b_tone_up=FALSE;
+      b_tone_win=b_tone_hits=b_tone_dn=0;
+      b_mid_n=0;
+      b_check[0]='\0';
+      b_expect_samples=0.0;
+      b_step_prev=0.0;
       b_boot=FALSE;
       b_locked=TRUE;
       b_settled=fabs(residual)<QO100_SETTLED_HZ;

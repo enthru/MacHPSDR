@@ -2036,6 +2036,24 @@ int main(int argc, char **argv) {
     qo100_beacon_reset();
   }
 
+  // One second of accumulation smears a weak squared BPSK carrier under
+  // drift. The CW slope must align the spectra and survive the handover.
+  for(int sign=-1;sign<=1;sign+=2) {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0; lo_drift_hz_s=sign*40.0;
+    run_loop(65000.0,14.0,blocks*20,&locked,768000,10489710000LL);
+    qo100_beacon_check(ck,sizeof(ck));
+    snprintf(d,sizeof(d),"%+d Hz/s: error %.1f Hz, step %.1f Hz; %.65s",
+             sign*40,worst_track,worst_step,ck);
+    check("weak drifting BPSK recovers with CW drift compensation",
+          locked && worst_track<150.0 && worst_step<200.0 &&
+          strstr(ck,"Lower CW")!=NULL,d);
+    lo_drift_hz_s=0.0; mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    qo100_beacon_reset();
+  }
+
   // ---- 23. the search band is the RECEIVER's, not a window around the guess.
   //          With the beacon expected 40 kHz below centre, a symmetric window
   //          reached -86 kHz on one side and +6 kHz on the other -- so an LNB
