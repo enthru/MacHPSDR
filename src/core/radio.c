@@ -2556,6 +2556,7 @@ static void frontend_slot_sync(RADIO *r) {
     char st[192];
     qo100_txcal_status(st,sizeof(st));
     gtk_label_set_text(GTK_LABEL(qo100_cal_lbl),st);
+    gtk_widget_set_visible(qo100_cal_lbl,st[0]!=0);
     gtk_widget_set_tooltip_text(qo100_cal_lbl,st[0]!=0?st:NULL);
     if(qo100_cal_b!=NULL)
       gtk_button_set_label(GTK_BUTTON(qo100_cal_b),
@@ -3205,7 +3206,12 @@ static void create_visual(RADIO *r) {
   g_signal_connect(qo100_cal_b,"clicked",G_CALLBACK(qo100_cal_cb),(gpointer)r);
   gtk_box_append(GTK_BOX(qo100_col),qo100_cal_b);
   qo100_cal_lbl=gtk_label_new("");
-  gtk_widget_set_name(qo100_cal_lbl,"section-label");
+  // NOT #section-label: that carries the accent rule which belongs to a title
+  // that is always there. A status line is empty most of the time, and with the
+  // title's style on it the empty label showed as a stray teal tick under the
+  // button. It is hidden outright while it has nothing to say -- see
+  // frontend_slot_sync.
+  gtk_widget_set_name(qo100_cal_lbl,"module-status");
   gtk_widget_set_halign(qo100_cal_lbl,GTK_ALIGN_START);
   gtk_label_set_ellipsize(GTK_LABEL(qo100_cal_lbl),PANGO_ELLIPSIZE_END);
   gtk_label_set_max_width_chars(GTK_LABEL(qo100_cal_lbl),22);

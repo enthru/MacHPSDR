@@ -831,6 +831,16 @@ static const char css_body[]=
 "    padding-left: 6px;\n"
 "    margin-left: 2px;\n"
 "    }\n"
+/* ---- a module's own status line: the same small dim text as a section label
+   and deliberately WITHOUT its accent rule. A module title is always present,
+   so the rule beside it reads as part of the title; a status line is empty most
+   of the time, and borrowing #section-label left a stray teal tick floating
+   under the button with nothing attached to it. ---- */
+"  #module-status {\n"
+"    font-family: @UIFONT@;\n"
+"    font-size: 10px;\n"
+"    color: @DARK_TEXT;\n"
+"    }\n"
 /* ---- TX MONITOR bezel: recess the little transmit panadapter into a framed
    display so it reads as an instrument, not a bare strip. The 3px padding ring
    is @SURFACE (same fill the Cairo surface draws), so the rounded @BORDER edge
