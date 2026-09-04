@@ -111,6 +111,7 @@ static int      correct_ds=QO100_CORRECT_DS_DEFAULT;
 // dial's independent check reads, and its spectrum is symmetric about its own
 // published frequency whichever way the CW beacon's two tones are named.
 static double   mid_bpsk_amp;
+static gboolean mid_intermittent;
 // ...and the world this file used to model, which is the one the application
 // assumed until the operator's own log argued it down: the beacon resting one
 // shift ABOVE its published frequency and keying down onto it. A loop built for
@@ -437,6 +438,10 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // by default; individual BPSK tests may request a stronger copy.
     if(generated_mid_amp<=0.0 && beacon_sel!=QO100_BEACON_SEL_MIDDLE)
       generated_mid_amp=0.5;
+    // Reproduce the log: initially acquired, then isolated appearances shorter
+    // than the agreement window. None of the gaps lasts the 10 s loss timeout.
+    if(mid_intermittent && t>=20.0 && fmod(t-20.0,5.12)>=0.05)
+      generated_mid_amp=0.0;
     if(generated_mid_amp>0.0) {
       // 400 bd, one random symbol per fs/400 samples, added to the same block:
       // a suppressed-carrier signal with no line to peak-search, which is the
@@ -1909,6 +1914,62 @@ int main(int argc, char **argv) {
              sign*40,keyed,worst_track,locked);
     check("fast drift confirmed by both beacons stays bounded",
           locked && worst_track<(keyed?180.0:150.0),d);
+    qo100_beacon_reset();
+  }
+
+  // BPSK has no CW keying shift. Its own confirmed drift must be followed,
+  // including when it acquired directly and never entered the CW fallback.
+  for(int sign=-1;sign<=1;sign+=2) {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    lo_drift_hz_s=sign*40.0;
+    run_loop(3000.0,0.05,blocks*12,&locked,768000,10489710000LL);
+    qo100_beacon_check(ck,sizeof(ck));
+    lo_drift_hz_s=0.0;
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"%+d Hz/s: error %.1f Hz, locked=%d; %.70s",
+             sign*40,worst_track,locked,ck);
+    check("direct BPSK lock tracks drift without a CW-ident veto",
+          locked && worst_track<180.0 && strstr(ck,"Lower CW")!=NULL,d);
+    qo100_beacon_reset();
+  }
+  {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    mid_intermittent=TRUE;
+    lo_drift_hz_s=6.0;
+    double res=run_loop(3000.0,0.05,blocks*12,&locked,768000,10489710000LL);
+    double final_error=res+6.0*(double)(blocks*12-1)*BLOCK/768000.0;
+    qo100_beacon_check(ck,sizeof(ck));
+    lo_drift_hz_s=0.0;
+    mid_intermittent=FALSE;
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"max %.1f Hz, final %+.1f Hz, locked=%d; %.75s",
+             worst_track,final_error,locked,ck);
+    // Allow the 10 s stall timeout plus CW verification and acquisition;
+    // require that it actually converges afterwards, not merely says locked.
+    check("intermittent BPSK cannot keep a stalled lock alive",
+          locked && worst_track<180.0 && fabs(final_error)<20.0 &&
+          strstr(ck,"Middle beacon")!=NULL,d);
+    qo100_beacon_reset();
+  }
+
+  {
+    bands_init(); gboolean locked=FALSE; char ck[192];
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    mid_bpsk_amp=1.0;
+    f1a_shape=TRUE;
+    run_loop(3000.0,0.05,blocks*12,&locked,768000,10489710000LL);
+    qo100_beacon_check(ck,sizeof(ck));
+    f1a_shape=FALSE;
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    check("mixed F1A tones do not declare the tone convention wrong",
+          locked && strstr(ck,"resting tone not established")!=NULL,ck);
     qo100_beacon_reset();
   }
 

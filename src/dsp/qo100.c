@@ -621,6 +621,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // let it true the dial and keep tracking that working CW source.
 // Nothing about the CW path changes; only which beacon this loop is currently
 // looking for.
+#define QO100_BPSK_STALL_MS 10000.0 // no accepted estimate, even if peaks reappear
 #define QO100_BOOT_DRY_MS   5000.0   // squared window empty this long => bootstrap
 // Once a fallback CW source is working, retain it until an explicit re-acquire
 // or source change. Settling the CW loop does not prove BPSK can hold a lock.
@@ -1388,6 +1389,19 @@ static void cw_tone_verdict(double off) {
              "(%d of %d)",off,b_mid_n,QO100_MID_MIN_N);
     return;
   }
+  double low=b_mid[0], high=b_mid[0];
+  for(int i=1;i<b_mid_n;i++) {
+    if(b_mid[i]<low) low=b_mid[i];
+    if(b_mid[i]>high) high=b_mid[i];
+  }
+  // Sampling both F1A tones is not evidence that the frequency convention is
+  // wrong. Report the ambiguity rather than alternating contradictory verdicts.
+  if(high-low>QO100_BPSK_CONFIRM_HZ) {
+    snprintf(b_check,sizeof(b_check),
+             "Lower CW tones span %.0f Hz (%d readings) — keying or drift; "
+             "resting tone not established",high-low,b_mid_n);
+    return;
+  }
   double med=median_of(b_mid,b_mid_n);
   int k=(int)llround(med/shift);
   if(fabs(med-(double)k*shift)>=QO100_MID_VERDICT_HZ)
@@ -1401,9 +1415,9 @@ static void cw_tone_verdict(double off) {
              "(%d readings) — the tone model is right",med,b_mid_n);
   else
     snprintf(b_check,sizeof(b_check),
-             "Lower CW beacon rests %+.0f Hz from its published figure "
-             "(%d readings) — %+d shift%s: QO100_BEACON_REST_HZ is wrong by that "
-             "much",med,b_mid_n,k,(k==1||k==-1)?"":"s");
+             "Lower CW tone observed %+.0f Hz from its published figure "
+             "(%d readings) — %+d shift%s: keyed tone or reference offset; "
+             "resting tone not established",med,b_mid_n,k,(k==1||k==-1)?"":"s");
 }
 
 static void middle_beacon_verdict(double off, double width, int bins) {
@@ -1740,7 +1754,11 @@ static void beacon_frame(RECEIVER *rx) {
   double middle_expected=(double)(track_beacon-rx->frequency_a);
   gboolean middle_reachable=fabs(middle_expected)<=span_half &&
                             fabs(middle_expected)>=2.0*QO100_DC_GUARD_HZ;
-  if(use_bpsk && !middle_reachable) {
+  // Count time since an estimate was accepted, not consecutive missing peaks.
+  // A brief appearance cannot keep a stalled BPSK lock alive indefinitely.
+  gboolean bpsk_stalled=b_expect_samples>=
+                        (double)track_fs*(QO100_BPSK_STALL_MS/1000.0);
+  if(use_bpsk && (!middle_reachable || bpsk_stalled)) {
     int boot=boot_beacon_pick(rx->frequency_a,span_half,-1);
     if(boot>=0) {
       beacon_reset_locked();
@@ -1749,8 +1767,11 @@ static void beacon_frame(RECEIVER *rx) {
       use_bpsk=FALSE;
       eff_sel=boot;
       eff_beacon=qo100_beacon_track_frequency(boot);
-      log_info("qo100: middle beacon at DC or outside span — acquiring %s CW beacon\n",
-               boot_name(boot));
+      snprintf(b_status,sizeof(b_status),
+               "Acquiring the %s CW beacon — middle BPSK %s",
+               boot_name(boot),bpsk_stalled?"has no accepted estimate for 10 s":
+                                          "is at DC or outside the span");
+      log_info("qo100: %s\n",b_status);
     }
   }
   double expected=(double)(eff_beacon-rx->frequency_a);
@@ -1928,7 +1949,7 @@ static void beacon_frame(RECEIVER *rx) {
       // Nothing in the SQUARED window is usually not a fault at all -- it is
       // the wrong source to be acquiring on, because that window is +/-25 kHz
       // and a cold LNB is out by tens. So do what the operator was having to do
-      // by hand: acquire a CW beacon, let it true the dial, and come back
+      // by hand: acquire a CW beacon and keep it tracking the dial
       // (QO100_BOOT_*). Everything about the CW path is unchanged, including
       // the 500/250 kHz identification, so this cannot lock to anything the
       // operator's own choice of that beacon would not have locked to.
@@ -2049,7 +2070,9 @@ static void beacon_frame(RECEIVER *rx) {
   // A shared displacement of the CW line and the independent BPSK centre is
   // LNB motion, not CW keying. This lets a rapidly warming converter build its
   // drift estimate without relaxing the guards for an isolated moving carrier.
-  gboolean common_drift=FALSE;
+  // The BPSK estimate already passed both its unsquared-shape check and the
+  // current CW geometry check. It has no F1A ident to veto a shared motion for.
+  gboolean common_drift=use_bpsk && geometry;
   if(!use_bpsk && got && bpsk_off!=0.0) {
     double c=0.0,w=0.0; int nb=0;
     double mid=found+bpsk_off;
@@ -2209,7 +2232,8 @@ static void beacon_frame(RECEIVER *rx) {
     b_expect_samples=0.0;
   } else if(!agreed) {
     snprintf(b_status,sizeof(b_status),
-             "Locked  (beacon unsteady %+.0f Hz -- ident?)",residual);
+             "Locked  (beacon unsteady %+.0f Hz%s)",residual,
+             use_bpsk?" — BPSK estimates disagree":" -- ident?");
     b_step_prev=0.0;
     return;
   }
@@ -2308,7 +2332,8 @@ static void beacon_frame(RECEIVER *rx) {
       b_reject++;
       if(b_reject<QO100_SLEW_LOST) {
         snprintf(b_status,sizeof(b_status),
-                 "Locked  (ignoring %+.0f Hz \342\200\224 beacon ident?)",residual-b_expect);
+                 "Locked  (ignoring %+.0f Hz — %s)",residual-b_expect,
+                 use_bpsk?"BPSK motion unconfirmed":"beacon ident?");
         b_step_prev=0.0;
         return;
       }
