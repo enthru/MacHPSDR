@@ -1067,8 +1067,8 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       int y=0;
       for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
         if(rates[r]>radio->sample_rate) continue;
-        char buf[16];
-        snprintf(buf,sizeof(buf),"%d",rates[r]);
+        char buf[24];
+        sui_rate_label(buf,sizeof(buf),rates[r]);   // 9600k, not 9600000
         GtkWidget *b=gtk_check_button_new_with_label(buf);
         if(first==NULL) first=b; else gtk_check_button_set_group(GTK_CHECK_BUTTON(b),GTK_CHECK_BUTTON(first));
         gtk_check_button_set_active(GTK_CHECK_BUTTON(b),rx->sample_rate==rates[r]);

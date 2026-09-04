@@ -209,6 +209,38 @@ static const char *dropdown_selected_text(GtkDropDown *dd) {
   return o ? gtk_string_object_get_string(o) : "";
 }
 
+// Row -> rate, for the three rate drop-downs on this page.  They used to read
+// the number back out of the row's LABEL, which stopped being possible the
+// moment the labels were written the way an operator reads them (9216k), and
+// was the same fragility the audio-backend menu already keeps backend_rows[]
+// for: a row is a position in a list somebody may filter, not a value.
+#define MAX_RATE_ROWS 16
+static int rate_rows[MAX_RATE_ROWS];        // the P1/fake radio-wide rate
+static int n_rate_rows=0;
+static int span_rows[MAX_RATE_ROWS];        // the per-receiver span (SoapySDR)
+static int n_span_rows=0;
+static int adc_rows[MAX_RATE_ROWS];         // the device's own clock (SoapySDR); 0 = "default"
+static int n_adc_rows=0;
+
+// Append one rate to a drop-down and remember what it means.
+static void rate_row_add(GtkWidget *dd,int *rows,int *n,int hz) {
+  if(*n>=MAX_RATE_ROWS) return;
+  char buf[24];
+  sui_rate_label(buf,sizeof(buf),hz);
+  gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(dd))),buf);
+  // What the row SAYS beside what it MEANS: the label is now written for a
+  // person to read, so the two can drift apart, and a drop-down is the one
+  // thing in this application no headless run can look at.
+  log_debug("%s: row %d = \"%s\" (%d Hz)\n",__FUNCTION__,*n,buf,hz);
+  rows[(*n)++]=hz;
+}
+
+static int rate_row_value(GtkDropDown *dd,const int *rows,int n) {
+  const guint sel=gtk_drop_down_get_selected(dd);
+  if(sel==GTK_INVALID_LIST_POSITION || (int)sel>=n) return 0;
+  return rows[sel];
+}
+
 static void model_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->model=gtk_drop_down_get_selected(widget);
@@ -220,7 +252,8 @@ static void sample_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   int rate;
   int i;
 
-  rate=atoi(dropdown_selected_text(widget));
+  rate=rate_row_value(widget,rate_rows,n_rate_rows);
+  if(rate<=0) return;
 
   switch(radio->discovered->protocol) {
     case PROTOCOL_1:
@@ -265,7 +298,8 @@ static void sample_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
 // rate down to it, so no hardware re-tuning and no full radio restart is needed.
 static void soapy_rx_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int rate=atoi(dropdown_selected_text(widget));
+  int rate=rate_row_value(widget,span_rows,n_span_rows);
+  if(rate<=0) return;
   if(rate>radio->sample_rate) rate=radio->sample_rate;
   for(int i=0;i<radio->discovered->supported_receivers;i++) {
     if(radio->receiver[i]!=NULL) {
@@ -291,9 +325,8 @@ static void soapy_adc_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data
              __FUNCTION__,radio->soapy_adc_rate_default);
     return;
   }
-  const char *t=dropdown_selected_text(widget);
-  if(t==NULL) return;
-  int rate=atoi(t);
+  int rate=rate_row_value(widget,adc_rows,n_adc_rows);
+  if(rate<=0) return;
   if(!soapy_adc_rate_valid(radio->discovered,rate)) return;
   radio->soapy_adc_rate=rate;
   log_info("%s: device rate %d chosen; it takes effect on the next start\n",__FUNCTION__,rate);
@@ -813,25 +846,25 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   if(radio->discovered->protocol==PROTOCOL_1 ||
      radio->discovered->protocol==PROTOCOL_FAKE) {
     GtkWidget *sample_rate_combo_box=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
-    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"48000");
-    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"96000");
-    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"192000");
-    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"384000");
+    n_rate_rows=0;
+    rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,48000);
+    rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,96000);
+    rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,192000);
+    rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,384000);
     // The fake device runs the wideband I/O path, so it can also offer the wide
     // spans (real Protocol-1 hardware tops out at 384k).
     if(radio->discovered->protocol==PROTOCOL_FAKE) {
-      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"768000");
-      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"1536000");
-      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),"1920000");
+      rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,768000);
+      rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,1536000);
+      rate_row_add(sample_rate_combo_box,rate_rows,&n_rate_rows,1920000);
     }
-    switch(radio->sample_rate) {
-      case 48000:   gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),0); break;
-      case 96000:   gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),1); break;
-      case 192000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),2); break;
-      case 384000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),3); break;
-      case 768000:  gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),4); break;
-      case 1536000: gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),5); break;
-      case 1920000: gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),6); break;
+    // Off the table the rows were built from, not off a second hand-written
+    // list of positions that has to be kept in step with the first.
+    for(int r=0;r<n_rate_rows;r++) {
+      if(rate_rows[r]==radio->sample_rate) {
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),r);
+        break;
+      }
     }
     g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(sample_rate_cb),radio);
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
@@ -879,15 +912,15 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     // broadcast FM -- 4800000 and 9600000 give 192 and 384 kHz.
     const int rates[]={192000,384000,768000,1536000,1920000,4800000,9600000};
     int rxrate=(radio->receiver[0]!=NULL)?radio->receiver[0]->sample_rate:radio->sample_rate;
-    int active=-1,idx=0;
+    int active=-1;
+    n_span_rows=0;
     for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
-      if(rates[r]<=radio->sample_rate) {
-        char buf[16];
-        snprintf(buf,sizeof(buf),"%d",rates[r]);
-        gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(sample_rate_combo_box))),buf);
-        if(rates[r]==rxrate) active=idx;
-        idx++;
-      }
+      // Up to the rate the DEVICE is clocked at -- which is now the operator's
+      // to raise (soapy_adc_rate_list), and why 4 800 000 and 9 600 000 are in
+      // that list: they are spans as well as clock rates.
+      if(rates[r]>radio->sample_rate) continue;
+      if(rates[r]==rxrate) active=n_span_rows;
+      rate_row_add(sample_rate_combo_box,span_rows,&n_span_rows,rates[r]);
     }
     if(active>=0) gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),active);
     g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(soapy_rx_rate_cb),radio);
@@ -913,20 +946,22 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     // list at all, so without it the control would sit on a number the device
     // is not running -- and once a rate had been picked there would be no way
     // back to the default at all.
+    n_adc_rows=0;
     {
-      char buf[40];
-      snprintf(buf,sizeof(buf),"Default (%d)",radio->soapy_adc_rate_default);
+      char rbuf[24],buf[40];
+      sui_rate_label(rbuf,sizeof(rbuf),radio->soapy_adc_rate_default);
+      snprintf(buf,sizeof(buf),"Default (%s)",rbuf);
       gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
+      log_debug("radio_dialog: device rate row 0 = \"%s\" (this device's default)\n",buf);
+      adc_rows[n_adc_rows++]=0;                           // 0 = "no choice of mine"
       idx++;
     }
     for(int i=0;i<soapy_adc_rate_count();i++) {
       const int r=soapy_adc_rate_at(i);
       if(!soapy_adc_rate_valid(radio->discovered,r)) continue;
       if(r==radio->soapy_adc_rate_default) continue;      // row 0 already is it
-      char buf[16];
-      snprintf(buf,sizeof(buf),"%d",r);
-      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
       if(r==radio->soapy_adc_rate) active=idx;
+      rate_row_add(adc_combo,adc_rows,&n_adc_rows,r);
       idx++;
     }
     gtk_drop_down_set_selected(GTK_DROP_DOWN(adc_combo),active);

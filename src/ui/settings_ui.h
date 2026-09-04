@@ -44,4 +44,12 @@ void sui_label_left(GtkWidget *label);
  */
 void sui_scale_show_value(GtkWidget *scale, int digits);
 
+// A sample rate as an operator reads it: 9216000 is six digits of noise around
+// the one that matters, so it is written 9216k. Exact multiples of 1000 only —
+// anything else is printed whole rather than rounded, since a rate that is not
+// round is usually the interesting part (a device reporting 2303999).
+// The VALUE must never be read back out of the label: rate drop-downs keep a
+// row -> rate table, the way the audio-backend menu does.
+void sui_rate_label(char *buf, size_t n, int hz);
+
 #endif

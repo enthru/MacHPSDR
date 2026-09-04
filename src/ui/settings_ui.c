@@ -12,6 +12,7 @@
 *
 */
 
+#include <stdio.h>
 #include "settings_ui.h"
 
 // One place to tune the whole configuration dialog's rhythm.
@@ -70,4 +71,9 @@ void sui_scale_show_value(GtkWidget *scale, int digits) {
     gtk_scale_set_value_pos(GTK_SCALE(scale),GTK_POS_BOTTOM);
   else
     gtk_scale_set_value_pos(GTK_SCALE(scale),GTK_POS_RIGHT);
+}
+
+void sui_rate_label(char *buf, size_t n, int hz) {
+  if(hz>=1000 && (hz%1000)==0) snprintf(buf,n,"%dk",hz/1000);
+  else                         snprintf(buf,n,"%d",hz);
 }

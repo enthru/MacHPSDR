@@ -2394,6 +2394,28 @@ static void ps_test_init(RADIO *r) {
 #endif
 }
 
+// MACHPSDR_CONFIGURE=<page title>: open the settings window on that page at
+// start-up, through the same call the Setup button makes.  Every control on it
+// is built only when the window is opened, so without this not one line of the
+// page builders runs in any headless test -- and they are where the rate
+// drop-downs, their row tables and their labels live.  A GTK critical from a
+// bad builder then shows up on stderr like any other.
+static gboolean configure_test_open(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  const char *page=g_getenv("MACHPSDR_CONFIGURE");
+  log_info("configure-test: opening the settings window on '%s'\n",page);
+  configure_dialog_open(r,page);
+  return G_SOURCE_REMOVE;
+}
+
+static void configure_test_init(RADIO *r) {
+  const char *e=g_getenv("MACHPSDR_CONFIGURE");
+  if(e==NULL || *e=='\0') return;
+  // After the receivers are streaming, so the page is built against a radio in
+  // the state an operator would open it in.
+  g_timeout_add(1200,configure_test_open,(gpointer)r);
+}
+
 static void reconnect_test_init(void) {
   const char *e=g_getenv("MACHPSDR_RECONNECT_TEST");
   if(e==NULL || *e=='\0') return;
@@ -3884,6 +3906,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   wideband_test_init(r);
 
   reconnect_test_init();
+
+  // MACHPSDR_CONFIGURE: open the settings window headlessly.
+  configure_test_init(r);
 
   // MACHPSDR_PS_TEST: enable PureSignal and key the transmitter.  Last, so it
   // runs against a radio that is already streaming.

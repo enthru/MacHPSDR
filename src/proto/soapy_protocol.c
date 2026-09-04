@@ -532,7 +532,15 @@ static int soapy_hw_rate_for(RECEIVER *rx) {
 
    Every entry is a multiple of 192 kHz, so the ratio to every span the app
    offers stays exact, and of 96 kHz, which is what the TX chain's geometry is
-   rounded to (create_transmitter). The list is bounded at use by what the
+   rounded to (create_transmitter).  4 800 000 and 9 600 000 are in it because
+   they are also SPANS: the offered spans are filtered by this rate, so without
+   them a device clocked at 9 216 000 stopped offering spans at 4 800 000, and a
+   receiver could never run at the device's own rate -- which is the one
+   configuration that needs no resampler at all.  9 600 000 is the widest span
+   the block geometry permits (rx_span_is_exact: the audio block is 25600/(rate/
+   48000) and must not fall below 128), so above it the extra width buys
+   receivers room to sit apart from each other, not a wider view for any one of
+   them. The list is bounded at use by what the
    device said it could be clocked at (info.soapy.rx_rate_max) -- an AD9361
    answers 61 440 000 there and a USRP more, so the top of this list is not
    meant to be the limit; the limit is meant to be the hardware and the link.
@@ -542,8 +550,8 @@ static int soapy_hw_rate_for(RECEIVER *rx) {
    stream in silence. Add to it when a device and a link that want more turn
    up -- and measure the delivery, do not assume it. */
 static const int soapy_adc_rate_list[]={
-  2304000,3072000,3840000,4608000,5760000,7680000,9216000,11520000,15360000,
-  19200000,23040000,30720000
+  2304000,3072000,3840000,4608000,4800000,5760000,7680000,9216000,9600000,
+  11520000,15360000,19200000,23040000,30720000
 };
 
 int soapy_adc_rate_count(void) { return (int)G_N_ELEMENTS(soapy_adc_rate_list); }
