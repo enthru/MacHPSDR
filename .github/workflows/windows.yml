@@ -20,14 +20,7 @@ name: Windows (MSYS2)
 
 on:
   push:
-    branches: [master, windows-port]
-    # A tag is a release: the same build and self-tests, with the package
-    # attached to the release instead of only to the run.  Glob, not regex --
-    # it matches 4.1 and 3.8.1 and nothing that does not start with a digit.
-    tags: ['[0-9]*']
-  pull_request:
-    branches: [master]
-  workflow_dispatch:
+    branches: ['release-[0-9]*']
 
 # Same reasoning as ci.yml: a run whose ref has moved on is reporting on a
 # commit that is no longer what the ref means.

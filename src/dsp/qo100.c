@@ -1007,6 +1007,28 @@ static gboolean find_carrier(const double *pow_acc, int fs,
     }
   }
 
+  // Check the 500 kHz geometry before any local 400 Hz tone pair: a
+  // candidate with a partner exactly that far away IS a beacon too. Among such
+  // candidates -- there is normally exactly one pair -- take the nearest to the
+  // expectation. Local modulation peaks must not hide a confirmed beacon.
+  if(sel<0 && partner_hz!=0.0) {
+    for(int i=0;i<held;i++) {
+      double want=cand_sf[i]+partner_hz;
+      if(want<lo_hz || want>hi_hz) continue;         // the partner is out of view
+      gboolean paired=FALSE;
+      for(int j=0;j<held && !paired;j++)
+        if(fabs(cand_sf[j]-want)<QO100_PAIR_TOL_HZ) paired=TRUE;
+      if(!paired) continue;
+      double d=fabs(cand_sf[i]-expected);
+      if(d<best) {
+        best=d;
+        sel=cand_bin[i];
+        how="the 500 kHz beacon pair";
+        if(geometry_out!=NULL) *geometry_out=TRUE;
+      }
+    }
+  }
+
   // The CW beacons are F1A: the published/resting line and the keyed line are
   // exactly QO100_KEYED_FROM_REST_HZ apart.  During acquisition this pair is a
   // much stronger identity test than "nearest" or "tallest", both of which
@@ -1031,28 +1053,6 @@ static gboolean find_carrier(const double *pow_acc, int fs,
         sel=cand_bin[i];
         confirmed=TRUE;
         how="the 400 Hz F1A pair";
-      }
-    }
-  }
-
-  // Failing that, the 500 kHz pairing, when both edges are in the window: a
-  // candidate with a partner exactly that far away IS a beacon too. Among such
-  // candidates -- there is normally exactly one pair -- take the nearest to the
-  // expectation.
-  if(sel<0 && partner_hz!=0.0) {
-    for(int i=0;i<held;i++) {
-      double want=cand_sf[i]+partner_hz;
-      if(want<lo_hz || want>hi_hz) continue;         // the partner is out of view
-      gboolean paired=FALSE;
-      for(int j=0;j<held && !paired;j++)
-        if(fabs(cand_sf[j]-want)<QO100_PAIR_TOL_HZ) paired=TRUE;
-      if(!paired) continue;
-      double d=fabs(cand_sf[i]-expected);
-      if(d<best) {
-        best=d;
-        sel=cand_bin[i];
-        how="the 500 kHz beacon pair";
-        if(geometry_out!=NULL) *geometry_out=TRUE;
       }
     }
   }
@@ -1716,11 +1716,12 @@ void qo100_beacon_status(char *buf, int size) {
 // nearer to the centre of the span the more room the wide search has on both
 // sides of it. Returns -1 when neither is reachable, which is a real answer:
 // then the span is what needs widening and the status says so.
-static int boot_beacon_pick(long long freq_a, double span_half) {
+static int boot_beacon_pick(long long freq_a, double span_half, int exclude) {
   static const int sels[2]={QO100_BEACON_SEL_LOWER,QO100_BEACON_SEL_UPPER};
   int best=-1;
   double bestd=0.0;
   for(int i=0;i<2;i++) {
+    if(sels[i]==exclude) continue;
     double e=(double)(qo100_beacon_track_frequency(sels[i])-freq_a);
     if(fabs(e)>=span_half) continue;
     if(fabs(e)<2.0*QO100_DC_GUARD_HZ) continue;
@@ -1741,12 +1742,30 @@ static void beacon_frame(RECEIVER *rx) {
   gboolean use_bpsk=track_bpsk && !b_boot;
   int eff_sel=b_boot?b_boot_sel:radio->qo100_beacon_sel;
   long long eff_beacon=b_boot?qo100_beacon_track_frequency(b_boot_sel):track_beacon;
+  // A middle beacon at DC (or outside the usable span) cannot be measured.
+  // Start CW immediately; these geometry refusals must not bypass fallback.
+  double middle_expected=(double)(track_beacon-rx->frequency_a);
+  gboolean middle_reachable=fabs(middle_expected)<=span_half &&
+                            fabs(middle_expected)>=2.0*QO100_DC_GUARD_HZ;
+  if(use_bpsk && !middle_reachable) {
+    int boot=boot_beacon_pick(rx->frequency_a,span_half,-1);
+    if(boot>=0) {
+      beacon_reset_locked();
+      b_boot=TRUE;
+      b_boot_sel=boot;
+      use_bpsk=FALSE;
+      eff_sel=boot;
+      eff_beacon=qo100_beacon_track_frequency(boot);
+      log_info("qo100: middle beacon at DC or outside span — acquiring %s CW beacon\n",
+               boot_name(boot));
+    }
+  }
   // ...and the way back. Once the CW lock has SETTLED the dial is true to well
   // inside a kilohertz, so the middle beacon is now inside its +/-25 kHz window
   // and the source the operator asked for can have the loop back. Bounded,
   // because a middle beacon that is not on air would otherwise trade the lock
   // with the CW one for ever.
-  if(b_boot && b_locked && b_settled && fabs(b_residual)<QO100_BOOT_DONE_HZ &&
+  if(b_boot && middle_reachable && b_locked && b_settled && fabs(b_residual)<QO100_BOOT_DONE_HZ &&
      b_boot_hands<QO100_BOOT_MAX) {
     log_info("qo100: dial trued on the %s CW beacon (%+.0f Hz applied) — handing "
              "back to the middle BPSK beacon\n",boot_name(b_boot_sel),b_applied);
@@ -1924,12 +1943,6 @@ static void beacon_frame(RECEIVER *rx) {
     b_run_samples=0.0;
     b_dry_samples+=avg_samples;
     if(!b_locked) {
-      if(unconfirmed) {
-        g_strlcpy(b_status,
-                  "Beacon candidate is unconfirmed — need another NB beacon 250/500 kHz away",
-                  sizeof(b_status));
-        return;
-      }
       // After ten seconds of finding nothing, stop repeating "Searching" and
       // name the limit the operator can actually act on. An LNB's error is its
       // crystal's tolerance times 9750 MHz -- 195 kHz at 20 ppm -- and a span of
@@ -1943,7 +1956,8 @@ static void beacon_frame(RECEIVER *rx) {
       // (QO100_BOOT_*). Everything about the CW path is unchanged, including
       // the 500/250 kHz identification, so this cannot lock to anything the
       // operator's own choice of that beacon would not have locked to.
-      int boot=use_bpsk?boot_beacon_pick(rx->frequency_a,span_half):-1;
+      int boot=(use_bpsk || b_boot)
+                 ?boot_beacon_pick(rx->frequency_a,span_half,b_boot?b_boot_sel:-1):-1;
       if(boot>=0 &&
          b_dry_samples>(double)track_fs*(QO100_BOOT_DRY_MS/1000.0)) {
         // ENTERING is not bounded; handing BACK is. After QO100_BOOT_MAX
@@ -1953,9 +1967,8 @@ static void beacon_frame(RECEIVER *rx) {
         // -- rather than a loop searching a window nothing is in while the LNB
         // warms up under it.
         gboolean last=(b_boot_hands>=QO100_BOOT_MAX);
-        log_info("qo100: middle beacon not found within +/-%.0f kHz of %+.1f kHz — "
-                 "acquiring the %s CW beacon%s\n",
-                 QO100_BPSK_ACQ_HZ/1000.0,expected/1000.0,boot_name(boot),
+        log_info("qo100: %s beacon not identified — acquiring the %s CW beacon%s\n",
+                 use_bpsk?"middle BPSK":boot_name(b_boot_sel),boot_name(boot),
                  last?" and keeping it: the middle one is not being heard"
                      :" first to bring the converter in");
         beacon_reset_locked();          // ...which clears the dry counter too
@@ -1967,11 +1980,15 @@ static void beacon_frame(RECEIVER *rx) {
                    "beacon instead",boot_name(boot));
         else
           snprintf(b_status,sizeof(b_status),
-                   "Middle beacon not within ±%.0f kHz — truing the dial on the "
-                   "%s CW beacon first",QO100_BPSK_ACQ_HZ/1000.0,boot_name(boot));
+                   "Acquiring the %s CW beacon for middle-beacon synchronization",
+                   boot_name(boot));
         return;
       }
-      if(b_dry_samples>(double)track_fs*10.0) {
+      if(unconfirmed) {
+        g_strlcpy(b_status,
+                  "Beacon candidate is unconfirmed — need another NB beacon 250/500 kHz away",
+                  sizeof(b_status));
+      } else if(b_dry_samples>(double)track_fs*10.0) {
         if(use_bpsk)
           snprintf(b_status,sizeof(b_status),
                    "Middle beacon not found within ±%.0f kHz and no CW beacon in "

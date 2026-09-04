@@ -18,10 +18,7 @@
 # the one defect no build step can notice (release 4.1 shipped it).  NEITHER IS
 # STARTED: what CI settles is that the bundle is complete, never that it runs.
 #
-# There is a third job, `macos-intel`, which does the same for x86_64 macOS and
-# runs only on a tag or a manual dispatch.  Its own comment block says why that
-# is where the line was drawn -- and it is NOT money, whatever an earlier
-# version of this file said.
+# The macos-intel job also builds the x86_64 bundle on every release branch.
 #
 # What it does NOT prove, and must never be written up as proving:
 #   - anything about radio hardware.  No HPSDR, no SoapySDR device, no TX.  The
@@ -42,22 +39,9 @@ name: Build + self-tests (macOS, Linux)
 
 on:
   push:
-    branches: [master]
-    # A tag is a release: the same build, with its .app attached to the release
-    # instead of only to the run.  See "Attach to the release" at the end of the
-    # build job -- the pattern is a glob, not a regex, so it matches 4.1 and
-    # 3.8.1 alike and nothing that does not start with a digit.
-    tags: ['[0-9]*']
-  pull_request:
-    branches: [master]
-  workflow_dispatch:
+    branches: ['release-[0-9]*']
 
-# A run whose ref has moved on is answering a question nobody is asking any
-# more: a second commit pushed to master, or a tag re-pointed at a different
-# commit, makes the run in flight obsolete the moment it happens.  Cancel it
-# rather than let it spend twenty minutes reporting on a commit that is no
-# longer what the ref means.  Keyed on the ref, so master, a tag and a pull
-# request never cancel each other.
+# Cancel obsolete builds when another commit is pushed to the same release branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -464,20 +448,6 @@ jobs:
   # measurement that settles it: /actions/runs/<id>/timing on the run that first
   # built this bundle reports MACOS total_ms 0 across both macOS jobs.
   #
-  # So the gate below is about attention, not money.  This is a compile of the
-  # same sources the arm64 job has just built and self-tested; both targets are
-  # 64-bit little-endian, so an endianness or pointer-size assumption shows on
-  # neither, and what is left for this job alone to catch is x86-only compiler
-  # behaviour and a Homebrew formula that exists for one architecture and not
-  # the other.  Three minutes per tag buys that; three minutes per commit, plus
-  # a second red X to triage on every push, does not.  What it gives up is that
-  # an Intel-only break surfaces on release day -- flip the `if:` to run it on
-  # every push the first time that actually costs an evening.
-  #
-  # A JOB OF ITS OWN AND NOT A THIRD MATRIX ENTRY, because a matrix entry cannot
-  # carry that condition: `jobs.<id>.if` has no access to the matrix context, so
-  # there is nowhere for it to live but a separate job.
-  #
   # macos-15-intel rather than macos-26-intel deliberately: it is the older of
   # the two GA Intel images, so the bundle it produces will load on the older
   # systems an Intel Mac is likely to still be running.
@@ -485,7 +455,6 @@ jobs:
   macos-intel:
     name: macos-15-intel
     runs-on: macos-15-intel
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
@@ -675,15 +644,6 @@ jobs:
   sanitize:
     name: ubuntu-latest (ASan + UBSan + LeakSanitizer)
     runs-on: ubuntu-latest
-    # NOT on a tag.  This job is twenty minutes of instrumented GUI runs, and a
-    # tag points at a commit that has already been through it on master -- the
-    # same tree, the same four leak checks, the same answer.  Re-running it
-    # because a ref was created delays the release and tells nobody anything.
-    # The gap, stated: a tag placed on a commit that never sat on master gets
-    # its release without the leak check.  Nothing in this repository is
-    # released that way, and if it ever is, `workflow_dispatch` runs this job.
-    if: "!startsWith(github.ref, 'refs/tags/')"
-
     # A SEPARATE JOB, not another matrix leg of `build`, and it has to be:
     # SANITIZE=1 rides in OPTIONS, .build-flags compares OPTIONS, and objects
     # land in the repo root under fixed names — so a sanitised and an ordinary

@@ -91,6 +91,9 @@ static gboolean f1a_fade;
 // line to peak-search, so the loop squares the stream and tracks the carrier
 // that comes out -- the source that cannot be one 400 Hz shift out.
 static gint     beacon_sel;
+static gint     generated_cw_sel=QO100_BEACON_SEL_LOWER;
+static gboolean generated_cw_pair;
+static gboolean unconfirmed_bpsk;
 static gboolean ft8_gate;
 static double   mock_utc;
 static double   test_utc(void) { return mock_utc; }
@@ -289,7 +292,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   guint32 seed=12345;
   // The PUBLISHED tone -- `hop` below is what puts the signal on the line the
   // beacon is actually radiating at that instant.
-  long long beacon=qo100_beacon_frequency(0);
+  long long beacon=qo100_beacon_frequency(generated_cw_sel);
 
   worst_pull=0.0;
   worst_track=0.0;
@@ -407,6 +410,12 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     double baseband=(double)(beacon-rx->frequency_a)-lo_error-lo_drift_hz_s*t+wob
                     -(deaf_radio?0.0:applied)+hop;
     gen_block(iq,BLOCK,baseband,fs,beacon_amp,noise,&phase,&seed);
+    if(generated_cw_pair) {
+      double upper[BLOCK*2];
+      static double uph=0.0; static guint32 usd=9123;
+      gen_block(upper,BLOCK,baseband+500000.0,fs,1.0,0.0,&uph,&usd);
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=upper[k];
+    }
     if(intruder_hz!=0.0) {
       // Somebody parked next to the beacon, on air continuously -- so unlike
       // the beacon's own tones it is there in EVERY integrated second.
@@ -437,6 +446,14 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       double mb=(double)(QO100_BEACON_MIDDLE-rx->frequency_a)-lo_error
                 -lo_drift_hz_s*t-(deaf_radio?0.0:applied);
       add_bpsk(iq,BLOCK,mb,fs,generated_mid_amp,&mph,&msd,&msym,&mcnt);
+    }
+    if(unconfirmed_bpsk) {
+      static double ph=0.0; static guint32 sd=192837;
+      static int sym=1, count=0;
+      // A BPSK-shaped station inside the middle search, without any witness
+      // 250 kHz away. It must not prevent fallback to the real CW pair.
+      add_bpsk(iq,BLOCK,(double)(QO100_BEACON_MIDDLE-rx->frequency_a)+2000.0,
+               fs,1.0,&ph,&sd,&sym,&count);
     }
     qo100_beacon_iq_feed(rx,iq,BLOCK);
     // The retune is queued onto the main loop, exactly as it is in the app.
@@ -1828,6 +1845,52 @@ int main(int argc, char **argv) {
              res,retunes,locked,st);
     check("a converter outside the BPSK window is brought in on CW",
           locked && fabs(res)<50.0, d);
+    qo100_beacon_reset();
+  }
+
+  // Selecting the middle frequency must not strand the loop at the DC guard.
+  // Both CW edges identify each other even when the middle beacon is absent.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    generated_cw_pair=TRUE;
+    double res=run_loop(65000.0,0.05,blocks*10,&locked,768000,QO100_BEACON_MIDDLE);
+    generated_cw_pair=FALSE;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"%+.1f Hz remaining, %d retunes, locked=%d",res,retunes,locked);
+    check("middle frequency at DC acquires and keeps a CW lock",locked && fabs(res)<50.0,d);
+    qo100_beacon_reset();
+  }
+  // The nearer lower CW beacon is missing. Try the upper instead of waiting
+  // forever on a source chosen solely by its expected position in the span.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    generated_cw_sel=QO100_BEACON_SEL_UPPER;
+    mid_bpsk_amp=1.0;
+    double res=run_loop(65000.0,0.05,blocks*10,&locked,768000,QO100_BEACON_MIDDLE-10000);
+    generated_cw_sel=QO100_BEACON_SEL_LOWER;
+    mid_bpsk_amp=0.0;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"%+.1f Hz remaining, %d retunes, locked=%d",res,retunes,locked);
+    check("missing lower bootstrap beacon falls back to upper",locked && fabs(res)<50.0,d);
+    qo100_beacon_reset();
+  }
+
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    beacon_sel=QO100_BEACON_SEL_MIDDLE;
+    generated_cw_pair=TRUE;
+    unconfirmed_bpsk=TRUE;
+    double res=run_loop(65000.0,0.05,blocks*10,&locked,768000,QO100_BEACON_MIDDLE-10000);
+    unconfirmed_bpsk=FALSE;
+    generated_cw_pair=FALSE;
+    beacon_sel=QO100_BEACON_SEL_LOWER;
+    snprintf(d,sizeof(d),"%+.1f Hz remaining, %d retunes, locked=%d",res,retunes,locked);
+    check("unconfirmed BPSK candidate cannot block CW fallback",locked && fabs(res)<50.0,d);
     qo100_beacon_reset();
   }
 
