@@ -425,6 +425,8 @@ log_info("radio_save_state: %s\n",filename);
 */
   sprintf(value,"%d",radio_iqswap_get(radio));
   setProperty("radio.iqswap",value);
+  sprintf(value,"%d",radio_dc_block_get(radio));
+  setProperty("radio.dc_block",value);
 
   setProperty("radio.iq_player_file",radio->iq_player_file);
   setPropertyDouble("radio.iq_player_offset",radio->iq_player_offset);
@@ -739,6 +741,11 @@ void radio_restore_state(RADIO *radio) {
 
   value=getProperty("radio.iqswap");
   if(value) radio_iqswap_set(radio,atoi(value));
+  // Absent (an older props file) leaves create_radio's default, which is on
+  // for a SoapySDR device: a spike nobody asked for is not a setting anyone
+  // chose to keep.
+  value=getProperty("radio.dc_block");
+  if(value) radio_dc_block_set(radio,atoi(value));
 
   value=getProperty("radio.iq_player_file");
   if(value) g_strlcpy(radio->iq_player_file,value,sizeof(radio->iq_player_file));

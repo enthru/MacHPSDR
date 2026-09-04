@@ -396,6 +396,13 @@ typedef struct _radio {
   // allowed to keep using the value it saw when it started.
   gint iqswap;
 
+  // Remove the zero-IF DC spike in software on a SoapySDR device (HackRF,
+  // PlutoSDR, RTL): see src/dsp/dc_block.h for why neither driver can do it.
+  // Read by the SoapySDR DSP worker and written by the GTK thread while it
+  // runs, so it takes the same atomic accessors iqswap does. Persisted; on by
+  // default for a SoapySDR device and meaningless (and unread) for any other.
+  gint dc_block;
+
   // I/Q Player (fake device): path of the WAV recording to loop, chosen in
   // Configure -> Radio. Empty => synthetic noise+tones. Persisted.
   char iq_player_file[512];
@@ -445,6 +452,14 @@ static inline gboolean radio_iqswap_get(const RADIO *r) {
 
 static inline void radio_iqswap_set(RADIO *r,gboolean enabled) {
   g_atomic_int_set(&r->iqswap,enabled ? TRUE : FALSE);
+}
+
+static inline gboolean radio_dc_block_get(const RADIO *r) {
+  return g_atomic_int_get(&r->dc_block) != 0;
+}
+
+static inline void radio_dc_block_set(RADIO *r,gboolean enabled) {
+  g_atomic_int_set(&r->dc_block,enabled ? TRUE : FALSE);
 }
 
 extern int radio_restart(void *data);

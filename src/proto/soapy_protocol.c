@@ -40,6 +40,7 @@
 #include "channel.h"
 #include "discovered.h"
 #include "bpsk.h"
+#include "dc_block.h"
 #include "mode.h"
 #include "filter.h"
 #include "receiver.h"
@@ -115,6 +116,12 @@ static long long fifo_dropped[MAX_CHANNELS];
 static GMutex fifo_mutex[MAX_CHANNELS];
 static GCond fifo_cond[MAX_CHANNELS];
 static gboolean dsp_thread_running[MAX_CHANNELS];
+/* "The stream underneath you is a different one now": raised by fifo_clear,
+   consumed by the DSP thread, which is the only owner of the DC estimate --
+   that state lives on its stack for exactly this reason, so that a restart on
+   the GTK thread can ask for a reset without writing the filter's memory while
+   it is being run. */
+static volatile gint dc_block_reset_req[MAX_CHANNELS];
 static GThread *dsp_thread_id[MAX_CHANNELS];
 static gpointer dsp_thread(gpointer data);
 
@@ -143,6 +150,12 @@ static void fifo_clear(size_t channel) {
   fifo_rd[channel]=0;
   fifo_n[channel]=0;
   g_mutex_unlock(&fifo_mutex[channel]);
+  /* The next block comes off a stream that was set up again, at a rate or a
+     gain or a centre that may have moved, so the offset measured off the old
+     one is not this one's.  Re-converging from zero takes a few milliseconds;
+     walking there from a stale estimate takes the same few milliseconds and
+     puts a step into the audio on the way. */
+  if(channel<MAX_CHANNELS) g_atomic_int_set(&dc_block_reset_req[channel],1);
 }
 
 /* Both teardown paths (a receiver going away, and a reconnect) must stop this
@@ -1656,10 +1669,35 @@ static gpointer dsp_thread(gpointer data) {
   float *buffer=g_new(float,block*2);
   gint64 dropped_reported=g_get_monotonic_time();
   gint64 next_block_us=0;
+  /* On this thread's stack, so nothing else can write it: see
+     dc_block_reset_req above. */
+  DCBLOCK dcb;
+  dc_block_init(&dcb,soapy_rx_actual_rate);
 log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,block);
   while(dsp_thread_running[channel]) {
     int elements=fifo_pop(channel,buffer,block);
     if(elements<=0) continue;
+    /* The zero-IF DC spike sits at the DEVICE's LO, so it is removed HERE:
+       once, on the raw block, before the per-receiver NCO brings each centre
+       to DC and the decimators throw the rest of the span away.  Anywhere
+       further down is the wrong frequency -- after the mixer the spike is at
+       minus the receiver's offset rather than at DC, and it would have to be
+       found again in every receiver instead of being removed from the one
+       stream they all share. */
+    {
+      const int rate=soapy_rx_actual_rate;
+      if(rate!=dcb.rate) dc_block_init(&dcb,rate);
+      if(g_atomic_int_get(&dc_block_reset_req[channel])) {
+        g_atomic_int_set(&dc_block_reset_req[channel],0);
+        dc_block_reset(&dcb);
+      }
+      /* One atomic load per block, not per sample -- the same rule the iqswap
+         snapshot below is written to.  Switched off, the estimate is dropped
+         rather than left to go stale, so switching it back on converges from
+         zero instead of from an offset measured at some other gain. */
+      if(radio_dc_block_get(radio)) dc_block_run(&dcb,buffer,elements);
+      else                          dc_block_reset(&dcb);
+    }
     // A whole HackRF transfer reaches the FIFO every ~65 ms, but DSP and the
     // analyzer need the smaller pieces at their sample-clock cadence.  Without
     // this, all pieces are processed back-to-back and the waterfall advances

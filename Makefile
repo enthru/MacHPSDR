@@ -575,6 +575,7 @@ level_meter.c \
 tx_info.c \
 tx_info_meter.c \
 peak_detect.c \
+dc_block.c \
 subrx.c \
 actions.c\
 keybind.c\
@@ -649,6 +650,7 @@ level_meter.h \
 tx_info.h \
 tx_info_meter.h \
 peak_detect.h \
+dc_block.h \
 subrx.h \
 actions.h\
 dxcluster.h\
@@ -726,6 +728,7 @@ level_meter.o \
 tx_info.o \
 tx_info_meter.o \
 peak_detect.o \
+dc_block.o \
 subrx.o \
 actions.o \
 keybind.o \
@@ -946,6 +949,20 @@ tci_offline$(EXE): tools/tci_offline.c src/proto/tci_stream.h tci_cw.o tci_ws.o 
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o \
 	  $(shell pkg-config --libs glib-2.0) $(WIN_NET_LIBS)
 
+# Headless DC-blocker harness.  The zero-IF spike remover runs on the raw
+# SoapySDR block, ahead of every receiver's mixer and decimator, so a mistake
+# there reaches the panadapter, the decoders and the I/Q recorder at once -- and
+# both ways of getting it wrong are invisible on a waterfall (a null that only
+# attenuates looks like a smaller spike; a notch that is too wide eats the band
+# next to the LO and looks like a clean centre).  Links dc_block.o alone: no
+# glib, no RADIO, no device.
+#   make dc-offline && ./dcblock_offline --selftest
+.PHONY: dc-offline
+dc-offline: dcblock_offline$(EXE)
+dcblock_offline$(EXE): tools/dcblock_offline.c dc_block.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  -o $@ tools/dcblock_offline.c dc_block.o -lm
+
 # Headless keyboard-shortcut harness.  The store is everything about a shortcut
 # except what it finally does: the accelerator round trip through the props file
 # (a hand-edited line that will not parse must leave the row UNBOUND, not bind
@@ -1079,7 +1096,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE)
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE)
 ifeq ($(FT8_INCLUDE),FT8)
 CHECK_BINS+=ft8_offline$(EXE)
 endif
@@ -1151,9 +1168,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

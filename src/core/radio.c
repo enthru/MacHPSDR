@@ -3597,9 +3597,14 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   #ifdef SOAPYSDR
   if(r->discovered->device==DEVICE_SOAPYSDR) {
     radio_iqswap_set(r,TRUE);
+    // On by default: every device this path drives is direct-conversion, so
+    // the spike is always there, and it is an artefact of the receiver rather
+    // than anything on the band. See src/dsp/dc_block.h.
+    radio_dc_block_set(r,TRUE);
   } else {
 #endif
     radio_iqswap_set(r,FALSE);
+    radio_dc_block_set(r,FALSE);
 #ifdef SOAPYSDR
   }
 #endif

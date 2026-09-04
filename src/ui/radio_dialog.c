@@ -658,6 +658,16 @@ static void dac0_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 }
 #endif
 
+#ifdef SOAPYSDR
+static void dc_block_changed_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  // Live: the SoapySDR DSP worker takes one atomic snapshot of this per block,
+  // so nothing has to be restarted and the spike appears or goes within a
+  // block of the click.
+  radio_dc_block_set(r,gtk_check_button_get_active(GTK_CHECK_BUTTON(widget)));
+}
+#endif
+
 static void iqswap_changed_cb(GtkWidget *widget, gpointer data) {
   RADIO *r=(RADIO *)data;
   radio_iqswap_set(r,gtk_check_button_get_active(GTK_CHECK_BUTTON(widget)));
@@ -994,6 +1004,24 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     g_object_set_data(G_OBJECT(adc_combo),"span-selector",
                       g_object_get_data(G_OBJECT(model_grid),"span-selector"));
     soapy_adc_status_update(GTK_DROP_DOWN(adc_combo),radio);
+  }
+
+  // The zero-IF spike in the middle of the panadapter.  Row 1, column 0: the
+  // top row's columns are counted out by `x` and adding to it would shift the
+  // rate selectors that share it.
+  if(radio->discovered->device==DEVICE_SOAPYSDR) {
+    GtkWidget *dcb=gtk_check_button_new_with_label("Remove DC spike");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(dcb),radio_dc_block_get(radio));
+    g_signal_connect(dcb,"toggled",G_CALLBACK(dc_block_changed_cb),radio);
+    gtk_widget_set_tooltip_text(dcb,
+        "Removes the carrier a direct-conversion receiver draws at the exact "
+        "centre of its own stream — the device's LO leakage and ADC offset, not "
+        "a signal on the band. Applied to the shared stream before each "
+        "receiver is tuned out of it, so it is removed once for all of them.\n"
+        "Applied immediately. It notches about 20 Hz at the DEVICE's frequency, "
+        "which is the centre of the panadapter only when CTUN and freetune are "
+        "off; turn it off if you are working a signal that sits exactly there.");
+    gtk_grid_attach(GTK_GRID(model_grid),dcb,0,1,1,1);
   }
 #endif
 
