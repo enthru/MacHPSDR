@@ -1465,15 +1465,6 @@ static void decode_sel_changed(GtkDropDown *cb, GParamSpec *ps, gpointer data) {
   r->decode_mode = m;
   if(m==DECODE_FT8) r->ft8_proto = 0;
   else if(m==DECODE_FT4) r->ft8_proto = 1;
-  // Re-apply the WDSP panel gain: turning a decoder on forces the channel to
-  // unity so the decoder (and the FT8 waterfall) always tap a full-level signal
-  // regardless of the listen volume/mute; turning it off restores the listen
-  // gain. receiver_panel_gain() now depends on decode_mode, which just changed, but
-  // (unlike a mode change) nothing else re-pushes the gain to WDSP — so without
-  // this the decoder would keep tapping the attenuated/muted audio and decode
-  // nothing (and the waterfall would stay blank).
-  if(r->active_receiver!=NULL && r->active_receiver->channel>=0)
-    receiver_set_volume(r->active_receiver);
   // Turning a decoder on holds this RX's noise reduction off (NR distorts the
   // waveform a decoder needs); turning it off restores the operator's NR. Only
   // the WDSP Run flags change — rx->nr* (and the VFO NR indicator) are untouched.

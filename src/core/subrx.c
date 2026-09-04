@@ -194,10 +194,10 @@ log_info("%s: rx=%d\n",__FUNCTION__,rx->channel);
   subrx_frequency_changed(rx);
   subrx_mode_changed(rx);
 
-  // rx->volume alone here left VFO B playing through Mute: the main channel's
-  // gain goes to zero and the sub-channel's did not, so muting the receiver
-  // silenced one ear of it.  One gain function for both channels.
-  SetRXAPanelGain1(subrx->channel, receiver_panel_gain(rx));
+  // Unity, like the main channel: the listen gain is applied once in software,
+  // after the two are mixed (receiver_listen_gain / process_rx_buffer), so Mute
+  // and AF GAIN answer for both ears with one multiply.
+  SetRXAPanelGain1(subrx->channel, 1.0);
   SetRXAPanelSelect(subrx->channel, 3);
   SetRXAPanelPan(subrx->channel, 0.5);
   SetRXAPanelCopy(subrx->channel, 0);
@@ -291,9 +291,11 @@ void subrx_update_noise(RECEIVER *rx) {
 }
 
 // Reached from receiver_set_volume(), i.e. from every volume AND mute change.
+// Both are software now, so this only re-asserts the unity panel -- see the
+// note on receiver_listen_gain().
 void subrx_volume_changed(RECEIVER *rx) {
   SUBRX *subrx=(SUBRX *)rx->subrx;
-  SetRXAPanelGain1(subrx->channel, receiver_panel_gain(rx));
+  SetRXAPanelGain1(subrx->channel, 1.0);
 }
 
 void subrx_change_sample_rate(RECEIVER *rx) {

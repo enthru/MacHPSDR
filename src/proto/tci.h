@@ -77,9 +77,10 @@ extern void tci_iq_feed(RECEIVER *rx, const double *iq, int nsamples, int sample
 extern void tci_audio_feed(RECEIVER *rx, const double *audio, int nstereo, int sample_rate);
 
 // TRUE while some client is streaming this receiver's RX audio. The receiver
-// asks this so it can hand the tap a full-level signal (receiver_panel_gain),
-// which is what keeps AF GAIN and Mute -- speaker controls -- out of a network
-// client's stream.
+// asks this to decide whether to install the pre-AGC tap ring. The level a
+// client gets needs no arrangement: the WDSP panel is at unity on every
+// channel and AF GAIN/Mute -- speaker controls -- are applied to the speaker
+// copy in software (receiver_listen_gain), so they never reach the stream.
 extern gboolean tci_audio_subscribed(RECEIVER *rx);
 
 // Phase C — TX audio in: while a client streams TX audio and we transmit,

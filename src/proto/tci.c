@@ -492,7 +492,7 @@ static gboolean tci_apply_state_idle(gpointer data) {
         break;
       case TCI_OP_MUTE:
         rx->mute = c->b;
-        receiver_set_volume(rx);      // mute is the panel gain going to 0
+        receiver_set_volume(rx);
         break;
       case TCI_OP_VOLUME:
         rx->volume = c->d;
@@ -580,20 +580,12 @@ static void client_set_iq(TCI_CLIENT *c, int rx_index, gboolean on) {
 }
 
 // Same for the RX audio subscription, bounded for the same reason.
-// Re-push the WDSP panel gain for a receiver whose audio-subscription state just
-// changed. Subscribing forces that channel to unity (receiver_panel_gain), and
-// nothing else re-pushes the gain, so without this the change would not take
-// until the operator next touched the volume. GTK thread, hence the idle.
-static gboolean tci_repush_gain_idle(gpointer data) {
-  RECEIVER *rx = (RECEIVER *)data;
-  if (!receiver_is_live(rx) || rx->channel < 0) return G_SOURCE_REMOVE;
-  // Panel gain only. Subscribing does NOT touch NR/ANF/SNB or the squelch: they
-  // are the operator's settings on the operator's receiver, and a client is not
-  // entitled to change what comes out of their speaker.
-  receiver_set_volume(rx);
-  return G_SOURCE_REMOVE;
-}
-
+// Subscribing changes nothing about the receiver itself: the audio it hands the
+// stream is the demodulator's own level whoever is listening (the WDSP panel
+// runs at unity and AF GAIN/Mute are applied to the speaker copy in software --
+// see receiver_listen_gain), and NR/ANF/SNB and the squelch stay the operator's
+// settings on the operator's receiver. A client is not entitled to change what
+// comes out of their speaker.
 static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
   if (rx_index >= MAX_RECEIVERS) return;
   gint old = g_atomic_int_get(&c->audio_mask);
@@ -616,19 +608,11 @@ static void client_set_audio(TCI_CLIENT *c, int rx_index, gboolean on) {
   gint all = 0;
   for (int i = 0; i < TCI_MAX_CLIENTS; i++)
     all |= g_atomic_int_get(&clients[i].audio_mask);
-  gint was = g_atomic_int_get(&audio_rx_mask);
   g_atomic_int_set(&audio_rx_mask, all);
-
-  for (int idx = 0; idx < MAX_RECEIVERS; idx++) {
-    if (((was ^ all) & (1 << idx)) == 0) continue;
-    RECEIVER *rx = tci_rx_at(idx);
-    if (rx != NULL) g_idle_add(tci_repush_gain_idle, rx);
-  }
 }
 
-// TRUE when some client is streaming this receiver's audio. The stream is not a
-// speaker, so this makes the receiver hand it a full-level signal: see
-// receiver_panel_gain().
+// TRUE when some client is streaming this receiver's audio. Used to decide
+// whether the pre-AGC tap ring is worth installing (receiver.c).
 gboolean tci_audio_subscribed(RECEIVER *rx) {
   if (!g_atomic_int_get(&server_running) || rx == NULL) return FALSE;
   int idx = tci_rx_index(rx);

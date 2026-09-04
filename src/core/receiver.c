@@ -2472,14 +2472,6 @@ void receiver_mode_changed(RECEIVER *rx,int mode) {
     set_apf(rx);
   }
   receiver_filter_changed(rx,rx->filter_a);
-#ifdef DECODERS
-  // Re-apply the WDSP panel gain: entering DIGU/DIGL switches the channel to
-  // unity (so the decoder taps full level regardless of volume/mute), leaving it
-  // restores the listen gain. receiver_panel_gain() depends on the just-set mode.
-  // Guard against early calls before the WDSP channel exists (create_receiver
-  // sets the gain itself).
-  if(rx->channel>=0) receiver_set_volume(rx);
-#endif
   // Re-evaluate stream-DSP bypass: a mode change can take this RX into or out of a
   // data mode (DIGU/DIGL) or a decoder-tapped mode (bypass_stream_dsp), so re-push
   // the NB/NR/ANF/SNB run flags (update_noise) and the manual-notch run flag
@@ -2575,33 +2567,6 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
 }
 #endif
 
-// WDSP audio-panel gain for a receiver's channel -- and for its SUBRX channel,
-// which is the same operator listening to the same receiver and must answer the
-// same Mute. Normally this is the listen
-// gain (volume, or 0 when muted). When a decoder is active on this RX we run the
-// channel at unity instead: the decoder taps rx->audio_output_buffer, which WDSP
-// scales by this gain, and the operator does not listen to the decoded signal —
-// so it must decode regardless of the volume slider or mute. The listen
-// volume/mute is applied to the audible output in software in
-// process_rx_buffer() for that case. See receiver_set_volume().
-// TRUE when this receiver's demodulated audio is consumed by something that is
-// not the operator's speaker: an in-tree decoder, or a TCI client streaming it.
-// Both need the signal at the level the demodulator produced, independent of
-// the listen volume and of Mute — those belong to the speaker, and the listen
-// gain is applied to the audible copy in software instead (process_rx_buffer).
-//
-// For a network client this is the difference between a stream that works out
-// of the box and one the operator has to set up: with only the decoder case
-// here, AF GAIN silently scaled what a TCI client received and Mute silenced
-// it, so a client's level depended on a knob that has nothing to do with it.
-gboolean receiver_audio_tapped(RECEIVER *rx) {
-  if(rx==NULL) return FALSE;
-#ifdef DECODERS
-  if(decoder_taps_audio(rx)) return TRUE;
-#endif
-  return tci_audio_subscribed(rx);
-}
-
 // The frequency this receiver is actually listening on, which is NOT
 // rx->frequency_a under ctun or freetune: there the dial names the span centre
 // and the cursor is where the demodulator sits. Every answer given to the
@@ -2613,8 +2578,42 @@ long long receiver_tuned_frequency(RECEIVER *rx) {
   return (rx->ctun || rx->freetune) ? rx->ctun_frequency : rx->frequency_a;
 }
 
-gdouble receiver_panel_gain(RECEIVER *rx) {
-  if(receiver_audio_tapped(rx)) return 1.0;
+// The listen gain: AF GAIN, or zero when the receiver is muted. It is applied
+// in ONE place, process_rx_buffer(), to the sample that is about to be played —
+// and deliberately NOT through WDSP's audio panel, which is left at unity on
+// every RX and SUBRX channel (create_receiver, create_subrx).
+//
+// It used to be the other way round: the panel carried the listen gain, and the
+// software multiply below was reserved for a receiver whose audio something
+// other than the speaker was consuming — an in-tree decoder or a TCI client,
+// which need the level the demodulator produced and not the level the speaker
+// is set to, so those channels ran at unity instead. Two things were wrong with
+// splitting it that way, and both were audible as sound out of a MUTED
+// receiver:
+//
+//   - the predicate choosing between them is (rx->mode_a, radio->decode_mode,
+//     subscribers), the GTK thread flips it, and the RX audio thread reads it.
+//     Leaving DIGU with a decoder selected cleared the software gain the moment
+//     set_mode() wrote rx->mode_a, while the panel was still at unity — the
+//     rest of receiver_mode_changed() (a possible channel restart, set_agc,
+//     set_squelch, the filter's fircore re-plan) ran with the receiver at full
+//     volume. decode_sel_changed() re-pushed the gain for the ACTIVE receiver
+//     only, so a second receiver sitting in DIGU kept its unity panel for the
+//     rest of the session and answered neither AF GAIN nor Mute at all.
+//
+//   - and no ordering could have fixed it, because the panel gain is not what
+//     the operator hears now: WDSP hands out audio it has ALREADY scaled, so
+//     SetRXAPanelGain1 takes the whole iobuff ring to reach the speaker.
+//     Measured against libwdsp at this application's own channel geometries,
+//     audio still coming out AFTER the gain went to zero: **213 ms** on a
+//     SoapySDR/faker receiver at a 192 kHz span (in 5120 @192k, dsp_size 5120
+//     @48k, ring depth 2), **133 ms** in WFM at a 384 kHz span (dsp_size 5120
+//     @384k, depth 9), **43 ms** on HPSDR at 192 kHz (blocks of 1024).
+//
+// One gain, applied last. Everything upstream of it — the decoders, the TCI
+// stream, the recorder, rx->audio_output_buffer generally — carries the level
+// the demodulator produced, which is what all of them wanted anyway.
+static inline gdouble receiver_listen_gain(RECEIVER *rx) {
   return rx->mute ? 0.0 : rx->volume;
 }
 
@@ -2795,12 +2794,12 @@ static void process_rx_buffer(RECEIVER *rx) {
         }
       }
     }
-    // While a decoder or a TCI client is tapping this RX the WDSP channel runs at
-    // unity (see receiver_audio_tapped) so they always get a full-level signal;
-    // apply the listen volume/mute to the audible output here instead, keeping
-    // the speaker behaviour unchanged.
-    if(receiver_audio_tapped(rx)) {
-      gdouble lg = rx->mute ? 0.0 : rx->volume;
+    // The listen volume and Mute, applied here and nowhere else -- see
+    // receiver_listen_gain(). This is the last thing done to the sample before
+    // it is clamped and handed to the sound card and to the radio, so Mute is
+    // answered by the very next block whatever WDSP has in flight.
+    {
+      const gdouble lg = receiver_listen_gain(rx);
       left_sample  *= lg;
       right_sample *= lg;
     }
@@ -4357,7 +4356,8 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   frequency_changed(rx);
   receiver_mode_changed(rx,rx->mode_a);
 
-  SetRXAPanelGain1(rx->channel, receiver_panel_gain(rx));
+  // Unity, always: the listen gain is software (receiver_listen_gain).
+  SetRXAPanelGain1(rx->channel, 1.0);
   SetRXAPanelSelect(rx->channel, 3);
   SetRXAPanelPan(rx->channel, 0.5);
   SetRXAPanelCopy(rx->channel, 0);
@@ -4487,8 +4487,14 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   return rx;
 }
 
+// Every volume and Mute change comes through here, and there is nothing left
+// for it to push: the RX audio thread reads rx->volume/rx->mute live
+// (receiver_listen_gain). What it does do is keep the invariant the software
+// gain rests on -- this channel's audio panel, and its SUBRX's, at unity -- so
+// a block that ever sets the panel for its own reasons cannot leave a receiver
+// quietly scaled twice.
 void receiver_set_volume(RECEIVER *rx) {
-  SetRXAPanelGain1(rx->channel, receiver_panel_gain(rx));
+  SetRXAPanelGain1(rx->channel, 1.0);
   if(rx->subrx_enable) {
     subrx_volume_changed(rx);
   }
