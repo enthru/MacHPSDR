@@ -92,6 +92,19 @@ MacHPSDR is deliberately limited to **2 receivers** for now (a UI decision — t
 underlying engine can do more). **Add Receiver** opens a second slice with its
 own VFO, panadapter and waterfall.
 
+On an HPSDR radio each receiver is a DDC of its own. On a **SoapySDR device**
+(PlutoSDR, HackRF, RTL-SDR) there is normally only one hardware receiver, so the
+second one **shares** it: both listen inside the same stream. Everything an
+operator touches is still its own — frequency, span, mode, filters, AGC, audio
+device, decoder panel, waterfall — with one limit: the second receiver's centre
+must stay inside the window the first one's local oscillator covers, which is
+half the device rate either side of it, less that receiver's own span. On a
+PlutoSDR at its default 2304k that is about ±1 MHz, which already covers the
+whole QO-100 narrowband transponder. If the dial stops moving, that is the
+window, and the log says so in as many words: give that receiver a narrower
+**Span**, or raise the **Device rate** (both in Configure — see §11). Closing
+either receiver is safe; whichever is left takes the hardware over.
+
 ---
 
 ## 3. Tuning and the VFO
@@ -680,13 +693,38 @@ Which streams are written and the output folder are set in
 
 ## 11. Configuration
 
-The **Configure** dialog groups settings into pages: Radio, Receiver,
-Transmitter, MIDI, Bookmarks, Diversity, PA, EER, PureSignal, **FT8**,
-**Recording**, and **Misc**. All settings are saved automatically to a
-per-device properties file under `~/.local/share/machpsdr/` and restored on the
-next start.
+The **Configure** dialog groups settings into pages: **Radio**, **Audio**
+(device audio + Recording), **CW**, **Bands** (transverters + open collector),
+**QO-100**, one **RX-*n*** page per open receiver, **Diversity**, **TX**,
+**PA / Linearity** (PA + PureSignal + EER), **Wideband** (when that window is
+open), **MIDI**, **Hotkeys**, **Display**, **FT8**, **Network** (DX cluster +
+TCI) and **About**. All settings are saved automatically to a per-device
+properties file under `~/.local/share/machpsdr/` and restored on the next start.
 
-The **Misc** page holds the colour skin, custom attenuator-button labels,
+**Rates, on a SoapySDR device (Radio page).** Two different things, and it is
+worth keeping them apart:
+
+- **Sample rate** is the **span** — how wide a piece of the device's stream each
+  receiver sees, i.e. the width of its panadapter. It applies to every receiver;
+  each **RX-*n*** page has a **Span** of its own if you want them different, so
+  one receiver can hold a whole band in view while the other sits in a narrow
+  window on one QSO.
+- **Device rate** is how fast the device itself is clocked. It is the window two
+  receivers share (see §2), and the widest span they can be offered. It **takes
+  effect on the next start**. *Default (…)* means "whatever this device's own
+  table says" and is what to go back to if a rate misbehaves.
+
+Raising the device rate is bounded by the **connection**, not by the radio: a
+PlutoSDR will clock itself far faster than any of its links can carry the result.
+If the stream starts arriving short the log says so — and missing samples are not
+a gap of silence, the signal either side of them is spliced, which looks like a
+broken receiver rather than a busy link. Raise it a step at a time and watch. Two
+more consequences: on a PlutoSDR one clock serves receive **and** transmit, so
+this is also the transmit rate and a transmission has to fit up the same link;
+and each receiver decimates the full rate on its own, so it costs CPU per
+receiver.
+
+The **Display** page holds the colour skin, custom attenuator-button labels,
 Broadcast-FM options, and **Frequency Calibration (PPM)**: pick a
 time/frequency-standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich
 on LF) and press **Calibrate** to measure its carrier and set the oscillator
@@ -824,3 +862,119 @@ remembered and applies live. `MACHPSDR_FAKE_OFFSET=<Hz>` does the same from the
 command line. If the sideband is inverted, tick **Swap I & Q** in the radio dialog
 to mirror the spectrum live. This is the recommended way to try FT8 decoding, the
 recorder replay, and the UI without a radio.
+
+---
+
+## 15. Command line, environment and build options
+
+### Command-line options
+
+| Option | What it does |
+|---|---|
+| `--open <name\|index>` | Open a discovered device straight away, no selection window. Matched against the device name (case-insensitive, first match); a bare number is an index into the discovered list. |
+| `--faker <iq.wav>` | Start the synthetic "I/Q Player" device on that recording, skipping the selection window (§14). |
+| `--usb-only` | Skip network discovery — USB devices only. Also skips the ~5 s libiio network browse. |
+| `--log-level <error\|info\|debug>` | Console log threshold (`--log-level=debug` also works). |
+| `--debug`, `-v`, `--verbose` | Shorthand for `--log-level debug`. |
+| `--quiet`, `-q` | Errors only. |
+
+### Environment variables
+
+Everything below is optional; MacHPSDR needs none of it to run. The first group
+is for ordinary use, the rest are diagnostics and development hooks — they are
+listed in full because a support request is usually answered by asking for one
+of them.
+
+**Files, logging and start-up**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_LOG=error\|info\|debug` | Log threshold, same as `--log-level` (the command line wins). |
+| `MACHPSDR_LOG_FILE=<path>` | Write the log to a file. Needed on Windows, where a GUI build has no console for a diagnostic to go to. |
+| `MACHPSDR_CTY=<path>` | Where to find `cty.dat` (the DXCC lookup behind the FT8 panel's country column). |
+| `MACHPSDR_COASTLINE=<path>` | Where to find `coastline.bin` (the coastline overlay on APT pictures). |
+| `MACHPSDR_TLE_URL=<url>` | Where the APT panel fetches satellite orbital elements from. |
+| `MACHPSDR_FAKE_IQ=<file>` | I/Q recording for the "I/Q Player" device when none is set in Configure (`--faker` wins over both). |
+| `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up (§14). |
+| `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR. The Network device row in the selection window is the permanent way to do this. |
+| `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
+
+**Streaming and DSP (SoapySDR devices)**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_SOAPY_BUFFLEN=<samples>` | Size of the receive stream buffer asked of the driver; `0` leaves the driver its own choice. About 36 ms of stream is the measured best on a networked PlutoSDR — more is not better. |
+| `MACHPSDR_SOAPY_TX_BUFFLEN=<samples>` | The same for the transmit stream. |
+| `MACHPSDR_SOAPY_READ_MTU=0\|1` | Force reads of whole device transfers (`1`) or of DSP-sized blocks (`0`) instead of the per-driver default. |
+| `MACHPSDR_SOAPY_TX_STATUS=1` | Poll and report the driver's transmit stream status while keyed. |
+| `MACHPSDR_FRONTEND=wdsp` | Use WDSP's single-stage resampler instead of the liquid-dsp cascade — one variable to split "is the front end at fault?" in one session. |
+| `MACHPSDR_DSP_FEED=0` | Above 384 kHz, keep the DSP channel at the full span instead of mixing and decimating in front of it (the behaviour before that existed). |
+| `MACHPSDR_SPEC_FEED=0` | Feed the spectrum analyzer every block instead of one frame's worth per 1/fps second. |
+
+**Diagnostics**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_AUDIO_DEBUG=1` | Every 5 s per receiver: audio frames/s actually produced, longest producer gap, sink fill, drops, underruns. The first thing to ask for when audio is reported wrong. |
+| `MACHPSDR_WF_CADENCE=1` | Waterfall lines/s actually drawn and the spread of the intervals — separates "the drawing is slow" from "the stream is stalling". |
+| `MACHPSDR_FPS=1` | FPS / frame-build-time readout drawn on the panadapter. |
+| `MACHPSDR_TCI_LEVEL=1` | Level figures for the TCI streams every 5 s. |
+| `MACHPSDR_TCI_PRETAP=1` | Send TCI audio from the pre-AGC tap rather than the listening path. |
+| `MACHPSDR_PS_DEBUG=1` | PureSignal correction diagnostics. |
+| `MACHPSDR_HFDL_ECHO=1` | Echo decoded HFDL messages to the console. |
+| `MACHPSDR_HFDL_FRAME_DEBUG=1`, `MACHPSDR_HFDL_MSG_DEBUG=1` | HFDL frame- and message-layer traces. |
+| `MACHPSDR_ACARS_ECHO=1` | Echo decoded VHF ACARS messages to the console. |
+| `MACHPSDR_ACARS_BITS=1` | ACARS demodulator bit-level trace. |
+| `MACHPSDR_CW_ECHO=1` | Echo decoded CW to the console. |
+| `MACHPSDR_CLUSTER_TESTSPOTS=1` | Inject synthetic DX-cluster spots, so the overlay can be seen without a cluster connection. |
+
+**Self-tests and headless test hooks.** These drive the application without a
+mouse and are how it is tested; several of them quit when finished, and one of
+them **transmits**. Give them their own `HOME` (and copy `wdspWisdom00` into it)
+so they cannot rewrite your settings.
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_HFDL_SELFTEST=1` | Run the HFDL per-layer self-tests inside the app (the same list `./hfdl_offline --selftest` runs). |
+| `MACHPSDR_ACARS_SELFTEST=1` | The same for VHF ACARS. |
+| `MACHPSDR_RX_CHURN=<n>` | Add and close a receiver n times, then quit. |
+| `MACHPSDR_RX_CHURN_OWNER=1` | With the above: close the receiver that owns the hardware instead of the one just added (SoapySDR — the survivor has to take the stream and the LO over). |
+| `MACHPSDR_DIVERSITY=<n>` | Enable diversity on RX0, and above 1 toggle it off and on n times. |
+| `MACHPSDR_WIDEBAND=<n>` | Open and close the wideband window n times (`0` = open and stay). |
+| `MACHPSDR_WIDEBAND_TEST=1` | With the above: add a resize storm, pointer drives and assertions. |
+| `MACHPSDR_SPAN_CYCLE=<n>` | Step receiver 0 through every offered span, n times over. |
+| `MACHPSDR_RECONNECT_TEST=reconnect\|exit` | Answer the lost-link dialog without a click. |
+| `MACHPSDR_CONFIGURE=<page title>` | Open the settings window on that page at start-up (e.g. `Radio`), so its controls are built in a headless run. |
+| `MACHPSDR_PS_TEST=<seconds>`, `MACHPSDR_PS_CYCLES=<n>` | Switch PureSignal on and **key the transmitter** for that long. **Never set this on a run with an antenna connected.** |
+
+**The null SoapySDR test driver** (`tools/soapy_null.cpp`, built by
+`tools/build-soapy-null.sh` and loaded only when `SOAPY_SDR_PLUGIN_PATH` points
+at it) has its own set: `MACHPSDR_NULL_RX` / `MACHPSDR_NULL_TX` (channel
+counts), `MACHPSDR_NULL_TONE` (Hz from centre), `MACHPSDR_NULL_AMPL`,
+`MACHPSDR_NULL_NOISE`, `MACHPSDR_NULL_PACE` (stream at 1/N of real time),
+`MACHPSDR_NULL_RATE_MULT` (pretend the device substituted a faster rate) — and
+`MACHPSDR_NULL_ADC` on the application side, which sets the rate MacHPSDR asks
+it for.
+
+### Build options
+
+Compile-time features are switched by commenting out the matching `*_INCLUDE`
+line near the top of the `Makefile`; a change forces a full rebuild by itself.
+
+| Flag | Default | What it covers |
+|---|---|---|
+| `SOAPYSDR_INCLUDE` | on | SoapySDR devices: RTL-SDR, HackRF, LimeSDR, PlutoSDR. |
+| `MIDI_INCLUDE` | on | MIDI control surfaces. |
+| `PURESIGNAL_INCLUDE` | on | Adaptive transmit predistortion (inert without transmit hardware). |
+| `PURESIGNAL_P2_INCLUDE` | on | The Protocol-2 half of it; needs `PURESIGNAL`. |
+| `FT8_INCLUDE` | on | FT8/FT4 receive, transmit and auto-QSO. |
+| `SSTV_INCLUDE` | on | SSTV — **and also** WEFAX, the CW decoder/encoder/keyer, and APT. |
+| `HFDL_INCLUDE` | on | HFDL — **and also** VHF ACARS, whose message layer is the same code. Needs `liquid-dsp`; because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3. Also what enables the faster liquid-dsp resampler for wide spans. |
+| `CWDAEMON_INCLUDE` | **off** (Linux only) | CW keying through `unixcw`; needs `libcw`, which no stock system has, so enabling it by default would break a plain `make`. |
+| `OPENGL_INCLUDES` | off | Unused legacy path — rendering goes through GTK4's own GPU renderer. |
+
+Two more knobs, on the `make` command line rather than in the file:
+`make SANITIZE=1` builds everything under AddressSanitizer and
+UndefinedBehaviorSanitizer (switching it on or off rebuilds the tree by itself),
+and `make STD_FLAG=-std=gnu2x` is the spelling older compilers need for the same
+C standard (gcc 13, e.g. Ubuntu 24.04's default).

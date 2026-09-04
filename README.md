@@ -27,6 +27,7 @@ feature additions.
   - [Modes & decoding](#modes--decoding)
   - [SoapySDR / HackRF](#soapysdr--hackrf)
   - [Reliability & performance](#reliability--performance)
+  - [Dual receive & diversity](#dual-receive--diversity)
   - [Satellite (QO-100)](#satellite-qo-100)
   - [HPSDR hardware](#hpsdr-hardware)
   - [Audio (macOS)](#audio-macos)
@@ -35,9 +36,13 @@ feature additions.
   - [macOS](#macos)
   - [Linux](#linux)
   - [Windows (MSYS2 / MinGW-w64)](#windows-msys2--mingw-w64)
+  - [Build feature flags](#build-feature-flags)
   - [WDSP (vendored)](#wdsp-vendored)
   - [CW support (Linux, optional)](#cw-support-linux-optional)
 - [Running](#running)
+  - [Logging](#logging)
+  - [Environment variables](#environment-variables)
+  - [Passing flags to the `.app` bundle](#passing-flags-to-the-app-bundle)
 - [User manual](#user-manual)
 - [License](#license)
 
@@ -643,6 +648,22 @@ you've dialled in.
 
 ### SoapySDR / HackRF
 
+- **The device's clock rate is yours to set** (Configure → Radio, *Device rate*).
+  On a device whose `sample_rate` is a real hardware rate rather than the widest
+  span offered — a PlutoSDR, an RTL dongle — that number is also the window two
+  receivers share and the widest span they can be offered, so it stopped being an
+  internal detail the moment a second receiver could exist. The default is
+  unchanged, because **what limits it is the link, not the radio**: an AD9361
+  answers 61 440 000 to `getSampleRateRange`, while the development Pluto over its
+  LAN delivers 99.8 % of 9 216 000 and only 67.5 % of 15 360 000, with the
+  delivered rate flat at about 11.3 MS/s — and a stream that arrives short is not
+  a gap of silence, the signal either side of it is spliced. So the per-model
+  table keeps the default, the operator raises it against their own link, and the
+  receive path counts and reports the shortfall. It takes effect at the next
+  start (on an AD9361 one clock serves receive and transmit, so moving it live
+  would move the emission of a transmitter sized for the old rate), and the list
+  includes the two rates that are also spans, so a receiver can run at the
+  device's own rate with no resampler at all.
 - **Transmit on HackRF / SoapySDR.** Full-duplex transmit on PlutoSDR and
   half-duplex transmit on HackRF over SoapySDR. Voice
   modes require a microphone input; the Drive slider controls output power. CW and
@@ -735,6 +756,25 @@ you've dialled in.
 
 ### Dual receive & diversity
 
+- **A second receiver on a one-receiver device.** Every SoapySDR device this
+  fork is used with has a single hardware RX — a PlutoSDR, a HackRF, an RTL
+  dongle — so "one receiver per hardware channel" greyed out **Add Receiver** on
+  all of them, over a stream one to two megahertz wide with room for several
+  receivers in it. The second receiver now **shares** that channel: it mixes its
+  own centre to DC and decimates to its own span, so it has a frequency, a span,
+  a mode, filters, AGC, an audio device, a decoder panel and a waterfall of its
+  own. It is not a compromise forced by a driver — an **AD9361 has one RX
+  synthesiser feeding both of its halves**, so even a two-channel Pluto gives two
+  receivers on one local oscillator. The one limit is that the second receiver's
+  centre must stay inside the window that oscillator covers (half the device rate
+  either side, less its own span — about ±1 MHz on a Pluto at its default rate,
+  which already covers the whole QO-100 narrowband transponder); the dial stops
+  there and the log says why. Either receiver may be closed: whichever is left
+  takes the hardware over. *(Measured through the TCI I/Q stream against the null
+  test driver — a tone 240 kHz outside the first receiver's span reads at exactly
+  +10 000.0 Hz in the second one, 90 dB above the noise floor; and on a real
+  PlutoSDR both receivers produce 48 07x audio frames/s with zero drops in the
+  same window. Nobody has listened to the second receiver on the air yet.)*
 - **Sub-receiver (SUBRX).** A second demodulator inside the same slice of
   spectrum — toggled with the **SUBRX** button — lets you listen to two signals
   in one passband at once (its own VFO-B frequency, mode, filter, AGC and noise
@@ -1112,6 +1152,36 @@ found a dozen errors that reading the code had not. Needs `mingw-w64`, `zstd`,
 `curl` and `python3`; with `autoconf`/`automake` present it builds liquid-dsp
 too, otherwise it drops HFDL and builds everything else.
 
+### Build feature flags
+
+Compile-time features are switched by commenting out the matching `*_INCLUDE`
+line near the top of the `Makefile`. A change forces a full rebuild by itself
+(the flags ride in `.build-flags`, which the build compares).
+
+| Flag | Default | What it covers |
+|---|---|---|
+| `SOAPYSDR_INCLUDE` | on | SoapySDR devices: RTL-SDR, HackRF, LimeSDR, PlutoSDR. |
+| `MIDI_INCLUDE` | on | MIDI control surfaces. |
+| `PURESIGNAL_INCLUDE` | on | Adaptive transmit predistortion (inert without transmit hardware). |
+| `PURESIGNAL_P2_INCLUDE` | on | The Protocol-2 half of it; requires `PURESIGNAL`. |
+| `FT8_INCLUDE` | on | FT8/FT4 receive, transmit and auto-QSO; vendored `ft8_lib/`. |
+| `SSTV_INCLUDE` | on | SSTV — **and also** WEFAX, the CW decoder/encoder/keyer, and APT. |
+| `HFDL_INCLUDE` | on | HFDL — **and also** VHF ACARS, whose message layer is the same code. Needs `liquid-dsp`; because the decoder is a port of `dumphfdl` (GPL-3.0) the resulting build is effectively GPLv3. It is also what enables the liquid-dsp resampler the wide spans want — without it they still work, just more slowly. |
+| `CWDAEMON_INCLUDE` | **off** (Linux only) | CW keying through `unixcw`; needs `libcw`, which no stock system ships, so enabling it by default would break a plain `make`. |
+| `OPENGL_INCLUDES` | off | Unused legacy path — rendering goes through GTK4's own GPU renderer. |
+
+Two more knobs live on the `make` command line rather than in the file:
+
+```bash
+make SANITIZE=1              # AddressSanitizer + UndefinedBehaviorSanitizer
+make SANITIZE=1 check        # ...and run every offline self-test under them
+make STD_FLAG=-std=gnu2x     # the older spelling of the same C standard (gcc 13)
+```
+
+Switching `SANITIZE` on or off rebuilds the tree by itself, which is necessary:
+objects land in the repo root under fixed names and a sanitised one must never
+link into an ordinary build.
+
 ### WDSP (vendored)
 
 The patched WDSP this fork needs is vendored in `wdsp/` (do **not** clone or
@@ -1195,6 +1265,81 @@ MACHPSDR_LOG=debug ./machpsdr  # via the environment
 `INFO` shows the normal start-up / status chatter; `DEBUG` adds hot-path and
 per-slot traces (audio callbacks, FT8 TX slot timing, etc.); `ERROR` shows only
 failures.
+
+### Environment variables
+
+None of these is needed to run MacHPSDR; the first group is for ordinary use and
+the rest are diagnostics and test hooks. They are listed in full because a
+support question is usually answered by asking for one of them. The same tables,
+in four languages, are in the [user manual](#user-manual) (§15).
+
+**Files, logging and start-up**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_LOG=error\|info\|debug` | Log threshold, same as `--log-level` (the command line wins). |
+| `MACHPSDR_LOG_FILE=<path>` | Write the log to a file. Needed on Windows, where a GUI build has no console. |
+| `MACHPSDR_CTY=<path>` | Where to find `cty.dat` (the DXCC lookup behind the FT8 panel's country column). |
+| `MACHPSDR_COASTLINE=<path>` | Where to find `coastline.bin` (the coastline overlay on APT pictures). |
+| `MACHPSDR_TLE_URL=<url>` | Where the APT panel fetches satellite orbital elements from. |
+| `MACHPSDR_FAKE_IQ=<file>` | I/Q recording for the "I/Q Player" device when none is set in Configure (`--faker` wins over both). |
+| `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up. |
+| `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR; the Network device row in the selection window is the permanent way. |
+| `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
+
+**Streaming and DSP (SoapySDR devices)**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_SOAPY_BUFFLEN=<samples>` | Receive stream buffer asked of the driver; `0` leaves the driver its own choice. ~36 ms of stream is the measured best on a networked Pluto — more is not better. |
+| `MACHPSDR_SOAPY_TX_BUFFLEN=<samples>` | The same for the transmit stream. |
+| `MACHPSDR_SOAPY_READ_MTU=0\|1` | Force reads of whole device transfers (`1`) or DSP-sized blocks (`0`). |
+| `MACHPSDR_SOAPY_TX_STATUS=1` | Poll and report the driver's transmit stream status while keyed. |
+| `MACHPSDR_FRONTEND=wdsp` | Use WDSP's single-stage resampler instead of the liquid-dsp cascade. |
+| `MACHPSDR_DSP_FEED=0` | Above 384 kHz keep the DSP channel at the full span instead of mixing and decimating in front of it. |
+| `MACHPSDR_SPEC_FEED=0` | Feed the spectrum analyzer every block instead of one frame's worth per 1/fps second. |
+
+**Diagnostics**
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_AUDIO_DEBUG=1` | Every 5 s per receiver: audio frames/s produced, longest producer gap, sink fill, drops, underruns. The first thing to ask for when audio is reported wrong. |
+| `MACHPSDR_WF_CADENCE=1` | Waterfall lines/s drawn and the spread of the intervals — separates slow drawing from a stalling stream. |
+| `MACHPSDR_FPS=1` | FPS / frame-build-time readout drawn on the panadapter. |
+| `MACHPSDR_TCI_LEVEL=1` | Level figures for the TCI streams every 5 s. |
+| `MACHPSDR_TCI_PRETAP=1` | Send TCI audio from the pre-AGC tap rather than the listening path. |
+| `MACHPSDR_PS_DEBUG=1` | PureSignal correction diagnostics. |
+| `MACHPSDR_HFDL_ECHO=1` | Echo decoded HFDL messages to the console. |
+| `MACHPSDR_HFDL_FRAME_DEBUG=1`, `MACHPSDR_HFDL_MSG_DEBUG=1` | HFDL frame- and message-layer traces. |
+| `MACHPSDR_ACARS_ECHO=1`, `MACHPSDR_ACARS_BITS=1` | VHF ACARS message echo and demodulator bit trace. |
+| `MACHPSDR_CW_ECHO=1` | Echo decoded CW to the console. |
+| `MACHPSDR_CLUSTER_TESTSPOTS=1` | Inject synthetic DX-cluster spots so the overlay can be seen without a connection. |
+
+**Self-tests and headless test hooks.** These drive the application without a
+mouse and are how it is tested. Several quit when finished, and one of them
+**transmits** — give them their own `HOME` (with `wdspWisdom00` copied in) so
+they cannot rewrite your settings.
+
+| Variable | Effect |
+|---|---|
+| `MACHPSDR_HFDL_SELFTEST=1`, `MACHPSDR_ACARS_SELFTEST=1` | Run the per-layer HFDL / ACARS self-tests inside the app. |
+| `MACHPSDR_RX_CHURN=<n>` | Add and close a receiver n times, then quit. |
+| `MACHPSDR_RX_CHURN_OWNER=1` | With the above: close the receiver that owns the hardware instead (SoapySDR — the survivor has to take the stream and the LO over). |
+| `MACHPSDR_DIVERSITY=<n>` | Enable diversity on RX0, and above 1 toggle it off and on n times. |
+| `MACHPSDR_WIDEBAND=<n>`, `MACHPSDR_WIDEBAND_TEST=1` | Open/close the wideband window n times (`0` = open and stay); the second adds a resize storm, pointer drives and assertions. |
+| `MACHPSDR_SPAN_CYCLE=<n>` | Step receiver 0 through every offered span, n times over. |
+| `MACHPSDR_RECONNECT_TEST=reconnect\|exit` | Answer the lost-link dialog without a click. |
+| `MACHPSDR_CONFIGURE=<page title>` | Open the settings window on that page at start-up (e.g. `Radio`), so its controls are built in a headless run. |
+| `MACHPSDR_PS_TEST=<seconds>`, `MACHPSDR_PS_CYCLES=<n>` | Switch PureSignal on and **key the transmitter** for that long. **Never on a run with an antenna connected.** |
+
+The null SoapySDR test driver (`tools/soapy_null.cpp`, built by
+`tools/build-soapy-null.sh`, loaded only when `SOAPY_SDR_PLUGIN_PATH` points at
+it) has its own: `MACHPSDR_NULL_RX` / `MACHPSDR_NULL_TX` (channel counts),
+`MACHPSDR_NULL_TONE` (Hz from centre), `MACHPSDR_NULL_AMPL`,
+`MACHPSDR_NULL_NOISE`, `MACHPSDR_NULL_PACE` (stream at 1/N of real time),
+`MACHPSDR_NULL_RATE_MULT` (pretend the device substituted a faster rate) — plus
+`MACHPSDR_NULL_ADC` on the application side, which sets the rate MacHPSDR asks
+it for.
 
 ### Passing flags to the `.app` bundle
 
