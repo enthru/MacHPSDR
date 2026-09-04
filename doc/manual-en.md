@@ -122,8 +122,8 @@ either receiver is safe; whichever is left takes the hardware over.
     current frequency in MHz — edit or retype it (`.` or `,` decimal, and the
     grouped `14.074.000` style are both accepted) and press Enter, Esc to cancel.
     The **band-stack menu** is on the **right-click**.
-  - Tuning is clamped to **0 – 6 GHz** (or the device's own upper limit if
-    lower), so a stray edit can't run the VFO off to a nonsense frequency.
+  - Tuning range starts at 0–20 GHz; the device range limits it, and configured transverters
+    can extend it.
 - **VFO A / B**, split, and A↔B swap are on the VFO widget and bottom bar.
 - **LINK** — in the SAT/RSAT splits the two VFOs track each other, which is what
   keeps a transponder offset while you tune, and also what makes the offset
@@ -137,16 +137,16 @@ either receiver is safe; whichever is left takes the hardware over.
   to ×10/×12/×16/×32 from the VFO zoom menu). The practical maximum depends on
   the panadapter width (WDSP's analyzer has a fixed internal buffer, so a very
   wide window caps the zoom automatically).
-- **Freetune** — a smooth continuous-tuning mode added in this fork. The cursor
-  moves freely inside the visible span while the waterfall stays where it is, so
-  the left button no longer drags the band around: **drag with the right button**
-  to move the whole span, exactly the way a plain drag tunes the VFO in normal
-  mode. A right click that does *not* move still opens Configure for that
-  receiver.
 - **PPM correction & auto-calibration** — corrects the reference-oscillator
   error (fractional ppm; applied on Protocol 1, Protocol 2 and SoapySDR alike).
   It can be measured automatically from a time-signal station's carrier — see
   §11 (Configure → Display).
+
+**LOCK** prevents tuning, band changes, bookmark/channel recalls and B→A / A↔B.
+RIT/XIT, mode, filter and A→B remain available. QO-100 setup requires releasing
+LOCK. In freetune, a right drag moves the displayed span while preserving the
+tuned station; the cursor moves within the display to keep its absolute frequency.
+Right-click without dragging still opens Configure for that receiver.
 
 ---
 
@@ -194,13 +194,21 @@ either receiver is safe; whichever is left takes the hardware over.
   fight fading. It lives on the **Configure → Diversity** page: an **Enable
   diversity** checkbox (greyed out on devices that can't do it) turns it on —
   adding a hidden second receiver and the mixer — next to the gain/phase controls
-  and a disclaimer. Protocol 1 only, needs a radio with two receivers/ADCs; not
-  yet verified on hardware in this fork.
+  and a disclaimer. Protocol 1 or Protocol 2; requires coherent ADC streams. For Protocol 2
+  use receiver 0 with receiver 1 free and two ADCs. Verified with software emulators, not
+  with two-ADC hardware.
 - **DX cluster spots** — when a DX cluster is connected (see Configure →
-  Cluster), incoming spots are drawn on the RX panadapter as a short coloured
+  Network), incoming spots are drawn on the RX panadapter as a short coloured
   tick with the callsign, colour-keyed by DXCC entity. **Left-click a spot
   marker** to tune the receiver straight onto that station (works in normal,
   ctun and freetune tuning). Spots disappear after 15 minutes.
+
+**NR3 depth (Configure → RX-*n*).** The **Depth (%)** slider mixes the original
+and denoised audio: 0% is original, 100% is full RNNoise (default). Reduce it if
+weak speech is being suppressed. NR4 smoothing defaults to 40% for new settings;
+existing saved values remain unchanged. NR settings also reach SUBRX.
+Mute silences both the main and sub-receiver, including during mode changes.
+In FM, AGC and AGC-G control the post-demodulation audio AGC.
 
 ---
 
@@ -215,7 +223,7 @@ stay visually consistent.
 ## 6. Transmitting (TX)
 
 For HPSDR radios MacHPSDR provides a full TX path: TX filtering, CTCSS, EER, and
-metering. PureSignal (adaptive predistortion, Protocol 1) is available as a
+metering. PureSignal (adaptive predistortion, Protocol 1 and experimental Protocol 2) is available as a
 build option. HackRF TX is implemented (half-duplex) via SoapySDR. Keying is by
 MOX, PTT, or a mapped MIDI/keyboard action.
 
@@ -228,6 +236,11 @@ Per-stage **Leveler / CFC / Compressor** gain-reduction meters (dB) are drawn
 under the ALC line on the TX panadapter while transmitting. *These are built and
 tested with the fake device but are not yet verified on the air — this fork has
 no transmit hardware.*
+
+**SoapySDR DAC level (Configure → TX → DAC Level).** **Backoff (dB)** attenuates
+the digital I/Q before the DAC, independently of Drive's analogue gain. Range:
+−30 to 0 dB; default −10 dB on PlutoSDR and 0 dB on other devices. It applies
+live and is saved. This provides headroom for the device's interpolation filters.
 
 ---
 
@@ -655,7 +668,7 @@ uplink converter — a different box with a different error — is never touched
 
 **Reference beacon** picks which one is measured, and the default is the
 **middle** one at 10489.750. It is 400 bd BPSK — a suppressed carrier, with no
-line to search for — so the loop makes one by squaring the spectrum, and the
+line to search for — so the loop recovers one by squaring the complex signal, and the
 reason to go to that trouble is that a BPSK spectrum is symmetric about its own
 published frequency: a lock to it cannot come out one keying shift off, the way
 a lock to a CW beacon can if you take the wrong one of its two tones for the
@@ -674,6 +687,16 @@ status line will say so.
 > including that it does not lock onto noise, but it has not yet been used on the
 > real satellite.
 
+**Correction interval (s)** sets the minimum interval between fine corrections:
+0.1–60 s, default 2.0 s, saved between sessions. Measurements and settling limit
+the practical minimum to about 1.5 s; coarse acquisition may correct immediately,
+and FT8/FT4 slot gating may delay a correction. Use a span of at least **768 kHz**
+so other beacons can confirm acquisition. With **Middle** selected, the loop can
+acquire via a CW beacon when BPSK is unavailable, and return after repeated BPSK
+confirmation. Selecting a CW beacon keeps it as the correction source; the
+middle beacon provides an independent check. Status remains visible in the
+QO-100 panel; detailed measurements are available with `--debug=sync`.
+
 ---
 
 ## 10. I/Q + audio recorder
@@ -688,6 +711,10 @@ The **Record** button (SETUP module) captures the active receiver to
 
 Which streams are written and the output folder are set in
 **Configure → Audio**.
+
+Long recordings continue automatically in numbered WAV segments at about
+3.75 GiB per stream (`rec_<UTC>_iq_001.wav`, then `_002.wav`, etc.). Each I/Q segment
+can be replayed separately in the I/Q Player.
 
 ---
 
@@ -710,8 +737,9 @@ worth keeping them apart:
   one receiver can hold a whole band in view while the other sits in a narrow
   window on one QSO.
 - **Device rate** is how fast the device itself is clocked. It is the window two
-  receivers share (see §2), and the widest span they can be offered. It **takes
-  effect on the next start**. *Default (…)* means "whatever this device's own
+  receivers share (see §2), and the widest span they can be offered. **Applies immediately while receiving**: streams are rebuilt and the available
+  spans update (maximum 9.6 MHz, also limited by the active device rate).
+  A change is refused during transmission; failures appear below the selector. *Default (…)* means "whatever this device's own
   table says" and is what to go back to if a rate misbehaves.
 
 Raising the device rate is bounded by the **connection**, not by the radio: a
@@ -734,7 +762,7 @@ manually.
 **DX cluster (Configure → Network).** Connect to a telnet DX cluster: enter the
 host/IP, the port and your login callsign (leave the login blank to use the
 station callsign from the FT8 page), then tick **Connect to DX cluster** — a
-status line shows the connection state. **Show spots on panadapter** toggles
+status line shows the connection state. **Show spots** toggles
 the overlay. Incoming `DX de …` spots are stored and shown on the RX
 panadapter, colour-keyed by DXCC entity, and clicking a spot tunes to it; the
 client reconnects automatically if the link drops.
@@ -763,6 +791,27 @@ client may ask for another rate (MacHPSDR resamples). A TCI client can also send
 CW: a `cw_msg` command keys the built-in keyer to transmit the text (speed from
 the CW settings, or set with `cw_macros_speed`). *The TX paths (audio and CW)
 have not been tested on the air (no transmit hardware).*
+
+**Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
+immediately to the shared device stream, before individual receivers are tuned
+out of it. It suppresses DC around the device LO with a 20 Hz corner; this may
+be away from the display centre in CTUN/freetune. Disable it to receive a signal
+exactly at that frequency. Hardware AGC is a separate device setting, saved and
+restored independently of the receiver's audio AGC.
+
+**TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
+DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
+weak or overloaded source. The output limiter
+prevents out-of-range samples; it cannot recover an overloaded signal.
+`MACHPSDR_TCI_PRETAP=1` selects the experimental pre-AGC path and its own filter;
+a subscription alone does not switch off the listening chain's noise reduction.
+
+**Display details.** Configure → RX-*n* → Panadapter offers **Phase Scope**,
+**Phase Style**, **Phase Gain** and **Phase Source**: Wideband (raw I/Q), Tuned
+(the selected channel) or Diversity (main/hidden pair). Configure → Display →
+**Interface font** changes the UI font; **Use platform default** restores it.
+In Configure → Network, **Show spots on** selects Panadapter, Waterfall or Both;
+spot-label font size, text colour and background are adjustable.
 
 ---
 
@@ -875,8 +924,22 @@ recorder replay, and the UI without a radio.
 | `--faker <iq.wav>` | Start the synthetic "I/Q Player" device on that recording, skipping the selection window (§14). |
 | `--usb-only` | Skip network discovery — USB devices only. Also skips the ~5 s libiio network browse. |
 | `--log-level <error\|info\|debug>` | Console log threshold (`--log-level=debug` also works). |
-| `--debug`, `-v`, `--verbose` | Shorthand for `--log-level debug`. |
+| `-v`, `--verbose` | Shorthand for `--log-level debug`. |
+| `--debug=rx,tx,...` | Enable DEBUG for selected comma-separated areas; `all` / `none` are accepted. |
 | `--quiet`, `-q` | Errors only. |
+
+### Debug categories
+
+Normal logging shows ERROR and INFO. Synchronization measurements (QO-100 beacon
+tracking, APT lock changes and HFDL carrier acquisition) are DEBUG only.
+Use `./machpsdr --debug=sync` for synchronization or `--debug=rx,tx` for reception
+and transmission. Available areas: `general`, `rx`, `tx`, `sync`, `protocol`,
+`decoder`, `ui`; lines identify the area, for example `[DEBUG][sync]`.
+`--debug` selects all areas, `--debug=none` disables debug output.
+`MACHPSDR_DEBUG=rx,tx ./machpsdr` selects areas and enables DEBUG unless
+`MACHPSDR_LOG` explicitly sets the threshold. Command-line options take priority
+and are applied left to right. Area filters do not suppress INFO or ERROR.
+Existing subsystem diagnostic environment variables below remain separate controls.
 
 ### Environment variables
 
@@ -890,6 +953,7 @@ of them.
 | Variable | Effect |
 |---|---|
 | `MACHPSDR_LOG=error\|info\|debug` | Log threshold, same as `--log-level` (the command line wins). |
+| `MACHPSDR_DEBUG=rx,tx,...` | Debug areas; enables DEBUG unless MACHPSDR_LOG explicitly sets the threshold. |
 | `MACHPSDR_LOG_FILE=<path>` | Write the log to a file. Needed on Windows, where a GUI build has no console for a diagnostic to go to. |
 | `MACHPSDR_CTY=<path>` | Where to find `cty.dat` (the DXCC lookup behind the FT8 panel's country column). |
 | `MACHPSDR_COASTLINE=<path>` | Where to find `coastline.bin` (the coastline overlay on APT pictures). |

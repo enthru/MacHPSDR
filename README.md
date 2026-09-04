@@ -163,13 +163,25 @@ you've dialled in.
   shows where the trace has spent time, with a **Persistence Decay** slider for how
   fast old activity fades. All are per receiver and remembered between sessions.
 
+**Display details.** Configure → RX-*n* → Panadapter offers **Phase Scope**,
+**Phase Style**, **Phase Gain** and **Phase Source**: Wideband (raw I/Q), Tuned
+(the selected channel) or Diversity (main/hidden pair). Configure → Display →
+**Interface font** changes the UI font; **Use platform default** restores it.
+In Configure → Network, **Show spots on** selects Panadapter, Waterfall or Both;
+spot-label font size, text colour and background are adjustable.
+
 - **Freetune.** A tuning mode where the cursor moves within the visible span;
   exiting keeps the frequency you were on, and the radio retunes automatically
   when the cursor reaches a span edge. Changing the bandwidth re-centres the span
   on the frequency you are listening to, and zooming keeps that frequency centred.
   Since the left button belongs to the cursor here, **dragging with the right
-  button moves the whole span** — the same gesture a plain drag performs in normal
-  mode. A right click that does not move still opens Configure for that receiver.
+  button moves the whole span while preserving the tuned station**; the cursor
+  moves within the display to retain its absolute frequency. A right click that does not move still opens Configure for that receiver.
+
+**LOCK** prevents tuning, band changes, bookmark/channel recalls and B→A / A↔B.
+RIT/XIT, mode, filter and A→B remain available. QO-100 setup requires releasing
+LOCK. In freetune, a right drag moves the displayed span while preserving the
+tuned station; the cursor moves within the display to keep its absolute frequency.
 
 - **VFO tuning.** Several ways to set the frequency on the VFO display:
   - **Mouse wheel** over a digit tunes by that digit's place value — wheel up
@@ -185,9 +197,8 @@ you've dialled in.
     retype it (`.` or `,` decimal, and the grouped `14.074.000` style are both
     accepted) and press Enter to jump there, Esc to cancel. The **band-stack
     menu** is on the **right-click**.
-  - Tuning is clamped to **0 – 6 GHz** (or the radio's own upper limit if it is
-    lower, e.g. ~61 MHz for classic HPSDR), so a stray edit can't run the VFO
-    off to a nonsense frequency.
+  - Tuning starts with a 20 GHz ceiling, limited by the device range and
+    extended for configured transverter bands.
 
 - **Keyboard shortcuts (Hotkeys).** **Configure → Hotkeys** lists every action
   the radio offers, in groups — Display (zoom, pan), Transmit (hold-to-talk PTT,
@@ -221,10 +232,17 @@ you've dialled in.
   *(NR3/NR4 are built and fake-tested; their on-air audio has not yet been tuned
   on real hardware.)*
 
+**NR3 depth (Configure → RX-*n*).** The **Depth (%)** slider mixes the original
+and denoised audio: 0% is original, 100% is full RNNoise (default). Reduce it if
+weak speech is being suppressed. NR4 smoothing defaults to 40% for new settings;
+existing saved values remain unchanged. NR settings also reach SUBRX.
+Mute silences both the main and sub-receiver, including during mode changes.
+In FM, AGC and AGC-G control the post-demodulation audio AGC.
+
 - **Audio peak filter (APF) for CW.** A narrow audio peaking filter that boosts
   the CW beat-note (centred on your sidetone pitch) to pull weak signals out of
   the noise. Enable it — with adjustable **bandwidth** (sharpness) and **gain** —
-  in Configure → RX-N; it runs only in CWL/CWU and is remembered per receiver.
+  in Configure → CW; it runs only in CWL/CWU and is remembered per receiver.
   *(Faker-tested; on-air benefit not yet judged on hardware.)*
 
 - **Variable squelch (mode-aware).** The **SQL** bar on the VFO row is now
@@ -467,6 +485,10 @@ you've dialled in.
   audio at 48 kHz. Output folder and which streams to write are set in
   **Configure → Audio**.
 
+Long recordings continue automatically in numbered WAV segments at about
+3.75 GiB per stream (`rec_<UTC>_iq_001.wav`, then `_002.wav`, etc.). Each I/Q segment
+can be replayed separately in the I/Q Player.
+
 - **TX speech processing chain.** A full transmit audio chain in
   **Configure → TX**:
   - **CESSB** (Controlled-Envelope SSB) overshoot control for more clean talk
@@ -485,7 +507,7 @@ you've dialled in.
   transmit hardware in this fork. They need a real SSB transmitter and a monitor
   receiver to confirm they improve talk power and that the meters read sanely.)*
 
-- **PureSignal.** Adaptive predistortion (Protocol 1 only), turned on in
+- **PureSignal.** Adaptive predistortion (Protocol 1 and experimental Protocol 2), turned on in
   **Configure → PA / Linearity**. Still an unfinished prototype, calibrated mainly
   for the Hermes-Lite 2.
 
@@ -497,8 +519,7 @@ you've dialled in.
   sending speed automatically, and turns the dots/dashes into letters. **Show
   CW** is optional — it opens a bigger panel (in the second-RX slot, like the
   SSTV/FT8 panels) with full scrollback and a **Clear** button. No external
-  program. *(Decoder verified on synthetic Morse audio; end-to-end off-air
-  decode not yet confirmed on hardware. Works best on a single well-tuned signal
+  program. *(Decoder verified on synthetic Morse and real off-air CW recordings. Works best on a single well-tuned signal
   in a narrow filter — heavy QRM garbles the text.)*
   The Show-CW panel also has a **TX row**: eight **message memories**
   (M1…M8, edited in **Configure → CW**, with a `%C` = your callsign macro) plus a
@@ -553,6 +574,13 @@ you've dialled in.
   verified to ingest without disturbing the mic path but, like the whole TX
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
+
+**TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
+DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
+weak or overloaded source. The output limiter
+prevents out-of-range samples; it cannot recover an overloaded signal.
+`MACHPSDR_TCI_PRETAP=1` selects the experimental pre-AGC path and its own filter;
+a subscription alone does not switch off the listening chain's noise reduction.
 
 - **HFDL — aviation HF data link.** A complete receiver for
   HFDL (ARINC 635), the ACARS-carrying data link airliners use over the oceans:
@@ -648,6 +676,18 @@ you've dialled in.
 
 ### SoapySDR / HackRF
 
+**Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
+immediately to the shared device stream, before individual receivers are tuned
+out of it. It suppresses DC around the device LO with a 20 Hz corner; this may
+be away from the display centre in CTUN/freetune. Disable it to receive a signal
+exactly at that frequency. Hardware AGC is a separate device setting, saved and
+restored independently of the receiver's audio AGC.
+
+**SoapySDR DAC level (Configure → TX → DAC Level).** **Backoff (dB)** attenuates
+the digital I/Q before the DAC, independently of Drive's analogue gain. Range:
+−30 to 0 dB; default −10 dB on PlutoSDR and 0 dB on other devices. It applies
+live and is saved. This provides headroom for the device's interpolation filters.
+
 - **The device's clock rate is yours to set** (Configure → Radio, *Device rate*).
   On a device whose `sample_rate` is a real hardware rate rather than the widest
   span offered — a PlutoSDR, an RTL dongle — that number is also the window two
@@ -659,11 +699,11 @@ you've dialled in.
   delivered rate flat at about 11.3 MS/s — and a stream that arrives short is not
   a gap of silence, the signal either side of it is spliced. So the per-model
   table keeps the default, the operator raises it against their own link, and the
-  receive path counts and reports the shortfall. It takes effect at the next
-  start (on an AD9361 one clock serves receive and transmit, so moving it live
-  would move the emission of a transmitter sized for the old rate), and the list
-  includes the two rates that are also spans, so a receiver can run at the
-  device's own rate with no resampler at all.
+  receive path counts and reports the shortfall. Changes apply immediately while receiving: streams
+  are rebuilt and the span
+  choices update, up to 9.6 MHz and the active device rate. Changes during TX
+  are refused; errors appear below the selector. Default restores the device's
+  standard rate. On an AD9361 one clock serves receive and transmit.
 - **Transmit on HackRF / SoapySDR.** Full-duplex transmit on PlutoSDR and
   half-duplex transmit on HackRF over SoapySDR. Voice
   modes require a microphone input; the Drive slider controls output power. CW and
@@ -788,9 +828,9 @@ you've dialled in.
   interferer or fight fading. It lives on the **Configure → Diversity** page: an
   **Enable diversity** checkbox (greyed out on devices that can't do it) turns it
   on — adding a hidden second receiver and the mixer — alongside the gain/phase
-  controls and a hardware-untested disclaimer. Like PureSignal it is Protocol 1
-  only and has not yet been verified on hardware in this fork; it requires a radio
-  with two receivers/ADCs.
+  controls. Protocol 1 and Protocol 2 are supported; Protocol 2 requires two
+  ADCs and receiver 0 with receiver 1 free (the DDC0/DDC1 pair). Verified with
+  software emulators; two-ADC hardware still needs testing.
 
 ### Satellite (QO-100)
 
@@ -848,7 +888,7 @@ a normal SDR.
 
   **Reference beacon** picks which one is measured, and the default is the
   **middle** one at 10489.750. It is 400 bd BPSK, i.e. a suppressed carrier with
-  no line to peak-search, so the loop makes one by squaring the spectrum — worth
+  no line to peak-search, so the loop recovers one by squaring the complex signal — worth
   the trouble because a BPSK spectrum is symmetric about its own published
   frequency, so a lock to it cannot come out one keying shift off the way a lock
   to an F1A beacon can when the published figure is taken for the wrong one of
@@ -864,6 +904,16 @@ a normal SDR.
   converges with noise on the beacon, and — the case that matters most — **pure
   noise produces no lock and does not move the radio at all**. It has not yet been
   used on the real satellite.
+
+**Correction interval (s)** sets the minimum interval between fine corrections:
+0.1–60 s, default 2.0 s, saved between sessions. Measurements and settling limit
+the practical minimum to about 1.5 s; coarse acquisition may correct immediately,
+and FT8/FT4 slot gating may delay a correction. Use a span of at least **768 kHz**
+so other beacons can confirm acquisition. With **Middle** selected, the loop can
+acquire via a CW beacon when BPSK is unavailable, and return after repeated BPSK
+confirmation. Selecting a CW beacon keeps it as the correction source; the
+middle beacon provides an independent check. Status remains visible in the
+QO-100 panel; detailed measurements are available with `--debug=sync`.
 
 ### HPSDR hardware
 
@@ -947,7 +997,7 @@ make app      # optional: self-contained MacHPSDR.app bundle
 
 `make app` bundles everything (GTK, the in-tree WDSP, resources) into
 `MacHPSDR.app`, which you can then `open MacHPSDR.app` or drag to `/Applications`.
-See [MacOS.md](./MacOS.md) for more detail.
+See [macOS packaging](#macos-packaging) for the self-contained application bundle.
 
 **Self-contained bundle.** `make app` produces a `.app` that needs **no Homebrew
 (or anything else) on the target machine** — all GTK/GLib libraries, gdk-pixbuf
@@ -1257,7 +1307,8 @@ command line or the environment; the command line wins:
 
 ```bash
 ./machpsdr --log-level debug   # or --log-level=debug
-./machpsdr --debug             # shorthand for --log-level debug (also -v / --verbose)
+./machpsdr --debug             # DEBUG with all categories
+./machpsdr -v                  # DEBUG with the current category selection (--verbose too)
 ./machpsdr --quiet             # errors only (also -q, i.e. --log-level error)
 MACHPSDR_LOG=debug ./machpsdr  # via the environment
 ```
