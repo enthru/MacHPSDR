@@ -643,9 +643,24 @@ static void adc_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 static void agc_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   gboolean agc=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  // radio->adc[].agc is the stored state, and it is what every re-apply path
+  // pushes to the device -- the checkbox that is built when this page is
+  // opened, the save at exit, add_receiver, a span change (which takes the
+  // stream down and back up) and the reconnect.  The click used to reach the
+  // hardware and nothing else, so the field kept saying "on" after the
+  // operator had switched it off: re-opening Configure showed a ticked box
+  // over a device running manual gain, and the next span change or reconnect
+  // silently turned the AGC back on.
+  adc->agc=agc;
   {
   RECEIVER *hwrx=radio_soapy_hw_receiver(radio);
-  if(hwrx!=NULL) soapy_protocol_set_automatic_gain(hwrx,agc);
+  if(hwrx!=NULL) {
+    soapy_protocol_set_automatic_gain(hwrx,agc);
+    // Switching the AGC off does not undo the gain it last set -- the part
+    // simply stops moving it -- so the manual gain has to be pushed for the
+    // spin button beside this checkbox to mean anything.
+    if(!agc) soapy_protocol_set_gain(adc);
+  }
   }
 }
 
