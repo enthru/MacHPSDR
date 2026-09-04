@@ -158,6 +158,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.filter_board",value);
   sprintf(value,"%d",radio->sample_rate);
   setProperty("radio.sample_rate",value);
+  sprintf(value,"%d",radio->soapy_adc_rate);
+  setProperty("radio.soapy_adc_rate",value);
   sprintf(value,"%d",radio->buffer_size);
   setProperty("radio.buffer_size",value);
   sprintf(value,"%d",radio->receivers);
@@ -545,6 +547,30 @@ void radio_restore_state(RADIO *radio) {
 #endif
   value=getProperty("radio.sample_rate");
   if(value!=NULL && !adc_rate_is_ours) radio->sample_rate=atoi(value);
+#ifdef SOAPYSDR
+  // ...but the operator may pick one deliberately, under a key of its own so
+  // that a corrected table value still reaches everybody who never touched it.
+  // It is what several receivers on one hardware channel have to fit inside, so
+  // it is worth raising -- against the operator's own link, which is what
+  // carries the stream and not something this code can know. Validated against
+  // the list AND against the rate the device claimed at discovery: a props file
+  // is an input.
+  value=getProperty("radio.soapy_adc_rate");
+  if(value!=NULL && adc_rate_is_ours) {
+    int want=atoi(value);
+    if(want>0 && soapy_adc_rate_valid(radio->discovered,want)) {
+      radio->soapy_adc_rate=want;
+      if(want!=radio->sample_rate) {
+        log_info("radio_restore_state: ADC rate %d chosen by the operator (table default %d)\n",
+                 want,radio->sample_rate);
+        radio->sample_rate=want;
+      }
+    } else if(want>0) {
+      log_error("radio_restore_state: saved ADC rate %d is not one this device offers; keeping %d\n",
+                want,radio->sample_rate);
+    }
+  }
+#endif
   value=getProperty("radio.meter_calibration");
   if(value) radio->meter_calibration=propToDouble(value);
   value=getProperty("radio.panadapter_calibration");

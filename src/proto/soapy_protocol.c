@@ -508,6 +508,63 @@ static int soapy_hw_rate_for(RECEIVER *rx) {
    For a span-driven device it is the widest span OFFERED, which has nothing to
    do with transmitting: a HackRF would open the TX chain at 9 600 000 and
    interpolate a 48 kHz microphone by 200.  Those get the ceiling instead. */
+/* ---- the rate the DEVICE is clocked at -----------------------------------
+   On a device whose radio->sample_rate is a real ADC rate (everything except
+   the span-driven ones -- see soapy_span_driven), that number is the width of
+   the window every receiver on the channel shares: a second receiver can sit
+   (rate - its own span)/2 either side of the first one's centre and no further.
+   2 304 000 was chosen for a Pluto when a receiver was alone in that window and
+   nothing wider than 1 920 000 was ever asked for, and it is the floor of what
+   an AD9361 will do, not the ceiling -- the part runs to 20 MHz.
+
+   Why it is a SETTING and not a bigger constant: what carries the stream is not
+   the radio.  Measured on the development Pluto, reached over a LAN
+   (tools/soapy_bench.c, 8 s per row, no application in the way): 99.9 % of
+   2 304 000, 99.8 % of 9 216 000, 98.4 % of 11 520 000 -- and then 67.5 % of
+   15 360 000 and 56.8 % of 20 000 000, with the DELIVERED rate flat at about
+   11.3 MS/s, which is that link's ceiling and nothing to do with the AD9361.
+   Another operator's Pluto, on USB or on a worse wireless link, has a different
+   ceiling; a number picked here to suit one of them silently splices the
+   stream for the others (a shortfall is not a silence -- the samples either
+   side of it are joined). So the default stays where it was and the operator
+   raises it against their own link, with receive_thread's own delivery count
+   as the check.
+
+   Every entry is a multiple of 192 kHz, so the ratio to every span the app
+   offers stays exact, and of 96 kHz, which is what the TX chain's geometry is
+   rounded to (create_transmitter). The list is bounded at use by what the
+   device said it could be clocked at (info.soapy.rx_rate_max) -- an AD9361
+   answers 61 440 000 there and a USRP more, so the top of this list is not
+   meant to be the limit; the limit is meant to be the hardware and the link.
+   It stops where it does because nothing this fork has met carries more (a
+   Pluto has only USB 2.0 High Speed and the network gadget on it), and because
+   an entry that no link can deliver is not a choice, it is a way to break the
+   stream in silence. Add to it when a device and a link that want more turn
+   up -- and measure the delivery, do not assume it. */
+static const int soapy_adc_rate_list[]={
+  2304000,3072000,3840000,4608000,5760000,7680000,9216000,11520000,15360000,
+  19200000,23040000,30720000
+};
+
+int soapy_adc_rate_count(void) { return (int)G_N_ELEMENTS(soapy_adc_rate_list); }
+
+int soapy_adc_rate_at(int i) {
+  if(i<0 || i>=(int)G_N_ELEMENTS(soapy_adc_rate_list)) return 0;
+  return soapy_adc_rate_list[i];
+}
+
+gboolean soapy_adc_rate_valid(DISCOVERED *d,int rate) {
+  if(d==NULL || d->device!=DEVICE_SOAPYSDR) return FALSE;
+  for(int i=0;i<(int)G_N_ELEMENTS(soapy_adc_rate_list);i++) {
+    if(soapy_adc_rate_list[i]!=rate) continue;
+    // A rate the device itself does not claim is not offered, whatever the list
+    // says: an RTL dongle stops around 3.2 MS/s and must not be asked for 19.2.
+    if(d->info.soapy.rx_rate_max>0 && rate>d->info.soapy.rx_rate_max) return FALSE;
+    return TRUE;
+  }
+  return FALSE;
+}
+
 int soapy_tx_dac_rate(void) {
   if(radio==NULL) return TX_SOAPY_MAX_IQ_RATE;
   if(soapy_span_driven() && radio->sample_rate>TX_SOAPY_MAX_IQ_RATE)

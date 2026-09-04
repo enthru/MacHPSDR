@@ -3675,6 +3675,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
     r->hl2 = create_hl2();
   }
 
+  // Before the restore, which may replace sample_rate with the operator's own
+  // ADC rate: this is the number the per-model table chose, and the only way
+  // back to it afterwards.
+  r->soapy_adc_rate_default=r->sample_rate;
+
   radio_restore_state(r);
 
 #ifdef SSTV

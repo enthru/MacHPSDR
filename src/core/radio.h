@@ -419,6 +419,18 @@ typedef struct _radio {
   GtkWidget *apt_expand_btn; // bottom-bar toggle: open/close the APT image panel (FMN)
   GtkWidget *acars_expand_btn;// bottom-bar toggle: open/close the ACARS message panel (AM)
 
+  // The ADC rate the operator has chosen for a SoapySDR device whose
+  // radio->sample_rate is a real hardware rate; 0 = whatever the per-model
+  // table in create_radio picks. Applied at START-UP only (radio_restore_state
+  // puts it into sample_rate before anything is built), because on an AD9361
+  // one clock serves both directions: moving it live would move the TX rate
+  // under a transmitter whose whole geometry was sized for the old one.
+  int soapy_adc_rate;
+  // What the per-model table in create_radio picked, kept because the choice
+  // above overwrites sample_rate: without it "put it back the way it was" is
+  // not expressible, and a drop-down cannot say which row is the default.
+  int soapy_adc_rate_default;
+
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)
 

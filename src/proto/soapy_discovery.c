@@ -138,13 +138,20 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
 
 
   int sample_rate=0;
+  int rx_rate_max=0;
   SoapySDRRange *rx_rates=SoapySDRDevice_getSampleRateRange(sdr, SOAPY_SDR_RX, 0, &rx_rates_length);
   log_info("Rx sample rates: ");
   for (size_t i = 0; i < rx_rates_length; i++) {
     log_info("%f -> %f,", rx_rates[i].minimum, rx_rates[i].maximum);
+    // The top of what the device says it can be clocked at -- kept, not just
+    // printed, because it bounds the ADC rate the operator may pick.  A fixed
+    // step arrives as minimum == maximum, so taking the maximum is right for
+    // both shapes.
+    if(rx_rates[i].maximum>(double)rx_rate_max) rx_rate_max=(int)rx_rates[i].maximum;
   }
   log_info("\n");
   free(rx_rates);
+  log_info("Rx top clock rate: %d\n",rx_rate_max);
   sample_rate=768000;
   if(strcmp(driver,"rtlsdr")==0) {
     sample_rate=1536000;
@@ -266,6 +273,7 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     discovered[devices].frequency_min=ranges[0].minimum;
     discovered[devices].frequency_max=ranges[0].maximum;
     discovered[devices].info.soapy.sample_rate=sample_rate;
+    discovered[devices].info.soapy.rx_rate_max=rx_rate_max;
     if(strcmp(driver,"rtlsdr")==0) {
       discovered[devices].info.soapy.rtlsdr_count=rtlsdr_val;
       discovered[devices].info.soapy.sdrplay_count=0;

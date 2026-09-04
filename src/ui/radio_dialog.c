@@ -275,6 +275,31 @@ static void soapy_rx_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data)
 }
 #endif
 
+#ifdef SOAPYSDR
+// The rate the DEVICE is clocked at, on the devices where radio->sample_rate is
+// that and not the widest span offered.  Stored and applied at start-up, never
+// live: on an AD9361 one clock serves receive and transmit, so moving it under a
+// running transmitter would move its emission with it (soapy_tx_dac_rate).
+static void soapy_adc_rate_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  // Row 0 is "Default (<rate>)" and means "no choice of mine": stored as 0, so
+  // a table value corrected in a later build still reaches this operator. Every
+  // other row is the number it shows.
+  if(gtk_drop_down_get_selected(widget)==0) {
+    radio->soapy_adc_rate=0;
+    log_info("%s: device rate back to this device's default (%d); it takes effect on the next start\n",
+             __FUNCTION__,radio->soapy_adc_rate_default);
+    return;
+  }
+  const char *t=dropdown_selected_text(widget);
+  if(t==NULL) return;
+  int rate=atoi(t);
+  if(!soapy_adc_rate_valid(radio->discovered,rate)) return;
+  radio->soapy_adc_rate=rate;
+  log_info("%s: device rate %d chosen; it takes effect on the next start\n",__FUNCTION__,rate);
+}
+#endif
+
 static void filter_board_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->filter_board=(int)gtk_drop_down_get_selected(widget);
@@ -866,7 +891,56 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     }
     if(active>=0) gtk_drop_down_set_selected(GTK_DROP_DOWN(sample_rate_combo_box),active);
     g_signal_connect(sample_rate_combo_box,"notify::selected",G_CALLBACK(soapy_rx_rate_cb),radio);
+    gtk_widget_set_tooltip_text(sample_rate_combo_box,
+        "Span of every receiver: how wide a piece of the device's stream each one "
+        "sees. Wider costs DSP.");
     gtk_grid_attach(GTK_GRID(model_grid),sample_rate_combo_box,x,0,1,1);
+  }
+
+  // The DEVICE rate, where that is a real hardware clock rather than the widest
+  // span offered.  It is what every receiver on one hardware channel has to fit
+  // inside -- a second receiver may sit (rate - its span)/2 either side of the
+  // first one's centre -- so it is the number to raise for two receivers far
+  // apart, and it is bounded by the LINK rather than by the radio.
+  if(radio->discovered->device==DEVICE_SOAPYSDR && !soapy_span_driven()) {
+    GtkWidget *adc_label=gtk_label_new("Device rate:");
+    gtk_grid_attach(GTK_GRID(model_grid),adc_label,x,1,1,1);
+
+    GtkWidget *adc_combo=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+    int active=0,idx=0;
+    // Row 0 names the device's own default and is what an untouched radio shows.
+    // It has to be a row of its own: an RTL dongle's 1 920 000 is not in the
+    // list at all, so without it the control would sit on a number the device
+    // is not running -- and once a rate had been picked there would be no way
+    // back to the default at all.
+    {
+      char buf[40];
+      snprintf(buf,sizeof(buf),"Default (%d)",radio->soapy_adc_rate_default);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
+      idx++;
+    }
+    for(int i=0;i<soapy_adc_rate_count();i++) {
+      const int r=soapy_adc_rate_at(i);
+      if(!soapy_adc_rate_valid(radio->discovered,r)) continue;
+      if(r==radio->soapy_adc_rate_default) continue;      // row 0 already is it
+      char buf[16];
+      snprintf(buf,sizeof(buf),"%d",r);
+      gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
+      if(r==radio->soapy_adc_rate) active=idx;
+      idx++;
+    }
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(adc_combo),active);
+    g_signal_connect(adc_combo,"notify::selected",G_CALLBACK(soapy_adc_rate_cb),radio);
+    gtk_widget_set_tooltip_text(adc_combo,
+        "How fast the device itself is clocked — TAKES EFFECT ON THE NEXT START.\n"
+        "It is the window several receivers share: a second receiver can sit "
+        "(this rate minus its own span)/2 either side of the first one's centre.\n"
+        "What limits it is the link, not the radio: raise it and watch the log — "
+        "a stream that arrives short is reported there, and missing samples are "
+        "not a silence, they are a splice.\n"
+        "On an AD9361 (PlutoSDR) one clock serves both directions, so this is "
+        "also the transmit rate, and a transmission has to fit up the same link.");
+    gtk_grid_attach(GTK_GRID(model_grid),adc_combo,x+1,1,1,1);
   }
 #endif
 

@@ -28,6 +28,15 @@ SoapySDRDevice *get_soapy_device(void);
    than a fixed ADC rate (see soapy_hw_rate_for in soapy_protocol.c). */
 gboolean soapy_span_driven(void);
 
+/* The ADC rates the operator may choose from on a device whose
+   radio->sample_rate is a real hardware rate (see soapy_span_driven). The
+   reasoning, and the measurement behind leaving the default where it is, are on
+   the list's definition. soapy_adc_rate_valid() bounds a rate out of a props
+   file by what the device said it could be clocked at. */
+int soapy_adc_rate_count(void);
+int soapy_adc_rate_at(int i);
+gboolean soapy_adc_rate_valid(DISCOVERED *d,int rate);
+
 /* The rate the TX DAC should run at.  Not radio->sample_rate: see the comment
    on the definition. */
 int soapy_tx_dac_rate(void);

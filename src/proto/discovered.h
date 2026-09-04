@@ -105,6 +105,13 @@ struct _DISCOVERED {
         int rtlsdr_count;
         int sdrplay_count;
         int sample_rate;
+        // The highest rate the device says it can be CLOCKED at (the top of
+        // getSampleRateRange, not a span). It bounds the ADC-rate choice the
+        // operator is offered: on a device whose radio->sample_rate really is
+        // the hardware rate, that rate is the width of the window several
+        // receivers share, so it is worth being able to raise -- but only to
+        // something the hardware answers to.
+        int rx_rate_max;
         size_t rx_channels;
         size_t rx_gains;
         char **rx_gain;
