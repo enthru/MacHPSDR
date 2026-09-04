@@ -389,6 +389,14 @@ gboolean qo100_transponder_setup(RADIO *r) {
   if(r==NULL) return FALSE;
   RECEIVER *rx=r->active_receiver;
   if(rx==NULL) return FALSE;
+  /* Refuse up front rather than half-way through: set_band() below honours LOCK
+     and would leave the dial where it was while the rest of this function still
+     built a SAT split around it -- an uplink computed from a frequency that is
+     not on the transponder at all. All or nothing, as the comment below says. */
+  if(rx->locked) {
+    log_info("qo100: transponder mode refused, VFO is locked\n");
+    return FALSE;
+  }
 
   // Do the whole job rather than refusing half of it. An earlier version bailed
   // out unless the operator had already tuned to the downlink and built the two

@@ -55,7 +55,10 @@ int ext_num_pad(void *data) {
       rx->entering_frequency=false;
       break;
     case -2: // enter
-      if(rx->entered_frequency!=0) {
+      // Direct entry assigns frequency_a, which is past every receiver_move*()
+      // guard -- so LOCK has to be tested here, as the VFO row's own type-in
+      // popover already does.
+      if(rx->entered_frequency!=0 && !rx->locked) {
         rx->frequency_a=rx->entered_frequency;
       }
       rx->entering_frequency=false;
@@ -206,7 +209,7 @@ int ext_vfo_step(void *data) {
   RX_STEP *s=(RX_STEP *)data;
   RECEIVER *rx=s->rx;
   if(!receiver_is_live(rx)) { g_free(s); return 0; }
-  if(rx!=NULL) {
+  if(rx!=NULL && !rx->locked) {
     rx->frequency_a=rx->frequency_a+(rx->step*s->step);
     rx->band_a=get_band_from_frequency(rx->frequency_a);
   }

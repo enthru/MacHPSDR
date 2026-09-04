@@ -165,6 +165,9 @@ static void tune_clicked(GtkButton *b, gpointer data) {
   if (sel == GTK_INVALID_LIST_POSITION || (int)sel >= p->preset_cnt) return;
 
   RECEIVER *rx = radio->active_receiver;
+  // Channel select writes the dial directly, so it is past receiver_move*() and
+  // its LOCK guard: refuse it here or a locked receiver still jumps channel.
+  if (rx->locked) return;
   long long f = (long long)p->preset_khz[sel] * 1000LL;
   // The decoder follows the tuned channel — the CTUN/freetune cursor when either
   // is on. So with those the cursor is what has to move, and the receiver centre

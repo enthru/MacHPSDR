@@ -371,7 +371,10 @@ void tree_selection_activated_cb(GtkColumnView *cv,guint pos,gpointer data) {
   if(it != NULL) {
     BOOKMARK *bookmark = it->bmk;
     g_object_unref(it);
-    if(bookmark!=NULL) {
+    /* A double-click in a list is one of the cheapest ways to lose a frequency,
+       and recall writes frequency_a/b and the cursor straight in -- past every
+       guard in receiver_move*(). LOCK has to be honoured here explicitly. */
+    if(bookmark!=NULL && !rx->locked) {
       rx->frequency_a=bookmark->frequency_a;
       rx->frequency_b=bookmark->frequency_b;
       rx->ctun_frequency=bookmark->ctun_frequency;

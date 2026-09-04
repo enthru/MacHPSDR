@@ -486,9 +486,13 @@ static gboolean tci_apply_state_idle(gpointer data) {
       case TCI_OP_IF:
         // Place the demod point c->v Hz off the panorama centre (CTUN offset).
         // A non-zero offset with plain tuning implies CTUN, so enable it.
-        if (c->v != 0 && !rx->ctun && !rx->freetune) rx->ctun = TRUE;
-        rx->ctun_frequency = rx->frequency_a + c->v;
-        frequency_changed(rx);
+        // Writes the cursor straight in, so receiver_move()'s LOCK guard is not
+        // in the path: a locked receiver would still be retuned from the network.
+        if (!rx->locked) {
+          if (c->v != 0 && !rx->ctun && !rx->freetune) rx->ctun = TRUE;
+          rx->ctun_frequency = rx->frequency_a + c->v;
+          frequency_changed(rx);
+        }
         break;
       case TCI_OP_MUTE:
         rx->mute = c->b;

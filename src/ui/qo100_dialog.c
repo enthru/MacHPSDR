@@ -134,6 +134,11 @@ static void setup_cb(GtkWidget *w, gpointer data) {
     snprintf(buf,sizeof(buf),"Uplink on VFO B: %.6f MHz, SAT split on",
              rx!=NULL ? (double)rx->frequency_b/1.0e6 : 0.0);
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),buf);
+  } else if(r->active_receiver!=NULL && r->active_receiver->locked) {
+    // The label must name the reason that actually applies: "no free transverter
+    // slots" over a locked VFO sends the operator to clear rows that are fine.
+    gtk_label_set_text(GTK_LABEL(qo100_setup_label),
+                       "Could not set up \342\200\224 the VFO is locked. Release LOCK and try again.");
   } else {
     gtk_label_set_text(GTK_LABEL(qo100_setup_label),
                        "Could not set up \342\200\224 no free transverter slots. Clear two rows in "

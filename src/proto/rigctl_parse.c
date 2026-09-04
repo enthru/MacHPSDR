@@ -779,9 +779,14 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply) ;
           } else if(command[15]==';') {
             long long f=atoll(&command[4]);
-            rx->frequency_b=f;
-            frequency_changed(rx);
-            update_frequency(rx);
+            // Assigns frequency_b directly, so receiver_move_b()'s LOCK guard is
+            // not in the path -- FA/ZZFA go through vfo_apply_frequency() and are
+            // refused, and this must be too or CAT can tune a locked receiver.
+            if(!rx->locked) {
+              rx->frequency_b=f;
+              frequency_changed(rx);
+              update_frequency(rx);
+            }
           }
           break;
         case 'D': //ZZFD
@@ -2290,9 +2295,11 @@ int parse_cmd(void *data) {
             send_resp(cmd,reply) ;
           } else if(command[13]==';') {
             long long f=atoll(&command[2]);
-            rx->frequency_b=f;
-            frequency_changed(rx);
-            update_frequency(rx);
+            if(!rx->locked) {                       // see ZZFB
+              rx->frequency_b=f;
+              frequency_changed(rx);
+              update_frequency(rx);
+            }
           }
           break;
         case 'C': //FC

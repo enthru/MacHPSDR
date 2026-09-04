@@ -115,6 +115,9 @@ static void tune_clicked(GtkButton *b, gpointer data) {
   if (ch == NULL) return;
 
   RECEIVER *rx = radio->active_receiver;
+  // Channel select writes the dial directly, so it is past receiver_move*() and
+  // its LOCK guard: refuse it here or a locked receiver still jumps channel.
+  if (rx->locked) return;
   long long f = (long long)ch->khz * 1000LL;
   // As in the HFDL panel: the decoder follows the CTUN/freetune cursor, so with
   // either of those on it is the cursor that moves and the operator keeps the

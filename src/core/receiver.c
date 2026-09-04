@@ -1210,16 +1210,21 @@ void receiver_sync_vfo_b_lo(RECEIVER *rx) {
   rx->error_b=band->errorLO;
 }
 
+/* Redraw the VFO row and the TX panadapter for whatever the frequencies now
+   are.  This used to be gated on !rx->locked, which is the tuning lock applied
+   to a DISPLAY refresh: every caller that can move a frequency is guarded
+   already and never gets here while locked, so all the gate did was freeze the
+   readout for the things LOCK does not stop -- RIT/XIT, and the QO-100 beacon
+   loop's errorLO corrections, which move the dial's meaning without moving the
+   dial. */
 void update_frequency(RECEIVER *rx) {
-  if(!rx->locked) {
-    receiver_sync_vfo_b_lo(rx);
-    if(rx->vfo!=NULL) {
-      update_vfo(rx);
-    }
-    if(radio->transmitter!=NULL) {
-      if(radio->transmitter->rx==rx) {
-        update_tx_panadapter(radio);
-      }
+  receiver_sync_vfo_b_lo(rx);
+  if(rx->vfo!=NULL) {
+    update_vfo(rx);
+  }
+  if(radio->transmitter!=NULL) {
+    if(radio->transmitter->rx==rx) {
+      update_tx_panadapter(radio);
     }
   }
 }

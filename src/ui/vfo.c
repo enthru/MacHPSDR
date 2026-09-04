@@ -258,7 +258,13 @@ static void a2b_cb(GtkButton *widget,gpointer user_data) {
   vfo_a2b(rx);
 }
 
+/* B>A and A<>B put VFO B's frequency on the dial with one click, from buttons
+   that sit in the VFO row beside the tuning digits -- the same slip LOCK exists
+   to stop.  A>B is deliberately NOT guarded: it writes only VFO B and is the
+   first step of split setup, where refusing half of it leaves a worse state
+   than letting it through. */
 void vfo_b2a(RECEIVER *rx) {
+  if(rx->locked) return;
   int m=rx->mode_a;
   int f=rx->filter_a;
   rx->band_a=rx->band_b;
@@ -287,6 +293,7 @@ static void b2a_cb(GtkButton *widget,gpointer user_data) {
 }
 
 void vfo_aswapb(RECEIVER *rx) {
+  if(rx->locked) return;
   gint temp_band;
   gint64 temp_frequency;
   gint temp_mode;
@@ -2036,7 +2043,9 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   v->lock_b=gtk_toggle_button_new_with_label("LOCK");
   gtk_widget_set_name(v->lock_b,"vfo-toggle");
   gtk_widget_set_tooltip_text(v->lock_b,
-      "Lock the VFO: tuning, band changes and frequency entry are ignored");
+      "Lock the VFO: tuning, band changes, bookmarks, channel presets and\n"
+      "frequency entry are all ignored, from the panel and over CAT/TCI alike.\n"
+      "RIT/XIT, mode and filter still work.");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),FALSE);
   g_signal_connect(v->lock_b, "toggled", G_CALLBACK(lock_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_ctl),v->lock_b);

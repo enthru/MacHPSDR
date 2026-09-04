@@ -787,6 +787,14 @@ int previous_band(int current_band) {
 }
 
 void set_band(RECEIVER *rx,int band,int bs_entry) {
+  /* LOCK stops the dial moving, and a band change is the largest move there is:
+     it replaces frequency, mode and filter from the band stack in one step.  It
+     is also the one that reaches the receiver by the most routes -- the band
+     menu, band up/down on a keyboard shortcut or a MIDI encoder, and CAT's
+     BD/BU/BS -- so the refusal belongs here rather than at each of them, which
+     is where it was missing entirely while the LOCK tooltip promised it. */
+  if(rx==NULL || rx->locked) return;
+
   // save current bandstack
   BAND *b=&bands[rx->band_a];
   BANDSTACK *stack=b->bandstack;
