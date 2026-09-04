@@ -231,7 +231,7 @@ static void rate_row_add(GtkWidget *dd,int *rows,int *n,int hz) {
   // What the row SAYS beside what it MEANS: the label is now written for a
   // person to read, so the two can drift apart, and a drop-down is the one
   // thing in this application no headless run can look at.
-  log_debug("%s: row %d = \"%s\" (%d Hz)\n",__FUNCTION__,*n,buf,hz);
+  log_debug_area(LOG_UI, "%s: row %d = \"%s\" (%d Hz)\n",__FUNCTION__,*n,buf,hz);
   rows[(*n)++]=hz;
 }
 
@@ -986,7 +986,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       sui_rate_label(rbuf,sizeof(rbuf),radio->soapy_adc_rate_default);
       snprintf(buf,sizeof(buf),"Default (%s)",rbuf);
       gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
-      log_debug("radio_dialog: device rate row 0 = \"%s\" (this device's default)\n",buf);
+      log_debug_area(LOG_UI, "radio_dialog: device rate row 0 = \"%s\" (this device's default)\n",buf);
       adc_rows[n_adc_rows++]=0;                           // 0 = "no choice of mine"
       idx++;
     }

@@ -481,7 +481,7 @@ static gboolean qso_poll(gpointer data) {
     // non-standard call may be unencodable for this step (grid/report), in
     // which case we surface it rather than transmitting a stale waveform.
     if (strcmp(pending_msg, prepared_msg) == 0) {
-      log_debug("ft8-qso: arming Tx '%s' (offset=%d even=%d)\n",
+      log_debug_area(LOG_TX, "ft8-qso: arming Tx '%s' (offset=%d even=%d)\n",
               pending_msg, radio->ft8_tx_offset, tx_even);
       ft8_tx_arm(tx_even);
       need_arm = FALSE;

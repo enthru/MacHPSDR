@@ -846,7 +846,7 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
   // never streaming TX audio -- left nothing to read: you could see what the app
   // answered only by inferring it from the source.  The guard is in the macro,
   // so this costs one int compare per command.
-  log_debug("tci: <- %s;\n", token);
+  log_debug_area(LOG_PROTOCOL, "tci: <- %s;\n", token);
   char name[32];
   const char *colon = strchr(token, ':');
   size_t nlen = colon ? (size_t)(colon - token) : strlen(token);
@@ -1359,7 +1359,7 @@ static void tci_handle_command(TCI_CLIENT *c, const char *token) {
     // Say which ones landed here: an unimplemented command a client is WAITING
     // on looks exactly like one it does not care about, and the echo below makes
     // both of them look answered.
-    log_debug("tci: '%s' has no implementation here -- echoed as an ack\n", name);
+    log_debug_area(LOG_PROTOCOL, "tci: '%s' has no implementation here -- echoed as an ack\n", name);
     // Everything left over — start, stop, spot, spot_delete, sql_level,
     // rx_balance, rx_filter_band, cw_macros_delay, … — is echoed as an ack so a
     // request/response client cannot hang waiting on it.

@@ -148,7 +148,7 @@ float *cw_encode_to_audio(const char *text, int wpm, int weight,
     }
     const char *code = char_to_code(c);
     if (code == NULL) {
-      log_debug("cw_encoder: skipping unencodable char '%c'\n", c);
+      log_debug_area(LOG_TX, "cw_encoder: skipping unencodable char '%c'\n", c);
       continue;
     }
     if (!first_char) {

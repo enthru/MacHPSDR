@@ -393,7 +393,7 @@ static gboolean rx_clamp_to_shared_window(RECEIVER *rx) {
              "receiver's span, or retune the one that owns the channel.\n",
              rx->channel,rx->adc,(long long)rx->frequency_a,d);
   } else {
-    log_debug("rx%d: held inside adc %d's window (moved %+lld Hz)\n",rx->channel,rx->adc,d);
+    log_debug_area(LOG_RX, "rx%d: held inside adc %d's window (moved %+lld Hz)\n",rx->channel,rx->adc,d);
   }
   return TRUE;
 }

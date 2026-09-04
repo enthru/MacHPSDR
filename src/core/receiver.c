@@ -1678,7 +1678,7 @@ static gboolean key_goes_to_text_field(GtkEventControllerKey *controller) {
 
 // GTK4: GtkEventControllerKey "key-pressed" handler (returns TRUE if handled).
 gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
-  log_debug("Pressed: %s\n", gdk_keyval_name(keyval));
+  log_debug_area(LOG_UI, "Pressed: %s\n", gdk_keyval_name(keyval));
   if(key_goes_to_text_field(controller)) return FALSE;
   // Cmd-Q (macOS) / Ctrl-Q: clean shutdown. On the quartz backend the Command
   // key may show up as either GDK_META_MASK or GDK_MOD2_MASK, so accept both.
@@ -1735,7 +1735,7 @@ gboolean receiver_key_pressed(GtkEventControllerKey *controller, guint keyval, g
 
 // GTK4: GtkEventControllerKey "key-released" handler (void).
 void receiver_key_released(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
-  log_debug("Released: %s\n", gdk_keyval_name(keyval));
+  log_debug_area(LOG_UI, "Released: %s\n", gdk_keyval_name(keyval));
   if(radio==NULL) return;                 // no radio yet: see receiver_key_pressed
   // Ends a hold-to-talk shortcut. It runs whatever else this key does -- and
   // whatever has the focus -- because a release that is skipped strands the

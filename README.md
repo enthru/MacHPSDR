@@ -1266,6 +1266,23 @@ MACHPSDR_LOG=debug ./machpsdr  # via the environment
 per-slot traces (audio callbacks, FT8 TX slot timing, etc.); `ERROR` shows only
 failures.
 
+Debug output can be limited to logical areas. Synchronization measurements
+(including QO-100 beacon tracking and APT lock changes) are hidden at `INFO`.
+
+```bash
+./machpsdr --debug=sync       # synchronization / beacon tracking
+./machpsdr --debug=rx,tx      # reception and transmission
+MACHPSDR_DEBUG=protocol,decoder ./machpsdr
+```
+
+Categories: `general`, `rx`, `tx`, `sync`, `protocol`, `decoder`, `ui`.
+`--debug` enables all categories; `--debug=none` disables debug output.
+Debug lines include the area, for example `[DEBUG][sync] …`.
+`MACHPSDR_DEBUG` accepts the same comma-separated list (or `all` / `none`)
+and enables DEBUG unless `MACHPSDR_LOG` explicitly sets a threshold.
+Command-line options override the environment and are applied left to right.
+Category selection filters only DEBUG; INFO and ERROR keep their normal threshold.
+
 ### Environment variables
 
 None of these is needed to run MacHPSDR; the first group is for ordinary use and
@@ -1278,6 +1295,7 @@ in four languages, are in the [user manual](#user-manual) (§15).
 | Variable | Effect |
 |---|---|
 | `MACHPSDR_LOG=error\|info\|debug` | Log threshold, same as `--log-level` (the command line wins). |
+| `MACHPSDR_DEBUG=rx,tx,...` | Select debug categories; enables DEBUG unless `MACHPSDR_LOG` sets the threshold. |
 | `MACHPSDR_LOG_FILE=<path>` | Write the log to a file. Needed on Windows, where a GUI build has no console. |
 | `MACHPSDR_CTY=<path>` | Where to find `cty.dat` (the DXCC lookup behind the FT8 panel's country column). |
 | `MACHPSDR_COASTLINE=<path>` | Where to find `coastline.bin` (the coastline overlay on APT pictures). |

@@ -244,7 +244,7 @@ gboolean keybind_key_pressed(guint keyval, guint keycode, GdkModifierType state)
       if(!built) { candidates_build(&c,keyval,keycode); built=TRUE; }
       if(!candidates_have(&c,bindings[i].keyval)) continue;
     }
-    log_debug("keybind: %s\n",keybind_actions[i].label);
+    log_debug_area(LOG_UI, "keybind: %s\n",keybind_actions[i].label);
     if(keybind_actions[i].hold) bindings[i].held=TRUE;
     keybind_run(keybind_actions[i].action,TRUE);
     return TRUE;

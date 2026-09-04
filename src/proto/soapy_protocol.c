@@ -856,7 +856,7 @@ static double soapy_rx_target_freq(RECEIVER *rx) {
 static void slot_set_offset(RXSLOT *sl,long long off) {
   if(sl->offset==off) return;
   sl->offset=off;
-  log_debug("%s: rx%d now %+lld Hz from the device LO\n",
+  log_debug_area(LOG_RX, "%s: rx%d now %+lld Hz from the device LO\n",
             __FUNCTION__,sl->rx!=NULL?sl->rx->channel:-1,off);
 }
 
@@ -1715,7 +1715,7 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       if(on) {
         const gint64 now=g_get_monotonic_time();
         if(now-dc_reported>=5000000) {
-          log_debug("dc_block: adc %ld: offset now I %+.6f Q %+.6f of full scale\n",
+          log_debug_area(LOG_RX, "dc_block: adc %ld: offset now I %+.6f Q %+.6f of full scale\n",
                     (long)channel,dcb.i,dcb.q);
           dc_reported=now;
         }
@@ -2035,7 +2035,7 @@ void soapy_protocol_rx_pause(void) {
   if(!rx_stream_active) return;
   // Which of the two branches in rxtx() ran is not otherwise visible in a log,
   // and it decides whether the link/CPU is shared with RX for the whole over.
-  log_debug("%s: RX stream(s) down for the transmission\n",__FUNCTION__);
+  log_debug_area(LOG_RX, "%s: RX stream(s) down for the transmission\n",__FUNCTION__);
   rx_stream_active=FALSE;
   // EVERY stream, not rx_channel's: that global holds whichever receiver was
   // started last, so with two receivers this deactivated one and left the other
@@ -2074,7 +2074,7 @@ static void rx_resume_channel(size_t channel) {
 void soapy_protocol_rx_resume(void) {
   if(soapy_device==NULL) return;
   if(rx_stream_active) return;
-  log_debug("%s: rebuilding the RX stream(s)\n",__FUNCTION__);
+  log_debug_area(LOG_RX, "%s: rebuilding the RX stream(s)\n",__FUNCTION__);
   for(size_t ch=0;ch<MAX_CHANNELS;ch++) {
     if(rx_stream[ch]!=NULL) rx_resume_channel(ch);
   }

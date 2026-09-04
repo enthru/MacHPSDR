@@ -228,7 +228,7 @@ void apt_map_update(int lines, int x0, int width) {
     run_flush();
   }
 
-  log_debug("apt_map: %d runs, %d points, %.1f ms\n", runs->len, xy->len / 2,
+  log_debug_area(LOG_UI, "apt_map: %d runs, %d points, %.1f ms\n", runs->len, xy->len / 2,
             (g_get_monotonic_time() - t0) / 1000.0);
 }
 

@@ -968,6 +968,16 @@ int main(int argc, char **argv) {
     }
   }
 
+  {
+    const char *env = getenv("MACHPSDR_DEBUG");
+    if (env != NULL) {
+      if (log_set_debug_categories(env) != 0)
+        log_error("unknown MACHPSDR_DEBUG categories '%s' (use general,rx,tx,sync,protocol,decoder,ui,all,none)\n", env);
+      else if (getenv("MACHPSDR_LOG") == NULL)
+        log_set_level(LOG_LEVEL_DEBUG);
+    }
+  }
+
   // --faker: offer the synthetic fake test device (see fake_protocol.c).
   // Strip it from argv so GtkApplication does not reject the unknown option.
   {
@@ -981,7 +991,13 @@ int main(int argc, char **argv) {
         // --log-level=<error|info|debug>
         if(log_set_level_name(argv[i]+12)!=0)
           log_error("unknown --log-level '%s' (use error|info|debug)\n",argv[i]+12);
+      } else if(strncmp(argv[i],"--debug=",8)==0) {
+        if(log_set_debug_categories(argv[i]+8)!=0)
+          log_error("unknown --debug categories '%s' (use general,rx,tx,sync,protocol,decoder,ui,all,none)\n",argv[i]+8);
+        else
+          log_set_level(LOG_LEVEL_DEBUG);
       } else if(strcmp(argv[i],"--debug")==0) {
+        log_set_debug_categories("all");
         log_set_level(LOG_LEVEL_DEBUG);
       } else if(strcmp(argv[i],"--verbose")==0 || strcmp(argv[i],"-v")==0) {
         log_set_level(LOG_LEVEL_DEBUG);

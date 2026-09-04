@@ -244,7 +244,7 @@ static gboolean tx_tick(gpointer data) {
     last_started_slot = slot;
     tx_idx = 0;
     tx_active = TRUE;
-    log_debug("ft8-tx: slot boundary reached, keying up (in_slot=%ldms even=%d mox=%d)\n",
+    log_debug_area(LOG_TX, "ft8-tx: slot boundary reached, keying up (in_slot=%ldms even=%d mox=%d)\n",
             in_slot, arm_even, radio->mox);
     key_time_ms = now_ms;               // arm the MOX safety watchdog
     if (!radio->mox) { we_keyed = TRUE; set_mox(radio, TRUE); }
@@ -280,7 +280,7 @@ void ft8_tx_arm(gboolean tx_even) {
     log_error("ft8-tx: arm ignored — no valid waveform (encode failed?)\n");
     return;
   }
-  log_debug("ft8-tx: armed for %s slots, waiting for boundary\n",
+  log_debug_area(LOG_TX, "ft8-tx: armed for %s slots, waiting for boundary\n",
           tx_even ? "even" : "odd");
   arm_even = tx_even;
   // Anchor on the current slot so we never start mid-slot: fire only when the

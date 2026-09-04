@@ -298,7 +298,7 @@ static void parse_spot_line(const char *line) {
   int entity = ft8_dxcc_entity(calltok);
   dxcluster_add_spot(calltok, freq_hz, spotter, comment, entity);
   // Permanent, level-gated: silent unless MACHPSDR_LOG=debug (or --debug/-v).
-  log_debug("dxcluster: spot %s %.1f kHz spotter=%s entity=%d (nspots=%d)\n",
+  log_debug_area(LOG_PROTOCOL, "dxcluster: spot %s %.1f kHz spotter=%s entity=%d (nspots=%d)\n",
             calltok, khz, spotter, entity, nspots);
 }
 

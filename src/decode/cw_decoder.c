@@ -234,7 +234,7 @@ static void emit_char_from_symbol(void) {
   // Only emit when the recent timing looks like real Morse; otherwise the
   // symbol is discarded (a non-CW signal that opened the squelch).
   if (c && timing_ok()) emit_char(c);
-  else if (!c)          log_debug("cw_decoder: unknown code '%s'\n", current_symbol);
+  else if (!c)          log_debug_area(LOG_DECODER, "cw_decoder: unknown code '%s'\n", current_symbol);
   current_symbol_len = 0;
   current_symbol[0] = '\0';
 }

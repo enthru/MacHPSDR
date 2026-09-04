@@ -1686,7 +1686,7 @@ static void process_ps_iq_data(int bytes,unsigned char *buffer) {
              samplesperframe/2);
   }
   packets++;
-  if((packets&0x7FF)==0) log_debug("PureSignal P2: %ld feedback packets\n",packets);
+  if((packets&0x7FF)==0) log_debug_area(LOG_TX, "PureSignal P2: %ld feedback packets\n",packets);
 }
 #endif
 

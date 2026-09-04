@@ -235,7 +235,7 @@ static void chan_search_done(int winner) {
         chans[i].khz == chans[winner].khz) any = TRUE;
   if (!any) return;
   if (chans[winner].trim_hz != 0.0)
-    log_info("hfdl: carrier found %+.0f Hz from the requested channel\n",
+    log_debug_area(LOG_SYNC, "hfdl: carrier found %+.0f Hz from the requested channel\n",
              chans[winner].trim_hz);
   int n = 0;
   for (int i = 0; i < nchans; i++) {

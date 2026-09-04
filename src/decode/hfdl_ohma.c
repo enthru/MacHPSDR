@@ -334,7 +334,7 @@ gboolean hfdl_ohma_decode(const char *reg, const char *txt, GString *out, int in
     if (guard >= 4) break;
     const char *dup = find_mem(ptr, len, txt, (gsize)(ptr - txt));
     if (dup == NULL) break;
-    log_debug("hfdl ohma: duplicate first fragment, skipping %ld octets\n", (long)(dup - txt));
+    log_debug_area(LOG_DECODER, "hfdl ohma: duplicate first fragment, skipping %ld octets\n", (long)(dup - txt));
     ptr = dup;
   }
 

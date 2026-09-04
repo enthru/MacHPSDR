@@ -1686,7 +1686,7 @@ static gboolean apply_idle(gpointer data) {
     // operator to blame the receiver.
     double ms=(double)(g_get_monotonic_time()-t0)/1000.0;
     if(ms>20.0)
-      log_info("qo100: the %+.1f Hz retune took %.0f ms on the GTK thread\n",step,ms);
+      log_debug_area(LOG_SYNC, "qo100: the %+.1f Hz retune took %.0f ms on the GTK thread\n",step,ms);
   }
   // Commit the control-loop state only after the hardware command has actually
   // been issued.  Until this point the DSP side discards input (b_hold == -1),
@@ -1891,7 +1891,7 @@ static void beacon_frame(RECEIVER *rx) {
                "Acquiring the %s CW beacon — middle BPSK %s",
                boot_name(boot),bpsk_stalled?"has no accepted estimate for 10 s":
                                           "is at DC or outside the span");
-      log_info("qo100: %s\n",b_status);
+      log_debug_area(LOG_SYNC, "qo100: %s\n",b_status);
     }
   }
   double expected=(double)(eff_beacon-rx->frequency_a);
@@ -2056,7 +2056,7 @@ static void beacon_frame(RECEIVER *rx) {
                  ?boot_beacon_pick(rx->frequency_a,span_half,b_boot?b_boot_sel:-1):-1;
       if(boot>=0 &&
          b_dry_samples>(double)track_fs*(QO100_BOOT_DRY_MS/1000.0)) {
-        log_info("qo100: %s beacon not identified — acquiring the %s CW beacon while monitoring the middle beacon\n",
+        log_debug_area(LOG_SYNC, "qo100: %s beacon not identified — acquiring the %s CW beacon while monitoring the middle beacon\n",
                  use_bpsk?"middle BPSK":boot_name(b_boot_sel),boot_name(boot));
         beacon_reset_locked();
         b_boot=TRUE;
@@ -2101,7 +2101,7 @@ static void beacon_frame(RECEIVER *rx) {
         g_strlcpy(b_status,
                   "Re-acquiring — the beacon was gone for 10 s",
                   sizeof(b_status));
-        log_info("qo100: lock given up — no carrier for %.0f s, searching wide "
+        log_debug_area(LOG_SYNC, "qo100: lock given up — no carrier for %.0f s, searching wide "
                  "again\n",QO100_LOST_MS/1000.0);
       } else {
         snprintf(b_status,sizeof(b_status),
@@ -2109,10 +2109,10 @@ static void beacon_frame(RECEIVER *rx) {
                  b_gone_samples/(double)track_fs);
       }
     }
-    // Say why, at INFO, because this is the status an operator gets stuck on and
+    // Say why in the synchronization debug log, because this is the status an operator gets stuck on and
     // it is the one that explains nothing by itself.
     if(say)
-      log_info("qo100: no carrier — beacon expected %+.1f kHz from centre, "
+      log_debug_area(LOG_SYNC, "qo100: no carrier — beacon expected %+.1f kHz from centre, "
                "searched %+.1f..%+.1f kHz (%d bins of %.1f Hz), %d candidate "
                "lines, best peak %.1f x mean (needs %.0f), span %d Hz\n",
                expected/1000.0,lo_hz/1000.0,hi_hz/1000.0,bins,
@@ -2146,7 +2146,7 @@ static void beacon_frame(RECEIVER *rx) {
     else
       g_strlcpy(b_check,"Lower CW beacon not heard — tone convention "
                         "unchecked",sizeof(b_check));
-    if(b_check[0]!='\0') log_info("qo100: %s\n",b_check);
+    if(b_check[0]!='\0') log_debug_area(LOG_SYNC, "qo100: %s\n",b_check);
   } else if(say && b_locked && b_settled) {
     double mid=(double)(QO100_BEACON_MIDDLE-rx->frequency_a);
     double c=0.0, w=0.0;
@@ -2160,7 +2160,7 @@ static void beacon_frame(RECEIVER *rx) {
                         "check of the dial from there",sizeof(b_check));
     else if(middle_beacon_centre(bpow,track_fs,mid,QO100_MID_WIN_HZ,&c,&w,&nb)) {
       middle_beacon_verdict(c-mid,w,nb);
-      log_info("qo100: %s\n",b_check);
+      log_debug_area(LOG_SYNC, "qo100: %s\n",b_check);
     } else
       g_strlcpy(b_check,"Middle beacon not heard — no independent check "
                         "of the dial",sizeof(b_check));
@@ -2215,7 +2215,7 @@ static void beacon_frame(RECEIVER *rx) {
     else b_return_run=ready?1:0;
     b_return_last=absolute_error;
     if(say)
-      log_info("qo100: middle recovery probe: %d/%d confirmed measurements, peak %.1f, drift %+.1f Hz/s\n",
+      log_debug_area(LOG_SYNC, "qo100: middle recovery probe: %d/%d confirmed measurements, peak %.1f, drift %+.1f Hz/s\n",
                b_return_run,QO100_BPSK_RETURN_RUN,mid_snr,b_slope);
     if(b_return_run>=QO100_BPSK_RETURN_RUN) {
       double residual=mid_found-middle_expected;
@@ -2247,7 +2247,7 @@ static void beacon_frame(RECEIVER *rx) {
       b_run_samples=track_fs*(QO100_AGREE_MS/1000.0);
       g_strlcpy(b_status,"Returning to the middle BPSK beacon — five confirmed measurements",
                 sizeof(b_status));
-      log_info("qo100: %s (%+.1f Hz residual)\n",b_status,residual);
+      log_debug_area(LOG_SYNC, "qo100: %s (%+.1f Hz residual)\n",b_status,residual);
       return;
     }
   } else b_return_run=0;
@@ -2303,9 +2303,9 @@ static void beacon_frame(RECEIVER *rx) {
   }
   // Per frame, at DEBUG: the only way to tell a beacon whose line MOVES (the
   // lower one is F1A and hops 400 Hz while it keys) from one that is steady but
-  // competing with another carrier. The INFO summary below is five seconds
+  // competing with another carrier. The periodic summary below is five seconds
   // apart and cannot show either.
-  log_debug("qo100: frame carrier %+.1f Hz residual %+.1f Hz snr %.0f "
+  log_debug_area(LOG_SYNC, "qo100: frame carrier %+.1f Hz residual %+.1f Hz snr %.0f "
             "(previous residual %+.1f Hz, delta %+.1f Hz, run %d)\n",
             found,residual,snr,b_last,residual-b_last,b_run);
 
@@ -2376,7 +2376,7 @@ static void beacon_frame(RECEIVER *rx) {
   // finds a strong carrier every frame and never locks is one whose readings
   // disagree, and nothing else in the log says by how much.
   if(say)
-    log_info("qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
+    log_debug_area(LOG_SYNC, "qo100: carrier at %+.1f Hz of an expected %+.1f Hz "
              "(residual %+.1f Hz, %.0f x mean, nearest of %d lines, %s; "
              "agreed on %d frames / %.0f ms of %.0f, reading change %+.1f Hz, "
              "tolerance %.0f Hz; picked by %s; tone %d on the resting side / "
@@ -2871,7 +2871,7 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   g_mutex_lock(&bmtx);
   if(now-last_report>=5*G_USEC_PER_SEC) {
     last_report=now;
-    log_info("qo100: status: %s; source=%s, span=%d Hz, pending=%d\n",
+    log_debug_area(LOG_SYNC, "qo100: status: %s; source=%s, span=%d Hz, pending=%d\n",
              b_status,b_boot?boot_name(b_boot_sel):
              (qo100_beacon_is_bpsk(radio->qo100_beacon_sel)?"middle BPSK":
               boot_name(radio->qo100_beacon_sel)),rx->sample_rate,b_hold);

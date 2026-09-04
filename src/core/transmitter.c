@@ -1081,7 +1081,7 @@ void transmitter_set_eer_mdelay(TRANSMITTER *tx,gdouble delay) {
 }
 
 void transmitter_set_twotone(TRANSMITTER *tx,gboolean state) {
-log_info("transmitter_set_twotone: %d\n",state);
+log_debug_area(LOG_TX, "transmitter_set_twotone: %d\n",state);
   tx->ps_twotone=state;
   if(state) {
     SetTXAPostGenTTMag(tx->channel, 0.49, 0.49);
@@ -1799,7 +1799,7 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
     int span_clip_l = (fft_size - window_bins) / 2;
     int span_clip_h = fft_size - window_bins - span_clip_l;
 
-    log_info("transmitter_init_analyzer: width=%d pixels=%d fft_size=%d window_bins=%d\n",
+    log_debug_area(LOG_TX, "transmitter_init_analyzer: width=%d pixels=%d fft_size=%d window_bins=%d\n",
              tx->panadapter_width,tx->pixels,fft_size,window_bins);
 
     if(tx->pixel_samples!=NULL) {
@@ -1818,7 +1818,7 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
       // does not (49152 at a 2304000 output rate), which reads as the heap bug
       // receiver.h's _Static_assert exists to prevent.  What is actually passed
       // is ANALYZER_FEED_BLOCK, and analyzer_feed() splits the buffer to match.
-      log_info("SetAnalyzer id=%d block=%d (buffer %d, fed in %d-sample pieces) overlap=%d\n",
+      log_debug_area(LOG_TX, "SetAnalyzer id=%d block=%d (buffer %d, fed in %d-sample pieces) overlap=%d\n",
                tx->channel,ANALYZER_FEED_BLOCK,tx->output_samples,ANALYZER_FEED_BLOCK,overlap);
 
 
@@ -2156,7 +2156,7 @@ log_info("create_transmitter: channel=%d\n",channel);
     log_error("XCreateAnalyzer channel=%d failed: %d\n",tx->channel,rc);
   } else {
     transmitter_init_analyzer(tx);
-log_info("update_timer: fps=%d\n",tx->fps);
+log_debug_area(LOG_TX, "update_timer: fps=%d\n",tx->fps);
     tx->update_timer_id=g_timeout_add(1000/tx->fps,update_timer_cb,(gpointer)tx);
   }
 

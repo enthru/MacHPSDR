@@ -45,6 +45,20 @@ typedef enum {
  * except through log_set_level()/log_set_level_name(). */
 extern log_level_t machpsdr_log_level;
 
+/* Configure before starting worker threads. Categories filter DEBUG only. */
+typedef enum {
+  LOG_GENERAL, LOG_RX, LOG_TX, LOG_SYNC, LOG_PROTOCOL, LOG_DECODER, LOG_UI,
+  LOG_CATEGORY_COUNT
+} log_category_t;
+extern unsigned int machpsdr_debug_categories;
+/* Comma-separated names, or all/none. Invalid input leaves the mask intact. */
+int log_set_debug_categories(const char *names);
+void log_emit_debug(log_category_t category, const char *fmt, ...)
+#if defined(__GNUC__) || defined(__clang__)
+  __attribute__((format(printf, 2, 3)))
+#endif
+  ;
+
 void        log_set_level(log_level_t level);
 /* Parse "error"/"info"/"debug" (also "warn"->info, "verbose"->debug),
  * case-insensitive. Returns 0 on success, -1 on an unknown name. */
@@ -62,7 +76,10 @@ void        log_emit(log_level_t level, const char *fmt, ...)
   do { if (machpsdr_log_level >= LOG_LEVEL_ERROR) log_emit(LOG_LEVEL_ERROR, __VA_ARGS__); } while (0)
 #define log_info(...) \
   do { if (machpsdr_log_level >= LOG_LEVEL_INFO)  log_emit(LOG_LEVEL_INFO,  __VA_ARGS__); } while (0)
-#define log_debug(...) \
-  do { if (machpsdr_log_level >= LOG_LEVEL_DEBUG) log_emit(LOG_LEVEL_DEBUG, __VA_ARGS__); } while (0)
+#define log_debug_area(category, ...) \
+  do { if (machpsdr_log_level >= LOG_LEVEL_DEBUG && \
+           (machpsdr_debug_categories & (1u << (category)))) \
+    log_emit_debug(category, __VA_ARGS__); } while (0)
+#define log_debug(...) log_debug_area(LOG_GENERAL, __VA_ARGS__)
 
 #endif /* _MACHPSDR_LOG_H */

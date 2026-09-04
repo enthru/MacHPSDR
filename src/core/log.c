@@ -75,3 +75,45 @@ void log_emit(log_level_t level, const char *fmt, ...) {
   fflush(stderr);
   g_mutex_unlock(&log_mutex);
 }
+
+static const char *debug_names[] = {
+  "general", "rx", "tx", "sync", "protocol", "decoder", "ui"
+};
+unsigned int machpsdr_debug_categories = (1u << LOG_CATEGORY_COUNT) - 1;
+
+int log_set_debug_categories(const char *names) {
+  if (!names || !*names) return -1;
+  gchar **parts = g_strsplit(names, ",", -1);
+  unsigned int mask = 0;
+  for (int i = 0; parts[i]; ++i) {
+    const char *name = g_strstrip(parts[i]);
+    if (!strcasecmp(name, "all")) {
+      mask |= (1u << LOG_CATEGORY_COUNT) - 1;
+    } else if (!strcasecmp(name, "none") && !parts[1]) {
+      mask = 0;
+    } else {
+      int category;
+      for (category = 0; category < LOG_CATEGORY_COUNT; ++category)
+        if (!strcasecmp(name, debug_names[category])) break;
+      if (category == LOG_CATEGORY_COUNT) {
+        g_strfreev(parts);
+        return -1;
+      }
+      mask |= 1u << category;
+    }
+  }
+  g_strfreev(parts);
+  machpsdr_debug_categories = mask;
+  return 0;
+}
+
+void log_emit_debug(log_category_t category, const char *fmt, ...) {
+  va_list ap;
+  g_mutex_lock(&log_mutex);
+  fprintf(stderr, "[DEBUG][%s] ", debug_names[category]);
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+  fflush(stderr);
+  g_mutex_unlock(&log_mutex);
+}

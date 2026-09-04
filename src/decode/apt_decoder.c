@@ -590,7 +590,7 @@ static void process_line(void) {
       if (unlocked_lines > NEWPASS_LINES) clear_image("signal returned");
       locked = TRUE; miss = 0; unlocked_lines = 0; cand_run = 0;
       line_start = bestpos;
-      log_info("APT: sync locked (corr %.2f)\n", best);
+      log_debug_area(LOG_SYNC, "APT: sync locked (corr %.2f)\n", best);
     } else {
       unlocked_lines++;
       // Nothing to draw — a picture built from unsynchronised noise is worse
@@ -622,7 +622,7 @@ static void process_line(void) {
       miss = 0;
     } else if (++miss > MISS_MAX) {
       locked = FALSE; cand_run = 0;
-      log_info("APT: sync lost\n");
+      log_debug_area(LOG_SYNC, "APT: sync lost\n");
     }
     // Between the two: a fade.  The line keeps its predicted position and the
     // clock trim is left exactly where the good syncs put it — letting a weak
