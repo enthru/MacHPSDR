@@ -107,6 +107,22 @@ int MIDIstartup(char *filename);
 
 static GtkWidget *add_receiver_b;
 static GtkWidget *add_wideband_b;
+// The swappable bottom-bar slot, and what can occupy it. It used to be the
+// RX FRONT-END module and nothing else -- Preamp / Att10 / Att20, which are the
+// LT2208's gain and ALEX's attenuators, i.e. three controls that exist on
+// protocol 1/2 hardware and on nothing else. On a SoapySDR device they were
+// three buttons that reached no register, in the most valuable strip of the
+// window. So the slot now carries whichever block suits the device and the mode,
+// with the front-end column as one occupant among others, and shows nothing at
+// all (module and rail together) when none of them applies.
+static GtkWidget *fe_module;      // the module, so the whole slot can be hidden
+static GtkWidget *fe_title;       // ...and retitled, the way the RDS block is
+static GtkWidget *fe_rail;        // the hairline to its right, hidden with it
+static GtkWidget *fe_adc_col;     // occupant: RX FRONT-END (protocol 1/2)
+static GtkWidget *fe_qo100_col;   // occupant: QO-100
+static GtkWidget *qo100_cal_b;    // ...its Calibrate TX button
+static GtkWidget *qo100_cal_lbl;  // ...and the one line it reports through
+
 // The bottom-bar Record button. Held here because a recording can also be
 // stopped from outside its own callback (delete_receiver closes the receiver it
 // was started on), and a button still reading "Stop" over an idle recorder is
@@ -896,6 +912,32 @@ static void vox_cb(GtkToggleButton *widget,gpointer data) {
   update_radio(r);
 }
 
+/* WHERE the Tune carrier comes out, as a signed offset from the transmit dial:
+   PostGen inserts a complex tone at baseband and the chain up-converts by the
+   dial, so the emission is simply `dial + this`, in every mode -- the sideband
+   only decides which sign the passband lets through.
+
+   It is a function and not four lines inside set_tune() because something else
+   now has to PREDICT the emission rather than merely produce it: the QO-100
+   transmit calibration keys a Tune carrier and then looks for it on the
+   downlink, and a copy of this expression would be a copy that can drift out of
+   step with the one that keys the radio -- the two would then disagree by a
+   whole tone, and the calibration would silently write that disagreement into
+   the operator's uplink converter. */
+double radio_tune_tone_hz(RADIO *r) {
+  if(r==NULL || r->transmitter==NULL || r->transmitter->rx==NULL) return 0.0;
+  TRANSMITTER *tx=r->transmitter;
+  switch(tx->rx->mode_a) {
+    case CWL: return -(double)r->cw_keyer_sidetone_frequency;
+    case CWU: return  (double)r->cw_keyer_sidetone_frequency;
+    case LSB:
+    case DIGL:
+      return (double)(-tx->filter_low-((tx->filter_high-tx->filter_low)/2));
+    default:
+      return (double)(tx->filter_low+((tx->filter_high-tx->filter_low)/2));
+  }
+}
+
 void set_tune(RADIO *r,gboolean state) {
   if(r->mox) {
     r->mox=FALSE;
@@ -912,22 +954,14 @@ void set_tune(RADIO *r,gboolean state) {
     switch(r->transmitter->rx->mode_a) {
       case CWL:
         SetTXAMode(r->transmitter->channel, LSB);
-        SetTXAPostGenToneFreq(r->transmitter->channel, -(double)r->cw_keyer_sidetone_frequency);
         r->cw_keyer_internal=FALSE;
-        break;
-      case LSB:
-      case DIGL:
-        SetTXAPostGenToneFreq(r->transmitter->channel, (double)(-r->transmitter->filter_low-((r->transmitter->filter_high-r->transmitter->filter_low)/2)));
         break;
       case CWU:
         SetTXAMode(r->transmitter->channel, USB);
-        SetTXAPostGenToneFreq(r->transmitter->channel, (double)r->cw_keyer_sidetone_frequency);
         r->cw_keyer_internal=FALSE;
         break;
-      default:
-        SetTXAPostGenToneFreq(r->transmitter->channel, (double)(r->transmitter->filter_low+((r->transmitter->filter_high-r->transmitter->filter_low)/2)));
-        break;
     }
+    SetTXAPostGenToneFreq(r->transmitter->channel, radio_tune_tone_hz(r));
     SetTXAPostGenToneMag(r->transmitter->channel,0.99999);
     SetTXAPostGenMode(r->transmitter->channel,0);
     SetTXAPostGenRun(r->transmitter->channel,1);
@@ -2473,6 +2507,62 @@ static void adc_att20_cb(GtkWidget *widget, gpointer data) {
   adc->att20=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
 }
 
+// --- the swappable bottom-bar slot ---------------------------------------
+
+// The operator pressed Calibrate TX. A run keys the transmitter, so a REFUSAL
+// has to be said out loud: the button would otherwise appear to do nothing at
+// exactly the moment the operator is being careful. Progress and the result are
+// one line under the button, which is all a column that narrow can hold; the
+// full story goes to the log either way.
+static void qo100_cal_cb(GtkWidget *widget, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  char msg[256];
+  if(qo100_txcal_active()) {          // a second press gives up and unkeys
+    qo100_txcal_cancel();
+    return;
+  }
+  if(!qo100_txcal_start(r,msg,sizeof(msg))) {
+    log_info("qo100: txcal refused: %s\n",msg);
+    GtkAlertDialog *dialog=gtk_alert_dialog_new("Cannot calibrate the uplink yet");
+    gtk_alert_dialog_set_detail(dialog,msg);
+    const char *buttons[]={ "OK", NULL };
+    gtk_alert_dialog_set_buttons(dialog,buttons);
+    gtk_alert_dialog_set_default_button(dialog,0);
+    gtk_alert_dialog_show(dialog,GTK_WINDOW(main_window));
+    g_object_unref(dialog);
+  }
+}
+
+// Who occupies the slot, re-asked on the same 500 ms timer that retitles the
+// RDS block. Order is priority, not preference: QO-100 wins over the front-end
+// column when a transverter puts an HPSDR radio on the transponder, because the
+// ALEX attenuators are also in Configure and this calibration is nowhere else.
+// A new occupant goes in this function and in create_visual, and nowhere else.
+static void frontend_slot_sync(RADIO *r) {
+  if(fe_module==NULL) return;
+  gboolean qo100=qo100_txcal_offered(r);
+  gboolean frontend=(r->discovered!=NULL &&
+                     (r->discovered->protocol==PROTOCOL_1 ||
+                      r->discovered->protocol==PROTOCOL_2));
+  const char *title=qo100?"QO-100":(frontend?"RX FRONT-END":NULL);
+
+  gtk_widget_set_visible(fe_qo100_col,qo100);
+  gtk_widget_set_visible(fe_adc_col,!qo100 && frontend);
+  gtk_widget_set_visible(fe_module,title!=NULL);
+  if(fe_rail!=NULL) gtk_widget_set_visible(fe_rail,title!=NULL);
+  if(title!=NULL && fe_title!=NULL) gtk_label_set_text(GTK_LABEL(fe_title),title);
+
+  if(qo100 && qo100_cal_lbl!=NULL) {
+    char st[192];
+    qo100_txcal_status(st,sizeof(st));
+    gtk_label_set_text(GTK_LABEL(qo100_cal_lbl),st);
+    gtk_widget_set_tooltip_text(qo100_cal_lbl,st[0]!=0?st:NULL);
+    if(qo100_cal_b!=NULL)
+      gtk_button_set_label(GTK_BUTTON(qo100_cal_b),
+                           qo100_txcal_active()?"Stop":"Calibrate TX");
+  }
+}
+
 // --- bottom-bar "console" helpers (Option A: labelled modules + hairline rails) ---
 
 // Wrap a control column under a small uppercase section label -> one module.
@@ -2562,6 +2652,7 @@ static const char *rds_country_name(int ecc, int cc) {
 static gboolean rds_update_cb(gpointer data) {
   RADIO *r=(RADIO *)data;
   RECEIVER *rx=r->active_receiver;
+  frontend_slot_sync(r);   // ...which is not RDS, but wants the same cadence
   char l0[256], l1[256], l2[512];
   l0[0]=l1[0]=l2[0]=0;
   gboolean wfm = rx!=NULL && rx->mode_a==WFM;
@@ -3095,13 +3186,43 @@ static void create_visual(RADIO *r) {
   gtk_box_append(GTK_BOX(adc_col),att20_button);
   r->att20_button=att20_button;
 
-  gtk_box_append(GTK_BOX(r->bottom_bar),
-                     bar_module("RX FRONT-END",adc_col));
+  fe_adc_col=adc_col;
+
+  // Occupant: QO-100 -- the transmit calibration, which is a BUTTON and not a
+  // setting because it keys the transmitter. It belongs on the bar rather than
+  // in Configure for the same reason Tune does: it is done when the operator
+  // notices they need it, in the middle of working the satellite, and a
+  // calibration buried two windows deep is one that gets skipped.
+  GtkWidget *qo100_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
+  qo100_cal_b=gtk_button_new_with_label("Calibrate TX");
+  gtk_widget_set_name(qo100_cal_b,"toolbar-button");
+  gtk_widget_set_tooltip_text(qo100_cal_b,
+      "True the uplink against your OWN downlink\n"
+      "Keys a short Tune carrier twice and measures where it comes back off the "
+      "satellite; the difference goes into the uplink converter's LO error.\n"
+      "Needs the beacon lock holding, SPLIT and DUP on \342\200\224 and a clear "
+      "patch of transponder, at low drive.");
+  g_signal_connect(qo100_cal_b,"clicked",G_CALLBACK(qo100_cal_cb),(gpointer)r);
+  gtk_box_append(GTK_BOX(qo100_col),qo100_cal_b);
+  qo100_cal_lbl=gtk_label_new("");
+  gtk_widget_set_name(qo100_cal_lbl,"section-label");
+  gtk_widget_set_halign(qo100_cal_lbl,GTK_ALIGN_START);
+  gtk_label_set_ellipsize(GTK_LABEL(qo100_cal_lbl),PANGO_ELLIPSIZE_END);
+  gtk_label_set_max_width_chars(GTK_LABEL(qo100_cal_lbl),22);
+  gtk_box_append(GTK_BOX(qo100_col),qo100_cal_lbl);
+  fe_qo100_col=qo100_col;
+
+  GtkWidget *fe_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_box_append(GTK_BOX(fe_col),fe_adc_col);
+  gtk_box_append(GTK_BOX(fe_col),fe_qo100_col);
+  fe_module=bar_module_ex("RX FRONT-END",fe_col,&fe_title);
+  gtk_box_append(GTK_BOX(r->bottom_bar),fe_module);
 
   // Module: RDS - a 3-line decoder readout (identity / RadioText / now-playing +
   // clock + AF). Its own block, attached to the left cluster and separated by a
   // rail; the free bottom-bar space sits to its right and each line ellipsizes.
-  gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
+  fe_rail=bar_rail(FALSE);
+  gtk_box_append(GTK_BOX(r->bottom_bar),fe_rail);
   GtkWidget *rds_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,1);
   gtk_widget_set_hexpand(rds_col,TRUE);
   gtk_widget_set_valign(rds_col,GTK_ALIGN_START);   // rows grow from the top
@@ -3314,6 +3435,10 @@ static void create_visual(RADIO *r) {
   // ends up rightmost with the rail immediately to its left.
   gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(TRUE));
   gtk_box_append(GTK_BOX(r->bottom_bar),bar_module("SETUP",tool_col));
+
+  // ...and settle the swappable slot before the first frame, or every device
+  // shows every occupant for the half second until the RDS timer first fires.
+  frontend_slot_sync(r);
 
   gtk_widget_set_visible(r->visual, TRUE);
 

@@ -513,6 +513,10 @@ extern void radio_apt_geo_pump(RADIO *r);
 extern void radio_image_settings_sync(RADIO *r);
 #endif
 extern void set_tune(RADIO *r,gboolean state);
+/* Signed offset of the Tune carrier from the transmit dial: the emission is
+   `dial + this`. One spelling, so a predictor cannot drift from the emitter --
+   see the comment on the definition. */
+extern double radio_tune_tone_hz(RADIO *r);
 extern void radio_change_region(RADIO *r);
 extern void radio_change_audio(RADIO *r,int selected);
 extern void radio_change_audio_backend(RADIO *r,int selected);

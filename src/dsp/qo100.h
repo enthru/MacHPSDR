@@ -275,4 +275,88 @@ extern void qo100_beacon_set_clock(double (*fn)(void));
    is the one place the ambiguous source must not be. */
 #define QO100_BEACON_SEL_DEFAULT QO100_BEACON_SEL_MIDDLE
 
+/* ---------------- transmit calibration against our own downlink ----------- */
+
+/* The beacon lock trues the DOWNLINK dial and says nothing about the uplink:
+   it measures the sum of everything in the receive path and books all of it
+   against the LNB's LO.  The transmit path has its own error -- the radio's
+   own reference multiplied by what it synthesises (2400 Hz per ppm at 2.4 GHz
+   against 740 Hz per ppm at a 739.5 MHz IF, so the two are not even the same
+   number), plus the uplink converter's own LO, plus the satellite's own
+   translation error.  None of that is visible from the downlink, and it cannot
+   be separated out of it either: the two CW beacons are 500 kHz apart on a
+   739.5 MHz IF, which discriminates 0.5 Hz per ppm.
+
+   So the only measurement available without a common reference is of OURSELVES.
+   The transponder is non-inverting with a constant translation, the station is
+   full duplex, and our own carrier is therefore visible on our own receiver a
+   quarter of a second after we key it.  Where it lands against where it was
+   ASKED to land is exactly the transmit path's total error, satellite included
+   -- which is the one term no GPSDO at this end can remove.
+
+   Derivation of the sign, and it is the OPPOSITE of the beacon loop's, because
+   there we correct the instrument and here we correct the emitter:
+     emitted    = uplink_dial + error_b + ppm_tx + E
+     downlink   = emitted + QO100_TP_OFFSET + S
+     residual   = measured_offset - expected_offset = error_b + ppm_tx + E + S
+   so the correction is  error_b -= residual  (and into the "QO-100 TX" row's
+   errorLO, which is where it survives a band change and a restart). */
+
+/* Is the calibration worth OFFERING at all -- i.e. is the cursor on a QO-100
+   transponder?  Cheap; GTK thread.  It answers for the button's visibility and
+   nothing else: every condition that can fail with a reason is checked by
+   qo100_txcal_start(), so the operator is told why rather than shown a control
+   that does nothing. */
+extern gboolean qo100_txcal_offered(RADIO *r);
+
+/* Run one calibration: key a short carrier, find it on our own downlink, write
+   the difference into the uplink converter's LO error.  Returns FALSE with the
+   reason in `msg` when a precondition is not met -- nothing is keyed and
+   nothing is written in that case.  GTK thread. */
+extern gboolean qo100_txcal_start(RADIO *r, char *msg, int msgsz);
+
+/* Give up a run in progress: the operator pressed the button again, the
+   receiver went away, or the application is closing.  ALWAYS unkeys.  GTK
+   thread. */
+extern void qo100_txcal_cancel(void);
+
+extern gboolean qo100_txcal_active(void);
+extern void     qo100_txcal_status(char *buf, int size);
+
+/* Raw off-air I/Q tap, from receiver.c:full_rx_buffer on the RX audio thread,
+   beside the beacon lock's and in the same (Q, I) order.  Returns at once
+   unless a run is in progress on this receiver.  NOTE that reaching this during
+   a transmission is exactly what rx->duplex buys -- full_rx_buffer's first line
+   returns without it, which is why the duplex flag is a precondition and not a
+   nicety. */
+extern void qo100_txcal_iq_feed(RECEIVER *rx, const double *iq, int n_frames);
+
+/* Drop the tracked receiver if it is this one, unkeying if a run was live.
+   Called from receiver_destroy() before the receiver is freed. */
+extern void qo100_txcal_forget_receiver(RECEIVER *rx);
+
+/* Timing.  All of it is set by the path delay: QO-100 is geostationary, so our
+   own carrier appears on the downlink about 250 ms after we key and is still
+   arriving 250 ms after we stop.  Anything shorter than that measures the band
+   without us in it. */
+#define QO100_TXCAL_SETTLE_MS   700   /* discarded after keying and after unkeying */
+#define QO100_TXCAL_AVG_MS      400   /* integrated per spectrum, keyed and not */
+#define QO100_TXCAL_RUNS          2   /* ...and how many key cycles must AGREE */
+#define QO100_TXCAL_AGREE_HZ   30.0   /* ...to within this */
+#define QO100_TXCAL_TIMEOUT_MS 20000  /* hard stop; unkeys whatever state it is in */
+
+/* How far off the expectation our own carrier is looked for.  A converter
+   crystal 20 ppm out on a 1968 MHz LO is 39 kHz and the radio's own reference
+   adds 2.4 kHz per ppm at 2.4 GHz, so the window has to be wide -- and it can
+   afford to be, because the line is picked out of the DIFFERENCE between the
+   keyed and the unkeyed spectrum, where the only thing that appears is what we
+   just switched on. */
+#define QO100_TXCAL_SEARCH_HZ  80000.0
+/* ...and beyond this a "measurement" is not believed at all: it is a station
+   that keyed up during the window, or the operator is not on the satellite. */
+#define QO100_TXCAL_MAX_HZ    150000.0
+/* How far the line must stand out of the difference spectrum's own median to be
+   a signal that appeared rather than the noise moving. */
+#define QO100_TXCAL_MIN_SNR      12.0
+
 #endif

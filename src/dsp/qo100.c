@@ -2878,3 +2878,532 @@ void qo100_beacon_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
   }
   g_mutex_unlock(&bmtx);
 }
+
+// ===========================================================================
+// Transmit calibration against our own downlink
+// ===========================================================================
+//
+// The beacon lock above trues the DOWNLINK and knows nothing about the uplink.
+// This is the other half, and the header carries the derivation; what follows
+// is how it is measured without lying to the operator once.
+//
+// The measurement is a DIFFERENCE of two integrated spectra, one with our
+// carrier on air and one without, and that is the whole discriminator: the only
+// thing that can appear between them is what we just switched on. Picking the
+// loudest line in a window instead would pick whoever is loudest on the
+// transponder, which on this band is never us.
+//
+// Everything about the timing is the path delay. QO-100 is geostationary, so
+// our carrier reaches our own receiver about 250 ms after we key it and is
+// still arriving 250 ms after we stop. So each cycle is
+//
+//   BASE (not keyed)  ->  KEY  ->  SETTLE  ->  MEAS  ->  UNKEY  ->  QUIET
+//
+// with SETTLE and QUIET both comfortably longer than that round trip. A window
+// that started at the key would hold a quarter of a second of band without us
+// in it, which does not fail -- it just measures us as weaker than we are and
+// lets the noise move the line.
+//
+// And it is run TWICE, with the two results required to agree: a single
+// confident number off a busy transponder is exactly what this tree's decoder
+// rules say not to trust, and the failure that matters here (somebody keying up
+// inside our window) is one an agreement test catches and a level test does not.
+
+typedef enum {
+  TXCAL_IDLE=0,
+  TXCAL_BASE,      // integrating the band as it is, not keyed
+  TXCAL_KEY,       // asked the GTK thread to key; waiting for it
+  TXCAL_SETTLE,    // keyed: discarding the path delay
+  TXCAL_MEAS,      // integrating with our own carrier in it
+  TXCAL_UNKEY,     // asked the GTK thread to unkey; waiting
+  TXCAL_QUIET,     // unkeyed: discarding the path delay again
+} TXCAL_STATE;
+
+static GMutex   tmtx;
+static volatile gint t_running;      // the tap's lock-free fast path, 0 or 1
+static TXCAL_STATE t_state;
+static TXCAL_STATE t_after;          // what a skip countdown runs into
+static RECEIVER *t_rx;
+static int      t_fs;
+static double   t_expect;            // where our carrier should land, signed baseband Hz
+static long long t_dial_a;           // ...and the two dials that expectation was built from,
+static long long t_dial_tx;          // so a retune mid-run is refused rather than measured
+static double   t_base[QO100_FFT_N]; // integrated power, not keyed
+static double   t_pow[QO100_FFT_N];  // ...and keyed
+static double   t_re[QO100_FFT_N];   // the frame being transformed
+static double   t_im[QO100_FFT_N];
+static int      t_acc;               // samples in that frame
+static int      t_frames;            // frames integrated in this phase
+static int      t_need;              // ...and how many are wanted
+static int      t_nbase;             // frames behind t_base / t_pow, for the scaling
+static int      t_nmeas;
+static double   t_skip;              // samples still to discard
+static double   t_result[QO100_TXCAL_RUNS];
+static int      t_runs;              // results in hand
+static gboolean t_keyed;             // the GTK thread says the carrier is on air
+static char     t_status[192]="";
+static guint    t_timeout_id;
+static guint64  t_epoch;             // invalidates every queued transaction
+
+static void txcal_enter(TXCAL_STATE st);         // caller holds tmtx
+static gboolean txcal_key_idle(gpointer data);
+static gboolean txcal_unkey_idle(gpointer data);
+static gboolean txcal_finish_idle(gpointer data);
+static gboolean txcal_timeout_cb(gpointer data);
+
+void qo100_txcal_status(char *buf, int size) {
+  if(buf==NULL || size<=0) return;
+  g_mutex_lock(&tmtx);
+  g_strlcpy(buf,t_status,(gsize)size);
+  g_mutex_unlock(&tmtx);
+}
+
+gboolean qo100_txcal_active(void) {
+  gboolean a;
+  g_mutex_lock(&tmtx);
+  a=(t_state!=TXCAL_IDLE);
+  g_mutex_unlock(&tmtx);
+  return a;
+}
+
+gboolean qo100_txcal_offered(RADIO *r) {
+  if(r==NULL) return FALSE;
+  RECEIVER *rx=r->active_receiver;
+  if(rx==NULL) return FALSE;
+  // A receive-only station is not a case for the refusal dialog: there is
+  // nothing the operator could do about it, so the button does not appear at
+  // all. Every OTHER condition is checked by qo100_txcal_start() and answered in
+  // words, because each of those the operator can fix.
+  if(!r->can_transmit || r->transmitter==NULL) return FALSE;
+  return qo100_in_transponder(qo100_dial(rx));
+}
+
+// The uplink the operator ASKED for, before any correction: the same branch
+// transmitter_get_frequency() takes, with the same reading of ctun/freetune, and
+// XIT included because XIT is a deliberate offset of the emission rather than an
+// error in it.
+static long long txcal_uplink_dial(RADIO *r, RECEIVER *rx) {
+  long long f;
+  if(rx->split) f=rx->frequency_b;
+  else if(rx->ctun || rx->freetune) f=rx->ctun_frequency;
+  else f=rx->frequency_a;
+  if(r->transmitter!=NULL && r->transmitter->xit_enabled) f+=r->transmitter->xit;
+  return f;
+}
+
+// Where our Tune carrier should come back, as a signed baseband offset in the
+// receiver's own stream. The receiver's HARDWARE centre is frequency_a whatever
+// ctun or freetune are doing -- they move a digital shift, not the LO -- which
+// is the same reference the beacon loop measures against.
+static double txcal_expected_offset(RADIO *r, RECEIVER *rx) {
+  long long offset=(r->qo100_offset!=0)?r->qo100_offset:QO100_TP_OFFSET;
+  long long down=txcal_uplink_dial(r,rx)+offset;
+  return (double)(down-rx->frequency_a)+radio_tune_tone_hz(r);
+}
+
+// Caller holds tmtx. Everything a phase needs to start, in one place, so a
+// transition cannot half-initialise.
+static void txcal_enter(TXCAL_STATE st) {
+  t_state=st;
+  t_acc=0;
+  t_frames=0;
+  switch(st) {
+    case TXCAL_BASE:
+      memset(t_base,0,sizeof(t_base));
+      t_nbase=0;
+      break;
+    case TXCAL_MEAS:
+      memset(t_pow,0,sizeof(t_pow));
+      t_nmeas=0;
+      break;
+    default:
+      break;
+  }
+}
+
+static void txcal_stop_locked(const char *why) {
+  t_epoch++;
+  t_state=TXCAL_IDLE;
+  g_atomic_int_set(&t_running,0);
+  t_rx=NULL;
+  t_runs=0;
+  t_skip=0.0;
+  if(why!=NULL) g_strlcpy(t_status,why,sizeof(t_status));
+}
+
+// The measurement itself: the tallest thing that APPEARED, in Hz off the
+// receiver's centre. Returns FALSE with a reason when nothing did.
+static gboolean txcal_measure(double *found, double *snr_out, const char **why) {
+  const int N=QO100_FFT_N;
+  const double bin_hz=(double)t_fs/(double)N;
+  if(t_nbase<1 || t_nmeas<1) { *why="no spectrum was integrated"; return FALSE; }
+  const double sb=1.0/(double)t_nbase, sm=1.0/(double)t_nmeas;
+
+  double lo=t_expect-QO100_TXCAL_SEARCH_HZ, hi=t_expect+QO100_TXCAL_SEARCH_HZ;
+  double base_sum=0.0, peak=-1.0;
+  int pk=-1, count=0;
+  for(int m=0;m<N;m++) {
+    double sf=((m<=N/2)?(double)m:(double)(m-N))*bin_hz;
+    if(fabs(sf)<QO100_DC_GUARD_HZ) continue;    // the zero-IF spike, not a signal
+    if(sf<lo || sf>hi) continue;
+    base_sum+=t_base[m]*sb; count++;
+    double d=t_pow[m]*sm-t_base[m]*sb;
+    if(d>peak) { peak=d; pk=m; }
+  }
+  if(count<8 || pk<1 || pk>=N-1) { *why="the search window is not in the span"; return FALSE; }
+  double mean=base_sum/(double)count;
+  if(!(mean>0.0)) { *why="the receiver is delivering silence"; return FALSE; }
+  double snr=peak/mean;
+  if(snr_out!=NULL) *snr_out=snr;
+  if(!(snr>=QO100_TXCAL_MIN_SNR)) {
+    *why="nothing appeared on the downlink when the carrier was keyed";
+    return FALSE;
+  }
+
+  // Parabolic interpolation on the amplitude of the DIFFERENCE, the same shape
+  // the beacon's find_carrier uses -- a bin is 23 Hz at a 768 kHz span and the
+  // answer is written into the operator's converter, so the fraction matters.
+  double y0=sqrt(fmax(t_pow[pk-1]*sm-t_base[pk-1]*sb,0.0));
+  double y1=sqrt(fmax(peak,0.0));
+  double y2=sqrt(fmax(t_pow[pk+1]*sm-t_base[pk+1]*sb,0.0));
+  double denom=y0-2.0*y1+y2;
+  double delta=(denom!=0.0)?0.5*(y0-y2)/denom:0.0;
+  if(delta> 0.5) delta= 0.5;
+  if(delta<-0.5) delta=-0.5;
+  double pos=(double)pk+delta;
+  double sf=(pos<=N/2)?pos:pos-(double)N;
+  *found=sf*bin_hz;
+  return TRUE;
+}
+
+// One cycle finished with the carrier still on air: score it, then unkey no
+// matter what the score was.
+static void txcal_measured_locked(void) {
+  double found=0.0, snr=0.0;
+  const char *why="";
+  if(!txcal_measure(&found,&snr,&why)) {
+    snprintf(t_status,sizeof(t_status),"Calibration failed \342\200\224 %s",why);
+    t_runs=-1;                       // ...and do not start another cycle
+  } else {
+    double residual=found-t_expect;
+    if(fabs(residual)>QO100_TXCAL_MAX_HZ) {
+      snprintf(t_status,sizeof(t_status),
+               "Calibration failed \342\200\224 %+.0f Hz is too far out to be our own carrier",
+               residual);
+      t_runs=-1;
+    } else {
+      if(t_runs>=0 && t_runs<QO100_TXCAL_RUNS) t_result[t_runs++]=residual;
+      snprintf(t_status,sizeof(t_status),"Measured %+.1f Hz (%d of %d)",
+               residual,t_runs,QO100_TXCAL_RUNS);
+      log_info("qo100: txcal: run %d measured %+.1f Hz, %.0fx over the band\n",
+               t_runs,residual,snr);
+    }
+  }
+  txcal_enter(TXCAL_UNKEY);
+  g_idle_add(txcal_unkey_idle,(gpointer)(guintptr)t_epoch);
+}
+
+void qo100_txcal_iq_feed(RECEIVER *rx, const double *iq, int n_frames) {
+  if(!g_atomic_int_get(&t_running)) return;   // cheap fast path
+  g_mutex_lock(&tmtx);
+  if(t_state==TXCAL_IDLE || rx==NULL || rx!=t_rx) { g_mutex_unlock(&tmtx); return; }
+  if(rx->sample_rate!=t_fs) {
+    txcal_stop_locked("Calibration abandoned \342\200\224 the span changed under it");
+    g_mutex_unlock(&tmtx);
+    return;
+  }
+
+  for(int k=0;k<n_frames;k++) {
+    if(t_skip>0.0) {
+      t_skip-=1.0;
+      if(t_skip<=0.0) txcal_enter(t_after);
+      continue;
+    }
+    if(t_state!=TXCAL_BASE && t_state!=TXCAL_MEAS) continue;  // waiting on the GTK thread
+    t_re[t_acc]=iq[2*k+1];      // (Q, I) -- the receiver's own order
+    t_im[t_acc]=iq[2*k];
+    t_acc++;
+    if(t_acc>=QO100_FFT_N) {
+      t_acc=0;
+      if(t_state==TXCAL_BASE) { spectrum_add(t_re,t_im,t_base); t_nbase++; }
+      else                    { spectrum_add(t_re,t_im,t_pow);  t_nmeas++; }
+      t_frames++;
+      if(t_frames>=t_need) {
+        if(t_state==TXCAL_BASE) {
+          txcal_enter(TXCAL_KEY);
+          g_idle_add(txcal_key_idle,(gpointer)(guintptr)t_epoch);
+        } else {
+          txcal_measured_locked();
+        }
+        break;                 // the rest of this block belongs to the next phase
+      }
+    }
+  }
+  g_mutex_unlock(&tmtx);
+}
+
+// ---- the GTK-thread half: it alone keys, unkeys and writes the converter ----
+
+static void txcal_skip_locked(TXCAL_STATE next) {
+  t_skip=(double)t_fs*(double)QO100_TXCAL_SETTLE_MS/1000.0;
+  t_after=next;
+  t_state=TXCAL_SETTLE;         // the label is only for the status line
+  if(next==TXCAL_BASE || next==TXCAL_MEAS) t_acc=0;
+}
+
+// Has anything moved under the run? A dial that shifts between the baseline and
+// the measurement makes the expectation a different number from the one the
+// carrier was emitted against, and the difference would be written into the
+// operator's converter as if it were an error.
+static gboolean txcal_still_valid(guint64 epoch) {
+  gboolean ok=FALSE;
+  g_mutex_lock(&tmtx);
+  if(epoch==t_epoch && t_state!=TXCAL_IDLE && t_rx!=NULL &&
+     radio!=NULL && t_rx==radio->active_receiver && receiver_is_live(t_rx) &&
+     t_rx->frequency_a==t_dial_a && txcal_uplink_dial(radio,t_rx)==t_dial_tx)
+    ok=TRUE;
+  g_mutex_unlock(&tmtx);
+  return ok;
+}
+
+static gboolean txcal_key_idle(gpointer data) {
+  guint64 epoch=(guint64)(guintptr)data;
+  if(!txcal_still_valid(epoch)) { qo100_txcal_cancel(); return G_SOURCE_REMOVE; }
+  set_tune(radio,TRUE);
+  g_mutex_lock(&tmtx);
+  if(epoch==t_epoch) {
+    t_keyed=TRUE;
+    g_strlcpy(t_status,"Calibrating \342\200\224 carrier on air",sizeof(t_status));
+    txcal_skip_locked(TXCAL_MEAS);
+  }
+  g_mutex_unlock(&tmtx);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean txcal_unkey_idle(gpointer data) {
+  guint64 epoch=(guint64)(guintptr)data;
+  gboolean mine;
+  g_mutex_lock(&tmtx);
+  mine=(epoch==t_epoch);
+  g_mutex_unlock(&tmtx);
+  // Unkey FIRST and unconditionally: a stale epoch means the run was abandoned,
+  // and the one thing that must not survive that is a keyed transmitter.
+  if(radio!=NULL && radio->tune) set_tune(radio,FALSE);
+  g_mutex_lock(&tmtx);
+  if(mine && epoch==t_epoch) {
+    t_keyed=FALSE;
+    if(t_runs<0 || t_runs>=QO100_TXCAL_RUNS) {
+      t_state=TXCAL_QUIET;
+      g_mutex_unlock(&tmtx);
+      g_idle_add(txcal_finish_idle,(gpointer)(guintptr)epoch);
+      return G_SOURCE_REMOVE;
+    }
+    txcal_skip_locked(TXCAL_BASE);   // the quiet gap, then the next cycle
+  }
+  g_mutex_unlock(&tmtx);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean txcal_finish_idle(gpointer data) {
+  guint64 epoch=(guint64)(guintptr)data;
+  double runs[QO100_TXCAL_RUNS];
+  int n;
+  gboolean mine;
+  RECEIVER *rx;
+
+  g_mutex_lock(&tmtx);
+  mine=(epoch==t_epoch);
+  n=t_runs;
+  rx=t_rx;
+  if(n>0) memcpy(runs,t_result,sizeof(double)*(size_t)n);
+  g_mutex_unlock(&tmtx);
+  if(!mine) return G_SOURCE_REMOVE;
+
+  if(t_timeout_id!=0) { g_source_remove(t_timeout_id); t_timeout_id=0; }
+
+  if(n<QO100_TXCAL_RUNS) {
+    // txcal_measured_locked has already written why.
+    g_mutex_lock(&tmtx);
+    txcal_stop_locked(NULL);
+    g_mutex_unlock(&tmtx);
+    log_info("qo100: txcal: gave up without changing anything\n");
+    return G_SOURCE_REMOVE;
+  }
+
+  double spread=fabs(runs[0]-runs[1]);
+  for(int i=2;i<n;i++) {
+    if(fabs(runs[i]-runs[0])>spread) spread=fabs(runs[i]-runs[0]);
+  }
+  if(spread>QO100_TXCAL_AGREE_HZ) {
+    char msg[192];
+    snprintf(msg,sizeof(msg),
+             "Calibration refused \342\200\224 the two runs disagree by %.0f Hz "
+             "(%+.0f and %+.0f); try again on a clear patch",
+             spread,runs[0],runs[1]);
+    g_mutex_lock(&tmtx);
+    txcal_stop_locked(msg);
+    g_mutex_unlock(&tmtx);
+    log_info("qo100: txcal: %s\n",msg);
+    return G_SOURCE_REMOVE;
+  }
+
+  double residual=0.0;
+  for(int i=0;i<n;i++) residual+=runs[i];
+  residual/=(double)n;
+
+  if(!txcal_still_valid(epoch)) {
+    g_mutex_lock(&tmtx);
+    txcal_stop_locked("Calibration abandoned \342\200\224 the dial moved during the run");
+    g_mutex_unlock(&tmtx);
+    return G_SOURCE_REMOVE;
+  }
+
+  // The correction, and its sign is the opposite of the beacon loop's: there we
+  // are correcting the instrument, here the emitter. A carrier that came back
+  // HIGH was transmitted high, so the uplink converter's LO error goes DOWN.
+  gint64 before=rx->error_b;
+  rx->error_b-=(gint64)llround(residual);
+  BAND *band=band_get_band(rx->band_b);
+  if(band!=NULL) band->errorLO=rx->error_b;   // survives a band change and a restart
+  frequency_changed(rx);
+  update_frequency(rx);
+
+  char msg[192];
+  snprintf(msg,sizeof(msg),
+           "Uplink trued by %+.0f Hz  (converter error %lld \342\206\222 %lld Hz)",
+           -residual,(long long)before,(long long)rx->error_b);
+  g_mutex_lock(&tmtx);
+  txcal_stop_locked(msg);
+  g_mutex_unlock(&tmtx);
+  log_info("qo100: txcal: %s\n",msg);
+  return G_SOURCE_REMOVE;
+}
+
+// The one promise this feature has to keep whatever else goes wrong: the
+// transmitter does not stay keyed. Every path out of a run passes through here
+// or through txcal_unkey_idle, and this one fires even if the audio thread has
+// stopped delivering entirely.
+static gboolean txcal_timeout_cb(gpointer data) {
+  guint64 epoch=(guint64)(guintptr)data;
+  t_timeout_id=0;
+  g_mutex_lock(&tmtx);
+  gboolean mine=(epoch==t_epoch && t_state!=TXCAL_IDLE);
+  g_mutex_unlock(&tmtx);
+  if(!mine) return G_SOURCE_REMOVE;
+  log_error("qo100: txcal: timed out after %d ms; unkeying\n",QO100_TXCAL_TIMEOUT_MS);
+  qo100_txcal_cancel();
+  g_mutex_lock(&tmtx);
+  g_strlcpy(t_status,
+            "Calibration timed out \342\200\224 no receive stream while transmitting "
+            "(is DUP on?)",sizeof(t_status));
+  g_mutex_unlock(&tmtx);
+  return G_SOURCE_REMOVE;
+}
+
+void qo100_txcal_cancel(void) {
+  gboolean keyed;
+  g_mutex_lock(&tmtx);
+  keyed=t_keyed;
+  t_keyed=FALSE;
+  if(t_state!=TXCAL_IDLE)
+    txcal_stop_locked("Calibration cancelled");
+  g_mutex_unlock(&tmtx);
+  if(t_timeout_id!=0) { g_source_remove(t_timeout_id); t_timeout_id=0; }
+  if(keyed && radio!=NULL && radio->tune) set_tune(radio,FALSE);
+}
+
+// Unkey and nothing else. Deferred, because the one caller that needs it
+// (receiver_destroy) is holding delete_rx_mutex, and set_tune() -> rxtx() walks
+// every receiver's WDSP channel -- the same reason tci.c keys from outside
+// rx->mutex.
+static gboolean txcal_unkey_only_idle(gpointer data) {
+  (void)data;
+  if(radio!=NULL && radio->tune) set_tune(radio,FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+void qo100_txcal_forget_receiver(RECEIVER *rx) {
+  gboolean mine, keyed;
+  g_mutex_lock(&tmtx);
+  mine=(t_state!=TXCAL_IDLE && t_rx==rx);
+  keyed=t_keyed;
+  if(mine) {
+    t_keyed=FALSE;
+    txcal_stop_locked("Calibration abandoned \342\200\224 the receiver was closed");
+  }
+  g_mutex_unlock(&tmtx);
+  if(!mine) return;
+  if(t_timeout_id!=0) { g_source_remove(t_timeout_id); t_timeout_id=0; }
+  if(keyed) g_idle_add(txcal_unkey_only_idle,NULL);
+}
+
+gboolean qo100_txcal_start(RADIO *r, char *msg, int msgsz) {
+#define TXCAL_NO(...) do { if(msg!=NULL) snprintf(msg,(size_t)msgsz,__VA_ARGS__); \
+                           return FALSE; } while(0)
+  if(r==NULL) TXCAL_NO("No radio");
+  RECEIVER *rx=r->active_receiver;
+  if(rx==NULL) TXCAL_NO("No receiver");
+  if(qo100_txcal_active()) TXCAL_NO("A calibration is already running");
+  if(!qo100_in_transponder(qo100_dial(rx)))
+    TXCAL_NO("The cursor is not on a QO-100 transponder");
+  if(!r->can_transmit || r->transmitter==NULL)
+    TXCAL_NO("This radio has no transmitter");
+  if(isTransmitting(r))
+    TXCAL_NO("Already transmitting \342\200\224 unkey first");
+  // Without a separate uplink VFO the transmitter rides error_a, which is the
+  // RECEIVE converter's correction: writing a transmit error there would move
+  // the downlink dial off the beacon it was just trued to. Transponder mode sets
+  // the split up, so this is a nudge towards it rather than a wall.
+  if(!rx->split)
+    TXCAL_NO("Turn SPLIT on (or press \342\200\234Set up transponder mode\342\200\235) "
+             "\342\200\224 the uplink needs its own VFO for the correction to live on");
+  if(!rx->duplex)
+    TXCAL_NO("Turn DUP on \342\200\224 the receiver has to stay open while the "
+             "carrier is out, or there is nothing to measure");
+  if(!r->qo100_beacon_lock || !qo100_beacon_locked())
+    TXCAL_NO("Lock the beacon first \342\200\224 an untrue downlink dial would be "
+             "measured as a transmit error");
+
+  // Our own carrier has to be IN the span, and the operator can put VFO B
+  // anywhere. Saying so up front turns a mysterious "nothing appeared on the
+  // downlink" into the thing that is actually wrong: the uplink on VFO B is not
+  // the downlink being listened to.
+  double expect=txcal_expected_offset(r,rx);
+  double half=(double)rx->sample_rate/2.0;
+  if(fabs(expect)>half-QO100_TXCAL_SEARCH_HZ/8.0)
+    TXCAL_NO("The uplink on VFO B does not come back inside this span "
+             "(%+.1f kHz of centre, half-span %.1f kHz) \342\200\224 pair the "
+             "VFOs, or widen the span",expect/1000.0,half/1000.0);
+
+  int need=(int)ceil((double)rx->sample_rate*(QO100_TXCAL_AVG_MS/1000.0)/
+                     (double)QO100_FFT_N);
+  if(need<1) need=1;
+
+  g_mutex_lock(&tmtx);
+  t_epoch++;
+  t_rx=rx;
+  t_fs=rx->sample_rate;
+  t_need=need;
+  t_runs=0;
+  t_keyed=FALSE;
+  t_skip=0.0;
+  t_nbase=0;
+  t_nmeas=0;
+  t_dial_a=rx->frequency_a;
+  t_dial_tx=txcal_uplink_dial(r,rx);
+  t_expect=expect;
+  g_strlcpy(t_status,"Calibrating \342\200\224 listening to the band first",
+            sizeof(t_status));
+  txcal_enter(TXCAL_BASE);
+  g_atomic_int_set(&t_running,1);
+  guint64 epoch=t_epoch;
+  g_mutex_unlock(&tmtx);
+
+  if(t_timeout_id!=0) g_source_remove(t_timeout_id);
+  t_timeout_id=g_timeout_add(QO100_TXCAL_TIMEOUT_MS,txcal_timeout_cb,
+                             (gpointer)(guintptr)epoch);
+  log_info("qo100: txcal: start, expecting our carrier at %+.1f Hz of the centre, "
+           "%d frames per window at %d Hz\n",t_expect,need,t_fs);
+  return TRUE;
+#undef TXCAL_NO
+}

@@ -170,6 +170,23 @@ BAND *band_get_band(int b) {
 void frequency_changed(RECEIVER *rx) { (void)rx; retunes++; }
 void update_frequency(RECEIVER *rx) { (void)rx; }
 void receiver_sync_vfo_b_lo(RECEIVER *rx) { (void)rx; }
+gboolean receiver_is_live(RECEIVER *rx) { return rx!=NULL; }
+gboolean isTransmitting(RADIO *r) {
+  return r!=NULL && (r->ptt | r->mox | r->vox | r->tune);
+}
+// The Tune carrier's offset from the transmit dial. In the application this is
+// radio.c's one spelling of the expression the tone generator is driven with;
+// here it is a FIXED number the harness also builds its own expectation from,
+// which is what makes the transmit calibration's arithmetic checkable rather
+// than merely self-consistent.
+#define TEST_TUNE_TONE_HZ 1500.0
+static int keyings;                 // rising edges of Tune, i.e. cycles run
+double radio_tune_tone_hz(RADIO *r) { (void)r; return TEST_TUNE_TONE_HZ; }
+void set_tune(RADIO *r, gboolean state) {
+  if(r==NULL) return;
+  if(state && !r->tune) keyings++;
+  r->tune=state;
+}
 void transmitter_set_mode(TRANSMITTER *tx, int m) { (void)tx; (void)m; }
 
 // Stands in for band.c:set_band(): restore the band-stack entry and the band's
@@ -478,6 +495,118 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   g_free(radio);
   radio=NULL;
   return residual;
+}
+
+// ---- transmit calibration rig -----------------------------------------------
+
+// A station, complete: the LNB trued by the beacon lock, an uplink on VFO B, and
+// a transponder that hands our own carrier back a quarter of a second later with
+// whatever error the transmit chain put on it.
+//
+// The one number this rig is built to pin is the SIGN. Everything else about the
+// calibration fails loudly; a sign error does not -- it writes double the error
+// into the operator's converter, which reads on air as "the calibration made it
+// worse" and is indistinguishable from a bad measurement unless something has
+// asserted the direction.
+#define TXCAL_RX_CENTRE 10489650000LL
+#define TXCAL_PATH_S    0.25            // geostationary round trip
+
+typedef struct {
+  double err_hz[4];        // the transmit error each key cycle is given
+  gboolean silent;         // ...or nothing comes back at all
+} TXCAL_AIR;
+
+static gboolean run_txcal(const TXCAL_AIR *air, gint64 *error_b_out,
+                          char *status, int status_sz, int *cycles_out) {
+  bands_init();
+  RECEIVER *rx=mk_rx(TXCAL_RX_CENTRE,FS);
+  rx->split=TRUE;
+  rx->duplex=TRUE;
+  rx->frequency_b=TXCAL_RX_CENTRE-QO100_TP_OFFSET;   // the matching uplink
+  rx->band_b=1;
+  RADIO *r=mk_radio(rx);
+  r->can_transmit=TRUE;
+  r->transmitter=g_new0(TRANSMITTER,1);
+  radio=r;
+  test_band.frequencyLO=9750000000LL;
+  test_band.errorLO=0;
+  retunes=0;
+  keyings=0;
+  qo100_beacon_reset();
+  radio->qo100_beacon_lock=TRUE;
+  radio->qo100_beacon_sel=QO100_BEACON_SEL_LOWER;
+
+  // What the calibration must arrive at, derived here from the operator's own
+  // numbers rather than from the code under test.
+  double expect=(double)(rx->frequency_b+QO100_TP_OFFSET-rx->frequency_a)
+                +TEST_TUNE_TONE_HZ;
+
+  double *iq=g_new0(double,BLOCK*2);
+  double ph_b=0.0, ph_m=0.0, ph_t=0.0;
+  guint32 sd_b=12345, sd_m=987654321u, sd_t=555;
+  int msym=1, mcnt=0;
+  long long beacon=qo100_beacon_frequency(QO100_BEACON_SEL_LOWER);
+  gboolean started=FALSE, done=FALSE;
+  double on_at=-1.0, off_at=-1.0;      // when our carrier appears / stops, on air
+  int cycle=0;
+  const int max_blocks=(int)(25.0*(double)FS/(double)BLOCK);
+
+  for(int b=0;b<max_blocks;b++) {
+    double t=(double)b*(double)BLOCK/(double)FS;
+    double applied=(double)rx->error_a;
+
+    // The beacon the lock lives on, plus the middle BPSK that confirms its
+    // identity -- the same pair run_loop generates, so the lock behaves here
+    // exactly as it does in every other case in this file.
+    gen_block(iq,BLOCK,(double)(beacon-rx->frequency_a)-applied,FS,1.0,0.05,
+              &ph_b,&sd_b);
+    add_bpsk(iq,BLOCK,(double)(QO100_BEACON_MIDDLE-rx->frequency_a)-applied,
+             FS,0.5,&ph_m,&sd_m,&msym,&mcnt);
+
+    // The transponder: our carrier arrives TXCAL_PATH_S after we key and keeps
+    // arriving TXCAL_PATH_S after we stop. A settle window shorter than that
+    // would measure the band without us in it, so the delay is modelled rather
+    // than assumed away.
+    if(radio->tune && on_at<0.0) { on_at=t+TXCAL_PATH_S; off_at=-1.0; cycle=keyings; }
+    if(!radio->tune && on_at>=0.0 && off_at<0.0) off_at=t+TXCAL_PATH_S;
+    gboolean on_air=(on_at>=0.0 && t>=on_at && (off_at<0.0 || t<off_at));
+    if(on_air && !air->silent) {
+      int idx=(cycle>0?cycle-1:0);
+      if(idx>3) idx=3;
+      double err=air->err_hz[idx];
+      double bb=expect+err-applied;
+      double *own=g_new0(double,BLOCK*2);
+      gen_block(own,BLOCK,bb,FS,0.2,0.0,&ph_t,&sd_t);
+      for(int k=0;k<BLOCK*2;k++) iq[k]+=own[k];
+      g_free(own);
+    }
+    if(off_at>=0.0 && t>=off_at) { on_at=-1.0; off_at=-1.0; }
+
+    qo100_beacon_iq_feed(rx,iq,BLOCK);
+    qo100_txcal_iq_feed(rx,iq,BLOCK);
+    while(g_main_context_iteration(NULL,FALSE)) ;
+
+    if(!started && qo100_beacon_locked()) {
+      char why[192];
+      if(qo100_txcal_start(radio,why,sizeof(why))) started=TRUE;
+      else { g_strlcpy(status,why,(gsize)status_sz); break; }
+    }
+    if(started && !qo100_txcal_active()) { done=TRUE; break; }
+  }
+
+  if(done) qo100_txcal_status(status,status_sz);
+  else if(!started) { if(status[0]==0) g_strlcpy(status,"never locked",(gsize)status_sz); }
+  else g_strlcpy(status,"never finished",(gsize)status_sz);
+  if(error_b_out!=NULL) *error_b_out=rx->error_b;
+  if(cycles_out!=NULL) *cycles_out=keyings;
+  gboolean keyed_at_end=radio->tune;
+  g_free(iq);
+  g_free(r->transmitter);
+  g_free(rx);
+  g_free(r);
+  radio=NULL;
+  // Whatever else a run does, it must not leave the transmitter keyed.
+  return done && !keyed_at_end;
 }
 
 static int failures;
@@ -2157,6 +2286,89 @@ int main(int argc, char **argv) {
           rx->frequency_b==10489710000LL-QO100_TP_OFFSET &&
           rx->ctun_frequency==10489710000LL, d);
     g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- 21. TRANSMIT CALIBRATION: the sign, which is the whole reason this
+  //          rig exists. A carrier that comes back HIGH was transmitted high, so
+  //          the uplink converter's LO error must go DOWN by that much. Getting
+  //          it backwards writes double the error into the operator's converter
+  //          and reads on air as a calibration that made things worse.
+  {
+    TXCAL_AIR air={ .err_hz={ 3200.0, 3200.0, 3200.0, 3200.0 } };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    snprintf(d,sizeof(d),"error_b=%lld after %d keyings \342\200\224 %s",
+             (long long)eb,cycles,st);
+    check("txcal: +3200 Hz high on the downlink trues the uplink by -3200",
+          ok && cycles==QO100_TXCAL_RUNS && llabs(eb+3200)<=3, d);
+  }
+
+  // ---- 22. ...and the other way round. A sign error still passes case 21 if
+  //          it is applied to the magnitude, so the mirror case is not optional.
+  {
+    TXCAL_AIR air={ .err_hz={ -2100.0, -2100.0, -2100.0, -2100.0 } };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    snprintf(d,sizeof(d),"error_b=%lld \342\200\224 %s",(long long)eb,st);
+    check("txcal: -2100 Hz low on the downlink trues the uplink by +2100",
+          ok && llabs(eb-2100)<=3, d);
+  }
+
+  // ---- 23. NOTHING CAME BACK. The transmitter keyed and the downlink stayed
+  //          empty -- no dish, wrong polarisation, converter dead. The one
+  //          outcome that must never happen is a number being written anyway:
+  //          the operator would then be transmitting at whatever the noise
+  //          floor's tallest bin happened to be.
+  {
+    TXCAL_AIR air={ .err_hz={ 0.0, 0.0, 0.0, 0.0 }, .silent=TRUE };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    snprintf(d,sizeof(d),"error_b=%lld after %d keyings \342\200\224 %s",
+             (long long)eb,cycles,st);
+    check("txcal: an empty downlink writes nothing and unkeys",
+          ok && eb==0 && cycles==1, d);
+  }
+
+  // ---- 24. THE TWO RUNS DISAGREE, which is what somebody else keying up inside
+  //          our measurement window looks like. A single confident reading is
+  //          exactly what this tree's decoder rules say not to trust, and the
+  //          level test cannot catch it -- only the agreement can.
+  {
+    TXCAL_AIR air={ .err_hz={ 1000.0, 6000.0, 6000.0, 6000.0 } };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    snprintf(d,sizeof(d),"error_b=%lld after %d keyings \342\200\224 %s",
+             (long long)eb,cycles,st);
+    check("txcal: two runs that disagree are refused, converter untouched",
+          ok && eb==0 && cycles==QO100_TXCAL_RUNS, d);
+  }
+
+  // ---- 25. The preconditions refuse in words and key NOTHING. Each of these is
+  //          a condition under which a measurement would be meaningless, and the
+  //          failure mode they guard against is the same one: a plausible number
+  //          written into the converter from something that was never measured.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(TXCAL_RX_CENTRE,FS);
+    RADIO *r=mk_radio(rx);
+    r->can_transmit=TRUE;
+    r->transmitter=g_new0(TRANSMITTER,1);
+    r->qo100_beacon_lock=FALSE;
+    radio=r;
+    keyings=0;
+    char why[192]="";
+    gboolean no_split=!qo100_txcal_start(r,why,sizeof(why));
+    rx->split=TRUE;
+    char why2[192]="";
+    gboolean no_dup=!qo100_txcal_start(r,why2,sizeof(why2));
+    rx->duplex=TRUE;
+    char why3[192]="";
+    gboolean no_lock=!qo100_txcal_start(r,why3,sizeof(why3));
+    snprintf(d,sizeof(d),"split:%s | dup:%s | lock:%s | keyings=%d",
+             why,why2,why3,keyings);
+    check("txcal: split, duplex and a beacon lock are all refused in words",
+          no_split && no_dup && no_lock && keyings==0 && !r->tune, d);
+    g_free(r->transmitter); g_free(rx); g_free(r); radio=NULL;
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

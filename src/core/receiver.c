@@ -905,6 +905,7 @@ void receiver_destroy(RECEIVER *rx) {
   //    because it has files to close while the receiver is still whole.
   ppm_cal_forget_receiver(rx);
   qo100_beacon_forget_receiver(rx);
+  qo100_txcal_forget_receiver(rx);
   vfo_forget_receiver(rx);
   if(radio->active_receiver==rx) {
     radio->active_receiver=NULL;
@@ -3143,6 +3144,12 @@ static void full_rx_buffer(RECEIVER *rx) {
   // QO-100 beacon lock: measures the LNB's LO drift off the raw spectrum, so it
   // wants the same untouched buffer. No-op unless the operator enabled it.
   qo100_beacon_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
+  // ...and the transmit half of the same problem, which is the one tap here that
+  // wants this buffer WHILE the transmitter is keyed: it is looking for our own
+  // carrier coming back off the satellite. That is what the duplex test at the
+  // head of this function decides, and why the calibration refuses to start with
+  // DUP off rather than quietly measuring nothing.
+  qo100_txcal_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   scope_iq_feed(rx, rx->iq_input_buffer, rx->buffer_size);
   // TCI (Phase B): stream this off-air I/Q block to any iq_start client. No-op
   // with no IQ subscribers (single atomic read).
