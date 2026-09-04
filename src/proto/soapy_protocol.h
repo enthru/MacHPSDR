@@ -37,6 +37,14 @@ void soapy_protocol_start_receiver(RECEIVER *rx);
 // Stop one receiver's receive thread and close its RX stream.  Call with
 // radio->delete_rx_mutex NOT held -- see the note at the definition.
 void soapy_protocol_stop_receiver(RECEIVER *rx);
+// TRUE when this receiver is the one its hardware RX channel is tuned to.  More
+// than one receiver can listen to one channel (a Pluto has a single RX with a
+// single LO); the others follow, with an NCO of their own inside the owner's
+// window.
+gboolean soapy_protocol_rx_owns_hardware(RECEIVER *rx);
+// Hz a following receiver's centre must move to fit inside that window; 0 when
+// it already does, and 0 for a receiver that owns its channel.
+long long soapy_protocol_rx_window_error(RECEIVER *rx);
 
 void soapy_protocol_init(RADIO *r,int rx);
 void soapy_protocol_stop(void);

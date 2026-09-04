@@ -437,6 +437,12 @@ extern int radio_start(void *data);
 extern gboolean isTransmitting(RADIO *r);
 extern RADIO *create_radio(DISCOVERED *d);
 extern void delete_receiver(RECEIVER *rx);
+#ifdef SOAPYSDR
+// The receiver that owns the hardware RX channel -- see the definition. Never
+// radio->receiver[0]: that slot can be empty, and its receiver need not be the
+// one the device is tuned to.
+extern RECEIVER *radio_soapy_hw_receiver(struct _radio *r);
+#endif
 extern void delete_diversity_mixer(DIVMIXER *dmix);
 extern void frequency_changed(RECEIVER *rx);
 // PPM oscillator-error correction (Hz) to add to an RF tune frequency f_rf

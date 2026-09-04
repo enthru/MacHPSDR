@@ -42,6 +42,9 @@
 #include "dac.h"
 #include "radio.h"
 #include "settings_ui.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 #include "receiver_dialog.h"
 #include "vfo.h"
 #include "audio.h"
@@ -1038,11 +1041,54 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     gtk_grid_attach(GTK_GRID(adc_grid),adc1_b,1,0,1,1);
   }
 
-  // Per-RX sample-rate picker. SoapySDR (HackRF/RTL/Lime) is deliberately NOT
-  // shown here: it already has its own ADC-rate-aware RX-rate dropdown on the
-  // Radio page (soapy_rx_rate_cb) with the correct integer-multiple-of-48k
-  // rates, so this fixed 48k..768k set was a duplicate offering wrong values.
+  // Per-RX sample-rate picker. The fixed 48k..1536k set below is protocol 2's;
+  // SoapySDR gets its own list, because the rates it can run are the device's
+  // (see the Radio page's soapy_rx_rate_cb, which sets the same thing for every
+  // receiver at once). It is per RECEIVER and not merely per radio because
+  // receivers sharing one hardware RX channel each decimate the shared stream
+  // by a ratio of their own: RX0 can hold the whole transponder in view while
+  // RX1 sits in a 192 kHz window around one QSO.
   switch(radio->discovered->protocol) {
+#ifdef SOAPYSDR
+    case PROTOCOL_SOAPYSDR:
+      {
+      GtkWidget *span_frame=gtk_frame_new("Span");
+      GtkWidget *span_grid=gtk_grid_new();
+      gtk_grid_set_row_homogeneous(GTK_GRID(span_grid),FALSE);
+      gtk_grid_set_column_homogeneous(GTK_GRID(span_grid),FALSE);
+      sui_style_group(span_grid);
+      gtk_frame_set_child(GTK_FRAME(span_frame),span_grid);
+      gtk_box_append(GTK_BOX(left_box),span_frame);
+
+      // The same list, and for the same reasons, as the Radio page's: every one
+      // an exact multiple of 48000 by a factor that divides the I/Q block.
+      const int rates[]={192000,384000,768000,1536000,1920000,4800000,9600000};
+      GtkWidget *first=NULL;
+      int y=0;
+      for(int r=0;r<(int)G_N_ELEMENTS(rates);r++) {
+        if(rates[r]>radio->sample_rate) continue;
+        char buf[16];
+        snprintf(buf,sizeof(buf),"%d",rates[r]);
+        GtkWidget *b=gtk_check_button_new_with_label(buf);
+        if(first==NULL) first=b; else gtk_check_button_set_group(GTK_CHECK_BUTTON(b),GTK_CHECK_BUTTON(first));
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(b),rx->sample_rate==rates[r]);
+        gtk_grid_attach(GTK_GRID(span_grid),b,0,y++,1,1);
+        SELECT *sel=g_new0(SELECT,1);
+        sel->rx=rx;
+        sel->choice=rates[r];
+        g_signal_connect(b,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)sel);
+      }
+      gtk_widget_set_tooltip_text(span_frame,
+          soapy_protocol_rx_owns_hardware(rx)?
+            "Width of this receiver's view of the band. The hardware runs at the "
+            "device's own rate and this receiver decimates it down to the span."
+          : "Width of this receiver's view of the band. It shares the hardware "
+            "channel with another receiver, so its centre has to stay inside the "
+            "window that receiver's LO covers -- a narrower span leaves it more "
+            "room to move.");
+      }
+      break;
+#endif
     case PROTOCOL_2:
       {
       int x=0;

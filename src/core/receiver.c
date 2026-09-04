@@ -3793,13 +3793,21 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
         break;
 #ifdef SOAPYSDR
       case PROTOCOL_SOAPYSDR:
-        if(radio->discovered->supported_receivers>1 &&
-// fv - need to figure how to deal with the Lime Suite
-           strcmp(radio->discovered->name,"lms7")==0) {
-          rx->adc=2;
-        } else {
-          rx->adc=1;
-        }
+        // One receiver per hardware RX channel while the device HAS one to
+        // spare; beyond that they share, which is the normal case rather than
+        // the exception -- a Pluto, a HackRF and an RTL dongle all have exactly
+        // one RX, and an AD9361 has one RX synthesiser even in its two-channel
+        // build, so a second receiver there would share the LO anyway.  A
+        // sharing receiver brings its own NCO and decimator (soapy_protocol.c's
+        // slot table) and listens inside the owner's window.
+        //
+        // It used to read adc=2 for a Lime and adc=1 for everything else, which
+        // was two bugs in three lines: 2 is past MAX_CHANNELS (the second
+        // receiver got "adc 2 has no stream slot" and no stream at all), and 1
+        // is a channel most of these devices do not have.
+        // Capped at 2: radio->adc[] holds two, and soapy_protocol.c keeps one
+        // stream, one FIFO and one pair of threads per entry.
+        rx->adc=(channel<radio->discovered->adcs && channel<2)?channel:0;
         break;
 #endif
     }
@@ -4278,6 +4286,34 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   }
 #endif
 
+
+#ifdef SOAPYSDR
+  // A receiver opened on a hardware channel another receiver already owns can
+  // only listen inside that channel's window, so it starts where that receiver
+  // is listening rather than at the 145 MHz default above (or at whatever a
+  // props file from a session on another band holds).  Without this the very
+  // first thing the operator sees is a dial pinned to the edge of the window,
+  // which reads as a receiver that refuses to tune.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     !soapy_protocol_rx_owns_hardware(rx) &&
+     soapy_protocol_rx_window_error(rx)!=0) {
+    for(int i=0;i<radio->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
+      RECEIVER *o=radio->receiver[i];
+      if(o==NULL || o==rx || o->adc!=rx->adc) continue;
+      if(!soapy_protocol_rx_owns_hardware(o)) continue;
+      log_info("create_receiver: channel=%d starts at rx%d's frequency (%lld) -- it shares adc %d\n",
+               rx->channel,o->channel,(long long)o->frequency_a,rx->adc);
+      rx->band_a=o->band_a;
+      rx->lo_a=o->lo_a;
+      rx->error_a=o->error_a;
+      rx->frequency_a=o->frequency_a;
+      rx->ctun_frequency=o->ctun_frequency;
+      rx->ctun_min=o->ctun_min;
+      rx->ctun_max=o->ctun_max;
+      break;
+    }
+  }
+#endif
 
   frequency_changed(rx);
   receiver_mode_changed(rx,rx->mode_a);

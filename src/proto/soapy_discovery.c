@@ -237,7 +237,28 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     // from a plugin (or, for a networked device, off the network) and the
     // fields are char[64] and char[128].
     g_strlcpy(discovered[devices].name,driver,sizeof(discovered[devices].name));
-    discovered[devices].supported_receivers=rx_channels;
+    // How many RECEIVERS the operator may open, which is not how many hardware
+    // RX channels the device has.  Every device in this class has one (a Pluto,
+    // a HackRF, an RTL dongle), so "one receiver per channel" meant the Add
+    // Receiver button was greyed for all of them -- while the stream they do
+    // deliver is one to two megahertz wide and has room for several receivers
+    // in it.  A second receiver shares the channel: it mixes its own centre to
+    // DC and decimates to its own span (the slot table in soapy_protocol.c),
+    // and its dial is bounded by the window the first one's LO leaves it.  That
+    // sharing is not a compromise forced by the driver -- an AD9361 has ONE RX
+    // synthesiser feeding both of its halves, so even a two-channel Pluto gives
+    // two receivers on one LO.
+    //
+    // adcs stays the hardware truth: it is what gain, antenna and the ADC
+    // controls are indexed by, and those really are per channel.
+    int rx_slots=rx_channels;
+#ifdef LIQUID
+    if(rx_slots<2) rx_slots=2;
+#else
+    // No liquid-dsp, no NCO and no per-receiver decimator, so a second receiver
+    // could only ever listen at the first one's centre.  Do not offer it.
+#endif
+    discovered[devices].supported_receivers=rx_slots;
     discovered[devices].supported_transmitters=tx_channels;
     discovered[devices].adcs=rx_channels;
     discovered[devices].status=STATE_AVAILABLE;

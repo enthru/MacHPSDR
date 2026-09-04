@@ -130,6 +130,28 @@ static gboolean panels_idle(RADIO *r) {
 
 static void rxtx(RADIO *r);
 
+#ifdef SOAPYSDR
+/* The receiver the hardware belongs to, for the calls that program the DEVICE
+   rather than a receiver: the sample rate, the antenna, the AGC mode, and the
+   whole stream on a reconnect.  Every one of them used to say receiver[0],
+   which stopped being true twice over -- receivers can share a hardware RX
+   channel (so the one that owns it is whichever holds slot 0), and receiver 0
+   itself can be CLOSED while another one lives on, leaving that slot NULL.
+   Closing it then took the application down inside radio_restart(); the
+   sanitiser caught it the first time a churn run closed the owner. */
+RECEIVER *radio_soapy_hw_receiver(RADIO *r) {
+  RECEIVER *first=NULL;
+  if(r==NULL || r->discovered==NULL) return NULL;
+  for(int i=0;i<r->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
+    RECEIVER *rx=r->receiver[i];
+    if(rx==NULL) continue;
+    if(first==NULL) first=rx;
+    if(soapy_protocol_rx_owns_hardware(rx)) return rx;
+  }
+  return first;
+}
+#endif
+
 int radio_restart(void *data) {
   RADIO *r=(RADIO *)data;
 log_info("radio_restart\n");
@@ -139,7 +161,10 @@ log_info("radio_restart\n");
       break;
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      soapy_protocol_change_sample_rate(r->receiver[0],r->sample_rate);
+      {
+      RECEIVER *rx=radio_soapy_hw_receiver(r);
+      if(rx!=NULL) soapy_protocol_change_sample_rate(rx,r->sample_rate);
+      }
       break;
 #endif
   }
@@ -338,7 +363,66 @@ static void tx_push_hw_frequency(RECEIVER *rx) {
   }
 }
 
+#ifdef SOAPYSDR
+/* A receiver that shares another one's hardware RX channel listens through an
+   NCO inside that channel's window, so its centre cannot leave it: the device
+   has one LO and one sample rate however many receivers are looking at it.  Two
+   things push a receiver out of the window -- its own dial, and the OWNER's
+   moving under it -- and both come through here, so this is where it is caught.
+   The cursor moves with the centre, so ctun keeps pointing at the same signal
+   right up to the stop. */
+static gboolean rx_clamp_to_shared_window(RECEIVER *rx) {
+  // Said once per episode, not once per tuning step: a dial that stops moving
+  // with no explanation anywhere is how an operator concludes the receiver is
+  // broken, and a line per step would bury the one that matters.
+  static gboolean pinned[MAX_RECEIVERS];
+  if(radio->discovered->protocol!=PROTOCOL_SOAPYSDR) return FALSE;
+  const long long d=soapy_protocol_rx_window_error(rx);
+  if(d==0) {
+    if(rx->channel>=0 && rx->channel<MAX_RECEIVERS) pinned[rx->channel]=FALSE;
+    return FALSE;
+  }
+  rx->frequency_a+=d;
+  rx->ctun_frequency+=d;
+  rx->ctun_min+=d;
+  rx->ctun_max+=d;
+  if(rx->channel>=0 && rx->channel<MAX_RECEIVERS && !pinned[rx->channel]) {
+    pinned[rx->channel]=TRUE;
+    log_info("rx%d shares adc %d and cannot leave the window that channel's own "
+             "receiver covers: held at %lld (moved %+lld Hz). Narrow this "
+             "receiver's span, or retune the one that owns the channel.\n",
+             rx->channel,rx->adc,(long long)rx->frequency_a,d);
+  } else {
+    log_debug("rx%d: held inside adc %d's window (moved %+lld Hz)\n",rx->channel,rx->adc,d);
+  }
+  return TRUE;
+}
+
+/* The receivers riding on this one's stream have just had the window they live
+   in moved.  Re-derive each one's NCO offset -- and drag any that no longer fit
+   -- rather than leaving them tuned to a frequency the device is no longer
+   listening to.  Only the ADC's owner has followers, so this does not recurse. */
+static void rx_sync_shared_followers(RECEIVER *rx) {
+  if(radio->discovered->protocol!=PROTOCOL_SOAPYSDR) return;
+  if(!soapy_protocol_rx_owns_hardware(rx)) return;
+  for(int i=0;i<radio->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
+    RECEIVER *f=radio->receiver[i];
+    if(f==NULL || f==rx || f->adc!=rx->adc) continue;
+    if(rx_clamp_to_shared_window(f)) {
+      frequency_changed(f);
+      update_vfo(f);
+    }
+  }
+}
+#endif
+
 void frequency_changed(RECEIVER *rx) {
+
+#ifdef SOAPYSDR
+    // Before anything reads frequency_a: a receiver sharing a hardware RX
+    // channel may not leave the window that channel covers.
+    rx_clamp_to_shared_window(rx);
+#endif
 
     // Diversity mixer hidden rx synced to the rx which is
     // visualised
@@ -459,6 +543,12 @@ void frequency_changed(RECEIVER *rx) {
   // receive through an LNB, transmit through a different converter) computes the
   // right TX IF. See receiver_sync_vfo_b_lo().
   receiver_sync_vfo_b_lo(rx);
+
+#ifdef SOAPYSDR
+  // The LO this receiver has just moved is shared with every other receiver on
+  // its ADC; their NCO offsets are measured from it.
+  rx_sync_shared_followers(rx);
+#endif
 
   // TCI (Phase A): push the new VFO to connected clients. No-op unless the
   // server is running and rx is the active receiver (see tci.c).
@@ -1959,6 +2049,10 @@ static gboolean add_receiver_cb(GtkWidget *widget,gpointer data) {
 static int churn_left;
 static int churn_done;
 
+// MACHPSDR_RX_CHURN_OWNER: churn the receiver holding the hardware, not the
+// one that was added (see rx_churn_tick).
+static gboolean churn_close_owner=FALSE;
+
 static gboolean rx_churn_tick(gpointer data) {
   RADIO *r=(RADIO *)data;
   if(churn_left<=0) {
@@ -1973,8 +2067,29 @@ static gboolean rx_churn_tick(gpointer data) {
   // cannot reach.  Churning it would be testing something the program does not
   // do.
   RECEIVER *victim=NULL;
-  for(int i=1;i<r->discovered->supported_receivers;i++) {
-    if(r->receiver[i]!=NULL && r->receiver[i]->show_rx) { victim=r->receiver[i]; break; }
+  int visible=0;
+  for(int i=0;i<r->discovered->supported_receivers;i++) {
+    if(r->receiver[i]!=NULL && r->receiver[i]->show_rx) visible++;
+  }
+#ifdef SOAPYSDR
+  // MACHPSDR_RX_CHURN_OWNER closes the receiver that OWNS the hardware instead,
+  // which on a SoapySDR device is a different teardown: receivers can share one
+  // hardware RX channel, and the survivor has to take the stream, its threads
+  // and the LO over rather than the whole lot being torn down.  Opt-in, because
+  // the plain churn is the shape every other device has -- but reachable by
+  // clicking (receiver_close lets go of any receiver while a second one is
+  // left), so it needs a way to be exercised.
+  if(churn_close_owner && visible>1) {
+    for(int i=0;i<r->discovered->supported_receivers;i++) {
+      RECEIVER *rx=r->receiver[i];
+      if(rx!=NULL && rx->show_rx && soapy_protocol_rx_owns_hardware(rx)) { victim=rx; break; }
+    }
+  }
+#endif
+  if(victim==NULL && visible>1) {
+    for(int i=1;i<r->discovered->supported_receivers;i++) {
+      if(r->receiver[i]!=NULL && r->receiver[i]->show_rx) { victim=r->receiver[i]; break; }
+    }
   }
   if(victim==NULL) {
     // add_receiver returns the slot it used, or -1 when there was none free --
@@ -1989,6 +2104,8 @@ static gboolean rx_churn_tick(gpointer data) {
       return FALSE;
     }
   } else {
+    log_info("rx-churn: closing rx%d%s\n",victim->channel,
+             (victim->channel==0)?" (it owns the hardware)":"");
     receiver_close(victim);
     churn_left--;
     churn_done++;
@@ -2140,6 +2257,7 @@ static void span_cycle_init(RADIO *r) {
 
 static void rx_churn_init(RADIO *r) {
   const char *e=g_getenv("MACHPSDR_RX_CHURN");
+  churn_close_owner=(g_getenv("MACHPSDR_RX_CHURN_OWNER")!=NULL);
   if(e==NULL || *e=='\0') return;
   churn_left=atoi(e);
   if(churn_left<=0) return;

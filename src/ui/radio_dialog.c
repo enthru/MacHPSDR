@@ -293,7 +293,10 @@ static void adc0_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
     protocol2_high_priority();
 #ifdef SOAPYSDR
   } else if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-    soapy_protocol_set_rx_antenna(radio->receiver[0],radio->adc[0].antenna);
+    {
+    RECEIVER *hwrx=radio_soapy_hw_receiver(radio);
+    if(hwrx!=NULL) soapy_protocol_set_rx_antenna(hwrx,radio->adc[0].antenna);
+    }
 #endif
   }
 }
@@ -555,7 +558,10 @@ static void adc_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
 static void agc_changed_cb(GtkWidget *widget, gpointer data) {
   ADC *adc=(ADC *)data;
   gboolean agc=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
-  soapy_protocol_set_automatic_gain(radio->receiver[0],agc);
+  {
+  RECEIVER *hwrx=radio_soapy_hw_receiver(radio);
+  if(hwrx!=NULL) soapy_protocol_set_automatic_gain(hwrx,agc);
+  }
 }
 
 static void dac0_gain_value_changed_cb(GtkWidget *widget, gpointer data) {

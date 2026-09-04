@@ -23,7 +23,8 @@
 #include <unistd.h>
 #include <wdsp.h>
 #ifdef LIQUID
-// The SoapySDR front-end decimator (see ms_resamp below).  Defined by the same
+// The SoapySDR front-end mixer and decimator (see the slot table below).
+// Defined by the same
 // Makefile switch that links liquid-dsp; without it the WDSP resampler is used.
 #include <complex.h>
 #include <liquid/liquid.h>
@@ -311,6 +312,47 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
   mic_sample_divisor=rate/48000;
 }
 
+/* ---- more than one receiver on one hardware RX channel --------------------
+   A Pluto has a single RX channel, so "one receiver per ADC" -- which is what
+   the stream, its block size and its receive thread are keyed by -- meant one
+   receiver, full stop, and the Add Receiver button was greyed on the device
+   this fork is most used with.  It cannot be cured by opening a second stream:
+   an AD9361 has ONE RX synthesiser feeding both halves, so even a 2R2T Pluto
+   gives two receivers that share a local oscillator.  The shared part is
+   therefore the honest model, and it is what this table implements.
+
+   Slot 0 of an ADC OWNS the hardware: the device is tuned to its centre, and it
+   alone sets the sample rate, the analogue bandwidth and the stream up.  Every
+   other slot is a FOLLOWER: it is handed the same raw block and brings its own
+   centre to DC with an NCO before decimating to its own span, so it has a
+   frequency, a span, a mode, filters, AGC, an audio device and a decoder panel
+   of its own -- but its centre must stay inside the window the owner's LO and
+   the hardware rate leave it (soapy_protocol_rx_window_error).
+
+   The table is mutated only under radio->delete_rx_mutex, which is the lock the
+   DSP thread already holds around the whole block it is distributing. */
+#define MAX_ADC_RECEIVERS 4
+
+typedef struct {
+  RECEIVER *rx;                 /* NULL: free slot */
+  gboolean ready;               /* its mixer/decimator are built for the live stream */
+#ifdef LIQUID
+  nco_crcf mixer;               /* this receiver's centre -> DC, before decimating */
+  msresamp_crcf resamp;         /* ...then the stream's rate down to its span */
+  liquid_float_complex *out;
+  int out_cap;
+  float ratio;                  /* span / stream rate: what out_cap is sized by */
+  liquid_float_complex *mix;    /* the mixed block; NULL while offset==0 */
+  int mix_cap;
+#endif
+  long long offset;             /* Hz between this receiver's centre and the device LO */
+} RXSLOT;
+
+static RXSLOT adc_slot[MAX_CHANNELS][MAX_ADC_RECEIVERS];
+/* What the device is really tuned to, per ADC -- the READBACK, not the request,
+   because every follower's offset is measured from it. */
+static double adc_lo[MAX_CHANNELS];
+
 #ifdef LIQUID
 /* ---- front-end decimator (liquid-dsp) -------------------------------------
    WDSP's create_resample() does the whole ratio in ONE FIR stage, sized at
@@ -324,14 +366,10 @@ void soapy_protocol_set_mic_sample_rate(int rate) {
    CASCADE -- halfband stages first, an arbitrary resampler last -- in float,
    which is the shape every SDR of this class uses.
 
-   One per ADC, the key everything else in this file already uses (the stream,
-   its block size and its receive thread are all per ADC, and a receiver holds
-   its ADC for its whole life).  Freed by the same two paths that free the
-   stream: soapy_protocol_stop_receiver() and a re-entry into
+   One per RECEIVER, not per ADC: receivers sharing an ADC have their own spans
+   and their own centres, so they cannot share a decimator.  Freed with the slot
+   -- by soapy_protocol_stop_receiver() and by a re-entry into
    soapy_protocol_create_receiver(). */
-static msresamp_crcf ms_resamp[MAX_CHANNELS];
-static liquid_float_complex *ms_out[MAX_CHANNELS];
-static int ms_out_cap[MAX_CHANNELS];
 
 /* Stop-band suppression of the cascade.  The panadapter draws about 100 dB of
    range, so an alias folded in at -60 dB would be a visible carrier that is not
@@ -339,13 +377,96 @@ static int ms_out_cap[MAX_CHANNELS];
    magnitude less than the single-stage filter it replaces. */
 #define MS_RESAMP_STOPBAND_DB 100.0f
 
-static void ms_resamp_free(int adc) {
-  if(adc<0 || adc>=MAX_CHANNELS) return;
-  if(ms_resamp[adc]!=NULL) { msresamp_crcf_destroy(ms_resamp[adc]); ms_resamp[adc]=NULL; }
-  if(ms_out[adc]!=NULL)    { g_free(ms_out[adc]); ms_out[adc]=NULL; }
-  ms_out_cap[adc]=0;
+static void slot_dsp_free(RXSLOT *sl) {
+  sl->ready=FALSE;
+  if(sl->resamp!=NULL) { msresamp_crcf_destroy(sl->resamp); sl->resamp=NULL; }
+  if(sl->out!=NULL)    { g_free(sl->out); sl->out=NULL; }
+  sl->out_cap=0;
+  if(sl->mixer!=NULL)  { nco_crcf_destroy(sl->mixer); sl->mixer=NULL; }
+  if(sl->mix!=NULL)    { g_free(sl->mix); sl->mix=NULL; }
+  sl->mix_cap=0;
 }
+#else
+static void slot_dsp_free(RXSLOT *sl) { sl->ready=FALSE; }
 #endif
+
+/* The slot this receiver already has, or NULL. */
+static RXSLOT *slot_find(RECEIVER *rx) {
+  if(rx==NULL) return NULL;
+  size_t ch=(size_t)rx->adc;
+  if(ch>=MAX_CHANNELS) return NULL;
+  for(int i=0;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[ch][i].rx==rx) return &adc_slot[ch][i];
+  }
+  return NULL;
+}
+
+/* Its slot, taking the first free one if it has none.  Idempotent, because it
+   is reached both from the create path and from the first frequency push --
+   which, for a receiver added while the radio runs, happens FIRST (frequency_
+   changed() is called at the end of create_receiver, before radio.c gets to
+   soapy_protocol_create_receiver).  Registering there rather than only in the
+   create path is what stops a not-yet-known second receiver being taken for the
+   owner and retuning the LO out from under the first one. */
+static RXSLOT *slot_add(RECEIVER *rx) {
+  RXSLOT *sl=slot_find(rx);
+  if(sl!=NULL) return sl;
+  size_t ch=(size_t)rx->adc;
+  if(ch>=MAX_CHANNELS) return NULL;
+  for(int i=0;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[ch][i].rx==NULL) {
+      // rx is written LAST.  This runs on the GTK thread while the DSP thread
+      // may be walking the row, and rx!=NULL is what makes a slot visible to
+      // it: everything it would then read has to say "not ready" already.
+      adc_slot[ch][i].offset=0;
+      adc_slot[ch][i].ready=FALSE;
+      adc_slot[ch][i].rx=rx;
+      if(i>0) log_info("%s: receiver %d shares adc %ld with receiver %d\n",
+                       __FUNCTION__,rx->channel,(long)ch,adc_slot[ch][0].rx->channel);
+      return &adc_slot[ch][i];
+    }
+  }
+  log_error("%s: adc %ld already carries %d receivers\n",__FUNCTION__,(long)ch,MAX_ADC_RECEIVERS);
+  return NULL;
+}
+
+/* Is this receiver the one the hardware belongs to?  A receiver with no slot
+   yet is the owner only when nothing else holds the ADC -- see slot_add. */
+static gboolean slot_is_owner(RECEIVER *rx) {
+  if(rx==NULL) return FALSE;
+  size_t ch=(size_t)rx->adc;
+  if(ch>=MAX_CHANNELS) return FALSE;
+  return (adc_slot[ch][0].rx==rx || adc_slot[ch][0].rx==NULL);
+}
+
+gboolean soapy_protocol_rx_owns_hardware(RECEIVER *rx) {
+  return slot_is_owner(rx);
+}
+
+/* Drop a receiver from its ADC and close the gap, so slot 0 is always the
+   owner.  Returns how many receivers are left on that ADC.  Called with
+   delete_rx_mutex held: the DSP thread walks this row inside it. */
+static int slot_remove(RECEIVER *rx) {
+  size_t ch=(size_t)rx->adc;
+  int n=0;
+  if(ch>=MAX_CHANNELS) return 0;
+  for(int i=0;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[ch][i].rx==rx) {
+      slot_dsp_free(&adc_slot[ch][i]);
+      adc_slot[ch][i].rx=NULL;
+      adc_slot[ch][i].offset=0;
+    }
+  }
+  /* Compact: a follower promoted to slot 0 becomes the owner, and the caller
+     retunes the hardware onto it. */
+  for(int i=0,j=0;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[ch][i].rx!=NULL) {
+      if(i!=j) { adc_slot[ch][j]=adc_slot[ch][i]; memset(&adc_slot[ch][i],0,sizeof(RXSLOT)); }
+      j++; n=j;
+    }
+  }
+  return n;
+}
 
 /* HackRF's practical floor: below ~2 MHz its 1.75 MHz baseband filter is the
    limit, so a narrower span is taken at 2 MHz and resampled, exactly as it was
@@ -484,13 +605,14 @@ static int soapy_set_rx_rate(size_t adc,int requested) {
    copies of it, and only one of them was ever fixed.
    Callers hold delete_rx_mutex whenever a receive thread is alive. */
 static void soapy_build_resampler(RECEIVER *rx,int block) {
+  RXSLOT *sl=slot_add(rx);
+  if(sl==NULL) return;
   if(rx->resampler!=NULL) {
     destroy_resample(rx->resampler);
     rx->resampler=NULL;
   }
-#ifdef LIQUID
-  ms_resamp_free(rx->adc);
-#endif
+  slot_dsp_free(sl);
+  const gboolean owner=(sl==&adc_slot[rx->adc][0]);
   int in_rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
 
   /* A device that lands a hair off the rate it was asked for is not substituting
@@ -533,15 +655,42 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
     rx->resampled_buffer_size=need;
   }
 
+#ifdef LIQUID
+  /* A follower is centred by an NCO of its own, so it needs the mixer even when
+     the stream is already at its span (offset 0 costs nothing: the mixer is only
+     run when the offset is non-zero). */
+  if(!owner) {
+    sl->mixer=nco_crcf_create(LIQUID_VCO);
+    if(sl->mixer==NULL) {
+      log_error("%s: nco_crcf_create failed; receiver %d cannot be tuned inside the shared stream\n",
+                __FUNCTION__,rx->channel);
+    }
+  }
+#else
+  if(!owner) {
+    /* Without liquid-dsp there is no mixer and no per-receiver decimator, so a
+       shared-ADC receiver could only ever listen at the owner's centre.  It is
+       not offered in that build (see soapy_discovery.c); say so if one turns up
+       anyway rather than quietly receiving the wrong frequency. */
+    log_error("%s: this build has no liquid-dsp: receiver %d cannot share adc %d\n",
+              __FUNCTION__,rx->channel,rx->adc);
+    return;
+  }
+#endif
+
   if(in_rate==rx->sample_rate) {
     log_info("%s: no resampler needed: stream and receiver are both at %d\n",__FUNCTION__,in_rate);
+    sl->ready=TRUE;
     return;
   }
 
 #ifdef LIQUID
   /* MACHPSDR_FRONTEND=wdsp puts the old single-stage resampler back without a
      rebuild.  It exists so a report of "the audio is wrong at some spans" can be
-     split in one session: same signal, same span, one variable. */
+     split in one session: same signal, same span, one variable.  Only for the
+     receiver that owns the ADC: WDSP's resampler cannot take the mixed block a
+     follower needs, so honouring it there would silently move that receiver back
+     onto the owner's frequency. */
   static int frontend_wdsp=-1;
   if(frontend_wdsp<0) {
     const char *e=g_getenv("MACHPSDR_FRONTEND");
@@ -551,23 +700,26 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
   /* The multistage cascade takes the ratio as a float, so the gcd of the two
      rates does not enter into it -- the arithmetic trap the WDSP path below has
      to warn about simply is not there. */
-  if(!frontend_wdsp) {
-    const int adc=(rx->adc>=0 && rx->adc<MAX_CHANNELS)?rx->adc:0;
+  if(!frontend_wdsp || !owner) {
     const float rate=(float)((double)rx->sample_rate/(double)in_rate);
-    ms_out_cap[adc]=(int)((double)block*(double)rate)+16;
-    ms_out[adc]=g_new(liquid_float_complex,ms_out_cap[adc]);
-    ms_resamp[adc]=msresamp_crcf_create(rate,MS_RESAMP_STOPBAND_DB);
-    if(ms_resamp[adc]!=NULL) {
-      log_info("%s: multistage decimator: block=%d stream=%d -> rx=%d (rate %.6f, %.0f dB, delay %.1f samples)\n",
-               __FUNCTION__,block,in_rate,rx->sample_rate,(double)rate,
-               (double)MS_RESAMP_STOPBAND_DB,(double)msresamp_crcf_get_delay(ms_resamp[adc]));
+    sl->ratio=rate;
+    sl->out_cap=(int)((double)block*(double)rate)+16;
+    sl->out=g_new(liquid_float_complex,sl->out_cap);
+    sl->resamp=msresamp_crcf_create(rate,MS_RESAMP_STOPBAND_DB);
+    if(sl->resamp!=NULL) {
+      log_info("%s: multistage decimator: block=%d stream=%d -> rx%d=%d (rate %.6f, %.0f dB, delay %.1f samples)\n",
+               __FUNCTION__,block,in_rate,rx->channel,rx->sample_rate,(double)rate,
+               (double)MS_RESAMP_STOPBAND_DB,(double)msresamp_crcf_get_delay(sl->resamp));
+      sl->ready=TRUE;
       return;
     }
     /* Never silently: falling through here means the expensive path, and the
        operator is entitled to know why their wide span costs what it does. */
     log_error("%s: msresamp_crcf_create(%.6f) failed; falling back to WDSP's single-stage resampler\n",
               __FUNCTION__,(double)rate);
-    ms_resamp_free(adc);
+    if(sl->out!=NULL) { g_free(sl->out); sl->out=NULL; }
+    sl->out_cap=0;
+    if(!owner) return;   /* a follower has no usable fallback */
   }
 #endif
 
@@ -588,7 +740,165 @@ static void soapy_build_resampler(RECEIVER *rx,int block) {
               __FUNCTION__,in_rate,rx->sample_rate,a,interp);
   }
   rx->resampler=create_resample(1,block,rx->buffer,rx->resampled_buffer,in_rate,rx->sample_rate,0.0,0,1.0);
+  sl->ready=TRUE;
 log_info("%s: created resampler: block=%d stream=%d -> rx=%d resampled_buffer=%d doubles\n",__FUNCTION__,block,in_rate,rx->sample_rate,rx->resampled_buffer_size);
+}
+
+/* The frequency this receiver wants the device tuned to.  The owner gets it;
+   every follower measures its NCO offset against what the device answered. */
+static double soapy_rx_target_freq(RECEIVER *rx) {
+  double f=(double)(rx->frequency_a-rx->lo_a+rx->error_a);
+  f+=(double)radio_ppm_correction(rx->frequency_a-rx->lo_a);
+  if(!rx->ctun) {
+    if(rx->rit_enabled) {
+      f+=(double)rx->rit;
+    }
+  }
+  return f;
+}
+
+/* How far a follower's centre sits from the device LO.  Only the number is
+   stored: the NCO's step depends on the I/Q order the operator has selected,
+   which is a per-block decision (see slot_feed). */
+static void slot_set_offset(RXSLOT *sl,long long off) {
+  if(sl->offset==off) return;
+  sl->offset=off;
+  log_debug("%s: rx%d now %+lld Hz from the device LO\n",
+            __FUNCTION__,sl->rx!=NULL?sl->rx->channel:-1,off);
+}
+
+/* Re-derive every follower's offset on this ADC.  Runs whenever the thing they
+   are measured against moves: the owner retuning, or the hardware rate changing
+   under them. */
+static void soapy_refresh_offsets(size_t ch) {
+  if(ch>=MAX_CHANNELS) return;
+  for(int i=1;i<MAX_ADC_RECEIVERS;i++) {
+    RECEIVER *f=adc_slot[ch][i].rx;
+    if(f==NULL) continue;
+    slot_set_offset(&adc_slot[ch][i],(long long)(soapy_rx_target_freq(f)-adc_lo[ch]));
+  }
+}
+
+/* Hz this receiver's centre has to move to sit inside the window its ADC's
+   owner leaves it: the device covers hw_rate about the owner's LO, and this
+   receiver's own span has to fit whole inside that.  0 when it fits, and 0 for
+   a receiver that owns its ADC -- that one moves the LO instead.  The answer is
+   a DELTA rather than a pair of limits on purpose: the dial, the converter LO,
+   its measured error and the ppm correction all sit between the two frequencies,
+   and a delta needs none of them inverted. */
+long long soapy_protocol_rx_window_error(RECEIVER *rx) {
+  if(rx==NULL) return 0;
+  size_t ch=(size_t)rx->adc;
+  if(ch>=MAX_CHANNELS) return 0;
+  if(slot_is_owner(rx)) return 0;
+  if(adc_lo[ch]==0.0) return 0;            /* the owner has not tuned yet */
+  const int hw=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
+  long long half=((long long)hw-(long long)rx->sample_rate)/2;
+  if(half<0) half=0;                       /* a span wider than the stream: pin it to the LO */
+  const long long want=(long long)soapy_rx_target_freq(rx);
+  const long long lo=(long long)adc_lo[ch];
+  if(want>lo+half) return (lo+half)-want;
+  if(want<lo-half) return (lo-half)-want;
+  return 0;
+}
+
+/* One raw block into one receiver: its own centre, its own span.  The caller
+   holds delete_rx_mutex and has checked that the receiver is still live. */
+static void slot_feed(RXSLOT *sl,const float *buffer,int elements,gboolean iqswap) {
+  RECEIVER *rx=sl->rx;
+  const float *src=buffer;
+  double isample,qsample;
+  int i;
+
+#ifdef LIQUID
+  /* Bring this receiver's centre to DC before the decimator, or the signal it
+     is listening to is outside the band the decimator keeps.  The stream is
+     CF32 and liquid_float_complex is (re,im) floats, so it goes in as it
+     arrived.
+     The shift is in the DEVICE's domain -- the offset is measured from the
+     frequency the hardware is tuned to, and this runs before anything the
+     application does to the pair -- so `iqswap` has no business in it, however
+     much it looks as though it should.  That flag is not a mirrored device: on
+     a SoapySDR device it is ON by default and cancels WDSP's own (Q, I) order,
+     and flipping the mixer with it put the second receiver the right distance
+     on the WRONG SIDE of the LO.  Measured against tools/soapy_null.cpp with a
+     tone 40 kHz above centre and a second receiver 10 kHz above the first: the
+     tone must land at +30 kHz in its stream, and read +50 kHz with the flip
+     in. */
+  if(sl->mixer!=NULL && sl->offset!=0) {
+    const int rate=(soapy_rx_actual_rate>0)?soapy_rx_actual_rate:radio->sample_rate;
+    if(sl->mix_cap<elements) {
+      g_free(sl->mix);
+      sl->mix=g_new(liquid_float_complex,elements);
+      sl->mix_cap=elements;
+    }
+    nco_crcf_set_frequency(sl->mixer,(float)(2.0*M_PI*(double)sl->offset/(double)rate));
+    nco_crcf_mix_block_down(sl->mixer,(liquid_float_complex *)(uintptr_t)src,sl->mix,(unsigned int)elements);
+    src=(const float *)sl->mix;
+  }
+  if(sl->resamp!=NULL) {
+    unsigned int ny=0;
+    /* msresamp writes ahead of any count this function returns, so the room has
+       to be there BEFORE the call -- clamping the answer afterwards is a check
+       that runs after the overflow.  The block a receiver is fed is the one its
+       ADC's owner drains the FIFO in, and that is decided by the owner: a
+       follower built for a smaller one would otherwise be a heap overflow the
+       first time the owner's stream came up with a bigger MTU. */
+    const int need=(int)((double)elements*(double)sl->ratio)+16;
+    if(sl->out_cap<need) {
+      g_free(sl->out);
+      sl->out=g_new(liquid_float_complex,need);
+      sl->out_cap=need;
+    }
+    msresamp_crcf_execute(sl->resamp,(liquid_float_complex *)(uintptr_t)src,
+                          (unsigned int)elements,sl->out,&ny);
+    if((int)ny>sl->out_cap) ny=(unsigned int)sl->out_cap;  // cannot happen; not a thing to find out the hard way
+    for(i=0;i<(int)ny;i++) {
+      isample=(double)crealf(sl->out[i]);
+      qsample=(double)cimagf(sl->out[i]);
+      if(iqswap) add_iq_samples(rx,qsample,isample);
+      else       add_iq_samples(rx,isample,qsample);
+    }
+    return;
+  }
+#else
+  (void)sl;
+#endif
+
+  if(rx->resampler!=NULL) {
+    for(i=0;i<elements;i++) {
+      rx->buffer[i*2]=(double)src[i*2];
+      rx->buffer[(i*2)+1]=(double)src[(i*2)+1];
+    }
+    // xresampleV, not xresample: the latter always consumes the count the
+    // resampler was CREATED with, while readStream returns "up to" block --
+    // so a short read re-resampled the tail of the previous one, and the
+    // very first one resampled uninitialised heap (rx->buffer is g_new).
+    int out_elements=0;
+    xresampleV(rx->buffer,rx->resampled_buffer,elements,&out_elements,rx->resampler);
+    for(i=0;i<out_elements;i++) {
+      if(iqswap) {
+        qsample=rx->resampled_buffer[i*2];
+        isample=rx->resampled_buffer[(i*2)+1];
+      } else {
+        isample=rx->resampled_buffer[i*2];
+        qsample=rx->resampled_buffer[(i*2)+1];
+      }
+      add_iq_samples(rx,isample,qsample);
+    }
+  } else {
+    /* No resampler: the stream is already at the span, so it goes straight
+       from the CF32 block the driver filled. */
+    for(i=0;i<elements;i++) {
+      isample=(double)src[i*2];
+      qsample=(double)src[(i*2)+1];
+      if(iqswap) {
+        add_iq_samples(rx,qsample,isample);
+      } else {
+        add_iq_samples(rx,isample,qsample);
+      }
+    }
+  }
 }
 
 /* Rebuilds rx->resampler, which the receive thread is using inside
@@ -598,7 +908,19 @@ log_info("%s: created resampler: block=%d stream=%d -> rx=%d resampled_buffer=%d
    (delete_rx_mutex around the block, then rx->mutex inside full_rx_buffer) and
    the other order is a deadlock. */
 void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
-  const int block=rx_block[rx->adc<MAX_CHANNELS?rx->adc:0];
+  const size_t slot_ch=(size_t)(rx->adc<MAX_CHANNELS?rx->adc:0);
+  const int block=rx_block[slot_ch];
+
+  if(!slot_is_owner(rx)) {
+    // A follower's span is a decimation ratio of its own applied to the shared
+    // block: rebuild that, re-derive its offset (the window it must fit in has
+    // just changed with its span) and leave the device and the FIFO alone --
+    // clearing the queue here would cost the OWNER a quarter of a second of
+    // stream for a change that is none of its business.
+    soapy_build_resampler(rx,block);
+    soapy_protocol_set_rx_frequency(rx);
+    return;
+  }
 
   // Devices driven at the receiver's own rate (see soapy_hw_rate_for) have to be
   // re-programmed here; for the rest the hardware rate does not move and only
@@ -650,6 +972,14 @@ void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
     }
   }
   soapy_build_resampler(rx,block);
+  // The stream's rate is what every follower's decimator ratio and NCO step are
+  // built from, so a change here rebuilds theirs too -- on the devices whose
+  // hardware rate follows the owner's span (soapy_hw_rate_for) this is the whole
+  // window moving under them.
+  for(int i=1;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[slot_ch][i].rx!=NULL) soapy_build_resampler(adc_slot[slot_ch][i].rx,block);
+  }
+  soapy_refresh_offsets(slot_ch);
   // Whatever queued up while the channel was being rebuilt is LATE -- the GTK
   // thread holds the lock for the whole rebuild, and at 2 MS/s a quarter of a
   // second of stream can pile up behind it.  Handing that to WDSP in one go is
@@ -766,6 +1096,33 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
     rx->resampled_buffer=NULL;
   }
 
+  size_t slot_ch=(size_t)rx->adc;
+  if(slot_ch>=MAX_CHANNELS) {
+    log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)slot_ch,MAX_CHANNELS);
+    return;
+  }
+  if(slot_add(rx)==NULL) return;
+  if(!slot_is_owner(rx)) {
+    // A receiver sharing another one's ADC gets no stream, no threads and no
+    // say over the hardware: it is handed the same raw block and does its own
+    // mixing and decimation (slot_feed).  Its block is therefore the one the
+    // owner's stream is drained in.
+    const int shared_block=rx_block[slot_ch]>0?rx_block[slot_ch]:2048;
+    // Under the lock: the DSP thread for this ADC is already running and reads
+    // the slot table inside it.  Nothing is joined in here, so there is nobody
+    // to deadlock against -- unlike the owner's path below, which is only ever
+    // reached with the threads not yet started or already stopped.
+    g_mutex_lock(&radio->delete_rx_mutex);
+    rx->buffer=g_new(double,shared_block*2);
+    rx->resampled_buffer_size=0;
+    soapy_build_resampler(rx,shared_block);
+    soapy_protocol_set_rx_frequency(rx);      // its offset from the owner's LO
+    g_mutex_unlock(&radio->delete_rx_mutex);
+    log_info("%s: receiver %d shares adc %ld (%d-sample blocks, span %d)\n",
+             __FUNCTION__,rx->channel,(long)slot_ch,shared_block,rx->sample_rate);
+    return;
+  }
+
   // What the hardware is told to run at -- the ADC rate for most devices, this
   // receiver's own span for the two that are driven directly (soapy_hw_rate_for).
   soapy_rx_sample_rate=soapy_hw_rate_for(rx);
@@ -775,11 +1132,7 @@ void soapy_protocol_create_receiver(RECEIVER *rx) {
 log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate);
   soapy_set_rx_rate(rx->adc,soapy_rx_sample_rate);
 
-  size_t channel=rx->adc;
-  if(channel>=MAX_CHANNELS) {
-    log_error("%s: adc %ld has no stream slot (MAX_CHANNELS=%d)\n",__FUNCTION__,(long)channel,MAX_CHANNELS);
-    return;
-  }
+  size_t channel=slot_ch;
   // Defensive: never set a second stream up over a live one.  The normal paths
   // (delete_receiver -> soapy_protocol_stop_receiver, and reconnect) have
   // already closed it and NULLed the slot; this is the belt for anything that
@@ -858,10 +1211,24 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
   // stream rate calls for.
   rx->resampled_buffer_size=0;
   soapy_build_resampler(rx,dsp_block);
+  // Everything riding on this stream was built for the one that just went away
+  // (this function is re-entered by the reconnect path, and the MTU, the block
+  // and the rate are all free to come back different).
+  for(int i=1;i<MAX_ADC_RECEIVERS;i++) {
+    if(adc_slot[channel][i].rx!=NULL) soapy_build_resampler(adc_slot[channel][i].rx,dsp_block);
+  }
+  soapy_refresh_offsets(channel);
 }
 
 void soapy_protocol_start_receiver(RECEIVER *rx) {
   int rc;
+
+  if(!slot_is_owner(rx)) {
+    // The stream and both threads belong to the receiver that owns this ADC and
+    // are already running; this one is fed out of the same block.
+    log_info("%s: receiver %d rides adc %d's stream\n",__FUNCTION__,rx->channel,rx->adc);
+    return;
+  }
 
 log_info("%s: activate_stream\n",__FUNCTION__);
 
@@ -934,7 +1301,7 @@ log_info("%s: create dsp_thread + receive_thread\n",__FUNCTION__);
   // The DSP thread first: it must be waiting on the FIFO before the reader
   // starts filling it, or the first burst is dropped for want of a consumer.
   dsp_thread_running[channel]=TRUE;
-  dsp_thread_id[channel]=g_thread_new("soapy_dsp",dsp_thread,rx);
+  dsp_thread_id[channel]=g_thread_new("soapy_dsp",dsp_thread,GSIZE_TO_POINTER(channel));
   if(dsp_thread_id[channel]==NULL) {
     log_error("%s: g_thread_new failed for dsp_thread\n",__FUNCTION__);
     dsp_thread_running[channel]=FALSE;
@@ -1175,17 +1542,14 @@ log_info("soapy_protocol_init: SoapySDRDevice_make\n");
 
 /* Everything the receive thread used to do after the read.  One block at a time,
    in order, on its own thread: the reader is never blocked by it.
-   This thread was handed its RECEIVER at start-up and holds it for its whole
-   life, so unlike the protocol1/2 paths there is no slot to re-read -- the check
-   is whether that receiver is still one of the radio's.  Everything that touches
-   it (rx->buffer, the resampler, add_iq_samples) is inside delete_rx_mutex,
-   because delete_receiver frees all three. */
+   It belongs to an ADC rather than to a receiver, because more than one receiver
+   can listen to one ADC (see the slot table above) -- so the receivers are read
+   out of that table on every block, inside delete_rx_mutex, which is also the
+   only lock under which the table is changed.  Everything each slot touches
+   (its decimator, rx->buffer, add_iq_samples) is freed by delete_receiver, and
+   is therefore inside the same lock. */
 static gpointer dsp_thread(gpointer data) {
-  double isample;
-  double qsample;
-  int i;
-  RECEIVER *rx=(RECEIVER *)data;
-  size_t channel=rx->adc;
+  size_t channel=GPOINTER_TO_SIZE(data);
   const int block=rx_block[channel]>0?rx_block[channel]:2048;
   float *buffer=g_new(float,block*2);
   gint64 dropped_reported=g_get_monotonic_time();
@@ -1222,66 +1586,26 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       }
     }
     g_mutex_lock(&radio->delete_rx_mutex);
-    if(!receiver_is_live(rx)) {
-      g_mutex_unlock(&radio->delete_rx_mutex);
-      continue;
-    }
     // The GTK control can change this while this worker is running.  Take one
     // atomic snapshot per block, both to make a live toggle reliable and to
     // keep the sample loops free of millions of atomic loads per second.
     const gboolean iqswap=radio_iqswap_get(radio);
-#ifdef LIQUID
-    if(ms_resamp[channel]!=NULL) {
-      /* The stream is CF32 and liquid_float_complex is (re,im) floats, so the
-         block goes in as it arrived: no float->double copy of 9.6 MS/s, and no
-         second buffer. */
-      unsigned int ny=0;
-      msresamp_crcf_execute(ms_resamp[channel],(liquid_float_complex *)buffer,
-                            (unsigned int)elements,ms_out[channel],&ny);
-      if((int)ny>ms_out_cap[channel]) ny=(unsigned int)ms_out_cap[channel];  // cannot happen; not a thing to find out the hard way
-      for(i=0;i<(int)ny;i++) {
-        isample=(double)crealf(ms_out[channel][i]);
-        qsample=(double)cimagf(ms_out[channel][i]);
-        if(iqswap) add_iq_samples(rx,qsample,isample);
-        else              add_iq_samples(rx,isample,qsample);
-      }
-      g_mutex_unlock(&radio->delete_rx_mutex);
-      continue;
-    }
-#endif
-    if(rx->resampler!=NULL) {
-      for(i=0;i<elements;i++) {
-        rx->buffer[i*2]=(double)buffer[i*2];
-        rx->buffer[(i*2)+1]=(double)buffer[(i*2)+1];
-      }
-      // xresampleV, not xresample: the latter always consumes the count the
-      // resampler was CREATED with, while readStream returns "up to" block --
-      // so a short read re-resampled the tail of the previous one, and the
-      // very first one resampled uninitialised heap (rx->buffer is g_new).
-      int out_elements=0;
-      xresampleV(rx->buffer,rx->resampled_buffer,elements,&out_elements,rx->resampler);
-      for(i=0;i<out_elements;i++) {
-        if(iqswap) {
-          qsample=rx->resampled_buffer[i*2];
-          isample=rx->resampled_buffer[(i*2)+1];
-        } else {
-          isample=rx->resampled_buffer[i*2];
-          qsample=rx->resampled_buffer[(i*2)+1];
-        }
-        add_iq_samples(rx,isample,qsample);
-      }
-    } else {
-      /* No resampler: the stream is already at the span, so it goes straight
-         from the CF32 block the driver filled. */
-      for(i=0;i<elements;i++) {
-        isample=(double)buffer[i*2];
-        qsample=(double)buffer[(i*2)+1];
-        if(iqswap) {
-          add_iq_samples(rx,qsample,isample);
-        } else {
-          add_iq_samples(rx,isample,qsample);
-        }
-      }
+    // Every receiver listening to this ADC gets the same raw block; each brings
+    // its own centre to DC and decimates to its own span (slot_feed).  The slot
+    // table is only ever changed under this lock, which is why it can be walked
+    // here without a second one.
+    for(int i=0;i<MAX_ADC_RECEIVERS;i++) {
+      RECEIVER *rx=adc_slot[channel][i].rx;
+      if(rx==NULL) continue;
+      // A receiver whose mixer and decimator are not built yet (it is being
+      // added) or have just been freed (its span is being changed) must not be
+      // fed: with neither, the block would go into a channel opened for a
+      // different rate, at a centre that is not its own.  The window is small
+      // and real -- the slot is claimed by the first frequency push, which
+      // happens inside create_receiver, before the chain exists.
+      if(!adc_slot[channel][i].ready) continue;
+      if(!receiver_is_live(rx)) continue;
+      slot_feed(&adc_slot[channel][i],buffer,elements,iqswap);
     }
     g_mutex_unlock(&radio->delete_rx_mutex);
   }
@@ -1415,6 +1739,28 @@ void soapy_protocol_stop_receiver(RECEIVER *rx) {
   if(!receiver_is_live(rx)) return;
   size_t channel=rx->adc;
   if(channel>=MAX_CHANNELS) return;
+
+  // Out of the block distribution first, under the lock the DSP thread reads the
+  // table inside -- after this returns, nothing is feeding this receiver.
+  g_mutex_lock(&radio->delete_rx_mutex);
+  const gboolean was_owner=(adc_slot[channel][0].rx==rx);
+  const int left=slot_remove(rx);
+  g_mutex_unlock(&radio->delete_rx_mutex);
+  if(left>0) {
+    // Somebody is still listening to this ADC: the stream, the FIFO and both
+    // threads stay up.  If what just went was the receiver the device was tuned
+    // to, the promoted slot takes the LO over -- it is already listening at its
+    // own frequency through its NCO, so this only moves the LO onto it and
+    // zeroes that offset.  The hardware RATE is deliberately left where it is:
+    // it is a rate the surviving receiver's decimator was built for.
+    if(was_owner) {
+      log_info("%s: receiver %d owned adc %ld; receiver %d takes it over\n",
+               __FUNCTION__,rx->channel,(long)channel,adc_slot[channel][0].rx->channel);
+      soapy_protocol_set_rx_frequency(adc_slot[channel][0].rx);
+    }
+    return;
+  }
+
   if(receive_thread_id[channel]==NULL) return;
 
 log_info("%s: stopping receive thread for channel %ld\n",__FUNCTION__,(long)channel);
@@ -1433,10 +1779,7 @@ log_info("%s: stopping receive thread for channel %ld\n",__FUNCTION__,(long)chan
     SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
     rx_stream[channel]=NULL;
   }
-#ifdef LIQUID
-  // After the join, never before: the thread reads this object every block.
-  ms_resamp_free((int)channel);
-#endif
+  adc_lo[channel]=0.0;
 
   running=FALSE;
   for(int i=0;i<MAX_CHANNELS;i++) {
@@ -1919,19 +2262,43 @@ log_info("%s: done\n",__FUNCTION__);
 void soapy_protocol_set_rx_frequency(RECEIVER *rx) {
   int rc;
 
-  if(soapy_device!=NULL) {
-    double f=(double)(rx->frequency_a-rx->lo_a+rx->error_a);
-    f+=(double)radio_ppm_correction(rx->frequency_a-rx->lo_a);
-    if(!rx->ctun) {
-      if(rx->rit_enabled) {
-        f+=(double)rx->rit;
-      }
-    }
-    //g_print("%s: %f\n",__FUNCTION__,f);
-    rc=SoapySDRDevice_setFrequency(soapy_device,SOAPY_SDR_RX,rx->adc,f,NULL);
-    if(rc!=0) {
-      log_info("%s: SoapySDRDevice_setFrequency(RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
-    }
+  if(rx==NULL) return;
+  size_t ch=(size_t)rx->adc;
+  if(ch>=MAX_CHANNELS) return;
+  // The slot is claimed even when there is no device yet (the reconnect path
+  // re-makes one under a live receiver): whoever gets slot 0 owns the LO, and
+  // that decision must not depend on whether the hardware happens to be there.
+  RXSLOT *sl=slot_add(rx);
+  if(sl==NULL) return;
+
+  const double f=soapy_rx_target_freq(rx);
+
+  if(sl!=&adc_slot[ch][0]) {
+    // A follower never moves the LO -- that would retune the receiver that owns
+    // this ADC out from under its operator.  It moves its own NCO instead, and
+    // the caller has already made sure the frequency fits in the window
+    // (soapy_protocol_rx_window_error).
+    slot_set_offset(sl,(long long)(f-adc_lo[ch]));
+    return;
+  }
+
+  sl->offset=0;                 // the device is tuned to this receiver
+  adc_lo[ch]=f;                 // ...or will be, the moment there is one
+  if(soapy_device==NULL) return;
+
+  //g_print("%s: %f\n",__FUNCTION__,f);
+  rc=SoapySDRDevice_setFrequency(soapy_device,SOAPY_SDR_RX,rx->adc,f,NULL);
+  if(rc!=0) {
+    log_info("%s: SoapySDRDevice_setFrequency(RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
+  }
+  if(adc_slot[ch][1].rx!=NULL) {
+    // Every follower is measured from where the device REALLY is, so take the
+    // readback rather than the request -- a driver is free to land on its own
+    // tuning step.  Only paid for when there is a follower to pay it for: this
+    // runs once per tuning step, and on a networked device it is a round trip.
+    const double at=SoapySDRDevice_getFrequency(soapy_device,SOAPY_SDR_RX,rx->adc);
+    if(at>0.0) adc_lo[ch]=at;
+    soapy_refresh_offsets(ch);
   }
 }
 

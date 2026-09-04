@@ -90,7 +90,10 @@ static gboolean do_reconnect(RADIO *r) {
   switch(r->discovered->protocol) {
 #ifdef SOAPYSDR
     case PROTOCOL_SOAPYSDR:
-      ok = soapy_protocol_reconnect(r->receiver[0]);
+      {
+      RECEIVER *hwrx = radio_soapy_hw_receiver(r);
+      ok = (hwrx != NULL) && soapy_protocol_reconnect(hwrx);
+      }
       break;
 #endif
     case PROTOCOL_1:
