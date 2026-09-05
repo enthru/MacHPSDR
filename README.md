@@ -73,7 +73,8 @@ de-emphasis / RDS options. Every slider in the settings dialogs shows its
 current numeric value beside the control, so you can read off the exact figure
 you've dialled in. The search field above the section list finds control names,
 group headings and help text across every settings page; press Ctrl-F (Cmd-F on
-macOS) to focus it and Esc to clear it.
+macOS) to focus it and Esc to clear it. Matching captions and controls are
+marked with a subtle accent highlight on the selected page.
 
 ![Settings — appearance & skin selection](./doc/settings.jpg)
 

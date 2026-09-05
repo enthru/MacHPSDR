@@ -83,15 +83,26 @@ static GtkWidget *search_empty;
 // so an operator can search for the setting itself ("sample rate", "AGC",
 // "beacon"), not merely guess which section contains it.
 static void append_search_text(GtkWidget *widget,GString *text) {
+  GString *own=g_string_new(NULL);
   if(GTK_IS_LABEL(widget)) {
     const char *label=gtk_label_get_text(GTK_LABEL(widget));
-    if(label!=NULL && *label!='\0') g_string_append_printf(text," %s",label);
+    if(label!=NULL && *label!='\0') g_string_append_printf(own," %s",label);
   }
 
   const char *tooltip=gtk_widget_get_tooltip_text(widget);
   if(tooltip!=NULL) {
-    g_string_append_printf(text," %s",tooltip);
+    g_string_append_printf(own," %s",tooltip);
   }
+
+  if(own->len>0) {
+    g_string_append(text,own->str);
+    // Keep the widget's own text separately from the page-wide document: it
+    // lets search_changed mark the exact captions/help-bearing controls that
+    // contributed a hit.  The data dies with the widget.
+    g_object_set_data_full(G_OBJECT(widget),"settings-search-text",
+                           g_utf8_casefold(own->str,-1),g_free);
+  }
+  g_string_free(own,TRUE);
 
   for(GtkWidget *child=gtk_widget_get_first_child(widget);
       child!=NULL;child=gtk_widget_get_next_sibling(child)) {
@@ -146,35 +157,50 @@ static void add_page(GtkWidget *child, const char *title) {
 
 // Every non-empty word must occur somewhere on the page.  This makes searches
 // such as "audio rate" useful without requiring the exact phrase or order.
-static gboolean page_matches(int page,const char *query) {
-  gchar *folded=g_utf8_casefold(query,-1);
-  gchar **words=g_strsplit_set(folded," \t\r\n",-1);
-  gboolean match=TRUE;
-
+static gboolean text_matches_all_words(const char *text,gchar **words) {
   for(int i=0;words[i]!=NULL;i++) {
-    if(*words[i]!='\0' && strstr(page_search_text[page],words[i])==NULL) {
-      match=FALSE;
-      break;
+    if(*words[i]!='\0' && strstr(text,words[i])==NULL) return FALSE;
+  }
+  return TRUE;
+}
+
+// A multi-word page match can come from several different captions. Highlight
+// each caption which supplied at least one word, giving the eye a useful trail
+// through a large page without turning the entire matching section bright.
+static void highlight_search_matches(GtkWidget *widget,gchar **words,gboolean active) {
+  gtk_widget_remove_css_class(widget,"search-match");
+  const char *text=g_object_get_data(G_OBJECT(widget),"settings-search-text");
+  if(active && text!=NULL) {
+    for(int i=0;words[i]!=NULL;i++) {
+      if(*words[i]!='\0' && strstr(text,words[i])!=NULL) {
+        gtk_widget_add_css_class(widget,"search-match");
+        break;
+      }
     }
   }
 
-  g_strfreev(words);
-  g_free(folded);
-  return match;
+  for(GtkWidget *child=gtk_widget_get_first_child(widget);
+      child!=NULL;child=gtk_widget_get_next_sibling(child)) {
+    highlight_search_matches(child,words,active);
+  }
 }
 
 static void search_changed(GtkSearchEntry *entry,gpointer data) {
   (void)data;
   const char *query=gtk_editable_get_text(GTK_EDITABLE(entry));
+  gchar *folded=g_utf8_casefold(query,-1);
+  gchar **words=g_strsplit_set(folded," \t\r\n",-1);
+  gboolean active=folded[strspn(folded," \t\r\n")]!='\0';
   GtkWidget *current=gtk_stack_get_visible_child(GTK_STACK(stack));
   GtkWidget *first_match=NULL;
   gboolean current_matches=FALSE;
   int matches=0;
 
   for(int i=0;i<n_pages;i++) {
-    gboolean match=page_matches(i,query);
+    gboolean match=text_matches_all_words(page_search_text[i],words);
     GtkStackPage *page=gtk_stack_get_page(GTK_STACK(stack),pages[i]);
     gtk_stack_page_set_visible(page,match);
+    highlight_search_matches(pages[i],words,active);
     if(match) {
       matches++;
       if(first_match==NULL) first_match=pages[i];
@@ -185,6 +211,8 @@ static void search_changed(GtkSearchEntry *entry,gpointer data) {
   gtk_widget_set_visible(search_empty,matches==0);
   if(first_match!=NULL && !current_matches)
     gtk_stack_set_visible_child(GTK_STACK(stack),first_match);
+  g_strfreev(words);
+  g_free(folded);
 }
 
 // Compose several page builders onto one tab. Each create_*_dialog() returns a
@@ -449,7 +477,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   gtk_widget_set_name(nav,"config-nav");
   search_entry=gtk_search_entry_new();
   gtk_widget_set_name(search_entry,"config-search");
-  gtk_entry_set_placeholder_text(GTK_ENTRY(search_entry),"Search settings");
+  gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(search_entry),"Search settings");
   gtk_widget_set_tooltip_text(search_entry,
       "Search setting names and show matching sections (Ctrl/Cmd+F)");
   gtk_box_append(GTK_BOX(nav),search_entry);

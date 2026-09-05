@@ -1320,6 +1320,13 @@ static const char css_body[]=
 "  #config-dialog separator {\n"
 "    background-color: @BORDER;\n"
 "    }\n"
+/* Search hits get a restrained highlighter treatment.  The inset underline is
+   still visible on buttons and frame titles whose own background is stronger. */
+"  #config-dialog .search-match {\n"
+"    background-color: alpha(@ACCENT_A,0.18);\n"
+"    box-shadow: inset 0 -2px alpha(@ACCENT_A,0.9);\n"
+"    border-radius: 3px;\n"
+"    }\n"
 /* The explicit colours above apply in every widget state, so they cancel GTK's
    default dimming of insensitive controls — a disabled scale/checkbox/dropdown
    would otherwise look fully active even though it ignores input. Restore a
