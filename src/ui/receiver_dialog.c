@@ -1198,6 +1198,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
       select->rx=rx;
       select->choice=3072000;
       g_signal_connect(sample_rate_3072,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
+
+      // 6144000 for the same reason as 3072000, and it is the last rung a
+      // 61.44 MHz radio can offer: the next power of two needs a decimation
+      // of 2.5.  Exact in the same tier -- 6144000/48000 = 128 divides the
+      // 25600 sample block into 200, still past RX_MIN_AUDIO_BLOCK.
+      GtkWidget *sample_rate_6144=gtk_check_button_new_with_label("6144000"); gtk_check_button_set_group(GTK_CHECK_BUTTON(sample_rate_6144),GTK_CHECK_BUTTON(sample_rate_3072));
+      gtk_check_button_set_active (GTK_CHECK_BUTTON (sample_rate_6144), rx->sample_rate==6144000);
+      gtk_grid_attach(GTK_GRID(sample_rate_grid),sample_rate_6144,x,y++,1,1);
+      select=g_new0(SELECT,1);
+      select->rx=rx;
+      select->choice=6144000;
+      g_signal_connect(sample_rate_6144,"toggled",G_CALLBACK(sample_rate_cb),(gpointer)select);
     }
     break;
   }
