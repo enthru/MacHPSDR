@@ -4307,8 +4307,9 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
               48000, // dsp rate
               48000, // output rate
               0, // receive
-              1, // run
+              0, // configure filters before enabling sample exchange
               0.010, 0.025, 0.0, 0.010, 0);
+  log_info("startup: RX%d WDSP OpenChannel complete\n", rx->channel);
 
   // The channel is opened at 48 kHz DSP rate regardless of any rate persisted
   // in props; keep rx->dsp_rate in sync so set_mode's guard reflects reality
@@ -4327,8 +4328,16 @@ log_info("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d
   // has already decided which they are (rx_nb_rematch).
   create_anbEXT(rx->channel, 1, rx->dsp_in_block, rx->dsp_in_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
   create_nobEXT(rx->channel,1, 0, rx->dsp_in_block, rx->dsp_in_rate, 0.00001, 0.00001, 0.00001, 0.05, 4.95);
+  log_info("startup: RX%d noise blankers ready\n", rx->channel);
   RXASetNC(rx->channel, rx->fft_size);
+  log_info("startup: RX%d filter length configured\n", rx->channel);
   RXASetMP(rx->channel, rx->low_latency);
+  log_info("startup: RX%d filter phase configured\n", rx->channel);
+  // RXASetNC stops a running channel and waits for incoming samples to flush
+  // it. No source feeds this new receiver yet, so that wait always times out.
+  // Enable it only after the initial filter setup; SetChannelState applies
+  // the same startup slew as OpenChannel(state=1).
+  SetChannelState(rx->channel,1,0);
 #ifdef SOAPYSDR
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
     rx->resample_step=radio->sample_rate/rx->sample_rate;

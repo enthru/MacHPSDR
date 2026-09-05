@@ -538,6 +538,7 @@ build libiio \
 # OSX_PACKAGE defaults to ON and would have CMake assemble a .pkg installer --
 # a macOS system installer, built as a side effect of a driver build, in a tree
 # whose whole point is a self-contained .app.
+python3 "$ROOT/tools/patch-ad9361-timing.py" "$WORK/libad9361-iio/ad9361_baseband_auto_rate.c"
 TARGET=ad9361 build libad9361-iio \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOSX_PACKAGE=OFF \
