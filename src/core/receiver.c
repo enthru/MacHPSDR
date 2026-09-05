@@ -2012,7 +2012,14 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
     }
   }
 
-  if(rx->zoom>1 && y>=rx->panadapter_height-20) {
+  // Only the panadapter's own bottom strip is a zoom-pan handle.  The waterfall
+  // shares this callback but its y-coordinate is local to a different (usually
+  // taller) widget; comparing that y with panadapter_height used to make much
+  // of the waterfall look like the handle, so wheel tuning in freetune moved
+  // the displayed span instead of the cursor.  Mirror the press hit-test above
+  // and use the actual widget height rather than the cached allocation.
+  if(rx->zoom>1 && widget==rx->panadapter &&
+     y>=gtk_widget_get_height(widget)-PAN_HANDLE_HEIGHT) {
     int pan;
     if(up) {
       pan=rx->pan+rx->zoom*mag;
