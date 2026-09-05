@@ -344,6 +344,43 @@ PATCH
 }
 patch_tx_safe_open_close
 
+# RX and TX share the AD9361 baseband clock/FIR. The startup log measured
+# 3.84 seconds in EACH setSampleRate(768000): libad9361 disables, uploads and
+# enables the same FIR twice. Cache only a successful configuration in this
+# device instance; never infer FIR state from a rounded rate on a new context.
+patch_shared_bb_rate() {
+  python3 - "$WORK/SoapyPlutoSDR/SoapyPlutoSDR.hpp" "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" <<'PATCH'
+import sys
+from pathlib import Path
+h, c = map(Path, sys.argv[1:])
+hs, cs = h.read_text(), c.read_text()
+if 'MACHPSDR shared BB rate' in cs:
+    assert 'configured_bb_rate' in hs, "incomplete shared BB rate patch"
+    print('==> SoapyPlutoSDR already patched (shared BB rate)')
+    sys.exit(0)
+member = '\t\tbool decimation, interpolation;'
+start = 'void SoapyPlutoSDR::setSampleRate( const int direction, const size_t channel, const double rate )\n{'
+old = '\tif(ad9361_set_bb_rate(dev,(unsigned long)samplerate))\n\t\tSoapySDR_logf(SOAPY_SDR_ERROR, "Unable to set BB rate.");\t'
+new = """	/* MACHPSDR shared BB rate: directional FPGA setup above is still required,
+	   including interpolation/decimation flags and RX buffer sizing. Only the
+	   expensive shared clock/FIR configuration can be reused. */
+	if (configured_bb_rate != (unsigned long)samplerate) {
+		configured_bb_rate = 0;
+		if (ad9361_set_bb_rate(dev, (unsigned long)samplerate))
+			throw std::runtime_error("Unable to set BB rate.");
+		configured_bb_rate = (unsigned long)samplerate;
+	}
+""".rstrip()
+assert hs.count(member) == 1 and cs.count(start) == 1 and cs.count(old) == 1, 'shared BB rate patch: unexpected upstream source'
+hs = hs.replace(member, member + '\n\t\tstd::mutex bb_rate_mutex;\n\t\tunsigned long configured_bb_rate = 0;', 1)
+cs = cs.replace(start, start + '\n\tstd::lock_guard<std::mutex> rate_lock(bb_rate_mutex);', 1).replace(old, new, 1)
+h.write_text(hs)
+c.write_text(cs)
+print('==> patched SoapyPlutoSDR: reuse successful shared clock/FIR setup')
+PATCH
+}
+patch_shared_bb_rate
+
 # THE ONE libiio PATCH, and it is worth more than every other line in this file
 # put together: it is ten seconds of every start-up on a NETWORKED Pluto.
 #
