@@ -562,8 +562,43 @@ static int soapy_hw_rate_for(RECEIVER *rx) {
    Pluto has only USB 2.0 High Speed and the network gadget on it), and because
    an entry that no link can deliver is not a choice, it is a way to break the
    stream in silence. Add to it when a device and a link that want more turn
-   up -- and measure the delivery, do not assume it. */
+   up -- and measure the delivery, do not assume it.
+
+   BELOW the old 2 304 000 the list has exactly three entries, and arithmetic is
+   what picks them rather than taste.  The point of going down there is the
+   wire: I/Q crosses it as CS16, four bytes a sample, so 2 304 000 is
+   73.7 Mbit/s and 768 000 is 24.6 -- which is the whole answer for a Pluto on
+   the far end of a network that a wider stream does not fit through.
+     - The floor is 25e6/48 = 520 833 Hz, not the 25e6/12 = 2 083 333 the
+       2 304 000 hardcode was chosen above.  That higher floor belongs to a
+       SoapyPlutoSDR built WITHOUT libad9361, which tools/build-soapy-plutosdr.sh
+       now guarantees.  Measured with it, on the development Pluto over the
+       network, 8 s a row (soapy_bench): 768 000 answered 767 999 and delivered
+       99.9 % at 24.6 Mbit/s, 1 536 000 and 1 920 000 answered exactly and
+       delivered 99.9 % at 49.2 and 61.4, all three with 0 overruns and no gap
+       past 2x the read interval.  The 1.3 ppm on the first is snapped away by
+       soapy_build_resampler.
+     - It stops at 768 000 and not at 192 000 because under that floor the
+       driver runs the phy at 8x and decimates on the HOST, while
+       getSampleRate() reports the rate that was asked for -- so nothing here
+       can see it, and 384 000 would put 3 072 000 on the wire, MORE than the
+       2 304 000 it was picked to undercut.  A rate below the floor saves
+       nothing; it just moves the decimation to the wrong end of the link.
+     - An entry at or below 1 920 000 must be one of soapy_rx_spans as well.
+       Above that ceiling radio_default_rx_span() hands a fresh receiver
+       1 920 000 whatever the rate is; at or below it, it hands the RATE, which
+       therefore has to be a span a receiver can actually run and the span
+       selector can actually show.  That is the test 1 152 000 and 576 000 fail
+       even though both are multiples of 192 kHz -- rx_span_is_exact wants
+       5120/(rate/48000) to be a whole number and both leave a remainder of 8 --
+       and it is also why 960 000 is absent: the arithmetic passes (5120/20 =
+       256) and it is still not a span this app offers.
+   Two things the operator is buying them with, both in the tooltip: on an
+   AD9361 this is the DAC clock as well (soapy_tx_dac_rate), so picking one
+   re-opens the transmit chain at that rate; and the shared window IS this rate,
+   so at 768 000 with a 768 000 span a second receiver has nowhere left to sit. */
 static const int soapy_adc_rate_list[]={
+  768000,1536000,1920000,
   2304000,3072000,3840000,4608000,4800000,5760000,7680000,9216000,9600000,
   11520000,15360000,19200000,23040000,30720000
 };
@@ -596,6 +631,17 @@ gboolean soapy_adc_rate_valid(DISCOVERED *d,int rate) {
     // A rate the device itself does not claim is not offered, whatever the list
     // says: an RTL dongle stops around 3.2 MS/s and must not be asked for 19.2.
     if(d->info.soapy.rx_rate_max>0 && rate>d->info.soapy.rx_rate_max) return FALSE;
+    // Since the list reaches below 2 304 000 that ceiling is no longer the whole
+    // test: the same RTL dongle claims 225001..300000 and 900001..3200000, and
+    // 768 000 lies in the hole between them -- under the ceiling and not
+    // runnable.  Where the device described its ranges, a rate has to be inside
+    // one of them; where it described none, the ceiling is all there is.
+    if(d->info.soapy.rx_rate_ranges>0) {
+      for(int j=0;j<d->info.soapy.rx_rate_ranges;j++) {
+        if(rate>=d->info.soapy.rx_rate_lo[j] && rate<=d->info.soapy.rx_rate_hi[j]) return TRUE;
+      }
+      return FALSE;
+    }
     return TRUE;
   }
   return FALSE;

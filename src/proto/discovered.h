@@ -30,6 +30,12 @@
 
 #define MAX_DEVICES 16
 
+// How many of a SoapySDR device's sample-rate ranges are kept (see rx_rate_lo
+// below).  Two is what the shapes met so far need -- one continuous range, or
+// an RTL dongle's pair -- and the rest is headroom for a device that answers a
+// ladder of fixed steps as one range each.
+#define SOAPY_RATE_RANGES 16
+
 #define OLD_DEVICE_METIS 0
 #define OLD_DEVICE_HERMES 1
 #define OLD_DEVICE_GRIFFIN 2
@@ -112,6 +118,15 @@ struct _DISCOVERED {
         // receivers share, so it is worth being able to raise -- but only to
         // something the hardware answers to.
         int rx_rate_max;
+        // The same answer kept WHOLE, because a ceiling is not the shape of it:
+        // an RTL dongle reports two disjoint ranges (225001..300000 and
+        // 900001..3200000) and 768 000 falls in the gap between them, so an
+        // offered rate is tested for containment rather than against the top.
+        // A device that reports no range at all leaves this empty and keeps the
+        // rx_rate_max test it had.
+        int rx_rate_ranges;
+        int rx_rate_lo[SOAPY_RATE_RANGES];
+        int rx_rate_hi[SOAPY_RATE_RANGES];
         size_t rx_channels;
         size_t rx_gains;
         char **rx_gain;

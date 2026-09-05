@@ -1007,6 +1007,9 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         "What limits it is the link, not the radio: raise it and watch the log — "
         "a stream that arrives short is reported there, and missing samples are "
         "not a silence, they are a splice.\n"
+        "Lowering it is how a narrow link is fitted: I/Q crosses the wire as "
+        "four bytes a sample, so 2304k is 73.7 Mbit/s and 768k is 24.6 — at the "
+        "price of the room several receivers had to sit apart in.\n"
         "On an AD9361 (PlutoSDR) one clock serves both directions, so this is "
         "also the transmit rate, and a transmission has to fit up the same link.");
     gtk_grid_attach(GTK_GRID(model_grid),adc_combo,x+1,1,1,1);

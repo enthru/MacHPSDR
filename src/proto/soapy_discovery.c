@@ -139,6 +139,8 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
 
   int sample_rate=0;
   int rx_rate_max=0;
+  int rx_rate_lo[SOAPY_RATE_RANGES],rx_rate_hi[SOAPY_RATE_RANGES];
+  int rx_rate_ranges=0;
   SoapySDRRange *rx_rates=SoapySDRDevice_getSampleRateRange(sdr, SOAPY_SDR_RX, 0, &rx_rates_length);
   log_info("Rx sample rates: ");
   for (size_t i = 0; i < rx_rates_length; i++) {
@@ -148,7 +150,24 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     // step arrives as minimum == maximum, so taking the maximum is right for
     // both shapes.
     if(rx_rates[i].maximum>(double)rx_rate_max) rx_rate_max=(int)rx_rates[i].maximum;
+    // And the ranges themselves, because the offered rates now reach below
+    // 2 304 000, where a ceiling stops being the whole answer: an RTL dongle
+    // says 225001..300000 and 900001..3200000, and 768 000 is in neither.  More
+    // ranges than there is room for means the shape is not known, so the list
+    // is abandoned rather than half-kept -- running out of storage must never
+    // be what refuses a rate the device can run.
+    if(rx_rate_ranges>=0 && rx_rates[i].minimum>0.0 &&
+       rx_rates[i].maximum>=rx_rates[i].minimum) {
+      if(rx_rate_ranges>=SOAPY_RATE_RANGES) {
+        rx_rate_ranges=-1;
+      } else {
+        rx_rate_lo[rx_rate_ranges]=(int)rx_rates[i].minimum;
+        rx_rate_hi[rx_rate_ranges]=(int)rx_rates[i].maximum;
+        rx_rate_ranges++;
+      }
+    }
   }
+  if(rx_rate_ranges<0) rx_rate_ranges=0;
   log_info("\n");
   free(rx_rates);
   log_info("Rx top clock rate: %d\n",rx_rate_max);
@@ -274,6 +293,11 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     discovered[devices].frequency_max=ranges[0].maximum;
     discovered[devices].info.soapy.sample_rate=sample_rate;
     discovered[devices].info.soapy.rx_rate_max=rx_rate_max;
+    discovered[devices].info.soapy.rx_rate_ranges=rx_rate_ranges;
+    for(int i=0;i<rx_rate_ranges;i++) {
+      discovered[devices].info.soapy.rx_rate_lo[i]=rx_rate_lo[i];
+      discovered[devices].info.soapy.rx_rate_hi[i]=rx_rate_hi[i];
+    }
     if(strcmp(driver,"rtlsdr")==0) {
       discovered[devices].info.soapy.rtlsdr_count=rtlsdr_val;
       discovered[devices].info.soapy.sdrplay_count=0;
