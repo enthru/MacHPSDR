@@ -344,6 +344,74 @@ PATCH
 }
 patch_tx_safe_open_close
 
+# THE ONE libiio PATCH, and it is worth more than every other line in this file
+# put together: it is ten seconds of every start-up on a NETWORKED Pluto.
+#
+# libiio's DNS-SD scan resolves each _iio._tcp responder to an address, opens a
+# context AT THAT ADDRESS to read the hardware out of it -- and then publishes
+# the scan result as `ip:<mDNS hostname>`, throwing the address away.  Every
+# later open therefore goes back through the name.  On macOS, getaddrinfo() of a
+# `.local` name with AF_UNSPEC -- which is what network.c asks for -- waits the
+# full mDNSResponder negative-answer timeout for an AAAA the Pluto never sends:
+#
+#     getaddrinfo("plutosky.local.", AF_UNSPEC)            5.003 s
+#     getaddrinfo("plutosky.local.", AF_INET)              0.002 s
+#     iio_create_context_from_uri("ip:plutosky.local.")    5.013 s
+#     iio_create_context_from_uri("ip:192.168.100.5")      0.011 s
+#
+# and the application pays it three times over: inside the driver's
+# find_PlutoSDR (which opens every scanned context to check it really is an
+# AD9361), again in soapy_discovery.c's get_info(), and again when the operator
+# opens the radio.  Measured on this tree before the patch: enumerate 5.36 s and
+# EVERY SoapySDRDevice_make() a further 5.01 s -- including one passed a numeric
+# uri, because SoapySDR's Device::make() merges the ENUMERATED args over the
+# caller's.  That last part is why this cannot be fixed in the application:
+# nothing it passes can win against the uri the scan published.  The mDNS browse
+# itself is not the cost and never was (0.144 s here).
+#
+# So the scan publishes what it connected to.  libiio's own uri parser already
+# takes a bare IPv4/IPv6 address and the bracketed `[v6]:port` form -- they are
+# the shapes network_create_context() was handed a few lines above -- so this
+# reuses that string verbatim rather than deriving it a second time.  Nothing is
+# lost to the operator: the hostname is still what the browse matched on, and an
+# address is the more useful of the two in a device list.
+patch_iio_scan_publishes_address() {
+  local f="$WORK/libiio/dns_sd.c"
+  [ -f "$f" ] || { echo "error: $f missing; cannot patch" >&2; exit 1; }
+  if grep -q 'MACHPSDR scan uri' "$f"; then
+    echo "==> libiio already patched (scan publishes the address)"
+    return
+  fi
+  python3 - "$f" <<'PATCH'
+import sys
+p=sys.argv[1]
+s=open(p).read()
+old = (
+ '\tif (port == IIOD_PORT)\n'
+ '\t\tiio_snprintf(uri, sizeof(uri), "ip:%s", hostname);\n'
+ '\telse\n'
+ '\t\tiio_snprintf(uri, sizeof(uri), "ip:%s:%d", hostname, port);\n')
+new = (
+ '\t/* MACHPSDR scan uri: publish the ADDRESS this scan just opened a context\n'
+ '\t   at, not the mDNS hostname.  Every consumer re-opens the published uri,\n'
+ '\t   and resolving a `.local` name with AF_UNSPEC costs a 5 s wait for an\n'
+ '\t   AAAA record on macOS, against 11 ms for the address.  `uri` still holds\n'
+ '\t   the exact string network_create_context() accepted above (bare v4/v6, or\n'
+ '\t   the bracketed [v6]:port form), so it is reused rather than rebuilt. */\n'
+ '\t{\n'
+ '\t\tchar connected[sizeof(uri)];\n'
+ '\n'
+ '\t\tiio_strlcpy(connected, uri, sizeof(connected));\n'
+ '\t\tiio_snprintf(uri, sizeof(uri), "ip:%s", connected);\n'
+ '\t}\n'
+ '\t(void) hostname;\n')
+assert s.count(old)==1, "dns_sd.c uri block not as expected"
+open(p,'w').write(s.replace(old,new,1))
+PATCH
+  echo "==> patched libiio: the DNS-SD scan publishes ip:<address>, not ip:<hostname>"
+}
+patch_iio_scan_publishes_address
+
 # OSX_FRAMEWORK=OFF is load-bearing: libiio's macOS build defaults to producing
 # an iio.framework, which no consumer here looks for and dylibbundler does not
 # handle.  The rest is trimming — this build exists to be dlopen'd by one
