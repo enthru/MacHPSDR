@@ -997,6 +997,9 @@ int main(int argc, char **argv) {
   win_startup();
 #endif
 
+  log_info("startup: entered main at unix %.3f (build %s %s)\n",
+           g_get_real_time()/1000000.0, build_date, version);
+
   // Winsock hands out no socket at all until the process has called WSAStartup,
   // so this must run before discovery, rigctl, TCI or the cluster client. No-op
   // on Linux/macOS.
@@ -1159,6 +1162,7 @@ int main(int argc, char **argv) {
   const char *quit_accels[]={"<Primary>q", NULL};
   gtk_application_set_accels_for_action(hpsdr, "app.quit", quit_accels);
 
+  log_info("startup: entering GTK application loop\n");
   rc=g_application_run(G_APPLICATION(hpsdr), argc, argv);
   g_object_unref(hpsdr);
   return rc;

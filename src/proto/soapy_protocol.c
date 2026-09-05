@@ -1690,6 +1690,7 @@ log_info("soapy_protocol_init\n");
 log_info("soapy_protocol_init: SoapySDRDevice_make\n");
   soapy_device_args(&args);
   soapy_device=SoapySDRDevice_make(&args);
+  log_info("soapy_protocol_init: device make returned\n");
   if(soapy_device==NULL) {
     log_info("%s: SoapySDRDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     _exit(-1);
@@ -1698,6 +1699,7 @@ log_info("soapy_protocol_init: SoapySDRDevice_make\n");
   // attenuated throughout receiver/transmitter construction.
   soapy_tx_hold_safe();
   SoapySDRKwargs_clear(&args);
+  log_info("soapy_protocol_init: safe TX setup complete\n");
 }
 
 

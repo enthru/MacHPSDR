@@ -28,6 +28,14 @@ log_level_t machpsdr_log_level = LOG_LEVEL_INFO;
 
 /* Zero-initialised static GMutex is usable directly (no g_mutex_init needed). */
 static GMutex log_mutex;
+static gint64 log_started;
+
+/* Called under log_mutex, including by the first worker to emit a message. */
+static double log_elapsed(void) {
+  gint64 now = g_get_monotonic_time();
+  if (log_started == 0) log_started = now;
+  return (now - log_started) / 1000000.0;
+}
 
 const char *log_level_name(log_level_t level) {
   switch (level) {
@@ -68,7 +76,7 @@ int log_set_level_name(const char *name) {
 void log_emit(log_level_t level, const char *fmt, ...) {
   va_list ap;
   g_mutex_lock(&log_mutex);
-  fprintf(stderr, "[%s] ", log_level_name(level));
+  fprintf(stderr, "[%s] [+%.3fs] ", log_level_name(level), log_elapsed());
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
   va_end(ap);
@@ -110,7 +118,7 @@ int log_set_debug_categories(const char *names) {
 void log_emit_debug(log_category_t category, const char *fmt, ...) {
   va_list ap;
   g_mutex_lock(&log_mutex);
-  fprintf(stderr, "[DEBUG][%s] ", debug_names[category]);
+  fprintf(stderr, "[DEBUG][%s] [+%.3fs] ", debug_names[category], log_elapsed());
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
   va_end(ap);

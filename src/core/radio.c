@@ -3896,6 +3896,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   create_audio(r->which_audio_backend,r->which_audio==USE_SOUNDIO?audio_get_backend_name(r->which_audio_backend):NULL);
 
+  log_info("startup: audio backend ready\n");
   r->rx_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
   gtk_widget_set_vexpand(r->rx_container, TRUE);
   gtk_widget_set_hexpand(r->rx_container, TRUE);
@@ -3908,7 +3909,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // the first channel is opened.
   SetDSPMult(2);
 
+  log_info("startup: creating receivers\n");
   add_receivers(r);
+  log_info("startup: receivers ready\n");
 
   radio_rebuild_rx_stack(r);
 
@@ -3928,7 +3931,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   }
 
 
+  log_info("startup: transmitter setup complete; creating visuals\n");
   create_visual(r);
+  log_info("startup: visuals ready\n");
 
 
   // Receivers are now loaded (possibly already at the max, e.g. restored from

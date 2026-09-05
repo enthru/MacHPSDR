@@ -83,6 +83,7 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
   log_info("soapy_discovery: make args: %s\n",make_args);
 
   SoapySDRDevice *sdr = SoapySDRDevice_make(&args);
+  log_info("soapy_discovery: device make returned (%s)\n",driver);
   if(sdr==NULL) {
     log_info("%s: SoapySdrDevice_make failed: %s\n",__FUNCTION__,SoapySDRDevice_lastError());
     SoapySDRKwargs_clear(&args);
@@ -361,6 +362,7 @@ log_info("Tx gains: \n");
 
   // fv
   SoapySDRDevice_unmake(sdr);
+  log_info("soapy_discovery: probe closed (%s)\n",driver);
 
   // Everything SoapySDR handed back that is NOT kept in discovered[].  The
   // gain, antenna and sensor lists above are stored there and deliberately
@@ -656,6 +658,7 @@ void soapy_discovery(void) {
   // Enumerate with EMPTY args.  Anything else (a hostname in particular) makes
   // SoapySDR/libiio resolve a name on every startup, and with nothing to resolve
   // the Avahi lookup blocks until it times out (~30 s), hanging discovery.
+  log_info("soapy_discovery: enumerating drivers\n");
   SoapySDRKwargs *results = SoapySDRDevice_enumerate(&input_args, &length);
   log_info("%s: length=%ld\n",__FUNCTION__,(long)length);
   for (i = 0; i < length; i++) {
