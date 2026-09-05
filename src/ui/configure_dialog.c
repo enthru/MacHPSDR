@@ -164,16 +164,64 @@ static gboolean text_matches_all_words(const char *text,gchar **words) {
   return TRUE;
 }
 
-// A multi-word page match can come from several different captions. Highlight
-// each caption which supplied at least one word, giving the eye a useful trail
-// through a large page without turning the entire matching section bright.
-static void highlight_search_matches(GtkWidget *widget,gchar **words,gboolean active) {
+static void clear_search_highlights(GtkWidget *widget) {
   gtk_widget_remove_css_class(widget,"search-match");
+  gtk_widget_remove_css_class(widget,"search-match-related");
+  for(GtkWidget *child=gtk_widget_get_first_child(widget);
+      child!=NULL;child=gtk_widget_get_next_sibling(child)) {
+    clear_search_highlights(child);
+  }
+}
+
+// Mark the field(s) which share a GtkGrid row with a matching caption.  Most
+// settings pages use exactly that label/control layout.  Horizontal boxes are
+// the other common row container. A matching frame title marks the frame,
+// making a group-name result visible as more than a coloured word.
+static void mark_related_setting(GtkWidget *match) {
+  GtkWidget *node=match;
+  GtkWidget *parent=gtk_widget_get_parent(node);
+
+  while(parent!=NULL) {
+    if(GTK_IS_FRAME(parent) && gtk_frame_get_label_widget(GTK_FRAME(parent))==node) {
+      gtk_widget_add_css_class(parent,"search-match-related");
+      break;
+    }
+    if(GTK_IS_GRID(parent)) {
+      int row,height;
+      gtk_grid_query_child(GTK_GRID(parent),node,NULL,&row,NULL,&height);
+      for(GtkWidget *sibling=gtk_widget_get_first_child(parent);
+          sibling!=NULL;sibling=gtk_widget_get_next_sibling(sibling)) {
+        int sibling_row,sibling_height;
+        gtk_grid_query_child(GTK_GRID(parent),sibling,
+                             NULL,&sibling_row,NULL,&sibling_height);
+        if(sibling_row<row+height && row<sibling_row+sibling_height)
+          gtk_widget_add_css_class(sibling,"search-match-related");
+      }
+      break;
+    }
+    if(GTK_IS_BOX(parent) &&
+       !GTK_IS_BOX(node) && !GTK_IS_GRID(node) && !GTK_IS_FRAME(node) &&
+       gtk_orientable_get_orientation(GTK_ORIENTABLE(parent))==GTK_ORIENTATION_HORIZONTAL) {
+      for(GtkWidget *sibling=gtk_widget_get_first_child(parent);
+          sibling!=NULL;sibling=gtk_widget_get_next_sibling(sibling))
+        gtk_widget_add_css_class(sibling,"search-match-related");
+      break;
+    }
+    node=parent;
+    parent=gtk_widget_get_parent(node);
+  }
+  gtk_widget_add_css_class(match,"search-match");
+}
+
+// A multi-word page match can come from several different captions. Highlight
+// each caption which supplied at least one word, plus its associated control,
+// giving the eye a useful trail through a large page.
+static void highlight_search_matches(GtkWidget *widget,gchar **words,gboolean active) {
   const char *text=g_object_get_data(G_OBJECT(widget),"settings-search-text");
   if(active && text!=NULL) {
     for(int i=0;words[i]!=NULL;i++) {
       if(*words[i]!='\0' && strstr(text,words[i])!=NULL) {
-        gtk_widget_add_css_class(widget,"search-match");
+        mark_related_setting(widget);
         break;
       }
     }
@@ -200,6 +248,7 @@ static void search_changed(GtkSearchEntry *entry,gpointer data) {
     gboolean match=text_matches_all_words(page_search_text[i],words);
     GtkStackPage *page=gtk_stack_get_page(GTK_STACK(stack),pages[i]);
     gtk_stack_page_set_visible(page,match);
+    clear_search_highlights(pages[i]);
     highlight_search_matches(pages[i],words,active);
     if(match) {
       matches++;

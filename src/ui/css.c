@@ -1320,12 +1320,19 @@ static const char css_body[]=
 "  #config-dialog separator {\n"
 "    background-color: @BORDER;\n"
 "    }\n"
-/* Search hits get a restrained highlighter treatment.  The inset underline is
-   still visible on buttons and frame titles whose own background is stronger. */
+/* Search hits use a warm amber/orange independent of the active skin: it is a
+   transient locator, not another semantic theme colour. Related controls in
+   the same setting row get the lighter treatment; the text that actually
+   matched gets the stronger one. */
+"  #config-dialog .search-match-related {\n"
+"    background-color: alpha(#ff9d22,0.20);\n"
+"    box-shadow: inset 0 0 0 1px alpha(#ff9d22,0.72);\n"
+"    border-radius: 4px;\n"
+"    }\n"
 "  #config-dialog .search-match {\n"
-"    background-color: alpha(@ACCENT_A,0.18);\n"
-"    box-shadow: inset 0 -2px alpha(@ACCENT_A,0.9);\n"
-"    border-radius: 3px;\n"
+"    background-color: alpha(#ff9d22,0.38);\n"
+"    box-shadow: inset 0 0 0 2px #ff9d22;\n"
+"    border-radius: 4px;\n"
 "    }\n"
 /* The explicit colours above apply in every widget state, so they cancel GTK's
    default dimming of insensitive controls — a disabled scale/checkbox/dropdown
