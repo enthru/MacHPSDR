@@ -187,15 +187,42 @@ static void mark_related_setting(GtkWidget *match) {
       break;
     }
     if(GTK_IS_GRID(parent)) {
-      int row,height;
-      gtk_grid_query_child(GTK_GRID(parent),node,NULL,&row,NULL,&height);
-      for(GtkWidget *sibling=gtk_widget_get_first_child(parent);
-          sibling!=NULL;sibling=gtk_widget_get_next_sibling(sibling)) {
-        int sibling_row,sibling_height;
-        gtk_grid_query_child(GTK_GRID(parent),sibling,
-                             NULL,&sibling_row,NULL,&sibling_height);
-        if(sibling_row<row+height && row<sibling_row+sibling_height)
-          gtk_widget_add_css_class(sibling,"search-match-related");
+      int column,row,width,height;
+      gtk_grid_query_child(GTK_GRID(parent),node,&column,&row,&width,&height);
+      gtk_widget_add_css_class(node,"search-match-related");
+
+      // A check/radio/button carries its own caption, so it is already the
+      // complete setting. In a two-column grid, treating every widget on its
+      // row as related made an FPS search also light up "Panadapter Filled".
+      if(!GTK_IS_CHECK_BUTTON(node) && !GTK_IS_BUTTON(node)) {
+        GtkWidget *nearest=NULL;
+        int nearest_column=GTK_IS_LABEL(node) ? G_MAXINT : G_MININT;
+
+        for(GtkWidget *sibling=gtk_widget_get_first_child(parent);
+            sibling!=NULL;sibling=gtk_widget_get_next_sibling(sibling)) {
+          if(sibling==node) continue;
+          int sibling_column,sibling_row,sibling_width,sibling_height;
+          gtk_grid_query_child(GTK_GRID(parent),sibling,
+                               &sibling_column,&sibling_row,
+                               &sibling_width,&sibling_height);
+          if(!(sibling_row<row+height && row<sibling_row+sibling_height)) continue;
+
+          if(GTK_IS_LABEL(node)) {
+            // Caption -> closest control to its right. A deliberate blank grid
+            // column separates independent setting columns.
+            if(sibling_column>=column+width && sibling_column<nearest_column) {
+              nearest=sibling;
+              nearest_column=sibling_column;
+            }
+          } else if(GTK_IS_LABEL(sibling) &&
+                    sibling_column+sibling_width<=column &&
+                    sibling_column+sibling_width>nearest_column) {
+            // Tooltip-bearing control -> closest caption to its left.
+            nearest=sibling;
+            nearest_column=sibling_column+sibling_width;
+          }
+        }
+        if(nearest!=NULL) gtk_widget_add_css_class(nearest,"search-match-related");
       }
       break;
     }
