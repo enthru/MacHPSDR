@@ -28,25 +28,39 @@
 #include "discovery.h"
 
 
-static char interface_name[64];
-static struct sockaddr_in interface_addr={0};
-static struct sockaddr_in interface_netmask={0};
-
 #define DISCOVERY_PORT 1024
-static int discovery_socket;
 
-void protocol2_discover(struct ifaddrs* iface);
+// One interface's discovery pass. Per-pass rather than file-static because the
+// passes run concurrently now -- see the same struct and the same reasoning in
+// protocol1_discovery.c.
+typedef struct {
+    char   interface_name[64];
+    struct sockaddr_in interface_addr;
+    struct sockaddr_in interface_netmask;
+    int    socket;
+    GThread *thread;
+} P2_DISCOVER_PASS;
 
-static GThread *discover_thread_id;
+static gboolean protocol2_discover_start(struct ifaddrs* iface, P2_DISCOVER_PASS *pass);
+static void protocol2_discover_finish(P2_DISCOVER_PASS *pass);
+
 gpointer protocol2_discover_receive_thread(gpointer data);
 
+// inet_ntoa()'s one static buffer is shared by every thread; with a pass per
+// adapter, and protocol 1's discovery running alongside, each formatter needs
+// its own.
+static const char *addr_str(struct in_addr a, char *buf, size_t len) {
+    return inet_ntop(AF_INET, &a, buf, (socklen_t)len) ? buf : "?";
+}
+
 void print_device(int i) {
+    char abuf[INET_ADDRSTRLEN];
     log_info("discovery: found protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s\n", 
         discovered[i].protocol,
         discovered[i].device,
         discovered[i].software_version,
         discovered[i].status,
-        inet_ntoa(discovered[i].info.network.address.sin_addr),
+        addr_str(discovered[i].info.network.address.sin_addr,abuf,sizeof(abuf)),
         discovered[i].info.network.mac_address[0],
         discovered[i].info.network.mac_address[1],
         discovered[i].info.network.mac_address[2],
@@ -58,11 +72,17 @@ void print_device(int i) {
 
 void protocol2_discovery(void) {
     struct ifaddrs *addrs,*ifa;
+    GPtrArray *passes;
+    guint p;
+
     // Unset on failure -- see protocol1_discovery.c.
     if(getifaddrs(&addrs)!=0 || addrs==NULL) {
         log_error("protocol2_discovery: getifaddrs failed, no interfaces to scan\n");
         return;
     }
+    // Broadcast on every adapter first, wait once afterwards -- the two-phase
+    // walk protocol1_discovery.c explains.
+    passes = g_ptr_array_new_with_free_func(g_free);
     ifa = addrs;
     while (ifa) {
         // NB: runs in a worker thread (see discovery.c) — do not pump the GTK
@@ -71,11 +91,20 @@ void protocol2_discovery(void) {
             if((ifa->ifa_flags&IFF_UP)==IFF_UP
                 && (ifa->ifa_flags&IFF_RUNNING)==IFF_RUNNING
                 && (ifa->ifa_flags&IFF_LOOPBACK)!=IFF_LOOPBACK) {
-                protocol2_discover(ifa);
+                P2_DISCOVER_PASS *pass=g_new0(P2_DISCOVER_PASS,1);
+                if(protocol2_discover_start(ifa,pass)) {
+                    g_ptr_array_add(passes,pass);
+                } else {
+                    g_free(pass);
+                }
             }
         }
         ifa = ifa->ifa_next;
     }
+    for(p=0;p<passes->len;p++) {
+        protocol2_discover_finish(g_ptr_array_index(passes,p));
+    }
+    g_ptr_array_free(passes,TRUE);
     freeifaddrs(addrs);
 
     
@@ -87,25 +116,33 @@ void protocol2_discovery(void) {
     }
 }
 
-void protocol2_discover(struct ifaddrs* iface) {
+// Start one interface's pass; the caller joins it in
+// protocol2_discover_finish(). TRUE means there is something to join. Every
+// failure is that interface's alone -- see protocol1_discovery.c.
+static gboolean protocol2_discover_start(struct ifaddrs* iface, P2_DISCOVER_PASS *pass) {
     int rc;
     struct sockaddr_in *sa;
     struct sockaddr_in *mask;
-    char addr[16];
-    char net_mask[16];
+    char addr[INET_ADDRSTRLEN];
+    char net_mask[INET_ADDRSTRLEN];
+    int discovery_socket;
+    char *interface_name=pass->interface_name;
+    struct sockaddr_in *interface_addr=&pass->interface_addr;
+    struct sockaddr_in *interface_netmask=&pass->interface_netmask;
 
     // NOT strcpy: see protocol1_discovery.c -- on Windows ifa_name is the
     // adapter's FriendlyName, a 256-byte buffer the operator can rename, and
     // this is 64.
-    g_strlcpy(interface_name,iface->ifa_name,sizeof(interface_name));
+    g_strlcpy(interface_name,iface->ifa_name,sizeof(pass->interface_name));
     log_info("protocol2_discover: looking for HPSDR devices on %s\n",interface_name);
 
     // send a broadcast to locate metis boards on the network
     discovery_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
     if(discovery_socket<0) {
         net_perror("protocol2_discover: create socket failed for discovery_socket");
-        return;
+        return FALSE;
     }
+    pass->socket=discovery_socket;
 
     int optval = 1;
     setsockopt(discovery_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
@@ -116,22 +153,21 @@ void protocol2_discover(struct ifaddrs* iface) {
     sa = (struct sockaddr_in *) iface->ifa_addr;
     mask = (struct sockaddr_in *) iface->ifa_netmask;
 
-    interface_netmask.sin_addr.s_addr = mask->sin_addr.s_addr;
+    interface_netmask->sin_addr.s_addr = mask->sin_addr.s_addr;
 
     // bind to this interface and the discovery port
-    interface_addr.sin_family = AF_INET;
-    interface_addr.sin_addr.s_addr = sa->sin_addr.s_addr;
-    interface_addr.sin_port = htons(0);
-    if(bind(discovery_socket,(struct sockaddr*)&interface_addr,sizeof(interface_addr))<0) {
+    interface_addr->sin_family = AF_INET;
+    interface_addr->sin_addr.s_addr = sa->sin_addr.s_addr;
+    interface_addr->sin_port = htons(0);
+    if(bind(discovery_socket,(struct sockaddr*)interface_addr,sizeof(*interface_addr))<0) {
         net_perror("protocol2_discover: bind socket failed for discovery_socket");
         closesocket(discovery_socket);
-        return;
+        return FALSE;
     }
 
-    strcpy(addr,inet_ntoa(sa->sin_addr));
-    strcpy(net_mask,inet_ntoa(mask->sin_addr));
-
-    log_info("protocol2_discover: bound to %s %s %s\n",interface_name,addr,net_mask);
+    log_info("protocol2_discover: bound to %s %s %s\n",interface_name,
+             addr_str(sa->sin_addr,addr,sizeof(addr)),
+             addr_str(mask->sin_addr,net_mask,sizeof(net_mask)));
 
     // allow broadcast on the socket
     int on=1;
@@ -139,7 +175,7 @@ void protocol2_discover(struct ifaddrs* iface) {
     if(rc != 0) {
         log_info("protocol2_discover: cannot set SO_BROADCAST: rc=%d\n", rc);
         closesocket(discovery_socket);
-        return;
+        return FALSE;
     }
 
     // setup to address
@@ -149,14 +185,14 @@ void protocol2_discover(struct ifaddrs* iface) {
     to_addr.sin_addr.s_addr=htonl(INADDR_BROADCAST);
 
     // start a receive thread to collect discovery response packets
-    discover_thread_id = g_thread_new( "protocol2 discover receive", protocol2_discover_receive_thread, NULL);
-    if( ! discover_thread_id )
+    pass->thread = g_thread_new( "protocol2 discover receive", protocol2_discover_receive_thread, pass);
+    if( ! pass->thread )
     {
         log_info("g_thread_new failed on protocol2_discover_receive_thread\n");
         closesocket(discovery_socket);
-        return;
+        return FALSE;
     }
-    log_info("protocol2_disovery: thread_id=%p\n",discover_thread_id);
+    log_info("protocol2_disovery: thread_id=%p\n",pass->thread);
 
 
     // send discovery packet
@@ -178,19 +214,25 @@ void protocol2_discover(struct ifaddrs* iface) {
         // leave the receive thread behind by returning early.
     }
 
-    // wait for receive thread to complete
-    g_thread_join(discover_thread_id);
+    return TRUE;
+}
 
-    closesocket(discovery_socket);
-
-    log_info("protocol2_discover: exiting discover for %s\n",iface->ifa_name);
+// The other half: one SO_RCVTIMEO second, waited out concurrently with every
+// other adapter's rather than after it.
+static void protocol2_discover_finish(P2_DISCOVER_PASS *pass) {
+    g_thread_join(pass->thread);
+    closesocket(pass->socket);
+    log_info("protocol2_discover: exiting discover for %s\n",pass->interface_name);
 }
 
 //void* protocol2_discover_receive_thread(void* arg) {
 gpointer protocol2_discover_receive_thread(gpointer data) {
+    P2_DISCOVER_PASS *pass=(P2_DISCOVER_PASS *)data;
+    int discovery_socket=pass->socket;
     struct sockaddr_in addr;
     socklen_t len;
     unsigned char buffer[2048];
+    char abuf[INET_ADDRSTRLEN];
     int bytes_read;
     int i;
     int version;
@@ -312,17 +354,18 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
                     discovered[devices].status=status;
                     memcpy((void*)&discovered[devices].info.network.address,(void*)&addr,sizeof(addr));
                     discovered[devices].info.network.address_length=sizeof(addr);
-                    memcpy((void*)&discovered[devices].info.network.interface_address,(void*)&interface_addr,sizeof(interface_addr));
-                    memcpy((void*)&discovered[devices].info.network.interface_netmask,(void*)&interface_netmask,sizeof(interface_netmask));
-                    discovered[devices].info.network.interface_length=sizeof(interface_addr);
-                    strcpy(discovered[devices].info.network.interface_name,interface_name);
+                    memcpy((void*)&discovered[devices].info.network.interface_address,(void*)&pass->interface_addr,sizeof(pass->interface_addr));
+                    memcpy((void*)&discovered[devices].info.network.interface_netmask,(void*)&pass->interface_netmask,sizeof(pass->interface_netmask));
+                    discovered[devices].info.network.interface_length=sizeof(pass->interface_addr);
+                    g_strlcpy(discovered[devices].info.network.interface_name,pass->interface_name,
+                              sizeof(discovered[devices].info.network.interface_name));
                     log_info("protocol2_discover: found %d protocol=%d device=%d software_version=%s status=%d address=%s (%02X:%02X:%02X:%02X:%02X:%02X) on %s DDCs=%d\n", 
                             devices,
                             discovered[devices].protocol,
                             discovered[devices].device,
                             discovered[devices].software_version,
                             discovered[devices].status,
-                            inet_ntoa(discovered[devices].info.network.address.sin_addr),
+                            addr_str(discovered[devices].info.network.address.sin_addr,abuf,sizeof(abuf)),
                             discovered[devices].info.network.mac_address[0],
                             discovered[devices].info.network.mac_address[1],
                             discovered[devices].info.network.mac_address[2],
@@ -338,6 +381,6 @@ gpointer protocol2_discover_receive_thread(gpointer data) {
         }
         }
     }
-    log_info("protocol2_discover: exiting protocol2_discover_receive_thread\n");
+    log_info("protocol2_discover: exiting protocol2_discover_receive_thread for %s\n",pass->interface_name);
     return NULL;
 }
