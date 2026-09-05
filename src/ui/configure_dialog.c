@@ -72,7 +72,40 @@ int rx_base=3; // number of tabs before receivers
 // index onto its stack child.
 static GtkWidget *stack;
 static GtkWidget *pages[64];
+static gchar *page_search_text[64];
 static int n_pages;
+
+static GtkWidget *search_entry;
+static GtkWidget *search_empty;
+
+// Build one case-folded search document per page.  Walking the widget tree
+// catches frame titles, field captions, checkbox/button labels and tooltips,
+// so an operator can search for the setting itself ("sample rate", "AGC",
+// "beacon"), not merely guess which section contains it.
+static void append_search_text(GtkWidget *widget,GString *text) {
+  if(GTK_IS_LABEL(widget)) {
+    const char *label=gtk_label_get_text(GTK_LABEL(widget));
+    if(label!=NULL && *label!='\0') g_string_append_printf(text," %s",label);
+  }
+
+  const char *tooltip=gtk_widget_get_tooltip_text(widget);
+  if(tooltip!=NULL) {
+    g_string_append_printf(text," %s",tooltip);
+  }
+
+  for(GtkWidget *child=gtk_widget_get_first_child(widget);
+      child!=NULL;child=gtk_widget_get_next_sibling(child)) {
+    append_search_text(child,text);
+  }
+}
+
+static gchar *make_search_text(GtkWidget *child,const char *title) {
+  GString *text=g_string_new(title);
+  append_search_text(child,text);
+  gchar *folded=g_utf8_casefold(text->str,-1);
+  g_string_free(text,TRUE);
+  return folded;
+}
 
 static void add_page(GtkWidget *child, const char *title) {
   if(n_pages>=(int)(sizeof(pages)/sizeof(pages[0]))) return;
@@ -106,7 +139,52 @@ static void add_page(GtkWidget *child, const char *title) {
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
   gtk_stack_add_titled(GTK_STACK(stack),scroller,title,title);
-  pages[n_pages++]=scroller;
+  pages[n_pages]=scroller;
+  page_search_text[n_pages]=make_search_text(child,title);
+  n_pages++;
+}
+
+// Every non-empty word must occur somewhere on the page.  This makes searches
+// such as "audio rate" useful without requiring the exact phrase or order.
+static gboolean page_matches(int page,const char *query) {
+  gchar *folded=g_utf8_casefold(query,-1);
+  gchar **words=g_strsplit_set(folded," \t\r\n",-1);
+  gboolean match=TRUE;
+
+  for(int i=0;words[i]!=NULL;i++) {
+    if(*words[i]!='\0' && strstr(page_search_text[page],words[i])==NULL) {
+      match=FALSE;
+      break;
+    }
+  }
+
+  g_strfreev(words);
+  g_free(folded);
+  return match;
+}
+
+static void search_changed(GtkSearchEntry *entry,gpointer data) {
+  (void)data;
+  const char *query=gtk_editable_get_text(GTK_EDITABLE(entry));
+  GtkWidget *current=gtk_stack_get_visible_child(GTK_STACK(stack));
+  GtkWidget *first_match=NULL;
+  gboolean current_matches=FALSE;
+  int matches=0;
+
+  for(int i=0;i<n_pages;i++) {
+    gboolean match=page_matches(i,query);
+    GtkStackPage *page=gtk_stack_get_page(GTK_STACK(stack),pages[i]);
+    gtk_stack_page_set_visible(page,match);
+    if(match) {
+      matches++;
+      if(first_match==NULL) first_match=pages[i];
+      if(pages[i]==current) current_matches=TRUE;
+    }
+  }
+
+  gtk_widget_set_visible(search_empty,matches==0);
+  if(first_match!=NULL && !current_matches)
+    gtk_stack_set_visible_child(GTK_STACK(stack),first_match);
 }
 
 // Compose several page builders onto one tab. Each create_*_dialog() returns a
@@ -165,6 +243,14 @@ static void configure_dialog_cleanup(RADIO *radio) {
       radio->receiver[i]->filter_grid=NULL;
     }
   }
+  for(i=0;i<n_pages;i++) {
+    g_clear_pointer(&page_search_text[i],g_free);
+    pages[i]=NULL;
+  }
+  n_pages=0;
+  search_entry=NULL;
+  search_empty=NULL;
+  stack=NULL;
 }
 
 // The one way for code outside this file to close the settings window.
@@ -182,14 +268,13 @@ static gboolean close_request(GtkWindow *self, gpointer data) {
   return FALSE;
 }
 
-// Layout-independent test for the physical "W" key (mirrors key_is_q() in
+// Layout-independent test for a physical Latin key (mirrors key_is_q() in
 // receiver.c): GTK reports keyval after the active keyboard layout, so on a
 // Russian layout Cmd-W arrives as Cyrillic "ц" and a plain keyval==GDK_KEY_w
-// test misses it. Look up every keyval the pressed hardware keycode produces
-// across all layout groups (there is always a Latin group where the physical W
-// key is w) so Cmd-W closes the dialog on any keyboard layout.
-static gboolean key_is_w(guint keyval, guint keycode) {
-  if(keyval==GDK_KEY_w || keyval==GDK_KEY_W) return TRUE;
+// test misses it. Look up every keyval the hardware keycode produces across
+// layout groups; there is normally a Latin group containing the requested key.
+static gboolean key_is_latin(guint keyval,guint keycode,guint lower,guint upper) {
+  if(keyval==lower || keyval==upper) return TRUE;
   GdkDisplay *display=gdk_display_get_default();
   if(!display || keycode==0) return FALSE;
   GdkKeymapKey *keys=NULL;
@@ -198,7 +283,7 @@ static gboolean key_is_w(guint keyval, guint keycode) {
   gboolean found=FALSE;
   if(gdk_display_map_keycode(display,keycode,&keys,&keyvals,&n)) {
     for(int i=0;i<n;i++) {
-      if(keyvals[i]==GDK_KEY_w || keyvals[i]==GDK_KEY_W) { found=TRUE; break; }
+      if(keyvals[i]==lower || keyvals[i]==upper) { found=TRUE; break; }
     }
   }
   g_free(keys);
@@ -210,7 +295,18 @@ static gboolean key_is_w(guint keyval, guint keycode) {
 // layout, mirroring the main window's Cmd-Q handling. gtk_window_close() emits
 // "close-request" so close_request() still runs its cleanup.
 static gboolean configure_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
-  if(key_is_w(keyval,keycode) &&
+  (void)controller;
+  if(key_is_latin(keyval,keycode,GDK_KEY_f,GDK_KEY_F) &&
+     (state & (GDK_META_MASK|GDK_CONTROL_MASK))) {
+    gtk_widget_grab_focus(search_entry);
+    return TRUE;
+  }
+  if(keyval==GDK_KEY_Escape && search_entry!=NULL &&
+     *gtk_editable_get_text(GTK_EDITABLE(search_entry))!='\0') {
+    gtk_editable_set_text(GTK_EDITABLE(search_entry),"");
+    return TRUE;
+  }
+  if(key_is_latin(keyval,keycode,GDK_KEY_w,GDK_KEY_W) &&
      (state & (GDK_META_MASK|GDK_ALT_MASK|GDK_CONTROL_MASK))) {
     gtk_window_close(GTK_WINDOW(data));
     return TRUE;
@@ -349,9 +445,25 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
 
   add_page(create_about_dialog(radio),"About");
 
+  GtkWidget *nav=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+  gtk_widget_set_name(nav,"config-nav");
+  search_entry=gtk_search_entry_new();
+  gtk_widget_set_name(search_entry,"config-search");
+  gtk_entry_set_placeholder_text(GTK_ENTRY(search_entry),"Search settings");
+  gtk_widget_set_tooltip_text(search_entry,
+      "Search setting names and show matching sections (Ctrl/Cmd+F)");
+  gtk_box_append(GTK_BOX(nav),search_entry);
+  search_empty=gtk_label_new("No settings found");
+  gtk_widget_set_name(search_empty,"config-search-empty");
+  gtk_widget_set_visible(search_empty,FALSE);
+  gtk_box_append(GTK_BOX(nav),search_empty);
+  gtk_widget_set_vexpand(sidebar,TRUE);
+  gtk_box_append(GTK_BOX(nav),sidebar);
+  g_signal_connect(search_entry,"search-changed",G_CALLBACK(search_changed),NULL);
+
   GtkWidget *hbox=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
   gtk_widget_set_name(hbox,"config-body");
-  gtk_box_append(GTK_BOX(hbox),sidebar);
+  gtk_box_append(GTK_BOX(hbox),nav);
   gtk_box_append(GTK_BOX(hbox),stack); gtk_widget_set_hexpand(stack,TRUE); gtk_widget_set_vexpand(stack,TRUE);
 
   gtk_box_append(GTK_BOX(content),hbox);
