@@ -87,6 +87,13 @@
 #include <string.h>
 #include <math.h>
 #include <stdarg.h>
+#ifdef _WIN32
+#include <windows.h>
+#define tap_nap() Sleep(1)
+#else
+#include <time.h>
+static void tap_nap(void) { struct timespec ts = { 0, 500000 }; nanosleep(&ts, NULL); }
+#endif
 
 #include "wdsp.h"
 
@@ -293,6 +300,40 @@ static void tap_drain(void) {
   }
 }
 
+/* Wait for the DSP thread to finish the blocks it has already been handed.
+ *
+ * fexchange0 does not process anything -- it copies the block into r1, releases
+ * Sem_BuffReady and returns; WDSP's own thread does the work and is what writes
+ * this tap.  bfo=1 paces the two loosely rather than in lock-step, because
+ * flush_iobuffs primes Sem_OutReady with (dsp_mult-1) blocks of silence, so the
+ * harness may run that far ahead of the DSP thread and duly does.  The blocks
+ * in flight when the input loop ends have not reached the tap yet, and this
+ * assertion used to be written around that: "trailing the input by no more than
+ * the iobuff ring is deep, measured exactly four blocks short at every tier".
+ *
+ * Four is what an idle machine gives.  On anything with other work on it the
+ * DSP thread falls further behind and the count is whatever the scheduler
+ * decided -- measured on this machine, 5 and 10 blocks short in 2 runs of 20,
+ * and on a CI runner 15 short at the 1024 block, which failed the run and took
+ * "NR3 does not reach the tap" down with it (two tap buffers of different
+ * lengths compared against each other are two different signals: it scored
+ * +3.0 dB where the pass reads -2977).
+ *
+ * So the tail is not measured, it is WAITED for, and the assertion below is
+ * tightened to the whole input rather than loosened to fit the worst runner. */
+static void tap_settle(void) {
+  if(!tap_ring) return;
+  long last = GetRXAPreAgcTapPos(CH);
+  int stable = 0;
+  /* 2 s at the outside, so a wedged DSP thread fails the assertion below
+   * rather than hanging the harness. */
+  for(int i=0;i<4000 && stable<3;i++) {
+    tap_nap();
+    long now = GetRXAPreAgcTapPos(CH);
+    if(now == last) stable++; else { stable = 0; last = now; }
+  }
+}
+
 /* Runs the whole signal through and captures the demodulated audio. */
 static void run_chain(int nr, int block) {
   /* stop FIRST, then select, then start: with the channel running the DSP
@@ -315,6 +356,8 @@ static void run_chain(int nr, int block) {
     tap_drain();                                      /* the pass is done: bfo=1 */
     for(int i=0;i<block && n<NS;i++) outbuf[n++] = out[2*i];
   }
+  tap_settle();                                       /* the blocks still in flight */
+  tap_drain();
   free(in); free(out);
 }
 
@@ -584,17 +627,17 @@ int main(int argc, char **argv) {
     for(int t=0;t<NT;t++) {
       if(t) { channel_resize(tier[t].block); tap_install(tier[t].block); }
       run_chain(NR_OFF, tier[t].block);
-      /* Whole passes only, and trailing the input by no more than the iobuff
-       * ring is deep (SetDSPMult(4) in channel_open): the DSP thread is still
-       * holding those when the last block goes in.  Measured: exactly four
-       * blocks short at every tier. */
+      /* Every whole pass of the input, and not one sample short: run_chain
+       * waits for the DSP thread before its last drain (tap_settle), so what
+       * the tap holds is no longer a race against the scheduler.  A block that
+       * does not reach the tap at all reads 0 here, and a geometry that stops
+       * partway reads a count that is not a multiple of the block. */
       const long want = (NS/tier[t].block)*(long)tier[t].block;
       double v, f;
       buf_levels(tapbuf, tap_n, &v, &f);
       char name[80];
       snprintf(name, sizeof name, "tap carries the audio at a %s span", tier[t].span);
-      check(name, tap_n > 0 && (tap_n % tier[t].block) == 0
-                  && (want - tap_n) <= 4L*tier[t].block
+      check(name, tap_n == want && (tap_n % tier[t].block) == 0
                   && isfinite(v) && v > 0.0,
             "block %d, %ld of %ld samples (%ld passes behind), voice %.4g",
             tier[t].block, tap_n, want, (want-tap_n)/tier[t].block, v);
