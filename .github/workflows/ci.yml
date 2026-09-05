@@ -18,7 +18,8 @@
 # the one defect no build step can notice (release 4.1 shipped it).  NEITHER IS
 # STARTED: what CI settles is that the bundle is complete, never that it runs.
 #
-# The macos-intel job also builds the x86_64 bundle on every release branch.
+# The macos-intel job also builds the x86_64 bundle on every release branch
+# and on the tag.
 #
 # What it does NOT prove, and must never be written up as proving:
 #   - anything about radio hardware.  No HPSDR, no SoapySDR device, no TX.  The
@@ -40,8 +41,17 @@ name: Build + self-tests (macOS, Linux)
 on:
   push:
     branches: ['release-[0-9]*']
+    # A TAG IS THE RELEASE, and it has to be listed here or the four "Attach to
+    # the release" steps below are dead code: every one of them is gated on
+    # `refs/tags/`, so with the release branch as the only trigger the builds
+    # ran and nothing was ever attached to anything.  The pattern is a glob, not
+    # a regex -- it matches 4.4 and 3.8.1 alike and nothing that does not start
+    # with a digit.  master is deliberately still not built.
+    tags: ['[0-9]*']
 
-# Cancel obsolete builds when another commit is pushed to the same release branch.
+# Cancel obsolete builds when another commit is pushed to the same release
+# branch, or when a tag is re-pointed at a different commit.  Keyed on the ref,
+# so a release branch and the tag cut from it never cancel each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

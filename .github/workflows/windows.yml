@@ -21,6 +21,10 @@ name: Windows (MSYS2)
 on:
   push:
     branches: ['release-[0-9]*']
+    # The release itself -- see ci.yml's note: the package below is attached to
+    # the release only on a tag build, so a missing tag trigger means it is
+    # never attached at all.
+    tags: ['[0-9]*']
 
 # Same reasoning as ci.yml: a run whose ref has moved on is reporting on a
 # commit that is no longer what the ref means.
