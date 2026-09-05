@@ -259,8 +259,28 @@ static int     tap_blk;         /* the DSP block the ring was sized for */
 static double *tapbuf;          /* what this harness reads out, I only */
 static long    tap_n;
 
+/* The app's own ring is SMALL and its reader is LOSSY on purpose:
+ * receiver_pretap_alloc sizes it at block*6 and rx_tci_audio_publish drops
+ * forward when a subscriber falls behind, because a stream client that cannot
+ * keep up must cost the DSP thread nothing.  A test that asserts the tap
+ * carries EVERY sample cannot use that policy -- the two contradict each other,
+ * and it took three CI runs to see it: the writer bursts through more than the
+ * four blocks of headroom while the harness sits inside fexchange0, the drain
+ * jumps the reader forward, and those samples are gone for good.  That is not
+ * the DSP thread being late, which is why waiting longer never recovered them
+ * (measured: 31 blocks short after a 5 s wait).
+ *
+ * So the harness gives itself a ring that holds the whole run.  What the tier
+ * loop is actually about is the tap FILTER's coefficient count following
+ * dsp_size -- nc < size is nfor = 0 and a NULL fftw plan, i.e. a SIGSEGV -- and
+ * `cap` reaches none of that: SetRXAPreAgcTap stores it for the ring and
+ * nothing else.  The app's sizing is asserted where it belongs, by
+ * tap_dropped: if this ring ever loses a sample the assertion says so instead
+ * of reporting a short count as a geometry fault. */
+static long tap_dropped;
+
 static void tap_install(int block) {
-  int cap = block*6;                                  /* as receiver_pretap_alloc */
+  int cap = NS + 8*block;                             /* the whole run, never lossy */
   if(cap < 4096) cap = 4096;
   SetRXAPreAgcTap(CH, NULL, 0);
   free(tap_ring);
@@ -289,7 +309,7 @@ static void tap_drain(void) {
    * the writer's next block lands on what is being copied. */
   long room = tap_cap - 2L*tap_blk;
   if(room < tap_blk) room = tap_cap;
-  if(avail > room) { tap_r = w - room; avail = room; }
+  if(avail > room) { tap_dropped += avail - room; tap_r = w - room; avail = room; }
   while(avail > 0) {
     int idx = (int)(tap_r % tap_cap);
     int n   = tap_cap - idx;
@@ -348,6 +368,7 @@ static void run_chain(int nr, int block) {
   SetChannelState(CH, 0, 1);                          /* flush every block's state */
   SetChannelState(CH, 1, 0);
   tap_n = 0;
+  tap_dropped = 0;
   if(tap_ring) tap_r = GetRXAPreAgcTapPos(CH);
   double *in  = malloc(sizeof(double)*2*block);
   double *out = malloc(sizeof(double)*2*block);
@@ -640,9 +661,9 @@ int main(int argc, char **argv) {
       char name[80];
       snprintf(name, sizeof name, "tap carries the audio at a %s span", tier[t].span);
       check(name, tap_n == want && (tap_n % tier[t].block) == 0
-                  && isfinite(v) && v > 0.0,
-            "block %d, %ld of %ld samples (%ld passes behind), voice %.4g",
-            tier[t].block, tap_n, want, (want-tap_n)/tier[t].block, v);
+                  && tap_dropped == 0 && isfinite(v) && v > 0.0,
+            "block %d, %ld of %ld samples (%ld passes behind, %ld dropped), voice %.4g",
+            tier[t].block, tap_n, want, (want-tap_n)/tier[t].block, tap_dropped, v);
     }
 
     /* The fork is BEFORE the noise reduction, which is the whole point of the
