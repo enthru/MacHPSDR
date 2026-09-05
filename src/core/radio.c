@@ -640,9 +640,7 @@ static void delete_receiver_locked(RECEIVER *rx) {
   // A recording is keyed on the RECEIVER this one may be: close its files while
   // the receiver is still alive, or their headers keep the placeholder sizes
   // written at open and the capture is unreadable rather than merely short.
-  if(recorder_stop_for_receiver(rx) && record_b!=NULL) {
-    gtk_button_set_label(GTK_BUTTON(record_b),"Record");
-  }
+  if(recorder_stop_for_receiver(rx)) radio_record_button_sync();
 
   // Read once: receiver_destroy() frees rx at the end of this function, and the
   // Configure-dialog rule below still needs to know whether it was visible.
@@ -2478,8 +2476,19 @@ static gboolean add_wideband_cb(GtkWidget *widget,gpointer data) {
 // recorder.c). The I/Q file is faker-replayable.
 static void record_cb(GtkWidget *widget,gpointer data) {
   RADIO *r=(RADIO *)data;
-  gboolean on = recorder_toggle(r->active_receiver);
-  gtk_button_set_label(GTK_BUTTON(widget), on ? "Stop" : "Record");
+  recorder_toggle(r->active_receiver);
+  radio_record_button_sync();
+}
+
+// Put the Record button's label back in step with the recorder. It is not only
+// the button's own handler that ends a recording: closing the receiver being
+// recorded does, and so does the writer thread giving up on a disk that will
+// not take the data -- and a button still reading "Stop" over a dead recorder
+// is how an operator comes to believe a lost recording is still running. GTK
+// thread only (the writer asks through an idle).
+void radio_record_button_sync(void) {
+  if(record_b==NULL) return;
+  gtk_button_set_label(GTK_BUTTON(record_b), recorder_active() ? "Stop" : "Record");
 }
 
 static gboolean configure_cb(GtkWidget *widget,gpointer data) {

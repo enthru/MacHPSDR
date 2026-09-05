@@ -917,6 +917,22 @@ cw_offline$(EXE): tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  -o $@ tools/cw_offline.c cw_decoder.o cw_encoder.o cw_keyer.o log.o $(GTKLIBS) -lm
 
+# Headless recorder harness: the I/Q + AF WAV writer, its writer thread and its
+# bounded queue, with the files read back and compared numerically.  The two
+# faults it shipped with -- the disk on the DSP thread, and unchecked writes
+# behind a byte counter that went up regardless -- were both invisible from
+# outside, and the cure adds three more properties nothing else can see (stop
+# drains the queue, an overflow costs frames and not the file, a failed write
+# stops the recording).  gtk4 is in the link only because recorder.c reaches
+# <gtk/gtk.h> through radio.h; the application surface is stubbed in the
+# harness, as in cw_offline.
+#   make rec-offline && ./rec_offline --selftest
+.PHONY: rec-offline
+rec-offline: rec_offline$(EXE)
+rec_offline$(EXE): tools/rec_offline.c recorder.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
+	  -o $@ tools/rec_offline.c recorder.o log.o $(GTKLIBS) -lm
+
 # Headless WEFAX harness: a synthesised radiofax transmission -- start tone,
 # then the picture -- straight into wefax_decoder.c, scored numerically against
 # what was sent.  WEFAX had no self-test of any kind; unlike SSTV there is no
@@ -1096,7 +1112,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE)
+CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE)
 ifeq ($(FT8_INCLUDE),FT8)
 CHECK_BINS+=ft8_offline$(EXE)
 endif
@@ -1168,9 +1184,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM rec_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)

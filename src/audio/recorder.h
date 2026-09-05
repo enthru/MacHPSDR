@@ -22,6 +22,18 @@ gboolean recorder_toggle(RECEIVER *rx);
 /* TRUE while a recording is in progress. */
 gboolean recorder_active(void);
 
+/* Stop a recording if one is running; no-op otherwise. Drains what the writer
+ * thread still has queued, so everything captured reaches the disk. GTK thread
+ * only -- the writer's own disk-error path asks for it through an idle. */
+void recorder_stop(void);
+
+/* Frames written and frames DROPPED (the queue was full because the disk could
+ * not keep up), for the current or most recent recording. Any pointer may be
+ * NULL. Frames, not bytes: dropped frames are missing TIME, in the middle of
+ * the recording rather than off the end of it. */
+void recorder_stats(guint64 *iq_frames, guint64 *af_frames,
+                    guint64 *iq_drop, guint64 *af_drop);
+
 /* Stop a recording that was started on rx, closing both files with a correctly
  * patched header; no-op if rx is not the receiver being recorded. Returns TRUE
  * if a recording was stopped (the caller repaints the Record button).
