@@ -381,6 +381,45 @@ PATCH
 }
 patch_shared_bb_rate
 
+# libad9361 sets the PHY clock itself, after arranging the FIR. Writing it
+# first can trigger an extra hardware reconfiguration (and can fail at low
+# rates while the old FIR is still installed). Keep FPGA direction setup.
+patch_single_phy_rate_write() {
+  python3 - "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" <<'PATCH'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+if 'MACHPSDR single PHY rate write v2' in s:
+    print('==> SoapyPlutoSDR already patched (single PHY rate write)')
+    sys.exit(0)
+# Install the shared clock before selecting the FPGA rate: its available
+# rates depend on that clock. Keep calibration under the shared rate mutex.
+start = s.index('#ifdef HAS_AD9361_IIO\n\t/* MACHPSDR shared BB rate:')
+end = s.index('#endif', start) + len('#endif')
+calibration = s[start:end]
+s = s[:start] + s[end:]
+anchor = '\tlong long samplerate =(long long) rate;'
+assert s.count(anchor) == 1
+s = s.replace(anchor, anchor + '\n\tauto configure_bb_rate = [&]() {\n' + calibration + '\n\t};', 1)
+for output in ('false', 'true'):
+    old = '\t\tiio_channel_attr_write_longlong(iio_device_find_channel(dev, "voltage0", ' + output + '),"sampling_frequency", samplerate);'
+    assert s.count(old) == 1, 'unexpected PHY sample rate write'
+    # Also upgrade the first version if already applied to a local build.
+    previous = ('#ifndef HAS_AD9361_IIO\n' + old + '\n#endif\n'
+                '\t\t/* MACHPSDR single PHY rate write: libad9361 owns the PHY clock\n'
+                '\t\t   when present; the FPGA direction below still needs setup. */')
+    new = ('#ifndef HAS_AD9361_IIO\n' + old + '\n#else\n'
+           '\t\tconfigure_bb_rate();\n#endif\n'
+           '\t\t/* MACHPSDR single PHY rate write v2: configure the PHY once,\n'
+           '\t\t   then select the FPGA rate using the resulting clock. */')
+    s = s.replace(previous if previous in s else old, new, 1)
+p.write_text(s)
+print('==> patched SoapyPlutoSDR: avoid redundant PHY clock writes')
+PATCH
+}
+patch_single_phy_rate_write
+
 # THE ONE libiio PATCH, and it is worth more than every other line in this file
 # put together: it is ten seconds of every start-up on a NETWORKED Pluto.
 #
