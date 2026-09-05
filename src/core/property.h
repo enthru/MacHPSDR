@@ -20,6 +20,8 @@
 #ifndef _PROPERTY_H
 #define _PROPERTY_H
 
+#include <glib.h>
+
 #define PROPERTY_VERSION 2.0
 
 // The property store is a name->value string map. Get/set are O(1) (backed by
@@ -42,6 +44,11 @@ extern void setProperty(char* name,char* value);
 extern void setPropertyDouble(char* name,double value);
 extern double propToDouble(const char* value);
 
-extern void saveProperties(char* filename);
+/* Writes the file ATOMICALLY: the new settings are built beside the target,
+   flushed to disk and only then moved into place, with the previous
+   generation kept as "<filename>.bak". Returns FALSE if the settings could
+   not be written -- the existing file is then left untouched, so a full disk
+   costs the operator an update, never their configuration. */
+extern gboolean saveProperties(char* filename);
 
 #endif

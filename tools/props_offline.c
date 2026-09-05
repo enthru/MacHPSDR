@@ -109,7 +109,101 @@ static void test_round_trip(void) {
          "a file with no property_version is discarded ENTIRELY (negative control)");
 
   g_unlink(path);
+  { char *b = g_strdup_printf("%s.bak", path); g_unlink(b); g_free(b); }
   g_free(path);
+}
+
+/* ---- the settings survive a failed save ---------------------------------- */
+
+/* The file used to be opened "w+", which truncates the operator's entire
+ * configuration before the first byte of the replacement is written, with
+ * neither the writes nor the close checked.  A full disk, a network home that
+ * went away, a crash or a kill in that window left a short file that the
+ * version gate then discarded -- silently, at both ends.  The three things
+ * that must now hold, and the one that makes the difference:
+ *
+ *   - a save that CANNOT be written leaves the existing file untouched (an
+ *     update lost, not a configuration);
+ *   - a save that succeeds leaves the previous generation as <name>.bak;
+ *   - a missing main file is recovered from that backup, which is the one
+ *     window an interrupted save can still leave open (between moving the old
+ *     file aside and moving the new one in).
+ *
+ * The failure is provoked with an UNWRITABLE DIRECTORY rather than a full
+ * disk, because that is the same errno path with none of the setup. */
+static void test_atomic_save(void) {
+  printf("\n-- a failed save must not destroy the settings --\n");
+  char *dir  = g_build_filename(g_get_tmp_dir(), "machpsdr_props_atomic", NULL);
+  g_mkdir_with_parents(dir, 0755);
+  char *path = g_build_filename(dir, "radio.props", NULL);
+  char *bak  = g_strdup_printf("%s.bak", path);
+  char *tmp  = g_strdup_printf("%s.tmp", path);
+  g_unlink(path); g_unlink(bak); g_unlink(tmp);
+
+  initProperties();
+  setProperty("radio.model", "3");
+  setProperty("receiver[0].frequency_a", "7074000");
+  expect(saveProperties(path), "a first save reports success");
+  expect(!g_file_test(bak, G_FILE_TEST_EXISTS),
+         "and leaves no backup, there being no previous generation");
+  expect(!g_file_test(tmp, G_FILE_TEST_EXISTS),
+         "and no temporary file behind it");
+
+  /* A second save keeps the first as the backup. */
+  setProperty("receiver[0].frequency_a", "14074000");
+  expect(saveProperties(path), "a second save reports success");
+  expect(g_file_test(bak, G_FILE_TEST_EXISTS),
+         "and keeps the previous generation as <name>.bak");
+  initProperties();
+  loadProperties(path);
+  expect_str(getProperty("receiver[0].frequency_a"), "14074000",
+             "the main file holds the NEW settings");
+  initProperties();
+  loadProperties(bak);
+  expect_str(getProperty("receiver[0].frequency_a"), "7074000",
+             "and the backup holds the previous ones");
+
+  /* Now make the directory unwritable, so creating the temporary file fails
+     exactly as a full disk does, and save again. */
+  g_chmod(dir, 0500);
+  initProperties();
+  setProperty("receiver[0].frequency_a", "21074000");
+  gboolean saved = saveProperties(path);
+  g_chmod(dir, 0755);
+  /* Root, and Windows, ignore the mode -- there the save legitimately works
+     and there is nothing here to assert.  Skipping is stated rather than
+     silently passing, since a case that never ran must not read as one that
+     did. */
+  if (saved) {
+    printf("  skip  unwritable-directory case (the write succeeded anyway)\n");
+  } else {
+    expect(TRUE, "a save that cannot be written reports FAILURE");
+    expect(!g_file_test(tmp, G_FILE_TEST_EXISTS),
+           "and leaves no temporary file behind");
+    initProperties();
+    loadProperties(path);
+    expect_str(getProperty("receiver[0].frequency_a"), "14074000",
+               "and the settings on disk are UNTOUCHED (the whole point)");
+  }
+
+  /* The interrupted-save window: main file gone, backup present. */
+  g_unlink(path);
+  initProperties();
+  loadProperties(path);
+  expect_str(getProperty("receiver[0].frequency_a"), "7074000",
+             "a missing main file is recovered from the backup");
+
+  /* Negative control: with no backup either, there is nothing to recover and
+     nothing is invented. */
+  g_unlink(bak);
+  initProperties();
+  loadProperties(path);
+  expect(getProperty("receiver[0].frequency_a") == NULL,
+         "with neither file present the store stays empty (negative control)");
+
+  g_unlink(path); g_unlink(bak); g_unlink(tmp);
+  g_rmdir(dir);
+  g_free(tmp); g_free(bak); g_free(path); g_free(dir);
 }
 
 /* ---- push/pop: the bookmarks bug ----------------------------------------- */
@@ -147,6 +241,7 @@ static void test_push_pop(void) {
          "unparked, loading a second file wipes the live store (negative control)");
 
   g_unlink(path);
+  { char *b = g_strdup_printf("%s.bak", path); g_unlink(b); g_free(b); }
   g_free(path);
 }
 
@@ -288,6 +383,7 @@ static void test_filter_vars(void) {
          "an absurd persisted edge is clamped, not handed to the DSP");
 
   g_remove(path);
+  { char *b = g_strdup_printf("%s.bak", path); g_remove(b); g_free(b); }
   g_free(path);
 }
 
@@ -303,6 +399,7 @@ int main(int argc, char *argv[]) {
 
   printf("props_offline: property store self-test\n");
   test_round_trip();
+  test_atomic_save();
   test_push_pop();
   test_retain();
   test_locale();
