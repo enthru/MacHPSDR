@@ -300,38 +300,41 @@ static void tap_drain(void) {
   }
 }
 
-/* Wait for the DSP thread to finish the blocks it has already been handed.
+/* Collect the rest of what this run owes us, instead of guessing when the DSP
+ * thread is done.
  *
- * fexchange0 does not process anything -- it copies the block into r1, releases
+ * fexchange0 processes nothing.  It copies the block into r1, releases
  * Sem_BuffReady and returns; WDSP's own thread does the work and is what writes
- * this tap.  bfo=1 paces the two loosely rather than in lock-step, because
- * flush_iobuffs primes Sem_OutReady with (dsp_mult-1) blocks of silence, so the
- * harness may run that far ahead of the DSP thread and duly does.  The blocks
- * in flight when the input loop ends have not reached the tap yet, and this
- * assertion used to be written around that: "trailing the input by no more than
- * the iobuff ring is deep, measured exactly four blocks short at every tier".
+ * this tap.  bfo=1 does not pace them in lock-step either, because
+ * flush_iobuffs primes Sem_OutReady with (dsp_mult-1) blocks.  So the harness
+ * runs ahead, and the blocks still in flight when the input loop ends have not
+ * reached the tap.  The assertion below used to be written around the four
+ * blocks an IDLE machine leaves behind; a loaded one leaves more (5 and 10
+ * short in 2 local runs of 20, 15 short on the macos-15-intel runner, which
+ * failed the 4.4 release build).
  *
- * Four is what an idle machine gives.  On anything with other work on it the
- * DSP thread falls further behind and the count is whatever the scheduler
- * decided -- measured on this machine, 5 and 10 blocks short in 2 runs of 20,
- * and on a CI runner 15 short at the 1024 block, which failed the run and took
- * "NR3 does not reach the tap" down with it (two tap buffers of different
- * lengths compared against each other are two different signals: it scored
- * +3.0 dB where the pass reads -2977).
+ * The first cure here waited for the tap position to stop moving -- three
+ * unchanged reads 0.5 ms apart -- and that is the SAME MISTAKE one level down:
+ * on a loaded runner a DSP thread that is merely descheduled for two
+ * milliseconds is indistinguishable from one that has finished, so it went
+ * green locally and on one CI run and then failed the tag build 15 blocks
+ * short.  An absence of change is not a completion.
  *
- * So the tail is not measured, it is WAITED for, and the assertion below is
- * tightened to the whole input rather than loosened to fit the worst runner. */
-static void tap_settle(void) {
+ * What the harness actually knows is how many samples this run owes it -- every
+ * whole pass of the input -- so that is what it waits for, draining as it goes
+ * so the ring cannot wrap under the reader.  A tap that genuinely does not
+ * carry the audio never reaches the count and fails the assertion on the
+ * timeout, which is the answer that case deserves. */
+static void tap_collect(long want) {
   if(!tap_ring) return;
-  long last = GetRXAPreAgcTapPos(CH);
-  int stable = 0;
-  /* 2 s at the outside, so a wedged DSP thread fails the assertion below
-   * rather than hanging the harness. */
-  for(int i=0;i<4000 && stable<3;i++) {
+  /* 5 s at the outside: ~500x the worst tail measured, and a timeout here is a
+   * failed assertion rather than a hung harness. */
+  for(int i=0;i<10000 && tap_n<want;i++) {
+    tap_drain();
+    if(tap_n >= want) break;
     tap_nap();
-    long now = GetRXAPreAgcTapPos(CH);
-    if(now == last) stable++; else { stable = 0; last = now; }
   }
+  tap_drain();
 }
 
 /* Runs the whole signal through and captures the demodulated audio. */
@@ -356,8 +359,7 @@ static void run_chain(int nr, int block) {
     tap_drain();                                      /* the pass is done: bfo=1 */
     for(int i=0;i<block && n<NS;i++) outbuf[n++] = out[2*i];
   }
-  tap_settle();                                       /* the blocks still in flight */
-  tap_drain();
+  tap_collect((NS/block)*(long)block);                 /* the blocks still in flight */
   free(in); free(out);
 }
 
@@ -628,8 +630,8 @@ int main(int argc, char **argv) {
       if(t) { channel_resize(tier[t].block); tap_install(tier[t].block); }
       run_chain(NR_OFF, tier[t].block);
       /* Every whole pass of the input, and not one sample short: run_chain
-       * waits for the DSP thread before its last drain (tap_settle), so what
-       * the tap holds is no longer a race against the scheduler.  A block that
+       * collects until this count arrives (tap_collect), so what the tap holds
+       * is no longer a race against the scheduler.  A block that
        * does not reach the tap at all reads 0 here, and a geometry that stops
        * partway reads a count that is not a multiple of the block. */
       const long want = (NS/tier[t].block)*(long)tier[t].block;
