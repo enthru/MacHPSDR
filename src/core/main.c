@@ -58,6 +58,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "reconnect.h"
 #include "resource_path.h"
 #include "main.h"
 #include "audio.h"
@@ -686,10 +687,15 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     gtk_grid_remove(GTK_GRID(grid),netdev_row);
     gtk_grid_remove(GTK_GRID(grid),netdev_status);
 #endif
-    gtk_grid_attach(GTK_GRID(grid), radio->visual, 0, 0, 5, 1);
+    // Row 0 is the link status strip (reconnect.c): hidden -- and therefore
+    // costing no height -- while the radio is streaming, which is all the time
+    // in an ordinary session. It lives here rather than in a dialog because a
+    // radio that has gone away must not take the whole UI with it.
+    gtk_grid_attach(GTK_GRID(grid), reconnect_banner(), 0, 0, 5, 1);
+    gtk_grid_attach(GTK_GRID(grid), radio->visual, 0, 1, 5, 1);
     // Breathing room between the window titlebar and the first VFO button row.
     gtk_widget_set_margin_top(radio->rx_container, 8);
-    gtk_grid_attach(GTK_GRID(grid), radio->rx_container, 0, 1, 5, 1);
+    gtk_grid_attach(GTK_GRID(grid), radio->rx_container, 0, 2, 5, 1);
 
     // Double-line divider between the RX stack and the bottom control panel
     // (two thin horizontal lines with a small gap; distinct from the vertical
@@ -698,9 +704,9 @@ gboolean start_cb(GtkWidget *widget,gpointer data) {
     gtk_widget_set_name(rx_bottom_sep,"rx-bottom-sep");
     gtk_box_append(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
     gtk_box_append(GTK_BOX(rx_bottom_sep),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-    gtk_grid_attach(GTK_GRID(grid), rx_bottom_sep, 0, 2, 5, 1);
+    gtk_grid_attach(GTK_GRID(grid), rx_bottom_sep, 0, 3, 5, 1);
 
-    gtk_grid_attach(GTK_GRID(grid), radio->bottom_bar, 0, 3, 5, 1);
+    gtk_grid_attach(GTK_GRID(grid), radio->bottom_bar, 0, 4, 5, 1);
 
 #ifdef FT8
     // If the radio restored a receiver already in DIGU, show the FT8 panel now

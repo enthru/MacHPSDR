@@ -899,6 +899,18 @@ static const char css_body[]=
 "    margin-right: 14px;\n"
 "    border-style: none;\n"
 "    }\n"
+/* ---- Link status strip (reconnect.c). Named, or it takes the platform
+   theme: a pale bubble across the top of a dark console. WARNING because it is
+   only ever on screen when the radio is not there. ---- */
+"  #link-banner {\n"
+"    background-color: alpha(@WARNING,0.18);\n"
+"    border-bottom: 1px solid alpha(@WARNING,0.55);\n"
+"    padding: 2px 4px;\n"
+"    }\n"
+"  #link-banner label {\n"
+"    color: @WARNING;\n"
+"    font-weight: bold;\n"
+"    }\n"
 "  #rx-bottom-sep {\n"
 "    margin-top: 3px;\n"
 "    margin-bottom: 3px;\n"
