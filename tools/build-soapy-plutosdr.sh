@@ -344,6 +344,65 @@ PATCH
 }
 patch_tx_safe_open_close
 
+# SoapySDR's gain-mode API is only a boolean, but the AD9361 exposes both
+# slow_attack and fast_attack hardware AGC.  Add a small driver setting that
+# lets MacHPSDR select which mode setGainMode(true) applies.  Keeping slow as
+# the default preserves the upstream driver's behaviour for every other app.
+patch_agc_attack_mode() {
+  python3 - "$WORK/SoapyPlutoSDR/SoapyPlutoSDR.hpp" "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" <<'PATCH'
+import sys
+from pathlib import Path
+h, c = map(Path, sys.argv[1:])
+hs, cs = h.read_text(), c.read_text()
+if 'MACHPSDR selectable AGC attack' in cs:
+    assert 'fastGainMode' in hs, 'incomplete AGC attack patch'
+    print('==> SoapyPlutoSDR already patched (selectable AGC attack)')
+    sys.exit(0)
+
+member = '\t\tbool gainMode;'
+assert hs.count(member) == 1, 'AGC attack patch: unexpected driver header'
+hs = hs.replace(member, member + '\n\t\tbool fastGainMode;', 1)
+
+init = '\tgainMode = false;'
+assert cs.count(init) == 1, 'AGC attack patch: unexpected constructor'
+cs = cs.replace(init, init + '\n\tfastGainMode = false;', 1)
+
+empty_write = '''void SoapyPlutoSDR::writeSetting(const std::string &key, const std::string &value)
+{
+
+
+
+}'''
+write = '''void SoapyPlutoSDR::writeSetting(const std::string &key, const std::string &value)
+{
+	/* MACHPSDR selectable AGC attack: the standard gain-mode API carries only
+	   on/off, so remember which AD9361 automatic mode the next enable uses. */
+	if (key == "machpsdr_agc_mode") {
+		if (value != "slow_attack" && value != "fast_attack")
+			throw std::runtime_error("invalid machpsdr_agc_mode: " + value);
+		std::lock_guard<pluto_spin_mutex> lock(rx_device_mutex);
+		fastGainMode = value == "fast_attack";
+		if (gainMode)
+			iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false),
+				"gain_control_mode", fastGainMode ? "fast_attack" : "slow_attack");
+		return;
+	}
+}'''
+assert cs.count(empty_write) == 1, 'AGC attack patch: unexpected writeSetting'
+cs = cs.replace(empty_write, write, 1)
+
+old_mode = 'iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false), "gain_control_mode", "slow_attack");'
+new_mode = 'iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false), "gain_control_mode", fastGainMode ? "fast_attack" : "slow_attack");'
+assert cs.count(old_mode) == 1, 'AGC attack patch: unexpected setGainMode'
+cs = cs.replace(old_mode, new_mode, 1)
+
+h.write_text(hs)
+c.write_text(cs)
+print('==> patched SoapyPlutoSDR: selectable slow/fast AGC attack')
+PATCH
+}
+patch_agc_attack_mode
+
 # RX and TX share the AD9361 baseband clock/FIR. The startup log measured
 # 3.84 seconds in EACH setSampleRate(768000): libad9361 disables, uploads and
 # enables the same FIR twice. Cache only a successful configuration in this

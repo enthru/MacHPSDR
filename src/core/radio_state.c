@@ -381,6 +381,9 @@ log_info("radio_save_state: %s\n",filename);
       sprintf(name,"radio.adc[%d].agc",i);
       sprintf(value,"%d", soapy_protocol_get_automatic_gain(&radio->adc[i]));
       setProperty(name,value);
+      sprintf(name,"radio.adc[%d].agc_fast",i);
+      sprintf(value,"%d",radio->adc[i].agc_fast);
+      setProperty(name,value);
       sprintf(name,"radio.dac[%d].gain",i);
       setPropertyDouble(name,radio->dac[0].gain);
       sprintf(name,"radio.dac[%d].antenna",i);
@@ -655,6 +658,9 @@ void radio_restore_state(RADIO *radio) {
       sprintf(name,"radio.adc[%d].agc",i);
       value=getProperty(name);
       if(value!=NULL) radio->adc[i].agc=atoi(value);
+      sprintf(name,"radio.adc[%d].agc_fast",i);
+      value=getProperty(name);
+      if(value!=NULL) radio->adc[i].agc_fast=atoi(value);
       if(radio->can_transmit) {
         sprintf(name,"radio.dac[%d].gain",i);
         value=getProperty(name);

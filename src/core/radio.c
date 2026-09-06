@@ -3707,6 +3707,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   if(r->discovered->device==DEVICE_SOAPYSDR) {
     r->adc[0].gain=20;
     r->adc[0].agc=FALSE;
+    r->adc[0].agc_fast=FALSE;
     if(r->can_transmit) {
       r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
       r->dac[0].gain=20;
@@ -3728,6 +3729,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   if(r->discovered->device==DEVICE_SOAPYSDR) {
     r->adc[1].gain=20;
     r->adc[1].agc=FALSE;
+    r->adc[1].agc_fast=FALSE;
     if(r->can_transmit) {
       r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
       r->dac[1].gain=20;

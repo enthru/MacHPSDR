@@ -2750,6 +2750,18 @@ gboolean soapy_protocol_get_automatic_gain(ADC *adc) {
 
 void soapy_protocol_set_automatic_gain(RECEIVER *rx,gboolean mode) {
   int rc;
+  // The standard SoapySDR API represents hardware AGC as a boolean.  Pluto's
+  // AD9361 also has slow_attack and fast_attack modes, so tell our bundled
+  // driver which one setGainMode(true) should select.  Older/external Pluto
+  // drivers safely ignore this setting and retain their slow-attack default.
+  if(strcmp(radio->discovered->name,"plutosdr")==0) {
+    const char *attack=radio->adc[rx->adc].agc_fast?"fast_attack":"slow_attack";
+    rc=SoapySDRDevice_writeSetting(soapy_device,"machpsdr_agc_mode",attack);
+    if(rc!=0) {
+      log_info("%s: Pluto AGC mode %s not supported: %s\n",
+               __FUNCTION__,attack,SoapySDR_errToStr(rc));
+    }
+  }
   rc=SoapySDRDevice_setGainMode(soapy_device, SOAPY_SDR_RX, rx->adc,mode);
   if(rc!=0) {
 

@@ -664,6 +664,15 @@ static void agc_changed_cb(GtkWidget *widget, gpointer data) {
   }
 }
 
+static void pluto_agc_mode_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  ADC *adc=(ADC *)data;
+  adc->agc_fast=gtk_drop_down_get_selected(widget)==1;
+  // Re-applying gain mode makes the change live when AGC is already enabled;
+  // when it is off this simply records the mode the next enable will use.
+  RECEIVER *hwrx=radio_soapy_hw_receiver(radio);
+  if(hwrx!=NULL) soapy_protocol_set_automatic_gain(hwrx,adc->agc);
+}
+
 static void dac0_gain_value_changed_cb(GtkWidget *widget, gpointer data) {
   DAC *dac=(DAC *)data;
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
@@ -1131,6 +1140,19 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         gtk_grid_attach(GTK_GRID(adc0_grid),agc,1,2,1,1);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(agc),radio->adc[0].agc);
         g_signal_connect(agc,"toggled",G_CALLBACK(agc_changed_cb),&radio->adc[0]);
+        if(strcmp(radio->discovered->name,"plutosdr")==0) {
+          GtkWidget *mode_label=gtk_label_new("AGC attack:");
+          gtk_widget_set_halign(mode_label,GTK_ALIGN_END);
+          gtk_grid_attach(GTK_GRID(adc0_grid),mode_label,0,3,1,1);
+          GtkStringList *modes=gtk_string_list_new(NULL);
+          gtk_string_list_append(modes,"Slow");
+          gtk_string_list_append(modes,"Fast");
+          GtkWidget *mode=gtk_drop_down_new(G_LIST_MODEL(modes),NULL);
+          g_object_unref(modes);
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(mode),radio->adc[0].agc_fast?1:0);
+          gtk_grid_attach(GTK_GRID(adc0_grid),mode,1,3,1,1);
+          g_signal_connect(mode,"notify::selected",G_CALLBACK(pluto_agc_mode_cb),&radio->adc[0]);
+        }
       }
       }
       break;

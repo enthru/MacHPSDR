@@ -691,7 +691,9 @@ immediately to the shared device stream, before individual receivers are tuned
 out of it. It suppresses DC around the device LO with a 20 Hz corner; this may
 be away from the display centre in CTUN/freetune. Disable it to receive a signal
 exactly at that frequency. Hardware AGC is a separate device setting, saved and
-restored independently of the receiver's audio AGC.
+restored independently of the receiver's audio AGC. On PlutoSDR, **AGC attack**
+selects the AD9361's Slow or Fast hardware AGC mode; the selection also takes
+effect immediately while hardware AGC is running.
 
 **SoapySDR DAC level (Configure → TX → DAC Level).** **Backoff (dB)** attenuates
 the digital I/Q before the DAC, independently of Drive's analogue gain. Range:

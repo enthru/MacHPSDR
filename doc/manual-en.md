@@ -797,7 +797,8 @@ immediately to the shared device stream, before individual receivers are tuned
 out of it. It suppresses DC around the device LO with a 20 Hz corner; this may
 be away from the display centre in CTUN/freetune. Disable it to receive a signal
 exactly at that frequency. Hardware AGC is a separate device setting, saved and
-restored independently of the receiver's audio AGC.
+restored independently of the receiver's audio AGC. On PlutoSDR, **AGC attack**
+selects the AD9361's Slow or Fast hardware AGC mode and applies immediately.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a

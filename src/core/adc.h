@@ -69,6 +69,10 @@ typedef struct _adc {
 #ifdef SOAPYSDR
   gdouble gain;
   gboolean agc;
+  // AD9361 hardware AGC attack mode.  SoapySDR's standard gain-mode API only
+  // exposes on/off; the bundled Pluto driver accepts the actual mode through
+  // its machpsdr_agc_mode setting.
+  gboolean agc_fast;
 #endif
 } ADC;
 
