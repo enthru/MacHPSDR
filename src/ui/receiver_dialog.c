@@ -102,6 +102,18 @@ static void adc_cb(GtkWidget *widget,gpointer data) {
   receiver_update_title(rx);
 }
 
+#ifdef SOAPYSDR
+// Which hardware antenna feed this receiver takes off the one shared-LO stream
+// (a 2R2T Pluto delivers two). The DSP thread reads rx->soapy_rx_antenna every
+// block and clamps it, so the change takes effect on the next block with no
+// stream rebuild.
+static void antenna_cb(GtkWidget *widget,gpointer data) {
+  if(!gtk_check_button_get_active(GTK_CHECK_BUTTON(widget))) return;
+  SELECT *select=(SELECT *)data;
+  select->rx->soapy_rx_antenna=select->choice;
+}
+#endif
+
 // These are plain GtkButtons (they only look like a radio group, via the orange
 // text on the selected one), so the signal is "clicked" and there is no active
 // state to interrogate.  Both of these used to be connected to "toggled" and to
@@ -1089,6 +1101,38 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
     g_signal_connect(adc1_b,"toggled",G_CALLBACK(adc_cb),(gpointer)select);
     gtk_grid_attach(GTK_GRID(adc_grid),adc1_b,1,0,1,1);
   }
+
+#ifdef SOAPYSDR
+  // A multi-input SoapySDR device (a 2R2T Pluto) has two antenna feeds on one
+  // shared LO. adcs stays 1 (one tuner), so the ADC-0/ADC-1 selector above does
+  // not apply; this picks which physical RX input this receiver listens to.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     radio->discovered->info.soapy.rx_channels>1) {
+    int hwch=(int)radio->discovered->info.soapy.rx_channels;
+    if(hwch>2) hwch=2;   /* the stream carries at most two lanes */
+    GtkWidget *ant_frame=gtk_frame_new("Antenna");
+    GtkWidget *ant_grid=gtk_grid_new();
+    gtk_grid_set_row_homogeneous(GTK_GRID(ant_grid),FALSE);
+    gtk_grid_set_column_homogeneous(GTK_GRID(ant_grid),FALSE);
+    sui_style_group(ant_grid);
+    gtk_frame_set_child(GTK_FRAME(ant_frame),ant_grid);
+    gtk_box_append(GTK_BOX(left_box),ant_frame);
+    GtkWidget *first=NULL;
+    for(int a=0;a<hwch;a++) {
+      char lbl[16];
+      snprintf(lbl,sizeof lbl,"RX%d",a+1);
+      GtkWidget *b=gtk_check_button_new_with_label(lbl);
+      if(first==NULL) first=b;
+      else gtk_check_button_set_group(GTK_CHECK_BUTTON(b),GTK_CHECK_BUTTON(first));
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(b), rx->soapy_rx_antenna==a);
+      select=g_new0(SELECT,1);
+      select->rx=rx;
+      select->choice=a;
+      g_signal_connect(b,"toggled",G_CALLBACK(antenna_cb),(gpointer)select);
+      gtk_grid_attach(GTK_GRID(ant_grid),b,a,0,1,1);
+    }
+  }
+#endif
 
   // Per-RX sample-rate picker. The fixed 48k..1536k set below is protocol 2's;
   // SoapySDR gets its own list, because the rates it can run are the device's

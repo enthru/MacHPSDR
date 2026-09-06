@@ -83,6 +83,12 @@ typedef struct _receiver {
 
   gint adc;
 
+  // Which hardware RX antenna feed this receiver listens to on a multi-input
+  // SoapySDR device (a 2R2T Pluto). 0 or 1; always 0 on a single-input device.
+  // Both feeds come off the one shared-LO stream (adc 0); this only selects
+  // which the slot takes. Clamped to the device's real rx_channels on restore.
+  gint soapy_rx_antenna;
+
   gint sample_rate;
   gint buffer_size;
   gint dsp_rate;

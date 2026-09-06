@@ -64,6 +64,10 @@ static double bandwidth=2000000.0;
 #define MAX_CHANNELS 2
 static SoapySDRDevice *soapy_device;
 static SoapySDRStream *rx_stream[MAX_CHANNELS];
+// How many hardware antenna feeds this ADC's stream carries (1 normally, 2 on a
+// 2R2T Pluto). Set when the stream is created; the reader allocates this many
+// readStream buffers and the FIFO this many lanes.
+static int soapy_rx_lanes[MAX_CHANNELS];
 static SoapySDRStream *tx_stream;
 static int soapy_rx_sample_rate;
 static int soapy_tx_sample_rate;
@@ -108,8 +112,18 @@ static gpointer receive_thread(gpointer data);
    MTU, before it is clamped for the read size) several times over, so a stall in
    the DSP costs latency instead of samples.  Keyed per ADC, like the stream and
    the receive thread. */
-static float *fifo_buf[MAX_CHANNELS];
-static int fifo_cap[MAX_CHANNELS];      /* in SAMPLES */
+/* A stream on one ADC can carry more than one hardware antenna feed: a 2R2T
+   Pluto delivers both of the AD9361's RX halves, sample-interleaved by the
+   driver into separate readStream buffers, off a SINGLE shared-LO stream.  The
+   FIFO therefore holds LANES -- one contiguous complex ring per feed, all
+   advancing in lockstep because they arrive together in the same readStream
+   call.  A receiver's slot then takes whichever lane its soapy_rx_antenna
+   selects (slot distribution in dsp_thread).  One lane is the single-input
+   case and is byte-for-byte the old path. */
+#define MAX_RX_LANES 2
+static float *fifo_buf[MAX_CHANNELS][MAX_RX_LANES];
+static int fifo_lanes[MAX_CHANNELS];    /* how many feeds this ADC's stream carries */
+static int fifo_cap[MAX_CHANNELS];      /* in SAMPLES (per lane) */
 static int fifo_rd[MAX_CHANNELS];
 static int fifo_n[MAX_CHANNELS];
 static long long fifo_dropped[MAX_CHANNELS];
@@ -130,16 +144,38 @@ static gpointer dsp_thread(gpointer data);
    down without racing it. */
 static void wait_rx_parked(size_t channel);
 
-static void fifo_alloc(size_t channel,int samples) {
+/* The RX channel list to open a stream with, and how many entries it has: {0}
+   on a single-input device, {0,1} on a 2R2T Pluto whose one shared-LO stream
+   carries both antenna feeds.  Every setupStream(RX) site uses this so the lane
+   count is decided in one place. */
+static int soapy_rx_chanlist(size_t *chans) {
+  int lanes=1;
+#ifdef SOAPYSDR
+  if(radio!=NULL && radio->discovered!=NULL &&
+     radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     radio->discovered->info.soapy.rx_channels>1)
+    lanes=(int)radio->discovered->info.soapy.rx_channels;
+#endif
+  if(lanes>MAX_RX_LANES) lanes=MAX_RX_LANES;
+  if(lanes<1) lanes=1;
+  for(int i=0;i<lanes;i++) chans[i]=(size_t)i;
+  return lanes;
+}
+
+static void fifo_alloc(size_t channel,int samples,int lanes) {
+  if(lanes<1) lanes=1; if(lanes>MAX_RX_LANES) lanes=MAX_RX_LANES;
   g_mutex_lock(&fifo_mutex[channel]);
-  g_free(fifo_buf[channel]);
-  fifo_buf[channel]=g_new(float,2*samples);
+  for(int l=0;l<MAX_RX_LANES;l++) {
+    g_free(fifo_buf[channel][l]);
+    fifo_buf[channel][l]=(l<lanes)?g_new(float,2*samples):NULL;
+  }
+  fifo_lanes[channel]=lanes;
   fifo_cap[channel]=samples;
   fifo_rd[channel]=0;
   fifo_n[channel]=0;
   fifo_dropped[channel]=0;
   g_mutex_unlock(&fifo_mutex[channel]);
-  log_info("fifo_alloc: adc %ld: %d samples of raw stream\n",(long)channel,samples);
+  log_info("fifo_alloc: adc %ld: %d samples of raw stream, %d lane(s)\n",(long)channel,samples,lanes);
 }
 
 /* Drop whatever is queued.  Used when the stream underneath is rebuilt: after a
@@ -173,8 +209,8 @@ static void stop_dsp_thread(size_t channel) {
 
 static void fifo_free(size_t channel) {
   g_mutex_lock(&fifo_mutex[channel]);
-  g_free(fifo_buf[channel]);
-  fifo_buf[channel]=NULL;
+  for(int l=0;l<MAX_RX_LANES;l++) { g_free(fifo_buf[channel][l]); fifo_buf[channel][l]=NULL; }
+  fifo_lanes[channel]=0;
   fifo_cap[channel]=0;
   fifo_rd[channel]=0;
   fifo_n[channel]=0;
@@ -184,18 +220,22 @@ static void fifo_free(size_t channel) {
 /* Reader side.  A full FIFO means the DSP has been behind for a whole burst, so
    the block is dropped and counted -- the alternative, blocking here, is exactly
    the coupling this FIFO exists to remove. */
-static void fifo_push(size_t channel,const float *iq,int n) {
+static void fifo_push(size_t channel,const float * const *iq,int n) {
   g_mutex_lock(&fifo_mutex[channel]);
-  if(fifo_buf[channel]==NULL || n<=0) { g_mutex_unlock(&fifo_mutex[channel]); return; }
+  if(fifo_buf[channel][0]==NULL || n<=0) { g_mutex_unlock(&fifo_mutex[channel]); return; }
   if(n>fifo_cap[channel]-fifo_n[channel]) {
     fifo_dropped[channel]+=n;
     g_mutex_unlock(&fifo_mutex[channel]);
     return;
   }
+  const int lanes=fifo_lanes[channel];
   int wr=(fifo_rd[channel]+fifo_n[channel])%fifo_cap[channel];
   int first=fifo_cap[channel]-wr; if(first>n) first=n;
-  memcpy(fifo_buf[channel]+2*wr,iq,(size_t)(2*first)*sizeof(float));
-  if(n>first) memcpy(fifo_buf[channel],iq+2*first,(size_t)(2*(n-first))*sizeof(float));
+  for(int l=0;l<lanes;l++) {
+    if(iq[l]==NULL) continue;
+    memcpy(fifo_buf[channel][l]+2*wr,iq[l],(size_t)(2*first)*sizeof(float));
+    if(n>first) memcpy(fifo_buf[channel][l],iq[l]+2*first,(size_t)(2*(n-first))*sizeof(float));
+  }
   fifo_n[channel]+=n;
   g_cond_signal(&fifo_cond[channel]);
   g_mutex_unlock(&fifo_mutex[channel]);
@@ -204,17 +244,21 @@ static void fifo_push(size_t channel,const float *iq,int n) {
 /* DSP side.  Blocks until there is something or the thread is being stopped;
    returns a CONTIGUOUS run, so the caller sees the stream in order without the
    ring's wrap ever showing. */
-static int fifo_pop(size_t channel,float *out,int want) {
+static int fifo_pop(size_t channel,float * const *out,int want) {
   g_mutex_lock(&fifo_mutex[channel]);
   while(dsp_thread_running[channel] && fifo_n[channel]==0) {
     gint64 until=g_get_monotonic_time()+100000;   /* 100 ms, so a stop is prompt */
     g_cond_wait_until(&fifo_cond[channel],&fifo_mutex[channel],until);
   }
+  const int lanes=fifo_lanes[channel];
   int n=fifo_n[channel]; if(n>want) n=want;
   if(n>0) {
     int first=fifo_cap[channel]-fifo_rd[channel]; if(first>n) first=n;
-    memcpy(out,fifo_buf[channel]+2*fifo_rd[channel],(size_t)(2*first)*sizeof(float));
-    if(n>first) memcpy(out+2*first,fifo_buf[channel],(size_t)(2*(n-first))*sizeof(float));
+    for(int l=0;l<lanes;l++) {
+      if(out[l]==NULL || fifo_buf[channel][l]==NULL) continue;
+      memcpy(out[l],fifo_buf[channel][l]+2*fifo_rd[channel],(size_t)(2*first)*sizeof(float));
+      if(n>first) memcpy(out[l]+2*first,fifo_buf[channel][l],(size_t)(2*(n-first))*sizeof(float));
+    }
     fifo_rd[channel]=(fifo_rd[channel]+n)%fifo_cap[channel];
     fifo_n[channel]-=n;
   }
@@ -1096,11 +1140,13 @@ void soapy_protocol_change_sample_rate_locked(RECEIVER *rx,int rate) {
     soapy_set_rx_rate(rx->adc,hw_rate);
 
     if(restart) {
-      size_t setup_ch=ch;
+      size_t setup_ch[MAX_RX_LANES];
+      int setup_nch=soapy_rx_chanlist(setup_ch);
+      soapy_rx_lanes[ch]=setup_nch;
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
-      SoapySDRDevice_setupStream(soapy_device,&rx_stream[ch],SOAPY_SDR_RX,SOAPY_SDR_CF32,&setup_ch,1,NULL);
+      SoapySDRDevice_setupStream(soapy_device,&rx_stream[ch],SOAPY_SDR_RX,SOAPY_SDR_CF32,setup_ch,setup_nch,NULL);
 #else
-      rx_stream[ch]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&setup_ch,1,NULL);
+      rx_stream[ch]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,setup_ch,setup_nch,NULL);
 #endif
       if(rx_stream[ch]==NULL) {
         log_error("%s: could not set the RX stream up again at %d Hz: %s\n",
@@ -1285,18 +1331,21 @@ log_info("%s: setting samplerate=%f\n",__FUNCTION__,(double)soapy_rx_sample_rate
     SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
     rx_stream[channel]=NULL;
   }
-log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)channel);
+  size_t setup_ch[MAX_RX_LANES];
+  int setup_nch=soapy_rx_chanlist(setup_ch);
+  soapy_rx_lanes[channel]=setup_nch;
+log_info("%s: SoapySDRDevice_setupStream: channel=%ld, %d lane(s)\n",__FUNCTION__,(long)channel,setup_nch);
   SoapySDRKwargs stream_args={0};
   soapy_rx_stream_args(&stream_args,soapy_rx_actual_rate>0?soapy_rx_actual_rate:soapy_rx_sample_rate);
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
-  rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
+  rc=SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,setup_ch,setup_nch,&stream_args);
   if(rc!=0) {
     log_info("%s: SoapySDRDevice_setupStream (RX) failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
     SoapySDRKwargs_clear(&stream_args);
     return FALSE;
   }
 #else
-  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,&stream_args);
+  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,setup_ch,setup_nch,&stream_args);
   if(rx_stream[channel]==NULL) {
     // This branch has no return code to report -- setupStream answers with the
     // pointer -- so the reason comes from the device.  It used to print
@@ -1348,7 +1397,7 @@ log_info("%s: SoapySDRDevice_setupStream: channel=%ld\n",__FUNCTION__,(long)chan
     long long cap=4LL*(long long)((mtu>read_block)?mtu:read_block);
     if(cap<4LL*read_block) cap=4LL*read_block;
     if(cap>(1LL<<20)) cap=(1LL<<20);
-    fifo_alloc(channel,(int)cap);
+    fifo_alloc(channel,(int)cap,soapy_rx_lanes[channel]>0?soapy_rx_lanes[channel]:1);
   }
   rx->buffer=g_new(double,dsp_block*2);
   // The freeing above cleared it; the builder allocates it to the size the real
@@ -1714,19 +1763,25 @@ log_info("soapy_protocol_init: SoapySDRDevice_make\n");
 static gpointer dsp_thread(gpointer data) {
   size_t channel=GPOINTER_TO_SIZE(data);
   const int block=rx_block[channel]>0?rx_block[channel]:2048;
-  float *buffer=g_new(float,block*2);
+  // One drained block per antenna feed the stream carries; each is contiguous
+  // complex and is fed to whichever receivers selected that antenna.
+  const int lanes=soapy_rx_lanes[channel]>0?soapy_rx_lanes[channel]:1;
+  float *lane[MAX_RX_LANES]={NULL,NULL};
+  float *pop_dst[MAX_RX_LANES]={NULL,NULL};
+  for(int l=0;l<lanes;l++) { lane[l]=g_new(float,block*2); pop_dst[l]=lane[l]; }
   gint64 dropped_reported=g_get_monotonic_time();
   gint64 next_block_us=0;
   /* On this thread's stack, so nothing else can write it: see
-     dc_block_reset_req above. */
-  DCBLOCK dcb;
-  dc_block_init(&dcb,soapy_rx_actual_rate);
+     dc_block_reset_req above.  One estimator per antenna feed: they share the
+     LO, so the spike is at DC for both, but the offset value differs per feed. */
+  DCBLOCK dcb[MAX_RX_LANES];
+  for(int l=0;l<lanes;l++) dc_block_init(&dcb[l],soapy_rx_actual_rate);
   gboolean dc_on=FALSE;
   int dc_logged_rate=-1;
   gint64 dc_reported=g_get_monotonic_time();
-log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,block);
+log_info("%s: running (adc %ld, %d-sample blocks, %d lane(s))\n",__FUNCTION__,(long)channel,block,lanes);
   while(dsp_thread_running[channel]) {
-    int elements=fifo_pop(channel,buffer,block);
+    int elements=fifo_pop(channel,pop_dst,block);
     if(elements<=0) continue;
     /* The zero-IF DC spike sits at the DEVICE's LO, so it is removed HERE:
        once, on the raw block, before the per-receiver NCO brings each centre
@@ -1737,18 +1792,18 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
        stream they all share. */
     {
       const int rate=soapy_rx_actual_rate;
-      if(rate!=dcb.rate) dc_block_init(&dcb,rate);
+      if(rate!=dcb[0].rate) for(int l=0;l<lanes;l++) dc_block_init(&dcb[l],rate);
       if(g_atomic_int_get(&dc_block_reset_req[channel])) {
         g_atomic_int_set(&dc_block_reset_req[channel],0);
-        dc_block_reset(&dcb);
+        for(int l=0;l<lanes;l++) dc_block_reset(&dcb[l]);
       }
       /* One atomic load per block, not per sample -- the same rule the iqswap
          snapshot below is written to.  Switched off, the estimate is dropped
          rather than left to go stale, so switching it back on converges from
          zero instead of from an offset measured at some other gain. */
       const gboolean on=radio_dc_block_get(radio);
-      if(on) dc_block_run(&dcb,buffer,elements);
-      else   dc_block_reset(&dcb);
+      if(on) for(int l=0;l<lanes;l++) dc_block_run(&dcb[l],lane[l],elements);
+      else   for(int l=0;l<lanes;l++) dc_block_reset(&dcb[l]);
       /* "Is it even running?" has to be answerable from the log, or the next
          report is a screenshot and an argument.  The state is named when it
          changes, and the ESTIMATE is named every 5 s: a removal that is on and
@@ -1764,7 +1819,7 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
         const gint64 now=g_get_monotonic_time();
         if(now-dc_reported>=5000000) {
           log_debug_area(LOG_RX, "dc_block: adc %ld: offset now I %+.6f Q %+.6f of full scale\n",
-                    (long)channel,dcb.i,dcb.q);
+                    (long)channel,dcb[0].i,dcb[0].q);
           dc_reported=now;
         }
       }
@@ -1816,12 +1871,16 @@ log_info("%s: running (adc %ld, %d-sample blocks)\n",__FUNCTION__,(long)channel,
       // happens inside create_receiver, before the chain exists.
       if(!adc_slot[channel][i].ready) continue;
       if(!receiver_is_live(rx)) continue;
-      slot_feed(&adc_slot[channel][i],buffer,elements,iqswap);
+      // Each receiver takes the antenna feed it selected. Clamped so a stale
+      // value or a single-input device can only ever land on lane 0.
+      int ant=rx->soapy_rx_antenna;
+      if(ant<0) ant=0; if(ant>=lanes) ant=lanes-1;
+      slot_feed(&adc_slot[channel][i],lane[ant],elements,iqswap);
     }
     g_mutex_unlock(&radio->delete_rx_mutex);
   }
 log_info("%s: exit (adc %ld)\n",__FUNCTION__,(long)channel);
-  g_free(buffer);
+  for(int l=0;l<MAX_RX_LANES;l++) g_free(lane[l]);
   return NULL;
 }
 
@@ -1837,8 +1896,13 @@ static gpointer receive_thread(gpointer data) {
   // Capture this receiver's hardware read size once; it need not be the smaller
   // block the DSP thread drains from the FIFO.
   const int block=rx_read_block[rx->adc]>0?rx_read_block[rx->adc]:2048;
-  float *buffer=g_new(float,block*2);
-  void *buffs[]={buffer};
+  // One readStream buffer per hardware antenna feed the stream carries (a 2R2T
+  // Pluto delivers two off its one shared-LO stream). buffs[] is the array
+  // readStream deinterleaves into; each lane is contiguous complex.
+  const int lanes=soapy_rx_lanes[rx->adc]>0?soapy_rx_lanes[rx->adc]:1;
+  float *buffer_lane[MAX_RX_LANES]={NULL,NULL};
+  void *buffs[MAX_RX_LANES]={NULL,NULL};
+  for(int l=0;l<lanes;l++) { buffer_lane[l]=g_new(float,block*2); buffs[l]=buffer_lane[l]; }
   int overruns=0;
   gint64 overrun_reported=g_get_monotonic_time();
   /* Stream-health accounting.  The overrun check below only catches a stream
@@ -1926,13 +1990,13 @@ log_info("%s: running\n",__FUNCTION__);
     if(elements>0) reconnect_note_data();   // fed the disconnect watchdog
     // Read and hand over, nothing else: everything that costs time now happens
     // on dsp_thread, so a slow DSP frame cannot turn into a driver overrun.
-    fifo_push(channel,buffer,elements);
+    fifo_push(channel,(const float * const *)buffer_lane,elements);
   }
   // The stream is NOT touched here.  Whoever stopped this thread joins it and
   // then deactivates/closes the stream; doing it from both ends would race a
   // close against a readStream that has not returned yet.
 log_info("%s: exit (channel=%ld)\n",__FUNCTION__,(long)channel);
-  g_free(buffer);
+  for(int l=0;l<MAX_RX_LANES;l++) g_free(buffer_lane[l]);
   return NULL;
 }
 
@@ -2107,11 +2171,16 @@ static void rx_resume_channel(size_t channel) {
   // rx_stream_active is TRUE, which we set last.
   SoapySDRDevice_deactivateStream(soapy_device,rx_stream[channel],0,0LL);
   SoapySDRDevice_closeStream(soapy_device,rx_stream[channel]);
+  {
+    size_t resume_ch[MAX_RX_LANES];
+    int resume_nch=soapy_rx_chanlist(resume_ch);
+    soapy_rx_lanes[channel]=resume_nch;
 #if defined(SOAPY_SDR_API_VERSION) && (SOAPY_SDR_API_VERSION < 0x00080000)
-  SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+    SoapySDRDevice_setupStream(soapy_device,&rx_stream[channel],SOAPY_SDR_RX,SOAPY_SDR_CF32,resume_ch,resume_nch,NULL);
 #else
-  rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,&channel,1,NULL);
+    rx_stream[channel]=SoapySDRDevice_setupStream(soapy_device,SOAPY_SDR_RX,SOAPY_SDR_CF32,resume_ch,resume_nch,NULL);
 #endif
+  }
   SoapySDRDevice_activateStream(soapy_device,rx_stream[channel],0,0LL,0);
   // The queue belongs to the stream that was just closed: what is in it is from
   // before the transmission, and playing it now would put a stale half-second of
@@ -2717,11 +2786,29 @@ void soapy_protocol_set_tx_antenna(TRANSMITTER *tx,int ant) {
   }
 }
 
+/* How many hardware RX channels this device delivers (antenna feeds off the one
+   shared-LO stream): 1 normally, 2 on a 2R2T Pluto. */
+static int soapy_rx_hw_channels(void) {
+  int n=1;
+  if(radio!=NULL && radio->discovered!=NULL &&
+     radio->discovered->info.soapy.rx_channels>1)
+    n=(int)radio->discovered->info.soapy.rx_channels;
+  if(n>MAX_RX_LANES) n=MAX_RX_LANES;
+  if(n<1) n=1;
+  return n;
+}
+
 void soapy_protocol_set_gain(ADC *adc) {
   int rc;
-  rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_RX,adc->id,adc->gain);
-  if(rc!=0) {
-    log_info("%s: SoapySDRDevice_setGain failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
+  // The app has one RX gain per ADC, but an AD9361's two antenna feeds are
+  // separate gain hardware. Apply the same value to every feed the stream
+  // carries, or the second antenna sits at whatever its power-on AGC left it.
+  const int hwch=soapy_rx_hw_channels();
+  for(int ch=0;ch<hwch;ch++) {
+    rc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_RX,ch,adc->gain);
+    if(rc!=0) {
+      log_info("%s: SoapySDRDevice_setGain (ch %d) failed: %s\n",__FUNCTION__,ch,SoapySDR_errToStr(rc));
+    }
   }
 }
 
@@ -2762,10 +2849,13 @@ void soapy_protocol_set_automatic_gain(RECEIVER *rx,gboolean mode) {
                __FUNCTION__,attack,SoapySDR_errToStr(rc));
     }
   }
-  rc=SoapySDRDevice_setGainMode(soapy_device, SOAPY_SDR_RX, rx->adc,mode);
-  if(rc!=0) {
-
-    log_info("%s: SoapySDRDevice_getGainMode failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
+  // Apply to every antenna feed the stream carries (see soapy_protocol_set_gain).
+  const int hwch=soapy_rx_hw_channels();
+  for(int ch=0;ch<hwch;ch++) {
+    rc=SoapySDRDevice_setGainMode(soapy_device, SOAPY_SDR_RX, ch,mode);
+    if(rc!=0) {
+      log_info("%s: SoapySDRDevice_setGainMode (ch %d) failed: %s\n",__FUNCTION__,ch,SoapySDR_errToStr(rc));
+    }
   }
 }
 

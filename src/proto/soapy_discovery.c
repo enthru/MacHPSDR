@@ -276,8 +276,16 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     // synthesiser feeding both of its halves, so even a two-channel Pluto gives
     // two receivers on one LO.
     //
-    // adcs stays the hardware truth: it is what gain, antenna and the ADC
-    // controls are indexed by, and those really are per channel.
+    // adcs is the number of independent TUNERS, and on every SoapySDR device
+    // this fork drives that is one: the AD9361's two RX halves share a single
+    // synthesiser and a single baseband clock, so a 2R2T Pluto is two ANTENNA
+    // feeds on one LO, not two ADCs.  The receiver-to-adc map, the per-ADC
+    // stream/thread/FIFO and the per-ADC save/restore all key off this, so it
+    // stays 1 -- both receivers land on adc 0 and share the one stream (the
+    // slot table in soapy_protocol.c).  The real hardware channel count lives
+    // in info.soapy.rx_channels, and a receiver picks which of those antenna
+    // feeds it listens to (receiver.soapy_rx_antenna); the master reader pulls
+    // both feeds off the one stream and each slot takes its own.
     int rx_slots=rx_channels;
 #ifdef LIQUID
     if(rx_slots<2) rx_slots=2;
@@ -287,7 +295,7 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
 #endif
     discovered[devices].supported_receivers=rx_slots;
     discovered[devices].supported_transmitters=tx_channels;
-    discovered[devices].adcs=rx_channels;
+    discovered[devices].adcs=1;   /* one tuner; rx_channels holds the antenna feeds */
     discovered[devices].status=STATE_AVAILABLE;
     g_strlcpy(discovered[devices].software_version,version,sizeof(discovered[devices].software_version));
     discovered[devices].frequency_min=ranges[0].minimum;

@@ -403,6 +403,107 @@ PATCH
 }
 patch_agc_attack_mode
 
+# On a 2R2T PlutoSky the AD9361 has two RX channels behind ONE synthesiser and
+# ONE baseband clock, and tezuka's FPGA image presents both through the
+# cf-ad9361-lpc DMA (four scan elements: I0,Q0,I1,Q1). Stock SoapyPlutoSDR
+# hardcodes getNumChannels()=1, so the second input is unreachable and the
+# multi-channel deinterleave in rx_streamer::recv writes PAST the caller's
+# buffer (dst[j*2+i] with i running 0..3 for two channels). Expose the real RX
+# count, fix the deinterleave to the buffer's own I/Q slot, and address per-RX
+# gain by channel. Frequency, sample rate and bandwidth stay on voltage0 --
+# one synth, one clock, genuinely shared, so a second stream is impossible and
+# the app shares the LO across both receivers exactly as CLAUDE.md describes.
+patch_dual_rx() {
+  python3 - "$WORK/SoapyPlutoSDR/SoapyPlutoSDR.hpp" \
+             "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" \
+             "$WORK/SoapyPlutoSDR/PlutoSDR_Streaming.cpp" <<'PATCH'
+import sys
+from pathlib import Path
+h, s, st = map(Path, sys.argv[1:])
+hs, ss, sts = h.read_text(), s.read_text(), st.read_text()
+if 'MACHPSDR dual RX' in ss:
+    assert 'rx_channel_count' in hs, 'incomplete dual RX patch'
+    print('==> SoapyPlutoSDR already patched (dual RX)')
+    sys.exit(0)
+
+def repl(text, old, new, why):
+    assert text.count(old) == 1, why
+    return text.replace(old, new, 1)
+
+# header: cache the RX channel count next to the AGC flag the previous patch added
+anchor = '\t\tbool fastGainMode;'
+assert hs.count(anchor) == 1, 'dual RX: expected fastGainMode member (run AGC patch first)'
+hs = hs.replace(anchor, anchor + '\n\t\tsize_t rx_channel_count;', 1)
+
+# constructor: two scan elements per RX channel on the RX DMA -> four means 2R2T
+ctor_anchor = '''	if (dev == nullptr || rx_dev == nullptr || tx_dev == nullptr) {
+		SoapySDR_logf(SOAPY_SDR_ERROR, "no device found in this context.");
+		throw std::runtime_error("no device found in this context");
+	}'''
+count_block = ctor_anchor + '''
+
+	/* MACHPSDR dual RX: the RX DMA (cf-ad9361-lpc) carries two scan elements
+	   per RX channel (I,Q), so four of them is a 2R2T image with a real second
+	   input.  Both RX share the one synthesiser and baseband clock. */
+	rx_channel_count = 1;
+	{
+		unsigned int n = iio_device_get_channels_count(rx_dev), scan = 0;
+		for (unsigned int i = 0; i < n; i++)
+			if (iio_channel_is_scan_element(iio_device_get_channel(rx_dev, i)))
+				scan++;
+		if (scan >= 4)
+			rx_channel_count = scan / 2;
+	}'''
+ss = repl(ss, ctor_anchor, count_block, 'dual RX: unexpected constructor null-check')
+
+# getNumChannels: report the RX count for the RX direction
+gnc = '''size_t SoapyPlutoSDR::getNumChannels( const int dir ) const
+{
+	return(1);
+}'''
+gnc_new = '''size_t SoapyPlutoSDR::getNumChannels( const int dir ) const
+{
+	if (dir == SOAPY_SDR_RX)
+		return rx_channel_count;
+	return(1);
+}'''
+ss = repl(ss, gnc, gnc_new, 'dual RX: unexpected getNumChannels')
+
+# per-RX gain: voltage0 -> voltageN on the three RX gain/gain-mode sites
+ss = repl(ss,
+    'iio_channel_attr_write_longlong(iio_device_find_channel(dev, "voltage0", false),"hardwaregain", gain);',
+    'iio_channel_attr_write_longlong(iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", false),"hardwaregain", gain);',
+    'dual RX: unexpected RX setGain')
+ss = repl(ss,
+    'if(iio_channel_attr_read_longlong(iio_device_find_channel(dev, "voltage0", false),"hardwaregain",&gain )!=0)',
+    'if(iio_channel_attr_read_longlong(iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", false),"hardwaregain",&gain )!=0)',
+    'dual RX: unexpected RX getGain')
+ss = repl(ss,
+    'iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false), "gain_control_mode", fastGainMode ? "fast_attack" : "slow_attack");',
+    'iio_channel_attr_write(iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", false), "gain_control_mode", fastGainMode ? "fast_attack" : "slow_attack");',
+    'dual RX: unexpected setGainMode(auto)')
+ss = repl(ss,
+    'iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false), "gain_control_mode", "manual");',
+    'iio_channel_attr_write(iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", false), "gain_control_mode", "manual");',
+    'dual RX: unexpected setGainMode(manual)')
+
+# idempotency marker (also proves this file was the one patched)
+ss = repl(ss, 'gainMode = automatic;', 'gainMode = automatic; /* MACHPSDR dual RX */',
+          'dual RX: unexpected setGainMode assignment')
+
+# recv: deinterleave into the caller buffer's own I/Q slot (i&1), never the
+# global channel index i, which for the second RX ran off the end of buffs[1]
+for slot in ('dst_cs16[j * 2 + i] = conv;',
+             'dst_cf32[j * 2 + i] = float(conv) / 2048.0f;',
+             'dst_cs8[j * 2 + i] = int8_t(conv >> 4);'):
+    sts = repl(sts, slot, slot.replace('j * 2 + i', 'j * 2 + (i & 1)'), 'dual RX: unexpected recv slot')
+
+h.write_text(hs); s.write_text(ss); st.write_text(sts)
+print('==> patched SoapyPlutoSDR: dual RX exposed, deinterleave + per-RX gain fixed')
+PATCH
+}
+patch_dual_rx
+
 # RX and TX share the AD9361 baseband clock/FIR. The startup log measured
 # 3.84 seconds in EACH setSampleRate(768000): libad9361 disables, uploads and
 # enables the same FIR twice. Cache only a successful configuration in this

@@ -107,6 +107,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].adc",rx->channel);
   sprintf(value,"%d",rx->adc);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].soapy_rx_antenna",rx->channel);
+  sprintf(value,"%d",rx->soapy_rx_antenna);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].sample_rate",rx->channel);
   sprintf(value,"%d",rx->sample_rate);
   setProperty(name,value);
@@ -591,6 +594,24 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].adc",rx->channel);
   value=getProperty(name);
   if(value) rx->adc=atol(value);
+
+  sprintf(name,"receiver[%d].soapy_rx_antenna",rx->channel);
+  value=getProperty(name);
+  if(value) rx->soapy_rx_antenna=atol(value);
+  /* Clamp to what the device really has: a props file from a 2R2T build opened
+     on a 1R1T device (or a hand-edited value) must not select a feed the
+     stream never carries. */
+  {
+    int hwch=1;
+#ifdef SOAPYSDR
+    if(radio!=NULL && radio->discovered!=NULL &&
+       radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+       radio->discovered->info.soapy.rx_channels>0)
+      hwch=(int)radio->discovered->info.soapy.rx_channels;
+#endif
+    if(rx->soapy_rx_antenna<0) rx->soapy_rx_antenna=0;
+    if(rx->soapy_rx_antenna>=hwch) rx->soapy_rx_antenna=hwch-1;
+  }
 
   sprintf(name,"receiver[%d].sample_rate",rx->channel);
   value=getProperty(name);
