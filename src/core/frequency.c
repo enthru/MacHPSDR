@@ -23,13 +23,9 @@
 // A US band plan: which sub-band a frequency falls in, its human-readable name,
 // and whether it is transmittable.
 //
-// NOTHING IN THE TREE CALLS ANY OF IT.  getBand(), getFrequencyInfo() and
-// canTransmit() have no callers outside this file, and the band readout the VFO
-// actually shows comes from band.c's much coarser table.  It is compiled and
-// linked into every build regardless.  Said here because it is not visible from
-// the code: the next reader should know the table is inert before spending time
-// on it, and should decide whether to wire it up or drop it rather than assume
-// it is load-bearing.
+// The lookup functions below remain available for the original callers, while
+// the panadapter walks this table through frequency_info_count()/at() to draw
+// modulation and activity allocations on every amateur band.
 //
 // THE TABLE MUST STAY SORTED BY minFrequency.  Both lookups walk it in order and
 // bail out the moment `frequency < info->minFrequency`, which is only valid on a
@@ -395,6 +391,15 @@ struct frequency_info frequencyInfo[]=
 
     };
 
+int frequency_info_count(void) {
+    return (int)(sizeof(frequencyInfo)/sizeof(frequencyInfo[0]))-1;
+}
+
+const struct frequency_info* frequency_info_at(int index) {
+    if(index<0 || index>=frequency_info_count()) return NULL;
+    return &frequencyInfo[index];
+}
+
 /* --------------------------------------------------------------------------*/
 /** 
 * @brief iGet the frequency information
@@ -481,4 +486,3 @@ int canTransmit(void) {
     }
     return result;
 }
-

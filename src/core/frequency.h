@@ -31,6 +31,10 @@ struct frequency_info {
         int transmit;
     };
 
+/* Read-only access to the detailed band-plan table.  The panadapter uses this
+ * to draw the same kind of allocation strip that QO-100 already has. */
+extern int frequency_info_count(void);
+extern const struct frequency_info* frequency_info_at(int index);
 
 extern char* getFrequencyInfo(long long frequency,int filter_low,int filter_high);
 extern int getBand(long long frequency);

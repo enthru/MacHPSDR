@@ -400,6 +400,11 @@ static void panadapter_agc_line_changed_cb(GtkWidget *widget, gpointer data) {
   rx->panadapter_agc_line=rx->panadapter_agc_line==TRUE?FALSE:TRUE;
 }
 
+static void panadapter_bandplan_changed_cb(GtkWidget *widget, gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->panadapter_bandplan=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+}
+
 static void show_panadapter_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
   rx->show_panadapter=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
@@ -1548,10 +1553,18 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_agc_line,3,2,2,1);
   g_signal_connect(panadapter_agc_line,"toggled",G_CALLBACK(panadapter_agc_line_changed_cb),rx);
 
+  GtkWidget *panadapter_bandplan=gtk_check_button_new_with_label("Band Plan");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(panadapter_bandplan),rx->panadapter_bandplan);
+  gtk_widget_set_tooltip_text(panadapter_bandplan,
+      "Show modulation and activity allocations over the panadapter");
+  gtk_widget_set_margin_start(panadapter_bandplan,24);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_bandplan,3,3,2,1);
+  g_signal_connect(panadapter_bandplan,"toggled",G_CALLBACK(panadapter_bandplan_changed_cb),rx);
+
   GtkWidget *panadapter_single_color_label=gtk_label_new("Panadapter Color:");
   gtk_widget_set_visible(panadapter_single_color_label, TRUE);
   gtk_widget_set_margin_start(panadapter_single_color_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,3,3,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_label,3,4,1,1);
 
   GtkStringList *psc_sl=gtk_string_list_new(NULL);
   for(i=0; i<(int)PANADAPTER_COLOR_COUNT; i++) {
@@ -1560,14 +1573,14 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_single_color_b=gtk_drop_down_new(G_LIST_MODEL(psc_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_single_color_b),rx->panadapter_single_color);
   gtk_widget_set_visible(panadapter_single_color_b, TRUE);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,4,3,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_single_color_b,4,4,1,1);
   g_signal_connect(panadapter_single_color_b,"notify::selected",G_CALLBACK(panadapter_single_color_changed_cb),rx);
 
   // Turn the spectroscope off entirely (waterfall then fills the whole area).
   GtkWidget *show_panadapter=gtk_check_button_new_with_label("Show Panadapter");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (show_panadapter), rx->show_panadapter);
   gtk_widget_set_margin_start(show_panadapter,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),show_panadapter,3,4,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),show_panadapter,3,5,2,1);
   g_signal_connect(show_panadapter,"toggled",G_CALLBACK(show_panadapter_cb),rx);
 
   // S-meter needle ballistics (0 = instant, 100 = heaviest damping).
@@ -1608,69 +1621,69 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   GtkWidget *panadapter_peak_hold=gtk_check_button_new_with_label("Peak Hold");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_peak_hold), rx->panadapter_peak_hold);
   gtk_widget_set_margin_start(panadapter_peak_hold,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_hold,3,5,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_hold,3,6,2,1);
   g_signal_connect(panadapter_peak_hold,"toggled",G_CALLBACK(panadapter_peak_hold_changed_cb),rx);
 
   GtkWidget *panadapter_peak_decay_label=gtk_label_new("Peak Decay (dB/s):");
   gtk_widget_set_margin_start(panadapter_peak_decay_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_label,3,6,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_label,3,7,1,1);
 
   GtkWidget *panadapter_peak_decay_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_peak_decay,0.0, 50.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_peak_decay_scale,200,30);
   sui_scale_show_value(panadapter_peak_decay_scale,0);
   gtk_widget_set_visible(panadapter_peak_decay_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_peak_decay_scale),"value_changed",G_CALLBACK(panadapter_peak_decay_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_scale,4,6,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_peak_decay_scale,4,7,1,1);
 
   GtkWidget *panadapter_histogram=gtk_check_button_new_with_label("Histogram");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_histogram), rx->panadapter_histogram);
   gtk_widget_set_margin_start(panadapter_histogram,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram,3,7,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram,3,8,2,1);
   g_signal_connect(panadapter_histogram,"toggled",G_CALLBACK(panadapter_histogram_changed_cb),rx);
 
   GtkWidget *panadapter_histogram_decay_label=gtk_label_new("Persistence Decay:");
   gtk_widget_set_margin_start(panadapter_histogram_decay_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram_decay_label,3,8,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram_decay_label,3,9,1,1);
 
   GtkWidget *panadapter_histogram_decay_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_histogram_decay,1.0, 100.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_histogram_decay_scale,200,30);
   sui_scale_show_value(panadapter_histogram_decay_scale,0);
   gtk_widget_set_visible(panadapter_histogram_decay_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_histogram_decay_scale),"value_changed",G_CALLBACK(panadapter_histogram_decay_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram_decay_scale,4,8,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_histogram_decay_scale,4,9,1,1);
 
   GtkWidget *panadapter_phase=gtk_check_button_new_with_label("Phase Scope");
   gtk_check_button_set_active (GTK_CHECK_BUTTON (panadapter_phase), rx->panadapter_phase);
   gtk_widget_set_margin_start(panadapter_phase,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase,3,9,2,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase,3,10,2,1);
   g_signal_connect(panadapter_phase,"toggled",G_CALLBACK(panadapter_phase_changed_cb),rx);
 
   GtkWidget *panadapter_phase_mode_label=gtk_label_new("Phase Style:");
   gtk_widget_set_margin_start(panadapter_phase_mode_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_label,3,10,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_label,3,11,1,1);
 
   GtkStringList *pm_sl=gtk_string_list_new(NULL);
   gtk_string_list_append(pm_sl,"Dots");
   gtk_string_list_append(pm_sl,"Lines");
   GtkWidget *panadapter_phase_mode_b=gtk_drop_down_new(G_LIST_MODEL(pm_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_phase_mode_b),rx->panadapter_phase_mode);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_b,4,10,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_mode_b,4,11,1,1);
   g_signal_connect(panadapter_phase_mode_b,"notify::selected",G_CALLBACK(panadapter_phase_mode_changed_cb),rx);
 
   GtkWidget *panadapter_phase_gain_label=gtk_label_new("Phase Gain:");
   gtk_widget_set_margin_start(panadapter_phase_gain_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_label,3,11,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_label,3,12,1,1);
 
   GtkWidget *panadapter_phase_gain_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(rx->panadapter_phase_gain,10.0, 400.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_phase_gain_scale,200,30);
   sui_scale_show_value(panadapter_phase_gain_scale,0);
   gtk_widget_set_visible(panadapter_phase_gain_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_phase_gain_scale),"value_changed",G_CALLBACK(panadapter_phase_gain_changed_cb),rx);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_scale,4,11,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_gain_scale,4,12,1,1);
 
   GtkWidget *panadapter_phase_source_label=gtk_label_new("Phase Source:");
   gtk_widget_set_margin_start(panadapter_phase_source_label,24);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_label,3,12,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_label,3,13,1,1);
 
   GtkStringList *ps_sl=gtk_string_list_new(NULL);
   gtk_string_list_append(ps_sl,"Wideband");
@@ -1678,12 +1691,12 @@ GtkWidget *create_receiver_dialog(RECEIVER *rx) {
   gtk_string_list_append(ps_sl,"Diversity");
   GtkWidget *panadapter_phase_source_b=gtk_drop_down_new(G_LIST_MODEL(ps_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(panadapter_phase_source_b),rx->panadapter_phase_source);
-  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_b,4,12,1,1);
+  gtk_grid_attach(GTK_GRID(panadapter_grid),panadapter_phase_source_b,4,13,1,1);
   g_signal_connect(panadapter_phase_source_b,"notify::selected",G_CALLBACK(panadapter_phase_source_changed_cb),rx);
 
   // Waterfall controls live INSIDE the Panadapter frame now, filling the empty
   // lower half of its left column (the left group ended at Averaging/row 7 while
-  // the right group runs to row 12). No separate Waterfall frame — the operator
+  // the right group runs to row 13). No separate Waterfall frame — the operator
   // asked for these elements tucked into the panadapter block itself.
   GtkWidget *waterfall_hdr=gtk_label_new(NULL);
   gtk_label_set_markup(GTK_LABEL(waterfall_hdr),"<b>Waterfall</b>");

@@ -344,6 +344,7 @@ typedef struct _receiver {
   gboolean panadapter_filled;
   gboolean panadapter_gradient;
   gboolean panadapter_agc_line;
+  gboolean panadapter_bandplan;   // detailed mode/activity allocations over the spectrum
   gint panadapter_single_color;
   gint display_detector_mode;   // WDSP DETECTOR_MODE_* (0=Peak,1=Rosenfell,2=Average,3=Sample)
   gint display_average_mode;    // WDSP AVERAGE_MODE_* (0=None,1=Recursive,2=Time Window,3=Log Recursive)

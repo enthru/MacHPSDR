@@ -53,6 +53,7 @@
 #include "mode.h"
 #include "filter.h"
 #include "band.h"
+#include "frequency.h"
 #include "receiver.h"
 #include "rx_panadapter.h"
 #include "transmitter.h"
@@ -807,6 +808,110 @@ static void receiver_draw_qo100_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
       double tw=lm_measure(widget, 10.0, lbl);
       double ty=(y>12.0)?y-2.0:y+12.0;   // flip below the line when it is at the top
       lm_text(snapshot, widget, (double)display_width-tw-4.0, ty, 10.0, &rc, lbl, FALSE);
+    }
+  }
+}
+
+// Detailed amateur-band allocations.  frequency.c already carries the plan
+// used by the frequency lookup API; this view turns that otherwise hidden information
+// into the same compact tinted strip and marker vocabulary as QO-100.
+static const char *bandplan_short_label(const char *label) {
+  const char *space=strchr(label,' ');
+  return (space!=NULL && space[1]!='\0')?space+1:"All modes";
+}
+
+static GdkRGBA bandplan_colour(const char *label, double alpha) {
+  if(strstr(label,"Beacon") || strstr(label,"Calling"))
+    return nrgba(1.00,0.85,0.20,alpha);
+  if(strstr(label,"CW"))
+    return nrgba(0.30,0.75,1.00,alpha);
+  if(strstr(label,"RTTY") || strstr(label,"Digital") || strstr(label,"Digi") ||
+     strstr(label,"Packet") || strstr(label,"Data") || strstr(label,"Non Voice"))
+    return nrgba(0.65,0.45,1.00,alpha);
+  if(strstr(label,"FM") || strstr(label,"Repeater"))
+    return nrgba(0.25,0.85,0.90,alpha);
+  if(strstr(label,"AM"))
+    return nrgba(1.00,0.55,0.25,alpha);
+  if(strstr(label,"Satellite"))
+    return nrgba(0.90,0.45,0.85,alpha);
+  if(strstr(label,"SSB") || strstr(label,"SSTV") || strstr(label,"Weak Signal"))
+    return nrgba(0.30,1.00,0.50,alpha);
+  return nrgba(0.65,0.65,0.65,alpha);
+}
+
+static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
+                                         RECEIVER *rx, int display_width,
+                                         int display_height) {
+  if(!rx->panadapter_bandplan || rx->hz_per_pixel<=0.0 || rx->band_a<0 ||
+     rx->band_a>=BANDS || rx->band_a==bandGen || rx->band_a==bandWWV) return;
+#ifdef SOAPYSDR
+  if(rx->band_a==bandAIR) return;
+#endif
+
+  BAND *band=band_get_band(rx->band_a);
+  if(band==NULL || band->frequencyMin==0LL || band->frequencyMax==0LL) return;
+
+  long long half=(long long)rx->sample_rate/2LL;
+  long long min_display=(rx->frequency_a-half)+(long long)((double)rx->pan*rx->hz_per_pixel);
+  long long max_display=min_display+(long long)((double)display_width*rx->hz_per_pixel);
+  if(max_display<band->frequencyMin || min_display>band->frequencyMax) return;
+
+  const double strip_h=8.0;
+  double top=(double)display_height-strip_h-16.0;
+  if(top<0.0) top=0.0;
+
+  gboolean band_has_plan=FALSE;
+  for(int i=0;i<frequency_info_count();i++) {
+    const struct frequency_info *fi=frequency_info_at(i);
+    if(fi==NULL || !fi->transmit || fi->maxFrequency<band->frequencyMin ||
+       fi->minFrequency>band->frequencyMax) continue;
+    band_has_plan=TRUE;
+    if(fi->maxFrequency<min_display || fi->minFrequency>max_display) continue;
+
+    double xl=((double)fi->minFrequency-(double)min_display)/rx->hz_per_pixel;
+    double xr=((double)fi->maxFrequency-(double)min_display)/rx->hz_per_pixel;
+    const char *label=bandplan_short_label(fi->info);
+
+    // A one-frequency allocation is a calling/beacon marker, not a coloured
+    // area.  Draw it through the trace just as the QO-100 beacons are drawn.
+    if(fi->minFrequency==fi->maxFrequency) {
+      if(xl>=0.0 && xl<=(double)display_width) {
+        GdkRGBA marker=bandplan_colour(fi->info,0.75);
+        lm_line(snapshot,xl,0.0,xl,(double)display_height-16.0,1.0,&marker);
+      }
+      continue;
+    }
+
+    if(xl<0.0) xl=0.0;
+    if(xr>(double)display_width) xr=(double)display_width;
+    if(xr-xl<1.0) continue;
+    GdkRGBA fill=bandplan_colour(fi->info,0.30);
+    lm_fill(snapshot,xl,top,xr-xl,strip_h,&fill);
+
+    double tw=lm_measure(widget,10.0,label);
+    if(xr-xl>tw+6.0) {
+      GdkRGBA text=bandplan_colour(fi->info,0.95);
+      lm_text(snapshot,widget,(xl+xr)/2.0-tw/2.0,top-2.0,10.0,&text,label,FALSE);
+    }
+  }
+
+  // A couple of optional hardware bands do not yet have subdivisions in the
+  // legacy detailed table.  Still mark their allocation rather than making the
+  // feature mysteriously disappear on precisely those bands.
+  if(!band_has_plan) {
+    double xl=((double)band->frequencyMin-(double)min_display)/rx->hz_per_pixel;
+    double xr=((double)band->frequencyMax-(double)min_display)/rx->hz_per_pixel;
+    if(xl<0.0) xl=0.0;
+    if(xr>(double)display_width) xr=(double)display_width;
+    if(xr-xl>=1.0) {
+      GdkRGBA fill=nrgba(0.65,0.65,0.65,0.30);
+      lm_fill(snapshot,xl,top,xr-xl,strip_h,&fill);
+      const char *label="All modes";
+      double tw=lm_measure(widget,10.0,label);
+      if(xr-xl>tw+6.0) {
+        GdkRGBA text=nrgba(0.65,0.65,0.65,0.95);
+        lm_text(snapshot,widget,(xl+xr)/2.0-tw/2.0,top-2.0,10.0,&text,label,FALSE);
+      }
     }
   }
 }
@@ -1655,6 +1760,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   }
 
   // ---- QO-100 transponder band plan + beacon level reference ---------------
+  receiver_draw_bandplan_nodes(snapshot, widget, rx, display_width, display_height);
   if(radio->qo100_bandplan || radio->qo100_beacon_ref) {
     receiver_draw_qo100_nodes(snapshot, widget, rx, display_width, display_height, dbm_per_line);
   }

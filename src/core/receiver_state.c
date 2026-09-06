@@ -158,6 +158,9 @@ void receiver_save_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
   sprintf(value,"%d",rx->panadapter_agc_line);
   setProperty(name,value);
+  sprintf(name,"receiver[%d].panadapter_bandplan",rx->channel);
+  sprintf(value,"%d",rx->panadapter_bandplan);
+  setProperty(name,value);
   sprintf(name,"receiver[%d].panadapter_single_color",rx->channel);
   sprintf(value,"%d",rx->panadapter_single_color);
   setProperty(name,value);
@@ -958,6 +961,9 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].panadapter_agc_line",rx->channel);
   value=getProperty(name);
   if(value) rx->panadapter_agc_line=atoi(value);
+  sprintf(name,"receiver[%d].panadapter_bandplan",rx->channel);
+  value=getProperty(name);
+  if(value) rx->panadapter_bandplan=atoi(value);
 
   sprintf(name,"receiver[%d].display_detector_mode",rx->channel);
   value=getProperty(name);
