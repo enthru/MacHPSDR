@@ -842,19 +842,29 @@ static GdkRGBA bandplan_colour(const char *label, double alpha) {
 static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
                                          RECEIVER *rx, int display_width,
                                          int display_height) {
-  if(!rx->panadapter_bandplan || rx->hz_per_pixel<=0.0 || rx->band_a<0 ||
-     rx->band_a>=BANDS || rx->band_a==bandGen || rx->band_a==bandWWV) return;
-#ifdef SOAPYSDR
-  if(rx->band_a==bandAIR) return;
-#endif
+  if(!rx->panadapter_bandplan || rx->hz_per_pixel<=0.0) return;
 
-  BAND *band=band_get_band(rx->band_a);
-  if(band==NULL || band->frequencyMin==0LL || band->frequencyMax==0LL) return;
+  // Do not key the plan off rx->band_a.  VHF/UHF is built into the band list
+  // only with SoapySDR; the same 145 MHz display is GEN on a direct-sampling
+  // radio or a user XVTR on other hardware.  The frequency axis is the source
+  // of truth, and lets those three paths render identically.
+  BAND *band=NULL;
+  gboolean fallback_band=FALSE;
+  if(rx->band_a>=0 && rx->band_a<BANDS+XVTRS) {
+    band=band_get_band(rx->band_a);
+    if(band!=NULL &&
+       (!strcmp(band->title,QO100_XVTR_RX_TITLE) ||
+        !strcmp(band->title,QO100_XVTR_TX_TITLE))) return;
+    fallback_band=(band!=NULL && band->frequencyMin!=0LL && band->frequencyMax!=0LL &&
+                   rx->band_a!=bandGen && rx->band_a!=bandWWV);
+#ifdef SOAPYSDR
+    if(rx->band_a==bandAIR) fallback_band=FALSE;
+#endif
+  }
 
   long long half=(long long)rx->sample_rate/2LL;
   long long min_display=(rx->frequency_a-half)+(long long)((double)rx->pan*rx->hz_per_pixel);
   long long max_display=min_display+(long long)((double)display_width*rx->hz_per_pixel);
-  if(max_display<band->frequencyMin || min_display>band->frequencyMax) return;
 
   const double strip_h=8.0;
   double top=(double)display_height-strip_h-16.0;
@@ -863,9 +873,12 @@ static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widge
   gboolean band_has_plan=FALSE;
   for(int i=0;i<frequency_info_count();i++) {
     const struct frequency_info *fi=frequency_info_at(i);
-    if(fi==NULL || !fi->transmit || fi->maxFrequency<band->frequencyMin ||
-       fi->minFrequency>band->frequencyMax) continue;
-    band_has_plan=TRUE;
+    if(fi==NULL || !fi->transmit) continue;
+    // QO-100 owns a more accurate, purpose-built plan; never paint the old
+    // single generic QO-100 row over it.
+    if(qo100_in_transponder(fi->minFrequency)) continue;
+    if(fallback_band && fi->maxFrequency>=band->frequencyMin &&
+       fi->minFrequency<=band->frequencyMax) band_has_plan=TRUE;
     if(fi->maxFrequency<min_display || fi->minFrequency>max_display) continue;
 
     double xl=((double)fi->minFrequency-(double)min_display)/rx->hz_per_pixel;
@@ -898,7 +911,7 @@ static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widge
   // A couple of optional hardware bands do not yet have subdivisions in the
   // legacy detailed table.  Still mark their allocation rather than making the
   // feature mysteriously disappear on precisely those bands.
-  if(!band_has_plan) {
+  if(fallback_band && !band_has_plan) {
     double xl=((double)band->frequencyMin-(double)min_display)/rx->hz_per_pixel;
     double xr=((double)band->frequencyMax-(double)min_display)/rx->hz_per_pixel;
     if(xl<0.0) xl=0.0;
