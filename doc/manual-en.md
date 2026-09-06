@@ -1032,6 +1032,7 @@ line near the top of the `Makefile`; a change forces a full rebuild by itself.
 | `PURESIGNAL_INCLUDE` | on | Adaptive transmit predistortion (inert without transmit hardware). |
 | `PURESIGNAL_P2_INCLUDE` | on | The Protocol-2 half of it; needs `PURESIGNAL`. |
 | `FT8_INCLUDE` | on | FT8/FT4 receive, transmit and auto-QSO. |
+| `FREEDV_INCLUDE` | **off** | FreeDV 2020 receive in DIGU. Run `tools/build-freedv2020.sh`, then `make FREEDV_INCLUDE=FREEDV`; ordinary codec2 packages omit the required LPCNet backend. |
 | `SSTV_INCLUDE` | on | SSTV — **and also** WEFAX, the CW decoder/encoder/keyer, and APT. |
 | `HFDL_INCLUDE` | on | HFDL — **and also** VHF ACARS, whose message layer is the same code. Needs `liquid-dsp`; because the decoder is a port of `dumphfdl` the resulting build is effectively GPLv3. Also what enables the faster liquid-dsp resampler for wide spans. |
 | `CWDAEMON_INCLUDE` | **off** (Linux only) | CW keying through `unixcw`; needs `libcw`, which no stock system has, so enabling it by default would break a plain `make`. |

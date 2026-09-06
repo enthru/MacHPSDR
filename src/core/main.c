@@ -76,6 +76,9 @@
 #include "ft8_qso.h"
 #include "ft8_dxcc.h"
 #endif
+#ifdef FREEDV
+#include "freedv_decoder.h"
+#endif
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -1106,6 +1109,10 @@ int main(int argc, char **argv) {
   ft8_decoder_init();
   // Start the auto-QSO poll timer (idle until a QSO/CQ is started from the panel).
   ft8_qso_init();
+#endif
+#ifdef FREEDV
+  // The modem/LPCNet work stays off the real-time receiver thread.
+  freedv_decoder_init();
 #endif
 
 #ifdef _WIN32

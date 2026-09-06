@@ -179,6 +179,9 @@ GtkWidget *create_about_dialog(RADIO *r) {
 #ifdef FT8
   about_row(g,&row,"ft8_lib (Karlis Goba, YL3JG) — MIT · cty.dat DXCC data (Jim Reisert, AD1C)",FALSE);
 #endif
+#ifdef FREEDV
+  about_row(g,&row,"Codec 2 (LGPL-2.1) + LPCNet FreeDV (BSD-3-Clause) — David Rowe, VK5DGR  [FreeDV 2020]",FALSE);
+#endif
   about_row(g,&row,"RNNoise (Xiph.Org) — BSD-3 · libspecbleach (Luciano Dato) — LGPL-2.1+  [NR3/NR4]",FALSE);
 #ifdef HFDL
   about_row(g,&row,

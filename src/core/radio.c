@@ -73,6 +73,9 @@
 #include "ft8_panel.h"
 #include "ft8_qso.h"
 #endif
+#ifdef FREEDV
+#include "freedv_decoder.h"
+#endif
 #ifdef SSTV
 #include "sstv_decoder.h"
 #include "sstv_panel.h"
@@ -1402,6 +1405,7 @@ static const char *decode_mode_label(int m) {
     case DECODE_HFDL:  return "HFDL";
     case DECODE_APT:   return "APT";
     case DECODE_ACARS: return "ACARS";
+    case DECODE_FREEDV2020: return "FreeDV 2020";
   }
   return "?";
 }
@@ -1420,6 +1424,9 @@ static int decode_valid_mask(RECEIVER *rx) {
 #endif
 #ifdef HFDL
     if(rx->mode_a==DIGU) m |= (1<<DECODE_HFDL);   // aviation HF data link — USB (DIGU) only
+#endif
+#ifdef FREEDV
+    if(rx->mode_a==DIGU) m |= (1<<DECODE_FREEDV2020);
 #endif
     return m;
   }
@@ -2695,6 +2702,9 @@ static gboolean rds_update_cb(gpointer data) {
   gboolean wefax_active = digi && r->decode_mode==DECODE_WEFAX;   // HF USB radiofax
   gboolean cw_active = cw_cap && r->decode_mode==DECODE_CW;
   gboolean apt_active = apt_cap && r->decode_mode==DECODE_APT;
+#ifdef FREEDV
+  gboolean freedv_active = digu && r->decode_mode==DECODE_FREEDV2020;
+#endif
 #ifdef HFDL
   // HFDL (aviation HF data link) is HF USB — offered in DIGU only.
   gboolean hfdl_active = digu && r->decode_mode==DECODE_HFDL;
@@ -2714,6 +2724,9 @@ static gboolean rds_update_cb(gpointer data) {
     else if(wefax_active) title = "WEFAX";
     else if(cw_active) title = "CW";
     else if(apt_active) title = "APT";
+#ifdef FREEDV
+    else if(freedv_active) title = "FreeDV 2020";
+#endif
 #ifdef HFDL
     else if(hfdl_active) title = "HFDL";
     else if(acars_active) title = "ACARS";
@@ -2721,6 +2734,12 @@ static gboolean rds_update_cb(gpointer data) {
 #endif
     gtk_label_set_text(GTK_LABEL(r->rds_title), title);
   }
+#if defined(FT8) && defined(FREEDV)
+  if(freedv_active) {
+    freedv_decoder_get_status(ft8buf,sizeof(ft8buf));
+    show_ft8=TRUE;
+  }
+#endif
   if(wfm) {
     int chn=rx->channel;
     char ps[9], rt[65], title[65], artist[65];

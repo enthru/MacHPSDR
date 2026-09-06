@@ -42,6 +42,12 @@ unaffected. hfdl_lib/hfdl_crc.c is dumphfdl's crc16_ccitt.
 The embedded HFDL ground-station table in src/decode/hfdl_msg.c is a snapshot of
 dumphfdl's etc/systable.conf.
 
+The optional FreeDV 2020 receiver links Codec 2 (David Rowe, LGPL 2.1) and its
+LPCNet FreeDV speech synthesizer (David Rowe, BSD 3-Clause). They are not vendored;
+tools/build-freedv2020.sh builds pinned upstream revisions into build/freedv.
+Their license texts and source are available from https://github.com/drowe67/codec2
+and https://github.com/drowe67/LPCNet.
+
 The VHF ACARS decoder (src/decode/acars_*.c, built by the same HFDL_INCLUDE flag
 because it shares that decoder's message layer) has its MSK demodulator and
 frame state machine ported from acarsdec (Thierry Leconte), which is licensed

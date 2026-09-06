@@ -156,6 +156,35 @@ ft8_decoder.o ft8_encoder.o ft8_qso.o ft8_panel.o ft8_dialog.o ft8_udp.o ft8_psk
 $(FT8_LIB_OBJS)
 endif
 
+# FreeDV 2020 receive.  This mode specifically needs a codec2 build with
+# LPCNet enabled; many distribution/Homebrew codec2 packages omit that neural
+# backend even though their public header still defines FREEDV_MODE_2020.
+# Build the tested repository-local backend, then enable it explicitly:
+#
+#   tools/build-freedv2020.sh
+#   make FREEDV_INCLUDE=FREEDV
+#
+# Keeping this opt-in prevents an ordinary build from advertising a mode whose
+# freedv_open(FREEDV_MODE_2020) is absent (and codec2 1.2.0 from Homebrew even
+# crashes in that call rather than returning NULL).
+#FREEDV_INCLUDE=FREEDV
+
+ifeq ($(FREEDV_INCLUDE),FREEDV)
+FREEDV_OPTIONS=-D FREEDV
+FREEDV_PREFIX?=build/freedv
+FREEDV_INCLUDES=-I$(FREEDV_PREFIX)/include/codec2
+FREEDV_LIBS=-L$(FREEDV_PREFIX)/lib -lcodec2
+ifeq ($(UNAME_S),Linux)
+FREEDV_RPATH=-Wl,-rpath,'$$ORIGIN/$(FREEDV_PREFIX)/lib'
+endif
+ifeq ($(UNAME_S),Darwin)
+FREEDV_RPATH=-Wl,-rpath,@loader_path/$(FREEDV_PREFIX)/lib
+endif
+FREEDV_SOURCES=freedv_decoder.c
+FREEDV_HEADERS=freedv_decoder.h
+FREEDV_OBJS=freedv_decoder.o
+endif
+
 # SSTV receive decoder (analogue image, Scottie/Martin) + WEFAX / HF radiofax
 # receive decoder.  Self-contained (their own Hilbert-transform FM discriminator;
 # no external DSP dependency).  Comment out SSTV_INCLUDE to build without SSTV /
@@ -324,7 +353,7 @@ CFLAGS= -g -O3 $(STD_FLAG) -Wall -Wextra \
         -Wno-unused-parameter -Wno-unused-variable \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(FREEDV_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
           $(WIN_OPTIONS) $(SAN_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
@@ -380,27 +409,27 @@ ifeq ($(UNAME_S), Linux)
 # (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
 # but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
 # require `sudo make install` of an upstream WDSP.
-LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(FREEDV_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
 # so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
 # make; single-quoted so the shell passes $ORIGIN through to the linker literally.)
-RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)'
+RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)' $(FREEDV_RPATH)
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(FREEDV_LIBS) $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
-RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks
+RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks $(FREEDV_RPATH)
 endif
 ifneq ($(ISMINGW),)
 # -lws2_32 is Winsock, -liphlpapi backs the getifaddrs() shim in net_compat.c,
 # -lwinmm is timeBeginPeriod (the default 15.6 ms timer tick is far too coarse
 # for the protocol-1 output pacing).
 LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) \
-     $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
+     $(MIDI_LIBS) $(FREEDV_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
 # The same two for a harness that links net_compat.o without the whole app.
 # Empty off Windows, where net_compat.o needs nothing beyond libc.
 WIN_NET_LIBS=-lws2_32 -liphlpapi
@@ -458,7 +487,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(FREEDV_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -744,8 +773,8 @@ tci_ws.o \
 tci_dialog.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
-	$(LINK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
+	$(LINK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
 
 # Windows resources.  Both WIN_RES_OBJS and WIN_LDFLAGS above are EMPTY off
 # Windows and this rule does not exist there, so the two lines above are the
@@ -764,7 +793,7 @@ endif
 # them in here makes a plain `make` recompile every object that includes a
 # changed header (e.g. a struct field added to radio.h) — without this, stale
 # objects keep the old struct layout and corrupt memory at run time.
-ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
+ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
 # Build the in-tree WDSP (patched: WFM demod + tweaks) on BOTH platforms, so the
@@ -817,7 +846,8 @@ endif
 
 
 all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
-                         $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES)
+                         $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES) \
+                         $(FREEDV_SOURCES) $(FREEDV_HEADERS)
 
 # Headless HFDL harness: feeds an I/Q WAV straight into the decoder with an
 # explicit receiver centre and tuned-channel frequency and prints every message.

@@ -110,11 +110,12 @@ typedef enum {
   DECODE_HFDL,      // HFDL (aviation HF data link) I/Q decoder (HFDL build flag)
   DECODE_APT,       // APT (NOAA weather satellite) image I/Q decoder (VHF FM)
   DECODE_ACARS,     // VHF ACARS (aviation VHF data link) I/Q decoder (HFDL build flag)
+  DECODE_FREEDV2020,// FreeDV 2020 digital voice (codec2 + LPCNet build flag)
 } decode_mode_t;
 
 // Last entry of decode_mode_t — the decoder-selector rebuild walks up to it, so
 // a new decoder added below without moving this would never be offered.
-#define DECODE_LAST DECODE_ACARS
+#define DECODE_LAST DECODE_FREEDV2020
 
 typedef struct _radio {
   DISCOVERED *discovered;

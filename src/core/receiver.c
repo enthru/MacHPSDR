@@ -79,6 +79,9 @@
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
 #endif
+#ifdef FREEDV
+#include "freedv_decoder.h"
+#endif
 #ifdef SSTV
 #include "sstv_decoder.h"
 #include "wefax_decoder.h"
@@ -2575,6 +2578,10 @@ static gboolean decoder_taps_audio(RECEIVER *rx) {
   // CW is only valid in the CW modes.
   if(radio->decode_mode==DECODE_CW)
     return rx->mode_a==CWL || rx->mode_a==CWU;
+#ifdef FREEDV
+  if(radio->decode_mode==DECODE_FREEDV2020)
+    return rx->mode_a==DIGU;
+#endif
   // WEFAX/FT8/FT4 are HF SSB-only (DIGU/DIGL).
   return rx->mode_a==DIGU || rx->mode_a==DIGL;
 }
@@ -2776,8 +2783,26 @@ static void process_rx_buffer(RECEIVER *rx) {
   gdouble left_sample,right_sample;
   short left_audio_sample, right_audio_sample;
   SUBRX *subrx=(SUBRX *)rx->subrx;
+#ifdef FREEDV
+  gboolean freedv_on=(radio->active_receiver==rx && rx->mode_a==DIGU &&
+                       radio->decode_mode==DECODE_FREEDV2020);
+  gdouble *freedv_speech=NULL;
+  if(radio->active_receiver==rx) {
+    freedv_decoder_set_enabled(freedv_on);
+    if(freedv_on) {
+      freedv_speech=g_newa(gdouble,rx->output_samples);
+      freedv_decoder_add_audio(rx->audio_output_buffer,rx->output_samples);
+      freedv_decoder_get_audio(freedv_speech,rx->output_samples);
+    }
+  }
+#endif
 
   for (int i=0;i<rx->output_samples;i++) {
+#ifdef FREEDV
+    if(freedv_on) {
+      left_sample=right_sample=freedv_speech[i];
+    } else
+#endif
     // Sub-RX: main on the left channel, sub on the right, with an adjustable
     // crossfeed (rx->subrx_mix 0..100). mix=0 keeps the hard L/R split; mix=100
     // (m=0.5) collapses both to an equal mono blend audible in both ears.
