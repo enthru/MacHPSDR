@@ -1148,7 +1148,9 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
           gtk_string_list_append(modes,"Slow");
           gtk_string_list_append(modes,"Fast");
           GtkWidget *mode=gtk_drop_down_new(G_LIST_MODEL(modes),NULL);
-          g_object_unref(modes);
+          // gtk_drop_down_new() takes ownership of the model.  Dropping our
+          // only reference here left the widget with a dangling GListModel and
+          // crashed in g_list_model_get_n_items() when Configure was closed.
           gtk_drop_down_set_selected(GTK_DROP_DOWN(mode),radio->adc[0].agc_fast?1:0);
           gtk_grid_attach(GTK_GRID(adc0_grid),mode,1,3,1,1);
           g_signal_connect(mode,"notify::selected",G_CALLBACK(pluto_agc_mode_cb),&radio->adc[0]);
