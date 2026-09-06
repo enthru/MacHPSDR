@@ -87,7 +87,7 @@ marked together with a warm amber highlight on the selected page.
 | **SoapySDR RX + TX** | Receive *and* transmit on SoapySDR devices — HackRF, RTL-SDR, LimeSDR, PlutoSDR (including one on another subnet, added by hand), SoapyRemote. Transmit is full-duplex by default on PlutoSDR and half-duplex on HackRF, keyed from the mic or the built-in encoders, with the Drive slider setting output power *(keys up on real hardware without crashing; on-air signal quality still needs more testing — CW and PureSignal are not available on this path)*. |
 | **macOS, Linux and Windows** | One tree, three platforms, each with a package that needs nothing installed on the target: `make app` for a self-contained `MacHPSDR.app`, `make appimage` for a single-file Linux **AppImage**, and **MSYS2 / MinGW-w64** on Windows, where `make win-package` collects the `.exe`, GTK's DLLs, the pixbuf loaders, the compiled GSettings schemas and an icon theme into one folder that runs. Every release tag publishes all three *(the Windows build starts, discovers, plays audio and draws — but it has never been run against a radio on real Windows hardware; see [Building → Windows](#windows-msys2--mingw-w64))*. |
 | **Single-window UI** | All receivers stacked in one resizable window with a bottom toolbar and log area — layout remembered between sessions. |
-| **Colour skins** | Eleven dark/light schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
+| **Colour skins** | Sixteen dark, light, and mid-tone schemes, redesigned S-meter & frequency display, selectable waterfall themes. |
 | **Keyboard shortcuts** | Bind any of the radio's actions — zoom, band, filter, mode, VFO, RIT/XIT, volume, AGC, squelch, NB/NR/ANF, MOX and a hold-to-talk PTT — to keys of your own in **Configure → Hotkeys**: click the row, press the combination, done. One combination per action, matched by the physical key (a shortcut set on a Latin layout still fires on a Cyrillic one), suppressed while you are typing into a decoder panel, and saved with the radio's settings. |
 | **Broadcast FM + RDS** | WFM reception on SoapySDR devices with stereo decoding and a full RDS panel. |
 | **FT8 / FT4** | Opt-in decode in DIGU/DIGL (pick the decoder from the Decode block), plus transmit, auto-QSO, ADIF logging, PSK Reporter and a dedicated band waterfall. |
@@ -128,9 +128,10 @@ marked together with a warm amber highlight on the selected page.
   narrows SSB, and switching, say, from SSB to CW restores the AGC setting that
   mode had last. Both are remembered per receiver between sessions.
 
-- **Colour skins.** A dark interface with eleven selectable colour schemes
+- **Colour skins.** Sixteen selectable dark, light, and mid-tone colour schemes
   (Charcoal, Solarized Dark, Solarized Light, Nord, Gruvbox Dark, Dracula,
-  Tokyo Night, Catppuccin Mocha, Rosé Pine, One Dark, Gruvbox Light), chosen in
+  Tokyo Night, Catppuccin Mocha, Rosé Pine, One Dark, Gruvbox Light,
+  Sage Studio, Coastal Fog, Terracotta, Lavender Haze, Sandstone), chosen in
   **Configure → Display → Appearance** and remembered per radio. Includes a
   redesigned S-meter and frequency display. The waterfall has several selectable
   colour themes of its own, and the panadapter trace colour is chosen from a

@@ -203,6 +203,84 @@ static const char palette_gruvbox_light[]=
 "  @define-color INFO_ON #076678;\n"
 "  @define-color SPECTRUM_BG #1d2021;\n";
 
+// Contemporary mid-tone skins.  These deliberately sit between the usual
+// near-black editor palettes and paper-white light themes.  Their muted bases
+// use dark body text, while the spectrum remains deep enough for signal traces.
+static const char palette_sage_studio[]=
+"  @define-color BACKGROUND #909b8e;\n"
+"  @define-color SURFACE #a5afa2;\n"
+"  @define-color SURFACE_HOVER #b7c0b4;\n"
+"  @define-color BORDER #68756b;\n"
+"  @define-color OFF_WHITE #202923;\n"
+"  @define-color DARK_TEXT #2d3830;\n"
+"  @define-color ON_ACCENT #f7f4ec;\n"
+"  @define-color ACCENT_A #0f3538;\n"
+"  @define-color ACCENT_B #4d211c;\n"
+"  @define-color ACCENT_ON #536a45;\n"
+"  @define-color WARNING #8e2734;\n"
+"  @define-color INFO_ON #16606b;\n"
+"  @define-color SPECTRUM_BG #263633;\n";
+
+static const char palette_coastal_fog[]=
+"  @define-color BACKGROUND #8999a3;\n"
+"  @define-color SURFACE #9eacb4;\n"
+"  @define-color SURFACE_HOVER #b0bbc1;\n"
+"  @define-color BORDER #61727c;\n"
+"  @define-color OFF_WHITE #202a31;\n"
+"  @define-color DARK_TEXT #2b3740;\n"
+"  @define-color ON_ACCENT #f5f4ef;\n"
+"  @define-color ACCENT_A #0c333c;\n"
+"  @define-color ACCENT_B #4d211c;\n"
+"  @define-color ACCENT_ON #4c5789;\n"
+"  @define-color WARNING #8e2937;\n"
+"  @define-color INFO_ON #315c7d;\n"
+"  @define-color SPECTRUM_BG #24333b;\n";
+
+static const char palette_terracotta[]=
+"  @define-color BACKGROUND #a38c80;\n"
+"  @define-color SURFACE #b69f93;\n"
+"  @define-color SURFACE_HOVER #c7b2a7;\n"
+"  @define-color BORDER #79665d;\n"
+"  @define-color OFF_WHITE #30231f;\n"
+"  @define-color DARK_TEXT #40302a;\n"
+"  @define-color ON_ACCENT #fbf3ec;\n"
+"  @define-color ACCENT_A #092b2d;\n"
+"  @define-color ACCENT_B #3f1b17;\n"
+"  @define-color ACCENT_ON #65517d;\n"
+"  @define-color WARNING #8d2935;\n"
+"  @define-color INFO_ON #285c77;\n"
+"  @define-color SPECTRUM_BG #382d2a;\n";
+
+static const char palette_lavender_haze[]=
+"  @define-color BACKGROUND #918c9d;\n"
+"  @define-color SURFACE #a59faf;\n"
+"  @define-color SURFACE_HOVER #b7b1c0;\n"
+"  @define-color BORDER #696476;\n"
+"  @define-color OFF_WHITE #292531;\n"
+"  @define-color DARK_TEXT #393442;\n"
+"  @define-color ON_ACCENT #f8f4fa;\n"
+"  @define-color ACCENT_A #082933;\n"
+"  @define-color ACCENT_B #3f1b17;\n"
+"  @define-color ACCENT_ON #5d4e83;\n"
+"  @define-color WARNING #902d45;\n"
+"  @define-color INFO_ON #355b82;\n"
+"  @define-color SPECTRUM_BG #302d3b;\n";
+
+static const char palette_sandstone[]=
+"  @define-color BACKGROUND #aaa08c;\n"
+"  @define-color SURFACE #bdb39e;\n"
+"  @define-color SURFACE_HOVER #cdc4b1;\n"
+"  @define-color BORDER #7d7462;\n"
+"  @define-color OFF_WHITE #302d25;\n"
+"  @define-color DARK_TEXT #403c31;\n"
+"  @define-color ON_ACCENT #faf5e9;\n"
+"  @define-color ACCENT_A #0f3538;\n"
+"  @define-color ACCENT_B #51251f;\n"
+"  @define-color ACCENT_ON #55633e;\n"
+"  @define-color WARNING #8f2e32;\n"
+"  @define-color INFO_ON #315d70;\n"
+"  @define-color SPECTRUM_BG #353127;\n";
+
 static const THEME themes[]={
   { "Charcoal",         palette_charcoal,          TRUE  },
   { "Solarized Dark",   palette_solarized_dark,    TRUE  },
@@ -215,6 +293,11 @@ static const THEME themes[]={
   { "Rosé Pine",        palette_rose_pine,         TRUE  },
   { "One Dark",         palette_one_dark,          TRUE  },
   { "Gruvbox Light",    palette_gruvbox_light,     FALSE },
+  { "Sage Studio",      palette_sage_studio,       FALSE },
+  { "Coastal Fog",      palette_coastal_fog,       FALSE },
+  { "Terracotta",       palette_terracotta,        FALSE },
+  { "Lavender Haze",    palette_lavender_haze,     FALSE },
+  { "Sandstone",        palette_sandstone,         FALSE },
 };
 static const int n_themes=(int)(sizeof(themes)/sizeof(themes[0]));
 
