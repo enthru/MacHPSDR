@@ -111,10 +111,31 @@ static void font_reset_cb(GtkButton *b, gpointer data) {
   radio_refresh_skin(radio);
 }
 
+// Keep the five mid-tone additions at the top of the picker without changing
+// the numeric IDs stored in radio.theme.  The first eleven IDs pre-date them;
+// preserving those IDs means an existing setup still opens with the same skin.
+#define LEGACY_THEME_COUNT 11
+
+static int skin_theme_from_position(guint position) {
+  int count=css_theme_count();
+  int split=count<LEGACY_THEME_COUNT ? count : LEGACY_THEME_COUNT;
+  int featured=count-split;
+  if(position==GTK_INVALID_LIST_POSITION || position>=(guint)count) return 0;
+  return position<(guint)featured ? split+(int)position
+                                  : (int)position-featured;
+}
+
+static guint skin_position_from_theme(int theme) {
+  int count=css_theme_count();
+  int split=count<LEGACY_THEME_COUNT ? count : LEGACY_THEME_COUNT;
+  int featured=count-split;
+  if(theme<0 || theme>=count) theme=0;
+  return (guint)(theme>=split ? theme-split : featured+theme);
+}
+
 static void theme_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
-  int sel=(int)gtk_drop_down_get_selected(widget);
-  if(sel<0) sel=0;
+  int sel=skin_theme_from_position(gtk_drop_down_get_selected(widget));
   radio->theme=sel;
   css_set_theme(sel);         // restyle the CSS chrome live
   radio_refresh_skin(radio);  // repaint idle Cairo surfaces (e.g. TX monitor)
@@ -305,11 +326,17 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_widget_set_halign(skin_lbl,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_lbl,0,1,1,1);
   GtkStringList *skin_sl=gtk_string_list_new(NULL);
-  for(int t=0;t<css_theme_count();t++) {
+  int theme_count=css_theme_count();
+  int split=theme_count<LEGACY_THEME_COUNT ? theme_count : LEGACY_THEME_COUNT;
+  for(int t=split;t<theme_count;t++) {
+    gtk_string_list_append(skin_sl,css_theme_name(t));
+  }
+  for(int t=0;t<split;t++) {
     gtk_string_list_append(skin_sl,css_theme_name(t));
   }
   GtkWidget *skin_combo=gtk_drop_down_new(G_LIST_MODEL(skin_sl),NULL);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(skin_combo),r->theme);
+  gtk_drop_down_set_enable_search(GTK_DROP_DOWN(skin_combo),TRUE);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(skin_combo),skin_position_from_theme(r->theme));
   gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
   g_signal_connect(skin_combo,"notify::selected",G_CALLBACK(theme_cb),r);
 
