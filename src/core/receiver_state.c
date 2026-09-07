@@ -594,6 +594,19 @@ void receiver_restore_state(RECEIVER *rx) {
   sprintf(name,"receiver[%d].adc",rx->channel);
   value=getProperty(name);
   if(value) rx->adc=atol(value);
+#ifdef SOAPYSDR
+  /* A SoapySDR device has one tuner now (adcs==1): both RX halves of a 2R2T
+     Pluto share one LO, so a receiver's adc is always 0 and the second antenna
+     is selected by soapy_rx_antenna, not by the ADC. A props file written by an
+     older build (when a 2R2T device reported adcs==2) still holds
+     receiver[1].adc==1; left as-is that receiver becomes a phantom owner of a
+     non-existent adc 1 and opens a second, conflicting stream on the one iio
+     device -- which freezes the real receiver's stream. Clamp it. */
+  if(radio!=NULL && radio->discovered!=NULL &&
+     radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     rx->adc>=radio->discovered->adcs)
+    rx->adc=0;
+#endif
 
   sprintf(name,"receiver[%d].soapy_rx_antenna",rx->channel);
   value=getProperty(name);
