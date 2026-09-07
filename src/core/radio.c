@@ -427,7 +427,20 @@ static void rx_sync_shared_followers(RECEIVER *rx) {
   for(int i=0;i<radio->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
     RECEIVER *f=radio->receiver[i];
     if(f==NULL || f==rx || f->adc!=rx->adc) continue;
-    if(rx_clamp_to_shared_window(f)) {
+    // One LO, one converter: the follower takes the owner's converter, keeping
+    // its OWN real (hardware) frequency, so the two can never diverge into a
+    // different converter each -- 741 MHz on the owner and a phantom 10 GHz on
+    // the follower for the very same hardware. When the owner drops the
+    // converter (tuned out of a transverter band), the follower drops it too.
+    if(f->lo_a!=rx->lo_a || f->error_a!=rx->error_a) {
+      long long f_real=f->frequency_a-f->lo_a;   // the follower's own hardware freq
+      f->lo_a=rx->lo_a;
+      f->error_a=rx->error_a;
+      f->frequency_a=f_real+f->lo_a;
+      f->band_a=get_band_from_frequency(f->frequency_a);
+      frequency_changed(f);
+      update_vfo(f);
+    } else if(rx_clamp_to_shared_window(f)) {
       frequency_changed(f);
       update_vfo(f);
     }
@@ -460,6 +473,12 @@ static gboolean radio_startup_done=FALSE;
    no converter, so plain tuning is untouched. */
 static void receiver_sync_transverter(RECEIVER *rx) {
   if(rx==NULL || rx->lo_a==0 || !radio_startup_done) return;
+  // A shared-LO follower does not own its converter -- it inherits the owner's
+  // (rx_sync_shared_followers), because the two are one piece of hardware and
+  // cannot show different converters (741 MHz on one and 10 GHz on the other).
+  // So a follower never self-heals here; only the receiver that owns the LO does.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
+     !soapy_protocol_rx_owns_hardware(rx)) return;
   // Still inside SOME band that uses this converter LO? Then the receiver is
   // legitimately on it (search all bands, not just band_a).
   for(int b=0;b<BANDS+XVTRS;b++) {
@@ -503,6 +522,13 @@ static void receiver_sync_transverter(RECEIVER *rx) {
 }
 
 void frequency_changed(RECEIVER *rx) {
+
+    // First of all: drop or heal a converter the operator has tuned out of, so
+    // everything below (the shared-window clamp especially) sees a consistent
+    // dial/LO pair. If this ran AFTER the clamp, a shared-LO follower with a
+    // bogus converter would be dragged into the transverter band's dial range
+    // and the converter kept instead of cleared.
+    receiver_sync_transverter(rx);
 
 #ifdef SOAPYSDR
     // Before anything reads frequency_a: a receiver sharing a hardware RX
@@ -593,10 +619,6 @@ void frequency_changed(RECEIVER *rx) {
     // off-centre.
     receiver_apply_shift(rx,0,FALSE);
     rx->band_a=get_band_from_frequency(rx->frequency_a);
-    // Drop a converter the operator has tuned out of, or heal an inconsistent
-    // dial/LO pair, BEFORE pushing the hardware frequency so the radio, the
-    // notch tune-frequency and the dial all agree.
-    receiver_sync_transverter(rx);
     // Manual notches are stored as absolute RF: keep WDSP's notch-DB tune
     // frequency tracking frequency_a here too, not just in the ctun/freetune
     // branch above, or a notch would drift off-station under plain tuning.
