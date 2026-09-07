@@ -435,6 +435,73 @@ static void rx_sync_shared_followers(RECEIVER *rx) {
 }
 #endif
 
+static gboolean radio_startup_done=FALSE;
+
+/* Keep the converter/transverter honest with what the operator has tuned to.
+   A converter LO is a property of the BAND (set_band writes rx->lo_a =
+   b->frequencyLO), but the VFO wheel moves frequency_a without touching it. Two
+   faults come out of that and both are fixed here:
+
+   1. Tuning OUT of a transverter band left the converter applied, so the dial
+      read the on-air frequency of a signal the hardware was no longer receiving
+      (10489 for QO-100, then tuned lower). When the dial leaves every band that
+      uses this LO, drop to the real frequency (dial - lo_a) and re-derive the
+      band there.
+   2. Because tuning bounded the DIAL and not the hardware, the dial could be
+      left far from what lo_a implies -- a receiver reading 443 MHz while still
+      claiming a 9750 MHz converter, i.e. a hardware frequency of -9306. When the
+      real frequency (dial - lo_a) is not one the device can tune, the converter
+      is bogus for this dial: drop it and treat the DIAL as the real frequency,
+      which is the valid one. This self-heals a state a previous session saved.
+
+   Gated on radio_startup_done so a receiver restored with a converter LO before
+   bandRestoreState() has re-populated the XVTR/QO-100 band table is never
+   touched -- only live operator tuning changes a converter. No-op when there is
+   no converter, so plain tuning is untouched. */
+static void receiver_sync_transverter(RECEIVER *rx) {
+  if(rx==NULL || rx->lo_a==0 || !radio_startup_done) return;
+  // Still inside SOME band that uses this converter LO? Then the receiver is
+  // legitimately on it (search all bands, not just band_a).
+  for(int b=0;b<BANDS+XVTRS;b++) {
+    BAND *bb=band_get_band(b);
+    if(bb==NULL || strlen(bb->title)==0) continue;
+    if(bb->frequencyLO==rx->lo_a &&
+       rx->frequency_a>=bb->frequencyMin && rx->frequency_a<=bb->frequencyMax) {
+      rx->band_a=b;
+      return;
+    }
+  }
+  long long real=rx->frequency_a-rx->lo_a;   // frequency the hardware would receive
+  long long dev_min=0, dev_max=RECEIVER_FREQ_CEILING_HZ;
+  if(radio!=NULL && radio->discovered!=NULL) {
+    dev_min=(long long)radio->discovered->frequency_min;
+    if(radio->discovered->frequency_max>0) dev_max=(long long)radio->discovered->frequency_max;
+  }
+  if(real>=dev_min && real<=dev_max) {
+    // The real frequency is tunable: land on it and let the band decide the
+    // converter (a normal band has none).
+    int nb=get_band_from_frequency(real);
+    BAND *nbb=band_get_band(nb);
+    if(nbb==NULL) return;
+    log_info("%s: rx%d tuned out of its converter (dial %lld, LO %lld) -> real %lld on %s (LO %lld)\n",
+             __FUNCTION__,rx->channel,(long long)rx->frequency_a,(long long)rx->lo_a,
+             (long long)real,nbb->title,(long long)nbb->frequencyLO);
+    rx->band_a=nb;
+    rx->lo_a=nbb->frequencyLO;
+    rx->error_a=nbb->errorLO;
+    rx->frequency_a=real+rx->lo_a;
+  } else {
+    // Inconsistent state (a converter that puts the hardware out of range): the
+    // DIAL is the frequency that is actually valid -- drop the bogus converter.
+    log_info("%s: rx%d had a bogus converter (dial %lld, LO %lld -> real %lld out of range); "
+             "dropping it, dial is the real frequency\n",
+             __FUNCTION__,rx->channel,(long long)rx->frequency_a,(long long)rx->lo_a,(long long)real);
+    rx->lo_a=0;
+    rx->error_a=0;
+    rx->band_a=get_band_from_frequency(rx->frequency_a);
+  }
+}
+
 void frequency_changed(RECEIVER *rx) {
 
 #ifdef SOAPYSDR
@@ -525,12 +592,16 @@ void frequency_changed(RECEIVER *rx) {
     // offset until it is told otherwise, so leaving ctun would keep listening
     // off-centre.
     receiver_apply_shift(rx,0,FALSE);
+    rx->band_a=get_band_from_frequency(rx->frequency_a);
+    // Drop a converter the operator has tuned out of, or heal an inconsistent
+    // dial/LO pair, BEFORE pushing the hardware frequency so the radio, the
+    // notch tune-frequency and the dial all agree.
+    receiver_sync_transverter(rx);
     // Manual notches are stored as absolute RF: keep WDSP's notch-DB tune
     // frequency tracking frequency_a here too, not just in the ctun/freetune
     // branch above, or a notch would drift off-station under plain tuning.
     RXANBPSetTuneFrequency(rx->channel, (double)rx->frequency_a);
     rx_push_hw_frequency(rx,TRUE);
-    rx->band_a=get_band_from_frequency(rx->frequency_a);
   }
 
   tx_push_hw_frequency(rx);
@@ -4085,6 +4156,11 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // MACHPSDR_PS_TEST: enable PureSignal and key the transmitter.  Last, so it
   // runs against a radio that is already streaming.
   ps_test_init(r);
+
+  // Restore is done and the band tables are populated: from here a converter
+  // the operator tunes out of is dropped, and a bogus dial/LO pair heals on the
+  // first frequency change (receiver_sync_transverter).
+  radio_startup_done=TRUE;
 
   return r;
 }
