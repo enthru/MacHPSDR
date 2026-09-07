@@ -1830,6 +1830,24 @@ gboolean vfo_type_digit(guint keyval) {
   return TRUE;
 }
 
+/* Put the transverter indicator in step with rx->lo_a: text (with the LO in
+   MHz) while a converter is applied, empty otherwise so the row reclaims the
+   space. Called at build and from vfo_update, so it tracks a band change, a
+   QO-100 setup, or a manual XVTR edit. The LO is a display string, not a parsed
+   number, but it is formatted with the dot so it reads the same everywhere. */
+static void vfo_xvtr_indicator_sync(VFO_DATA *v, RECEIVER *rx) {
+  if(v==NULL || v->xvtr_label==NULL) return;
+  if(rx!=NULL && rx->lo_a!=0) {
+    char lo[32];
+    g_ascii_formatd(lo,sizeof(lo),"%.3f",(double)rx->lo_a/1.0e6);
+    char temp[48];
+    g_snprintf(temp,sizeof(temp),"XVTR LO %s",lo);
+    gtk_label_set_text(GTK_LABEL(v->xvtr_label),temp);
+  } else {
+    gtk_label_set_text(GTK_LABEL(v->xvtr_label),"");
+  }
+}
+
 GtkWidget *create_vfo(RECEIVER *rx) {
   char temp[32];
 
@@ -1920,6 +1938,21 @@ GtkWidget *create_vfo(RECEIVER *rx) {
       "Tuning step of the VFO — click to choose");
   g_signal_connect(v->step_b, "clicked",G_CALLBACK(step_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_top),v->step_b);
+
+  // Transverter/converter indicator: when a converter LO is applied the dial no
+  // longer reads the hardware frequency (a QO-100 setup shows ~10 GHz for a
+  // ~740 MHz IF), which is otherwise invisible and reads as the receiver being
+  // on the wrong frequency. Shown only while lo_a != 0; kept in step by
+  // vfo_update(). It also carries the LO so "why is the dial in the gigahertz?"
+  // is answered on the row itself.
+  v->xvtr_label=gtk_label_new("");
+  gtk_widget_set_name(v->xvtr_label,"warning-label");
+  gtk_widget_set_tooltip_text(v->xvtr_label,
+      "Transverter/converter active: the dial shows the on-air frequency, not "
+      "the hardware's — the converter LO is added. Clear it by choosing a "
+      "non-transverter band on this VFO.");
+  gtk_box_append(GTK_BOX(vfo_row_top),v->xvtr_label);
+  vfo_xvtr_indicator_sync(v,rx);
 
   v->tx_label=gtk_label_new("");
   gtk_widget_set_name(v->tx_label,"warning-label");
@@ -2350,6 +2383,9 @@ void update_vfo(RECEIVER *rx) {
   }
   gtk_label_set_markup(GTK_LABEL(v->frequency_b_text),markup);
   g_free(markup);
+
+  // Transverter/converter indicator (dial != hardware while a converter LO is on)
+  vfo_xvtr_indicator_sync(v,rx);
 
   // ASSIGNED TX
   if(radio!=NULL && radio->transmitter!=NULL) {

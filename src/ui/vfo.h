@@ -35,6 +35,7 @@ typedef struct _vfo_data {
   GtkWidget *vfo_b_text;
   GtkWidget *zoom_b;
   GtkWidget *step_b;
+  GtkWidget *xvtr_label;
   GtkWidget *tx_label;
   GtkWidget *frequency_a_text;
   GtkWidget *frequency_b_text;
