@@ -186,7 +186,19 @@ static void test_atomic_save(void) {
                "and the settings on disk are UNTOUCHED (the whole point)");
   }
 
-  /* The interrupted-save window: main file gone, backup present. */
+  /* The interrupted-save window: main file gone, backup present.
+
+     Re-establish a known main(14074000)+backup(7074000) pair first. The
+     unwritable-directory case above does NOT fail on Windows or under root --
+     there the save went through and advanced the on-disk generations, so the
+     backup is no longer 7074000. Two clean saves converge both platforms on
+     the same pair, so the recovered value below is deterministic. */
+  initProperties();
+  setProperty("receiver[0].frequency_a", "7074000");
+  saveProperties(path);                                   /* -> previous gen */
+  setProperty("receiver[0].frequency_a", "14074000");
+  saveProperties(path);                        /* -> current; .bak = 7074000 */
+
   g_unlink(path);
   initProperties();
   loadProperties(path);
