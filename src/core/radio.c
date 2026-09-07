@@ -4184,6 +4184,44 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   // first frequency change (receiver_sync_transverter).
   radio_startup_done=TRUE;
 
+#ifdef SOAPYSDR
+  // Heal any receiver whose persisted dial/LO pair puts the HARDWARE frequency
+  // (dial - lo_a) outside what the device can tune -- a corrupted state a prior
+  // session may have saved (a dial in the gigahertz with the converter already
+  // dropped, or a converter that implies a negative frequency). A restart then
+  // always comes up consistent, with no manual step. The LO owner drops the
+  // bogus converter and lands on a valid frequency; a follower co-locates with
+  // the owner, since they are one LO.
+  if(r->discovered!=NULL && r->discovered->protocol==PROTOCOL_SOAPYSDR) {
+    long long dev_min=(long long)r->discovered->frequency_min;
+    long long dev_max=(r->discovered->frequency_max>0)
+                      ? (long long)r->discovered->frequency_max : RECEIVER_FREQ_CEILING_HZ;
+    RECEIVER *owner=radio_soapy_hw_receiver(r);
+    for(int pass=0;pass<2;pass++) {          // owner first, then the followers
+      for(int i=0;i<r->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
+        RECEIVER *rx=r->receiver[i];
+        if(rx==NULL || !rx->show_rx) continue;
+        gboolean is_owner=(rx==owner);
+        if((pass==0)!=is_owner) continue;
+        long long real=rx->frequency_a-rx->lo_a;
+        if(real>=dev_min && real<=dev_max) continue;   // already sane
+        if(is_owner || owner==NULL) {
+          long long v=real; if(v<dev_min) v=dev_min; if(v>dev_max) v=dev_max;
+          rx->lo_a=0; rx->error_a=0; rx->frequency_a=v;
+          rx->band_a=get_band_from_frequency(v);
+        } else {
+          rx->lo_a=owner->lo_a; rx->error_a=owner->error_a;
+          rx->frequency_a=owner->frequency_a; rx->band_a=owner->band_a;
+        }
+        log_info("create_radio: healed rx%d's out-of-range persisted frequency -> %lld (LO %lld)\n",
+                 rx->channel,(long long)rx->frequency_a,(long long)rx->lo_a);
+        frequency_changed(rx);
+        update_vfo(rx);
+      }
+    }
+  }
+#endif
+
   return r;
 }
 
