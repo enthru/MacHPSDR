@@ -59,6 +59,36 @@ GdkRGBA skin_rgba(const int colour, const double alpha) {
   return (GdkRGBA){(float)r,(float)g,(float)b,(float)alpha};
 }
 
+// Relative luminance (sRGB coefficients, no gamma decode — a cheap ordering that
+// is plenty for a contrast test).
+static double spectrum_lum(double r,double g,double b) {
+  return 0.2126*r+0.7152*g+0.0722*b;
+}
+
+// See the header. SPECTRUM_BG is dark in every theme, but a light-surface theme
+// may set an accent (ACCENT_A/B, i.e. the TEXT_* enums) to a near-black value
+// meant for its pale panels — which then vanishes on the spectrum (the
+// frequency ruler, the VFO cursor, the AGC lines). Keep the colour when it
+// already contrasts (unchanged for every dark theme); otherwise lift it toward
+// white along its own hue until its luminance clears SPECTRUM_BG by a margin.
+GdkRGBA skin_rgba_spectrum(const int colour, const double alpha) {
+  const char *name; double r,g,b;
+  skin_colour(colour,&name,&r,&g,&b);
+  double br=0.09,bg=0.09,bb=0.10;
+  css_rgb("SPECTRUM_BG",&br,&bg,&bb);
+  double bl=spectrum_lum(br,bg,bb);
+  double fl=spectrum_lum(r,g,b);
+  const double MARGIN=0.33;                 // enough for 12px text on the strip
+  double target=bl+MARGIN; if(target>0.95) target=0.95;
+  if(fl<target) {
+    // luminance of (c + (1-c)*t) blend toward white is fl + t*(1-fl); solve for t.
+    double t=(1.0-fl>1e-6) ? (target-fl)/(1.0-fl) : 0.0;
+    if(t<0.0) t=0.0; if(t>1.0) t=1.0;
+    r=r+(1.0-r)*t; g=g+(1.0-g)*t; b=b+(1.0-b)*t;
+  }
+  return (GdkRGBA){(float)r,(float)g,(float)b,(float)alpha};
+}
+
 // ---- GSK render-node helpers (shared by the GPU meter widgets) -------------
 void lm_fill(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c) {
   if(w<=0.0||h<=0.0) return;

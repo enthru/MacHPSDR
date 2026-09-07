@@ -24,6 +24,13 @@ extern void SetColour(cairo_t *cr, const int colour);
 // Skin-palette colour as a GdkRGBA (for GSK render-node code that has no cairo_t).
 extern GdkRGBA skin_rgba(const int colour, const double alpha);
 
+// Like skin_rgba(), but for text/markers drawn ON the spectrum strip: the
+// returned colour is guaranteed to read against SPECTRUM_BG (which is dark in
+// every theme). A colour that already contrasts is returned unchanged (so the
+// dark themes are untouched); a near-black accent from a light-surface theme is
+// lifted toward white until it clears a fixed luminance margin.
+extern GdkRGBA skin_rgba_spectrum(const int colour, const double alpha);
+
 // GSK render-node meter helpers (GPU-rendered meters). lm_text centres on x when
 // center is TRUE. level_meter_draw_node is the node version of level_meter_draw.
 extern void lm_fill(GtkSnapshot *s,double x,double y,double w,double h,const GdkRGBA *c);

@@ -1524,7 +1524,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   n_rect(snapshot,0,0,40,display_height,&bgstrip);
 
   GdkRGBA dark=skin_rgba(DARK_LINES,1.0);
-  GdkRGBA text_b=skin_rgba(TEXT_B,1.0);
+  GdkRGBA text_b=skin_rgba_spectrum(TEXT_B,1.0);
   GdkRGBA label_bg=bgstrip;  // same as the scale strip → box is seamless, just hides the graticule under each number
   int db_step = rx->panadapter_step>0 ? rx->panadapter_step : 20;
   {
@@ -1685,12 +1685,12 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
     hang_y = floor((rx->panadapter_high - hang_y)*dbm_per_line);
 
     if(rx->agc!=AGC_MEDIUM && rx->agc!=AGC_FAST) {
-      GdkRGBA ca=skin_rgba(TEXT_A,1.0);
+      GdkRGBA ca=skin_rgba_spectrum(TEXT_A,1.0);
       n_rect(snapshot,ax,hang_y-8.0,8.0,8.0,&ca);
       n_line(snapshot,ax,hang_y,(double)display_width-ax,hang_y,LINE_WIDTH,&ca);
       n_text(snapshot,widget,ax+8.0,hang_y,&ca,"-H",NULL);
     }
-    GdkRGBA cc=skin_rgba(TEXT_C,1.0);
+    GdkRGBA cc=skin_rgba_spectrum(TEXT_C,1.0);
     n_rect(snapshot,ax,knee_y-8.0,8.0,8.0,&cc);
     n_line(snapshot,ax,knee_y,(double)display_width-ax,knee_y,LINE_WIDTH,&cc);
     n_text(snapshot,widget,ax+8.0,knee_y,&cc,"-G",NULL);
@@ -1704,7 +1704,7 @@ static void rx_pana_build(GtkSnapshot *snapshot, int display_width, int display_
   if(rx->subrx!=NULL) {
     i=(int)(((double)rx->frequency_b-(double)min_display)/rx->hz_per_pixel);
     i -= cw_offset / rx->hz_per_pixel;
-    GdkRGBA cc=skin_rgba(TEXT_C,1.0);
+    GdkRGBA cc=skin_rgba_spectrum(TEXT_C,1.0);
     n_line(snapshot,(double)i,0.0,(double)i,(double)display_height-20,LINE_WIDTH,&cc);
   }
 
