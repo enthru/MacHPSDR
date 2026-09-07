@@ -39,7 +39,9 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/resource.h>
+#ifndef _WIN32
+#include <sys/resource.h>   // RLIMIT_FSIZE; the disk-failure case is POSIX-only
+#endif
 
 // Prerequisite types for radio.h (the include order recorder.c uses).
 #include "discovered.h"
@@ -390,6 +392,9 @@ static void test_disk_failure(void) {
   }
   recorder_stop();
   g_free(rx);
+#else
+  printf("\n-- a write that fails stops the recording and says so --\n");
+  printf("  skip  RLIMIT_FSIZE unavailable on this platform\n");
 #endif
 }
 
