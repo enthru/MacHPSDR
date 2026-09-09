@@ -78,6 +78,9 @@ marked together with a warm amber highlight on the selected page.
 
 ![Settings — appearance & skin selection](./doc/settings.jpg)
 
+More screenshots and an overview of the project are available in
+[Big update of the LinHPSDR — now it’s MacHPSDR](https://enthru.net/2026/08/25/big-update-of-the-linhpsdr-now-its-machpsdr/).
+
 ---
 
 ## Highlights
