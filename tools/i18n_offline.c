@@ -18,6 +18,8 @@ int main(void) {
   i18n_init(dir);
   i18n_set_language(I18N_RU);
   if(strcmp(i18n_tr("Start Radio"),"Запустить радио")!=0) return 2;
+  if(strcmp(i18n_tr("Configure"),"Настройки")!=0) return 8;
+  if(strcmp(i18n_tr("Calibrate TX"),"Калибровка TX")!=0) return 9;
   if(strcmp(i18n_tr("VFO"),"VFO")!=0) return 3; /* technical term */
 
   /* Re-initialization proves that the independent global preference survives
