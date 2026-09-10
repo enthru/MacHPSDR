@@ -149,9 +149,9 @@ static void add_page(GtkWidget *child, const char *title) {
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),child);
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
-  gtk_stack_add_titled(GTK_STACK(stack),scroller,title,title);
+  gtk_stack_add_titled(GTK_STACK(stack),scroller,title,i18n_tr(title));
   pages[n_pages]=scroller;
-  page_search_text[n_pages]=make_search_text(child,title);
+  page_search_text[n_pages]=make_search_text(child,i18n_tr(title));
   n_pages++;
 }
 
@@ -425,7 +425,10 @@ static void visible_child_changed(GObject *object,GParamSpec *pspec,gpointer dat
   // GTK4: child properties are gone — query the GtkStackPage for its title.
   const gchar *text=NULL;
   GtkStackPage *page=gtk_stack_get_page(GTK_STACK(stack),child);
-  if(page!=NULL) text=gtk_stack_page_get_title(page);
+  /* The visible title is localized; the stable internal name stays English so
+   * programmatic page selection and the RX/TX refresh logic do not depend on
+   * the selected language. */
+  if(page!=NULL) text=gtk_stack_page_get_name(page);
   if(text==NULL) return;
   if(strncmp("RX",text,2)==0) {
     int rx=atoi(&text[3]);

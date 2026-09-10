@@ -540,6 +540,7 @@ SOURCES=\
 main.c\
 log.c\
 css.c\
+i18n.c\
 audio.c\
 version.c\
 net_compat.c\
@@ -617,6 +618,7 @@ HEADERS=\
 main.h\
 log.h\
 css.h\
+i18n.h\
 audio.h\
 version.h\
 net_compat.h\
@@ -689,6 +691,7 @@ OBJS=\
 main.o\
 log.o\
 css.o\
+i18n.o\
 settings_ui.o\
 audio.o\
 version.o\
@@ -971,9 +974,18 @@ reconnect_offline$(EXE): tools/reconnect_offline.c link_state.o log.o
 #   make rec-offline && ./rec_offline --selftest
 .PHONY: rec-offline
 rec-offline: rec_offline$(EXE)
-rec_offline$(EXE): tools/rec_offline.c recorder.o log.o
+rec_offline$(EXE): tools/rec_offline.c recorder.o log.o i18n.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
-	  -o $@ tools/rec_offline.c recorder.o log.o $(GTKLIBS) -lm
+	  -o $@ tools/rec_offline.c recorder.o log.o i18n.o $(GTKLIBS) -lm
+
+# Headless localization harness: catalogue lookup, preservation of technical
+# terms, and the global language preference round trip.
+.PHONY: i18n-offline
+i18n-offline: i18n_offline$(EXE)
+i18n_offline$(EXE): tools/i18n_offline.c i18n.o
+	$(CC) $(CFLAGS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/i18n_offline.c i18n.o \
+	  $(shell pkg-config --libs glib-2.0)
 
 # Headless WEFAX harness: a synthesised radiofax transmission -- start tone,
 # then the picture -- straight into wefax_decoder.c, scored numerically against
@@ -1154,7 +1166,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
+CHECK_BINS=i18n_offline$(EXE) qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
 ifeq ($(FT8_INCLUDE),FT8)
 CHECK_BINS+=ft8_offline$(EXE)
 endif
@@ -1225,9 +1237,9 @@ clean:
 	-$(MAKE) -C hfdl_lib/asn1 clean
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
-	-rm -f $(PROGRAM) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
+	-rm -f $(PROGRAM) i18n_offline$(EXE) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
 	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
-	-rm -rf $(PROGRAM).dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
+	-rm -rf $(PROGRAM).dSYM i18n_offline.dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
 	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM rec_offline.dSYM reconnect_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app

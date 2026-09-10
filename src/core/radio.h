@@ -527,4 +527,8 @@ extern void update_radio(RADIO *radio);
 #ifdef CWDAEMON
 extern void radio_change_cwgeneration(RADIO *r);
 #endif
+
+/* Included last: every source including radio.h has already included GTK, so
+ * the UI-call aliases cannot affect GTK's own function declarations. */
+#include "i18n.h"
 #endif

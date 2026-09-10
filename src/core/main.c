@@ -1163,6 +1163,10 @@ int main(int argc, char **argv) {
   rc=mkdir(text,0777);
 #endif
 
+  /* Language is global rather than radio-specific and is needed before the
+   * discovery window creates its first label. */
+  i18n_init(text);
+
   sprintf(text,"org.g0orx.hpsdr.pid%d",getpid());
   hpsdr=gtk_application_new(text, G_APPLICATION_DEFAULT_FLAGS);
   g_signal_connect(hpsdr, "activate", G_CALLBACK(activate_hpsdr), NULL);

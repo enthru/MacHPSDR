@@ -753,7 +753,11 @@ and each receiver decimates the full rate on its own, so it costs CPU per
 receiver.
 
 The **Display** page holds the colour skin, custom attenuator-button labels,
-Broadcast-FM options, and **Frequency Calibration (PPM)**: pick a
+Broadcast-FM options, the interface **Language**, and **Frequency Calibration
+(PPM)**. English, Russian, Ukrainian and Belarusian are available; the first
+launch follows the desktop language when supported, and a changed language is
+used after restarting MacHPSDR. Radio/DSP terms and abbreviations intentionally
+remain in English. For calibration, pick a
 time/frequency-standard station (RWM, WWV, CHU, BPM on HF; MSF, DCF77, Droitwich
 on LF) and press **Calibrate** to measure its carrier and set the oscillator
 correction automatically, **Tune** to zero-beat it by ear, or type the value in

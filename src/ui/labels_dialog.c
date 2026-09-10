@@ -69,6 +69,14 @@ static void rds_rbds_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   radio->rds_rbds=(sel>0)?1:0;   // 0 = RDS (Europe), 1 = RBDS (N. America)
 }
 
+static void language_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  (void)ps;
+  (void)data;
+  guint selected=gtk_drop_down_get_selected(widget);
+  if(selected<I18N_LANGUAGE_COUNT)
+    i18n_set_language((I18nLanguage)selected);
+}
+
 // ---- Font pickers ----
 // GtkFontDialogButton at FAMILY level: the operator picks from what is actually
 // installed, which is the whole point — the previous hard-coded "Noto Sans" is
@@ -356,6 +364,22 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(skin_grid),font_reset,1,4,1,1);
   g_signal_connect(font_reset,"clicked",G_CALLBACK(font_reset_cb),r);
 
+  GtkWidget *language_lbl=gtk_label_new("Language:");
+  gtk_widget_set_halign(language_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),language_lbl,0,5,1,1);
+  GtkStringList *language_list=gtk_string_list_new(NULL);
+  for(int language=0;language<I18N_LANGUAGE_COUNT;language++)
+    gtk_string_list_append(language_list,i18n_language_name((I18nLanguage)language));
+  GtkWidget *language_combo=gtk_drop_down_new(G_LIST_MODEL(language_list),NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo),i18n_language());
+  gtk_grid_attach(GTK_GRID(skin_grid),language_combo,1,5,1,1);
+  g_signal_connect(language_combo,"notify::selected",G_CALLBACK(language_cb),NULL);
+
+  GtkWidget *language_info=gtk_label_new(
+      "Please restart MacHPSDR to apply the language to every window.");
+  gtk_widget_set_halign(language_info,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(skin_grid),language_info,0,6,2,1);
+
   { char note[192];
     snprintf(note,sizeof(note),
              "Frequency readouts and panadapter labels use the monospaced one.\n"
@@ -363,7 +387,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
              css_ui_font_default(),css_mono_font_default());
     GtkWidget *font_info=gtk_label_new(note);
     gtk_widget_set_halign(font_info,GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(skin_grid),font_info,0,5,2,1); }
+    gtk_grid_attach(GTK_GRID(skin_grid),font_info,0,7,2,1); }
 
   // ---- Frequency Calibration (PPM) ----
   GtkWidget *ppm_frame=gtk_frame_new("Frequency Calibration (PPM)");
