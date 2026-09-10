@@ -249,7 +249,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_frame_set_child(GTK_FRAME(frame),grid);
 
   GtkWidget *info=gtk_label_new("Custom labels for the RX front-end attenuator buttons.\n"
-                                "Leave a field empty to restore the default.");
+                                "Leave a field empty to restore the default.\n"
+                                "This setting applies only to HPSDR devices.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12); // gap between the description and the fields below
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);
