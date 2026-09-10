@@ -40,6 +40,7 @@ static inline GtkWidget *i18n_drop_down_new_from_strings(
 #ifndef I18N_IMPLEMENTATION
 #define gtk_label_new(text) gtk_label_new(i18n_tr(text))
 #define gtk_label_set_text(label,text) gtk_label_set_text(label,i18n_tr(text))
+#define gtk_label_set_markup(label,text) gtk_label_set_markup(label,i18n_tr(text))
 #define gtk_button_new_with_label(text) gtk_button_new_with_label(i18n_tr(text))
 #define gtk_button_set_label(button,text) gtk_button_set_label(button,i18n_tr(text))
 #define gtk_check_button_new_with_label(text) gtk_check_button_new_with_label(i18n_tr(text))
