@@ -53,7 +53,7 @@ static inline void drive_level_apply(TRANSMITTER *tx) {
 #endif
 }
 
-static char *title="Drive";
+static const char *title="Drive";
 
 // GPU render-node builder (PanaView).
 static void drive_level_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
@@ -68,8 +68,9 @@ static void drive_level_build(GtkSnapshot *snapshot,int width,int height,gpointe
   level_meter_draw_node(snapshot, x, width, height, BOX_ON);
 
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
-  sprintf(t,"%s (%d%%)",title,(int)radio->transmitter->drive);
-  double lw=lm_measure(widget,10,title);
+  const char *translated_title=i18n_tr(title);
+  sprintf(t,"%s (%d%%)",translated_title,(int)radio->transmitter->drive);
+  double lw=lm_measure(widget,10,translated_title);
   lm_text(snapshot,widget,(5+width/2)-lw/2.0,height-2,10,&tb,t,FALSE);
 }
 

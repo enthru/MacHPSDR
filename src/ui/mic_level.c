@@ -35,7 +35,7 @@
 #include "level_meter.h"
 #include "pana_view.h"
 
-static char *title="Microphone Level";
+static const char *title="Microphone Level";
 
 // GPU render-node builder (PanaView). Same look as the old cairo draw.
 static void mic_level_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
@@ -51,7 +51,7 @@ static void mic_level_build(GtkSnapshot *snapshot,int width,int height,gpointer 
   lm_line(snapshot,threshold+5.0,1,threshold+5.0,height/2,1.0,&warn);
 
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
-  lm_text(snapshot,widget,5+width/2,height-2,10,&tb,title,TRUE);
+  lm_text(snapshot,widget,5+width/2,height-2,10,&tb,i18n_tr(title),TRUE);
 }
 
 // GTK4: GtkGestureClick "pressed" handler (x in widget coords).

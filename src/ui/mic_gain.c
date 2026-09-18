@@ -37,7 +37,7 @@
 #include "pana_view.h"
 
 
-static char *title="Microphone Gain";
+static const char *title="Microphone Gain";
 
 // GPU render-node builder (PanaView).
 static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
@@ -57,9 +57,10 @@ static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer d
   lm_line(snapshot,x+5.0,(double)(height/2)-8.0,x+5.0,height/2-1,1.0,&warn);
 
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
-  sprintf(t,"%s (%ddB)",title,(int)radio->transmitter->mic_gain);
+  const char *translated_title=i18n_tr(title);
+  sprintf(t,"%s (%ddB)",translated_title,(int)radio->transmitter->mic_gain);
   // centred by the title's width (matching the old cairo layout).
-  double lw=lm_measure(widget,10,title);
+  double lw=lm_measure(widget,10,translated_title);
   lm_text(snapshot,widget,(5+width/2)-lw/2.0,height-2,10,&tb,t,FALSE);
 }
 

@@ -22,7 +22,7 @@
 typedef struct _txmeter {
   GtkWidget *tx_meter_drawing;
   cairo_surface_t *tx_info_meter_surface;  
-  char *label;
+  const char *label;
   gdouble meter_max;
   gdouble meter_min;
   gdouble cur_value;   // last value/peak published by update_tx_info_meter, for the builder
@@ -33,5 +33,5 @@ typedef struct _txmeter {
 extern TXMETER *create_tx_info_meter(void);
 extern void update_tx_info_meter(TXMETER *tx_meter, gdouble value, gdouble peak);
 
-extern void configure_meter(TXMETER *meter, char *title, gdouble max_val, gdouble min_val);
+extern void configure_meter(TXMETER *meter, const char *title, gdouble min_val, gdouble max_val);
 #endif

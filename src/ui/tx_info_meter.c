@@ -73,7 +73,7 @@ GtkWidget *create_tx_meter(TXMETER *tx_meter) {
 TXMETER *create_tx_info_meter(void) {
   TXMETER *tx_meter = g_new0(TXMETER,1);  
   
-  tx_meter->label = "Default";
+  tx_meter->label = i18n_tr("Default");
   tx_meter->meter_max = 100;
   tx_meter->meter_min = 0;
   
@@ -94,8 +94,8 @@ void update_tx_info_meter(TXMETER *meter, gdouble value, gdouble peak) {
   }
 }
 
-void configure_meter(TXMETER *meter, char *title, gdouble min_val, gdouble max_val) {
-  meter->label = title;
+void configure_meter(TXMETER *meter, const char *title, gdouble min_val, gdouble max_val) {
+  meter->label = i18n_tr(title);
   meter->meter_max = max_val;
   meter->meter_min = min_val;
 }
