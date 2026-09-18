@@ -42,7 +42,9 @@ static const char *title="Microphone Gain";
 // GPU render-node builder (PanaView).
 static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer data) {
   GtkWidget *widget=radio->mic_gain;
-  char t[32];
+  // Translated UTF-8 titles can take several bytes per glyph; keep formatting
+  // bounded even if a future catalogue entry is longer than this buffer.
+  char t[128];
 
   double bar_width=(double)width-10;
 
@@ -58,7 +60,8 @@ static void mic_gain_build(GtkSnapshot *snapshot,int width,int height,gpointer d
 
   GdkRGBA tb=skin_rgba(TEXT_B,1.0);
   const char *translated_title=i18n_tr(title);
-  sprintf(t,"%s (%ddB)",translated_title,(int)radio->transmitter->mic_gain);
+  g_snprintf(t,sizeof(t),"%s (%ddB)",translated_title,
+             (int)radio->transmitter->mic_gain);
   // centred by the title's width (matching the old cairo layout).
   double lw=lm_measure(widget,10,translated_title);
   lm_text(snapshot,widget,(5+width/2)-lw/2.0,height-2,10,&tb,t,FALSE);
