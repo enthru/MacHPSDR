@@ -29,6 +29,18 @@ int main(void) {
   if(strcmp(i18n_tr("Microphone Gain"),"Усиление микрофона")!=0) return 19;
   if(strcmp(i18n_tr("Drive"),"Мощность TX")!=0) return 20;
   if(strcmp(i18n_tr("Power out"),"Выходная мощность")!=0) return 23;
+  if(strcmp(i18n_tr("Device rate:"),"Частота устройства:")!=0) return 24;
+  if(strcmp(i18n_tr("Freetune:"),"Freetune:")!=0) return 25;
+  if(strcmp(i18n_tr("Active device rate: %s. Maximum receiver span: %s."),
+            "Активная частота устройства: %s. Максимальная полоса приёмника: %s.")!=0)
+    return 26;
+  char rate_status[256];
+  g_snprintf(rate_status,sizeof(rate_status),
+             i18n_tr("Active device rate: %s. Maximum receiver span: %s."),
+             "768k","384k");
+  if(strcmp(rate_status,
+            "Активная частота устройства: 768k. Максимальная полоса приёмника: 384k.")!=0)
+    return 27;
   if(strcmp(i18n_tr("VFO"),"VFO")!=0) return 3; /* technical term */
   if(strcmp(i18n_tr("AGC"),"AGC")!=0) return 13; /* technical term */
 

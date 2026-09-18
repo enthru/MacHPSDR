@@ -330,10 +330,12 @@ static void soapy_span_rows_update(GtkDropDown *widget,RADIO *r) {
 static void soapy_adc_status_update(GtkDropDown *widget,RADIO *r) {
   GtkLabel *status=g_object_get_data(G_OBJECT(widget),"adc-rate-status");
   if(status==NULL) return;
-  char current[24],span[24],text[160];
+  char current[24],span[24],text[256];
   sui_rate_label(current,sizeof(current),r->sample_rate);
   sui_rate_label(span,sizeof(span),soapy_rx_span_max(r->sample_rate));
-  snprintf(text,sizeof(text),"Active device rate: %s. Maximum receiver span: %s.",current,span);
+  g_snprintf(text,sizeof(text),
+             i18n_tr("Active device rate: %s. Maximum receiver span: %s."),
+             current,span);
   gtk_label_set_text(status,text);
 }
 
@@ -993,7 +995,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     {
       char rbuf[24],buf[40];
       sui_rate_label(rbuf,sizeof(rbuf),radio->soapy_adc_rate_default);
-      snprintf(buf,sizeof(buf),"Default (%s)",rbuf);
+      g_snprintf(buf,sizeof(buf),"%s (%s)",i18n_tr("Default"),rbuf);
       gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(adc_combo))),buf);
       log_debug_area(LOG_UI, "radio_dialog: device rate row 0 = \"%s\" (this device's default)\n",buf);
       adc_rows[n_adc_rows++]=0;                           // 0 = "no choice of mine"
