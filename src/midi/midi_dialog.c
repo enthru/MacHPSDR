@@ -85,7 +85,7 @@ static GtkColumnViewColumn *midi_col(const char *title, int colid) {
   GtkListItemFactory *f = gtk_signal_list_item_factory_new();
   g_signal_connect(f,"setup",G_CALLBACK(midi_setup),NULL);
   g_signal_connect(f,"bind",G_CALLBACK(midi_bind),GINT_TO_POINTER(colid));
-  return gtk_column_view_column_new(title, f);
+  return gtk_column_view_column_new(i18n_tr(title), f);
 }
 
 static GListStore *store;
@@ -1260,4 +1260,3 @@ void midi_restore_state(void) {
   }
 
 }
-

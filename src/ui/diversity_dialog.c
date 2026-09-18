@@ -321,19 +321,23 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   // Honest disclaimer (mirrors the PureSignal note): the diversity path needs
   // two coherent ADC streams and has not been verified on hardware in this fork.
   GtkWidget *note = gtk_label_new(NULL);
+  const char *note_text;
   if(diversity_supported(radio)) {
-    gtk_label_set_markup(GTK_LABEL(note),
-      "<small><i>Note: diversity reception combines two coherent ADC streams to null "
+    note_text=i18n_tr(
+      "Note: diversity reception combines two coherent ADC streams to null "
       "interference / fight fading. It has NOT been verified against a radio with two\n"
       "coherent ADCs in this fork — only against software emulators, which prove the "
       "plumbing and nothing about the hardware. Use at your own risk.\n"
       "On Protocol 2 only the DDC0/DDC1 pair can be synchronised, so enable it on "
-      "receiver 0 with receiver 1 free.</i></small>");
+      "receiver 0 with receiver 1 free.");
   } else {
-    gtk_label_set_markup(GTK_LABEL(note),
-      "<small><i>This device does not support diversity reception (it needs Protocol 1 "
-      "or Protocol 2, two receivers and two ADCs), so it cannot be enabled here.</i></small>");
+    note_text=i18n_tr(
+      "This device does not support diversity reception (it needs Protocol 1 "
+      "or Protocol 2, two receivers and two ADCs), so it cannot be enabled here.");
   }
+  char *note_markup=g_markup_printf_escaped("<small><i>%s</i></small>",note_text);
+  gtk_label_set_markup(GTK_LABEL(note),note_markup);
+  g_free(note_markup);
   gtk_label_set_wrap(GTK_LABEL(note), TRUE);
   gtk_label_set_justify(GTK_LABEL(note), GTK_JUSTIFY_LEFT);
   gtk_label_set_xalign(GTK_LABEL(note), 0.0);

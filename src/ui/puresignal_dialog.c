@@ -278,8 +278,8 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
 
   // Honest disclaimer: this PureSignal path is an unfinished prototype.
   GtkWidget *note=gtk_label_new(NULL);
-  gtk_label_set_markup(GTK_LABEL(note),
-    "<small><i>Note: PureSignal here is an unfinished prototype. Protocol 1 is the "
+  const char *note_text=i18n_tr(
+    "Note: PureSignal here is an unfinished prototype. Protocol 1 is the "
     "tested code path (peak calibration tuned mainly for the Hermes-Lite 2); "
 #ifdef PURESIGNAL_P2
     "Protocol 2 support is now wired but experimental and completely unverified "
@@ -288,7 +288,10 @@ GtkWidget *create_puresignal_dialog(TRANSMITTER *tx) {
 #else
     "Protocol 2 is not built in (enable PURESIGNAL_P2 to try the experimental path). "
 #endif
-    "None of this has been verified on hardware in this fork; use at your own risk.</i></small>");
+    "None of this has been verified on hardware in this fork; use at your own risk.");
+  char *note_markup=g_markup_printf_escaped("<small><i>%s</i></small>",note_text);
+  gtk_label_set_markup(GTK_LABEL(note),note_markup);
+  g_free(note_markup);
   gtk_label_set_wrap(GTK_LABEL(note),TRUE);
   // Bound the wrap width so this long sentence doesn't stretch the whole page
   // (its single-line natural width was driving the tab wide).

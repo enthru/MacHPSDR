@@ -135,10 +135,14 @@ GtkWidget *create_about_dialog(RADIO *r) {
   gtk_grid_set_row_homogeneous(GTK_GRID(titles),FALSE);
   row=0;
   about_row_ex(titles,&row,"<span size=\"xx-large\" weight=\"bold\">MacHPSDR</span>",TRUE,FALSE);
-  about_row_ex(titles,&row,
-               "<span size=\"small\">A GTK4 control application for HPSDR, Hermes-Lite 2 "
-               "and SoapySDR receivers — macOS and Linux.</span>",TRUE,FALSE);
-  snprintf(text,sizeof(text),"<span size=\"small\">Version %s · built %s</span>",version,build_date);
+  g_snprintf(text,sizeof(text),"<span size=\"small\">%s</span>",
+             i18n_tr("A GTK4 control application for HPSDR, Hermes-Lite 2 and "
+                     "SoapySDR receivers — macOS and Linux."));
+  about_row_ex(titles,&row,text,TRUE,FALSE);
+  char version_text[256];
+  g_snprintf(version_text,sizeof(version_text),
+             i18n_tr("Version %s · built %s"),version,build_date);
+  g_snprintf(text,sizeof(text),"<span size=\"small\">%s</span>",version_text);
   about_row_ex(titles,&row,text,TRUE,FALSE);
   gtk_box_append(GTK_BOX(header),titles);
   gtk_grid_attach(GTK_GRID(page),header,0,page_row++,1,1);
