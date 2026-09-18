@@ -32,6 +32,7 @@ int main(void) {
   if(strcmp(i18n_tr("Device rate:"),"Частота устройства:")!=0) return 24;
   if(strcmp(i18n_tr("Freetune:"),"Freetune:")!=0) return 25;
   if(strcmp(i18n_tr("Gain"),"Усиление")!=0) return 28;
+  if(strcmp(i18n_tr("ASSIGNED TX"),"НАЗНАЧЕН TX")!=0) return 37;
   if(strcmp(i18n_tr("Tuning"),"Настройка")!=0) return 29;
   if(strcmp(i18n_tr("Zoom in"),"Увеличить масштаб")!=0) return 30;
   if(strcmp(i18n_tr("Event"),"Событие")!=0) return 31;
