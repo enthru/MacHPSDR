@@ -44,6 +44,16 @@ static GtkWidget *qo100_setup_label;
 static GtkWidget *qo100_xvtr_label;
 static guint      qo100_poll_id;
 
+/* The explanatory copy deliberately spans several lines. Translations are not
+ * the same length as English, so their embedded newlines alone cannot keep the
+ * page readable (or stop the grid acquiring a window-wide natural width).
+ * Give every prose/status label the same bounded, word-wrapped measure. */
+static void wrap_long_label(GtkWidget *label) {
+  gtk_label_set_wrap(GTK_LABEL(label),TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(label),PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(GTK_LABEL(label),96);
+}
+
 static void status_refresh(void) {
   if(qo100_status_label==NULL) return;
   char st[128], buf[192];
@@ -229,6 +239,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "does not demodulate. What it gives you there is a truthful dial, the channel\n"
     "plan drawn over the spectrum, and the matching uplink on VFO B.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
+  wrap_long_label(info);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
 
@@ -263,6 +274,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "Writes \"" QO100_XVTR_RX_TITLE "\" and \"" QO100_XVTR_TX_TITLE "\" into Bands \342\206\222 Transverters.\n"
     "Pressing it again updates those two rows rather than using more slots,\nand keeps their LO error.");
   gtk_widget_set_halign(qo100_xvtr_label,GTK_ALIGN_START);
+  wrap_long_label(qo100_xvtr_label);
   gtk_widget_set_margin_bottom(qo100_xvtr_label,12);
   gtk_grid_attach(GTK_GRID(grid),qo100_xvtr_label,0,row++,2,1);
 
@@ -300,6 +312,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "downlink, puts VFO B on the matching uplink and links the two (SAT split).\n"
     "If you are already on that transponder your own frequency is kept.");
   gtk_widget_set_halign(qo100_setup_label,GTK_ALIGN_START);
+  wrap_long_label(qo100_setup_label);
   gtk_widget_set_margin_bottom(qo100_setup_label,12);
   gtk_grid_attach(GTK_GRID(grid),qo100_setup_label,0,row++,2,1);
 
@@ -383,7 +396,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
 
   qo100_check_label=gtk_label_new("Middle beacon: no check yet");
   gtk_widget_set_halign(qo100_check_label,GTK_ALIGN_START);
-  gtk_label_set_wrap(GTK_LABEL(qo100_check_label),TRUE);
+  wrap_long_label(qo100_check_label);
   gtk_grid_attach(GTK_GRID(grid),qo100_check_label,0,row++,2,1);
 
   GtkWidget *lk_hint=gtk_label_new(
@@ -401,6 +414,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "disabled at 192 kHz because one isolated carrier cannot be identified safely;\n"
     "acquisition is accepted only when another NB beacon is seen 250/500 kHz away.");
   gtk_widget_set_halign(lk_hint,GTK_ALIGN_START);
+  wrap_long_label(lk_hint);
   gtk_grid_attach(GTK_GRID(grid),lk_hint,0,row++,2,1);
 
   status_refresh();
