@@ -664,7 +664,7 @@ const char *i18n_tr(const char *english) {
  * Entries live until the widget is finalized, tracked by a weak reference. */
 
 typedef struct {
-  GtkWidget *widget;
+  GObject *object;  /* a GtkWidget for every kind but I18N_W_STACK_TITLE */
   I18nWidgetKind kind;
   const char *en;   /* canonical static catalogue key */
 } I18nEntry;
@@ -679,24 +679,24 @@ static void i18n_entry_weak_notify(gpointer data, GObject *where) {
   g_free(entry);
 }
 
-void i18n_register_widget(GtkWidget *widget, I18nWidgetKind kind,
+void i18n_register_object(GObject *object, I18nWidgetKind kind,
                           const char *english) {
-  if(widget==NULL) return;
+  if(object==NULL) return;
   const Translation *t=translation_lookup(english);
 
-  /* Find an existing entry for this exact widget+property. */
+  /* Find an existing entry for this exact object+property. */
   I18nEntry *entry=NULL;
   if(i18n_registry!=NULL) {
     for(guint i=0;i<i18n_registry->len;i++) {
       I18nEntry *e=g_ptr_array_index(i18n_registry,i);
-      if(e->widget==widget && e->kind==kind) { entry=e; break; }
+      if(e->object==object && e->kind==kind) { entry=e; break; }
     }
   }
 
   if(entry!=NULL) {
     /* Property re-set: track the new key (NULL once it turns dynamic, which
      * just makes the retranslate pass skip it — the entry and its weak ref
-     * stay put for the widget's lifetime). */
+     * stay put for the object's lifetime). */
     entry->en=(t!=NULL)?t->en:NULL;
     return;
   }
@@ -705,11 +705,16 @@ void i18n_register_widget(GtkWidget *widget, I18nWidgetKind kind,
 
   if(i18n_registry==NULL) i18n_registry=g_ptr_array_new();
   entry=g_new0(I18nEntry,1);
-  entry->widget=widget;
+  entry->object=object;
   entry->kind=kind;
   entry->en=t->en;
   g_ptr_array_add(i18n_registry,entry);
-  g_object_weak_ref(G_OBJECT(widget),i18n_entry_weak_notify,entry);
+  g_object_weak_ref(object,i18n_entry_weak_notify,entry);
+}
+
+void i18n_register_widget(GtkWidget *widget, I18nWidgetKind kind,
+                          const char *english) {
+  i18n_register_object(widget!=NULL?G_OBJECT(widget):NULL,kind,english);
 }
 
 static void i18n_entry_apply(const I18nEntry *e) {
@@ -717,26 +722,28 @@ static void i18n_entry_apply(const I18nEntry *e) {
   const char *text=i18n_tr(e->en);
   switch(e->kind) {
     case I18N_W_LABEL:
-      gtk_label_set_text(GTK_LABEL(e->widget),text); break;
+      gtk_label_set_text(GTK_LABEL(e->object),text); break;
     case I18N_W_MARKUP:
-      gtk_label_set_markup(GTK_LABEL(e->widget),text); break;
+      gtk_label_set_markup(GTK_LABEL(e->object),text); break;
     case I18N_W_BUTTON:
-      gtk_button_set_label(GTK_BUTTON(e->widget),text); break;
+      gtk_button_set_label(GTK_BUTTON(e->object),text); break;
     case I18N_W_CHECK:
-      gtk_check_button_set_label(GTK_CHECK_BUTTON(e->widget),text); break;
+      gtk_check_button_set_label(GTK_CHECK_BUTTON(e->object),text); break;
     case I18N_W_FRAME:
-      gtk_frame_set_label(GTK_FRAME(e->widget),text); break;
+      gtk_frame_set_label(GTK_FRAME(e->object),text); break;
     case I18N_W_WINDOW_TITLE:
-      gtk_window_set_title(GTK_WINDOW(e->widget),text); break;
+      gtk_window_set_title(GTK_WINDOW(e->object),text); break;
     case I18N_W_TOOLTIP:
-      gtk_widget_set_tooltip_text(e->widget,text); break;
+      gtk_widget_set_tooltip_text(GTK_WIDGET(e->object),text); break;
     case I18N_W_MENU_LABEL:
-      gtk_menu_button_set_label(GTK_MENU_BUTTON(e->widget),text); break;
+      gtk_menu_button_set_label(GTK_MENU_BUTTON(e->object),text); break;
     case I18N_W_SEARCH_PLACEHOLDER:
-      gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(e->widget),text);
+      gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(e->object),text);
       break;
     case I18N_W_ENTRY_PLACEHOLDER:
-      gtk_entry_set_placeholder_text(GTK_ENTRY(e->widget),text); break;
+      gtk_entry_set_placeholder_text(GTK_ENTRY(e->object),text); break;
+    case I18N_W_STACK_TITLE:
+      gtk_stack_page_set_title(GTK_STACK_PAGE(e->object),text); break;
   }
 }
 

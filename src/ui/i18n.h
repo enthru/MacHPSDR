@@ -27,7 +27,8 @@ typedef enum {
   I18N_W_TOOLTIP,            /* gtk_widget_set_tooltip_text */
   I18N_W_MENU_LABEL,         /* gtk_menu_button_set_label */
   I18N_W_SEARCH_PLACEHOLDER, /* gtk_search_entry_set_placeholder_text */
-  I18N_W_ENTRY_PLACEHOLDER   /* gtk_entry_set_placeholder_text */
+  I18N_W_ENTRY_PLACEHOLDER,  /* gtk_entry_set_placeholder_text */
+  I18N_W_STACK_TITLE         /* gtk_stack_page_set_title (a GtkStackPage) */
 } I18nWidgetKind;
 
 void i18n_init(const char *config_dir);
@@ -45,6 +46,11 @@ const char *i18n_tr(const char *english);
  * widget is tracked by a weak reference, so it de-registers itself on destroy.
  * All calls are on the GTK main thread. */
 void i18n_register_widget(GtkWidget *widget, I18nWidgetKind kind,
+                          const char *english);
+
+/* The same, for a translatable string carried by a plain GObject rather than a
+ * widget — currently a GtkStackPage title (the Configure sidebar tabs). */
+void i18n_register_object(GObject *object, I18nWidgetKind kind,
                           const char *english);
 
 /* The wrappers below translate at creation/set time (as the macros always did)

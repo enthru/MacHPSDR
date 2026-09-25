@@ -150,6 +150,10 @@ static void add_page(GtkWidget *child, const char *title) {
   gtk_widget_set_hexpand(scroller,TRUE);
   gtk_widget_set_vexpand(scroller,TRUE);
   gtk_stack_add_titled(GTK_STACK(stack),scroller,title,i18n_tr(title));
+  // The sidebar tab title lives on the GtkStackPage (not a GtkWidget the macro
+  // layer wraps), so register it explicitly for live language switching.
+  i18n_register_object(G_OBJECT(gtk_stack_get_page(GTK_STACK(stack),scroller)),
+                       I18N_W_STACK_TITLE,title);
   pages[n_pages]=scroller;
   page_search_text[n_pages]=make_search_text(child,i18n_tr(title));
   n_pages++;
