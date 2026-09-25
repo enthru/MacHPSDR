@@ -33,6 +33,13 @@ int main(void) {
   if(strcmp(i18n_tr("Freetune:"),"Freetune:")!=0) return 25;
   if(strcmp(i18n_tr("Gain"),"Усиление")!=0) return 28;
   if(strcmp(i18n_tr("<b>Gain</b>"),"<b>Усиление</b>")!=0) return 38;
+  if(strcmp(i18n_tr("Sample Rate"),"Частота дискретизации")!=0) return 39;
+  if(strcmp(i18n_tr("Span"),"Полоса")!=0) return 40;
+  if(strcmp(i18n_tr("Diversity"),"Разнесённый приём")!=0) return 41;
+  if(strcmp(i18n_tr("Equalizer"),"Эквалайзер")!=0) return 42;
+  if(strcmp(i18n_tr("Phase Rotator"),"Фазовращатель")!=0) return 43;
+  if(strcmp(i18n_tr("TCI Server"),"Сервер TCI")!=0) return 44;
+  if(strcmp(i18n_tr("Detector:"),"Детектор:")!=0) return 45;
   if(strcmp(i18n_tr("ASSIGNED TX"),"НАЗНАЧЕН TX")!=0) return 37;
   if(strcmp(i18n_tr("Tuning"),"Настройка")!=0) return 29;
   if(strcmp(i18n_tr("Zoom in"),"Увеличить масштаб")!=0) return 30;
