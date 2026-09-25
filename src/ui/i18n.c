@@ -1,4 +1,5 @@
 #define I18N_IMPLEMENTATION
+#include <gtk/gtk.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <string.h>
@@ -117,7 +118,7 @@ static const Translation translations[] = {
   {"Open MIDI File", "Открыть файл MIDI", "Відкрити файл MIDI", "Адкрыць файл MIDI"},
   {"Other", "Другое", "Інше", "Іншае"},
   {"PA / Linearity", "PA / Линейность", "PA / Лінійність", "PA / Лінейнасць"},
-  {"Please restart MacHPSDR to apply the language to every window.", "Перезапустите MacHPSDR, чтобы применить язык ко всем окнам.", "Перезапустіть MacHPSDR, щоб застосувати мову до всіх вікон.", "Перазапусціце MacHPSDR, каб ужыць мову ва ўсіх вокнах."},
+  {"The language applies immediately across the open windows.", "Язык применяется сразу во всех открытых окнах.", "Мова застосовується одразу в усіх відкритих вікнах.", "Мова ўжываецца адразу ва ўсіх адкрытых вокнах."},
   {"Preamp", "Предусилитель", "Передпідсилювач", "Папярэдні ўзмацняльнік"},
   {"Power out", "Выходная мощность", "Вихідна потужність", "Выхадная магутнасць"},
   {"Radio", "Радио", "Радіо", "Радыё"},
@@ -576,6 +577,8 @@ static const Translation translations[] = {
 static I18nLanguage active_language = I18N_EN;
 static char *language_path;
 
+static void i18n_retranslate(void);   /* defined with the registry below */
+
 static I18nLanguage language_from_code(const char *code) {
   if(code==NULL) return I18N_EN;
   if(g_ascii_strncasecmp(code,"ru",2)==0) return I18N_RU;
@@ -621,19 +624,129 @@ const char *i18n_language_name(I18nLanguage language) {
 
 void i18n_set_language(I18nLanguage language) {
   if(language<0 || language>=I18N_LANGUAGE_COUNT) return;
+  if(language==active_language) return;
   active_language=language;
   if(language_path!=NULL)
     (void)g_file_set_contents(language_path,i18n_language_code(),-1,NULL);
+  i18n_retranslate();
+}
+
+static const Translation *translation_lookup(const char *english) {
+  if(english==NULL) return NULL;
+  for(gsize i=0;i<G_N_ELEMENTS(translations);i++)
+    if(strcmp(english,translations[i].en)==0) return &translations[i];
+  return NULL;
 }
 
 const char *i18n_tr(const char *english) {
   if(english==NULL || active_language==I18N_EN) return english;
-  for(gsize i=0;i<G_N_ELEMENTS(translations);i++) {
-    if(strcmp(english,translations[i].en)==0) {
-      if(active_language==I18N_RU) return translations[i].ru;
-      if(active_language==I18N_UK) return translations[i].uk;
-      if(active_language==I18N_BE) return translations[i].be;
+  const Translation *t=translation_lookup(english);
+  if(t==NULL) return english;
+  if(active_language==I18N_RU) return t->ru;
+  if(active_language==I18N_UK) return t->uk;
+  if(active_language==I18N_BE) return t->be;
+  return english;
+}
+
+/* ---- Live retranslation registry ------------------------------------------
+ *
+ * The macro layer in i18n.h translates every catalogue string at the moment a
+ * widget is built.  That alone cannot follow a language change: the strings are
+ * already baked into live widgets.  So each translatable widget also records
+ * here which of its properties carries the string and the catalogue key that
+ * produced it (always the stable static ".en" pointer, never a caller buffer),
+ * and i18n_set_language re-applies them all in place.
+ *
+ * One entry per (widget, property): a button with both a label and a tooltip
+ * gets two.  Non-catalogue text (dynamic labels, empty strings) is never
+ * registered — it owns its own contents and is refreshed by whatever produces
+ * it, already in the current language because it, too, goes through the macros.
+ * Entries live until the widget is finalized, tracked by a weak reference. */
+
+typedef struct {
+  GtkWidget *widget;
+  I18nWidgetKind kind;
+  const char *en;   /* canonical static catalogue key */
+} I18nEntry;
+
+static GPtrArray *i18n_registry;   /* of I18nEntry* */
+
+static void i18n_entry_weak_notify(gpointer data, GObject *where) {
+  (void)where;
+  I18nEntry *entry=(I18nEntry *)data;
+  if(i18n_registry!=NULL)
+    g_ptr_array_remove_fast(i18n_registry,entry);
+  g_free(entry);
+}
+
+void i18n_register_widget(GtkWidget *widget, I18nWidgetKind kind,
+                          const char *english) {
+  if(widget==NULL) return;
+  const Translation *t=translation_lookup(english);
+
+  /* Find an existing entry for this exact widget+property. */
+  I18nEntry *entry=NULL;
+  if(i18n_registry!=NULL) {
+    for(guint i=0;i<i18n_registry->len;i++) {
+      I18nEntry *e=g_ptr_array_index(i18n_registry,i);
+      if(e->widget==widget && e->kind==kind) { entry=e; break; }
     }
   }
-  return english;
+
+  if(entry!=NULL) {
+    /* Property re-set: track the new key (NULL once it turns dynamic, which
+     * just makes the retranslate pass skip it — the entry and its weak ref
+     * stay put for the widget's lifetime). */
+    entry->en=(t!=NULL)?t->en:NULL;
+    return;
+  }
+
+  if(t==NULL) return;   /* nothing translatable to remember */
+
+  if(i18n_registry==NULL) i18n_registry=g_ptr_array_new();
+  entry=g_new0(I18nEntry,1);
+  entry->widget=widget;
+  entry->kind=kind;
+  entry->en=t->en;
+  g_ptr_array_add(i18n_registry,entry);
+  g_object_weak_ref(G_OBJECT(widget),i18n_entry_weak_notify,entry);
+}
+
+static void i18n_entry_apply(const I18nEntry *e) {
+  if(e->en==NULL) return;
+  const char *text=i18n_tr(e->en);
+  switch(e->kind) {
+    case I18N_W_LABEL:
+      gtk_label_set_text(GTK_LABEL(e->widget),text); break;
+    case I18N_W_MARKUP:
+      gtk_label_set_markup(GTK_LABEL(e->widget),text); break;
+    case I18N_W_BUTTON:
+      gtk_button_set_label(GTK_BUTTON(e->widget),text); break;
+    case I18N_W_CHECK:
+      gtk_check_button_set_label(GTK_CHECK_BUTTON(e->widget),text); break;
+    case I18N_W_FRAME:
+      gtk_frame_set_label(GTK_FRAME(e->widget),text); break;
+    case I18N_W_WINDOW_TITLE:
+      gtk_window_set_title(GTK_WINDOW(e->widget),text); break;
+    case I18N_W_TOOLTIP:
+      gtk_widget_set_tooltip_text(e->widget,text); break;
+    case I18N_W_MENU_LABEL:
+      gtk_menu_button_set_label(GTK_MENU_BUTTON(e->widget),text); break;
+    case I18N_W_SEARCH_PLACEHOLDER:
+      gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(e->widget),text);
+      break;
+    case I18N_W_ENTRY_PLACEHOLDER:
+      gtk_entry_set_placeholder_text(GTK_ENTRY(e->widget),text); break;
+  }
+}
+
+static void i18n_retranslate(void) {
+  if(i18n_registry==NULL) return;
+  /* Copy the pointers first: applying a value can, in principle, run handlers
+   * that touch the registry, and g_ptr_array is not re-entrancy-safe. */
+  guint n=i18n_registry->len;
+  I18nEntry **snapshot=g_new(I18nEntry *,n);
+  for(guint i=0;i<n;i++) snapshot[i]=g_ptr_array_index(i18n_registry,i);
+  for(guint i=0;i<n;i++) i18n_entry_apply(snapshot[i]);
+  g_free(snapshot);
 }

@@ -376,7 +376,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   g_signal_connect(language_combo,"notify::selected",G_CALLBACK(language_cb),NULL);
 
   GtkWidget *language_info=gtk_label_new(
-      "Please restart MacHPSDR to apply the language to every window.");
+      "The language applies immediately across the open windows.");
   gtk_widget_set_halign(language_info,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(skin_grid),language_info,0,6,2,1);
 

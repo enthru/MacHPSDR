@@ -983,9 +983,8 @@ rec_offline$(EXE): tools/rec_offline.c recorder.o log.o i18n.o
 .PHONY: i18n-offline
 i18n-offline: i18n_offline$(EXE)
 i18n_offline$(EXE): tools/i18n_offline.c i18n.o
-	$(CC) $(CFLAGS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
-	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/i18n_offline.c i18n.o \
-	  $(shell pkg-config --libs glib-2.0)
+	$(CC) $(CFLAGS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
+	  -o $@ tools/i18n_offline.c i18n.o $(GTKLIBS)
 
 # Headless WEFAX harness: a synthesised radiofax transmission -- start tone,
 # then the picture -- straight into wefax_decoder.c, scored numerically against
