@@ -164,8 +164,8 @@ static void ppm_status_refresh(RADIO *r) {
   if(ppm_status_label==NULL) return;
   const PPM_STATION *st=ppm_station(r->ppm_ref_station);
   char buf[256];
-  snprintf(buf,sizeof(buf),"Correction: %+.2f ppm    Reference: %s",
-           r->ppm_correction_value, st?st->name:"(none)");
+  snprintf(buf,sizeof(buf),i18n_tr("Correction: %+.2f ppm    Reference: %s"),
+           r->ppm_correction_value, st?st->name:i18n_tr("(none)"));
   gtk_label_set_text(GTK_LABEL(ppm_status_label),buf);
 }
 
@@ -382,8 +382,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
 
   { char note[192];
     snprintf(note,sizeof(note),
-             "Frequency readouts and panadapter labels use the monospaced one.\n"
-             "This machine's defaults: %s / %s.",
+             i18n_tr("Frequency readouts and panadapter labels use the monospaced one.\n"
+                     "This machine's defaults: %s / %s."),
              css_ui_font_default(),css_mono_font_default());
     GtkWidget *font_info=gtk_label_new(note);
     gtk_widget_set_halign(font_info,GTK_ALIGN_START);

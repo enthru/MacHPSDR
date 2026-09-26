@@ -93,7 +93,8 @@ const char *dxcluster_status(void) {
   g_mutex_lock(&status_mutex);
   g_strlcpy(out, status_buf, sizeof(out));
   g_mutex_unlock(&status_mutex);
-  return out;
+  // status_buf stays English for the log; the display is translated here.
+  return i18n_tr(out);
 }
 
 gboolean dxcluster_running(void) {

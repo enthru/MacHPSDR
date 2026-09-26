@@ -41,7 +41,7 @@ static guint      tci_poll_id;
 static void tci_status_refresh(void) {
   if(tci_status_label==NULL) return;
   char buf[192];
-  snprintf(buf,sizeof(buf),"Status: %s",tci_status());
+  snprintf(buf,sizeof(buf),i18n_tr("Status: %s"),tci_status());
   gtk_label_set_text(GTK_LABEL(tci_status_label),buf);
 }
 
@@ -85,8 +85,7 @@ GtkWidget *create_tci_dialog(RADIO *r) {
   GtkWidget *info=gtk_label_new(
       "TCI (Expert Electronics) control server over WebSocket. Lets loggers\n"
       "and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO,\n"
-      "mode and PTT. Phase A is control only — spectrum/audio streaming is\n"
-      "not yet implemented.");
+      "mode and PTT, and stream the receiver's IQ and audio.");
   gtk_widget_set_halign(info,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);

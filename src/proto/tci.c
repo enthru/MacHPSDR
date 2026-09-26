@@ -1667,7 +1667,8 @@ void tci_stop(void) {
 }
 
 const char *tci_status(void) {
-  if (!g_atomic_int_get(&server_running)) return status_line;
+  // status_line stays English for the log; the display is translated here.
+  if (!g_atomic_int_get(&server_running)) return i18n_tr(status_line);
   static char buf[128];
   int n = 0;
   g_mutex_lock(&clients_mutex);
@@ -1675,8 +1676,8 @@ const char *tci_status(void) {
   g_mutex_unlock(&clients_mutex);
   int iq = g_atomic_int_get(&iq_sub_count);
   int au = g_atomic_int_get(&audio_sub_count);
-  g_snprintf(buf, sizeof(buf), "%s (%d client%s%s%s)", status_line, n, n == 1 ? "" : "s",
-             iq > 0 ? ", IQ" : "", au > 0 ? ", audio" : "");
+  g_snprintf(buf, sizeof(buf), i18n_tr("listening on :%d (clients: %d%s%s)"),
+             listening_port, n, iq > 0 ? ", IQ" : "", au > 0 ? ", audio" : "");
   return buf;
 }
 

@@ -40,6 +40,16 @@ int main(void) {
   if(strcmp(i18n_tr("Phase Rotator"),"Фазовращатель")!=0) return 43;
   if(strcmp(i18n_tr("TCI Server"),"Сервер TCI")!=0) return 44;
   if(strcmp(i18n_tr("Detector:"),"Детектор:")!=0) return 45;
+  if(strcmp(i18n_tr("Status: %s"),"Статус: %s")!=0) return 46;
+  if(strcmp(i18n_tr("stopped"),"остановлен")!=0) return 47;
+  if(strcmp(i18n_tr("Correction: %+.2f ppm    Reference: %s"),
+            "Коррекция: %+.2f ppm    Опорная: %s")!=0) return 48;
+  {
+    char st[128];
+    g_snprintf(st,sizeof(st),i18n_tr("listening on :%d (clients: %d%s%s)"),
+               40001,0,"","");
+    if(strcmp(st,"прослушивание на :40001 (клиентов: 0)")!=0) return 49;
+  }
   if(strcmp(i18n_tr("ASSIGNED TX"),"НАЗНАЧЕН TX")!=0) return 37;
   if(strcmp(i18n_tr("Tuning"),"Настройка")!=0) return 29;
   if(strcmp(i18n_tr("Zoom in"),"Увеличить масштаб")!=0) return 30;

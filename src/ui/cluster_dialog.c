@@ -41,7 +41,7 @@ static guint      cluster_poll_id;
 static void cluster_status_refresh(void) {
   if(cluster_status_label==NULL) return;
   char buf[160];
-  snprintf(buf,sizeof(buf),"Status: %s",dxcluster_status());
+  snprintf(buf,sizeof(buf),i18n_tr("Status: %s"),dxcluster_status());
   gtk_label_set_text(GTK_LABEL(cluster_status_label),buf);
 }
 
