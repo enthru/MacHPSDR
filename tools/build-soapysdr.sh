@@ -39,7 +39,11 @@ git clone --depth 1 --branch "$VER" -q \
 # "MSYS Makefiles" + an explicit compiler pins the build to the mingw64 gcc the
 # rest of the job links against, rather than whatever else CMake might discover
 # on the runner. Bindings and tests off: the app links only the core library.
+# SoapySDR 0.8.1 still declares cmake_minimum_required below 3.5, which CMake 4
+# refuses outright; this is the escape hatch its own error names, and it only
+# affects how old the project's policy defaults are, not what is built.
 cmake -S "$WORK/src" -B "$WORK/build" -G "MSYS Makefiles" \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$PREFIX" \
       -DCMAKE_C_COMPILER=gcc \
