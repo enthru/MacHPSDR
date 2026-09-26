@@ -2918,7 +2918,7 @@ static gboolean rds_update_cb(gpointer data) {
       }
       char *p=ft8buf; size_t n=sizeof(ft8buf);
       if(total==0) {
-        snprintf(ft8buf,sizeof(ft8buf),"listening…");
+        g_strlcpy(ft8buf,i18n_tr("listening…"),sizeof(ft8buf));
       } else {
         // Decodes are rendered as Pango markup so "new one" callsigns can be
         // coloured by the same two-level DXCC principle as the big panel — gold
@@ -2945,7 +2945,7 @@ static gboolean rds_update_cb(gpointer data) {
           g_free(msg);
           if(w<0) w=0; else if((size_t)w>=n) w=(int)n-1; p+=w; n-=(size_t)w;
           if(last) {
-            int e=snprintf(p,n,"   (+%d more)", total-FT8_ROWS);
+            int e=snprintf(p,n,i18n_tr("   (+%d more)"), total-FT8_ROWS);
             if(e<0) e=0; else if((size_t)e>=n) e=(int)n-1; p+=e; n-=(size_t)e;
           }
         }
@@ -2964,10 +2964,10 @@ static gboolean rds_update_cb(gpointer data) {
     if(r->sstv_panel_open)
       snprintf(ft8buf,sizeof(ft8buf),"%s   %d%%", sst.status, sst.progress);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %d%%\n(Show SSTV to view the image)",
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%s   %d%%\n(Show SSTV to view the image)"),
                sst.status, sst.progress);
 #else
-    snprintf(ft8buf,sizeof(ft8buf),"SSTV support not built in");
+    g_strlcpy(ft8buf,i18n_tr("SSTV support not built in"),sizeof(ft8buf));
 #endif
   }
   else if(wefax_active) {
@@ -2980,10 +2980,10 @@ static gboolean rds_update_cb(gpointer data) {
     if(r->wefax_panel_open)
       snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines", wst.status, wst.line);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines\n(Show WEFAX to view the image)",
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%s   %d lines\n(Show WEFAX to view the image)"),
                wst.status, wst.line);
 #else
-    snprintf(ft8buf,sizeof(ft8buf),"WEFAX support not built in");
+    g_strlcpy(ft8buf,i18n_tr("WEFAX support not built in"),sizeof(ft8buf));
 #endif
   }
   else if(cw_active) {
@@ -3001,12 +3001,12 @@ static gboolean rds_update_cb(gpointer data) {
     if(r->rds_title!=NULL) gtk_label_set_text(GTK_LABEL(r->rds_title), "CW");
     if(cwtext[0])
       snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n%s",
-               wpm, tone_hz, locked?"":"  (searching…)", cwtext);
+               wpm, tone_hz, locked?"":i18n_tr("  (searching…)"), cwtext);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%d WPM   %.0f Hz%s\n(listening…)",
-               wpm, tone_hz, locked?"":"  (searching…)");
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%d WPM   %.0f Hz%s\n(listening…)"),
+               wpm, tone_hz, locked?"":i18n_tr("  (searching…)"));
 #else
-    snprintf(ft8buf,sizeof(ft8buf),"CW decoder support not built in");
+    g_strlcpy(ft8buf,i18n_tr("CW decoder support not built in"),sizeof(ft8buf));
 #endif
   }
   else if(apt_active) {
@@ -3030,10 +3030,10 @@ static gboolean rds_update_cb(gpointer data) {
     if(r->apt_panel_open)
       snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines%s", ast.status, ast.lines, atune);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %d lines%s\n(Show APT to view the image)",
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%s   %d lines%s\n(Show APT to view the image)"),
                ast.status, ast.lines, atune);
 #else
-    snprintf(ft8buf,sizeof(ft8buf),"APT support not built in");
+    g_strlcpy(ft8buf,i18n_tr("APT support not built in"),sizeof(ft8buf));
 #endif
   }
 #ifdef HFDL
@@ -3088,7 +3088,7 @@ static gboolean rds_update_cb(gpointer data) {
       snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s",
                listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)",
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)"),
                listening?"sig":"idle", hlvl, hframes, hsyms/1000, hch);
   }
   else if(acars_active) {
@@ -3128,7 +3128,7 @@ static gboolean rds_update_cb(gpointer data) {
       snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld msg   %ld bad%s",
                listening?"sig":"idle", alvl, amsgs, abad, ach);
     else
-      snprintf(ft8buf,sizeof(ft8buf),"%s   %.0f dB   %ld msg   %ld bad%s\n(Show ACARS for the message panel)",
+      snprintf(ft8buf,sizeof(ft8buf),i18n_tr("%s   %.0f dB   %ld msg   %ld bad%s\n(Show ACARS for the message panel)"),
                listening?"sig":"idle", alvl, amsgs, abad, ach);
   }
 #endif

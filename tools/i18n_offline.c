@@ -40,6 +40,16 @@ int main(void) {
   if(strcmp(i18n_tr("Phase Rotator"),"Фазовращатель")!=0) return 43;
   if(strcmp(i18n_tr("TCI Server"),"Сервер TCI")!=0) return 44;
   if(strcmp(i18n_tr("Detector:"),"Детектор:")!=0) return 45;
+  if(strcmp(i18n_tr("listening…"),"приём…")!=0) return 50;
+  {
+    /* A translated format must keep every %-specifier: exercise one. */
+    char db[128];
+    g_snprintf(db,sizeof(db),
+               i18n_tr("%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)"),
+               "sig",-42.0,(glong)7,(glong)123,"");
+    if(strstr(db,"(Откройте HFDL для панели сообщений)")==NULL) return 51;
+    if(strstr(db,"-42 dB")==NULL || strstr(db,"7 frames")==NULL) return 52;
+  }
   if(strcmp(i18n_tr("Status: %s"),"Статус: %s")!=0) return 46;
   if(strcmp(i18n_tr("stopped"),"остановлен")!=0) return 47;
   if(strcmp(i18n_tr("Correction: %+.2f ppm    Reference: %s"),

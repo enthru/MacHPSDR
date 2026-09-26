@@ -632,6 +632,20 @@ static const Translation translations[] = {
   {"Delete: %s", "Удалить: %s", "Видалити: %s", "Выдаліць: %s"},
   {"Cancel", "Отмена", "Скасувати", "Скасаваць"},
   {"%s = %s (taken from \"%s\")", "%s = %s (забрано у «%s»)", "%s = %s (забрано в «%s»)", "%s = %s (забрана ў «%s»)"},
+  /* Bottom Decode-block prose hints (telemetry and decoder status stay English). */
+  {"listening…", "приём…", "приймання…", "прыём…"},
+  {"   (+%d more)", "   (+%d ещё)", "   (+%d ще)", "   (+%d яшчэ)"},
+  {"  (searching…)", "  (поиск…)", "  (пошук…)", "  (пошук…)"},
+  {"%s   %d%%\n(Show SSTV to view the image)", "%s   %d%%\n(Откройте SSTV, чтобы увидеть изображение)", "%s   %d%%\n(Відкрийте SSTV, щоб побачити зображення)", "%s   %d%%\n(Адкрыйце SSTV, каб убачыць выяву)"},
+  {"SSTV support not built in", "Сборка без поддержки SSTV", "Збірка без підтримки SSTV", "Зборка без падтрымкі SSTV"},
+  {"%s   %d lines\n(Show WEFAX to view the image)", "%s   %d lines\n(Откройте WEFAX, чтобы увидеть изображение)", "%s   %d lines\n(Відкрийте WEFAX, щоб побачити зображення)", "%s   %d lines\n(Адкрыйце WEFAX, каб убачыць выяву)"},
+  {"WEFAX support not built in", "Сборка без поддержки WEFAX", "Збірка без підтримки WEFAX", "Зборка без падтрымкі WEFAX"},
+  {"%d WPM   %.0f Hz%s\n(listening…)", "%d WPM   %.0f Hz%s\n(приём…)", "%d WPM   %.0f Hz%s\n(приймання…)", "%d WPM   %.0f Hz%s\n(прыём…)"},
+  {"CW decoder support not built in", "Сборка без поддержки декодера CW", "Збірка без підтримки декодера CW", "Зборка без падтрымкі дэкодэра CW"},
+  {"%s   %d lines%s\n(Show APT to view the image)", "%s   %d lines%s\n(Откройте APT, чтобы увидеть изображение)", "%s   %d lines%s\n(Відкрийте APT, щоб побачити зображення)", "%s   %d lines%s\n(Адкрыйце APT, каб убачыць выяву)"},
+  {"APT support not built in", "Сборка без поддержки APT", "Збірка без підтримки APT", "Зборка без падтрымкі APT"},
+  {"%s   %.0f dB   %ld frames   %ld ksym%s\n(Show HFDL for the message panel)", "%s   %.0f dB   %ld frames   %ld ksym%s\n(Откройте HFDL для панели сообщений)", "%s   %.0f dB   %ld frames   %ld ksym%s\n(Відкрийте HFDL для панелі повідомлень)", "%s   %.0f dB   %ld frames   %ld ksym%s\n(Адкрыйце HFDL для панэлі паведамленняў)"},
+  {"%s   %.0f dB   %ld msg   %ld bad%s\n(Show ACARS for the message panel)", "%s   %.0f dB   %ld msg   %ld bad%s\n(Откройте ACARS для панели сообщений)", "%s   %.0f dB   %ld msg   %ld bad%s\n(Відкрийте ACARS для панелі повідомлень)", "%s   %.0f dB   %ld msg   %ld bad%s\n(Адкрыйце ACARS для панэлі паведамленняў)"},
 };
 
 static I18nLanguage active_language = I18N_EN;
