@@ -63,11 +63,11 @@ jobs:
             automake-wrapper
             libtool
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-gtk4
             mingw-w64-x86_64-fftw
             mingw-w64-x86_64-libsoundio
-            mingw-w64-x86_64-soapysdr
             mingw-w64-x86_64-zlib
 
       # Pinned to a tag, not a moving master: an unannounced upstream change
@@ -91,6 +91,28 @@ jobs:
           set -e
           cp -r liquid-install/include/* /mingw64/include/
           cp -r liquid-install/lib/*      /mingw64/lib/
+
+      # MSYS2 dropped the mingw64 build of SoapySDR (the package survives only
+      # for ucrt64/clang64), so the core library is rebuilt from source here the
+      # same way liquid-dsp is, and installed into /mingw64 so nothing else in
+      # this job or in win-package.sh has to know it did not come from pacman.
+      - name: Cache SoapySDR
+        id: soapy-cache
+        uses: actions/cache@v6
+        with:
+          path: soapy-install
+          key: soapysdr-0.8.1-mingw64-1
+
+      - name: Build SoapySDR
+        if: steps.soapy-cache.outputs.cache-hit != 'true'
+        run: tools/build-soapysdr.sh "$(pwd)/soapy-install"
+
+      - name: Install SoapySDR into the prefix
+        run: |
+          set -e
+          cp -r soapy-install/include/* /mingw64/include/
+          cp -r soapy-install/lib/*      /mingw64/lib/
+          cp -r soapy-install/bin/*      /mingw64/bin/
 
       - name: Build
         run: make -j"$(nproc)"
