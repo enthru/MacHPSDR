@@ -354,9 +354,9 @@ void bookmark_pressed_cb(GtkGestureClick *gesture,int n_press,double px,double p
   GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
   gtk_popover_set_child(GTK_POPOVER(pop),box);
 
-  snprintf(label,sizeof(label),"Edit: %s",name?name:"");
+  snprintf(label,sizeof(label),i18n_tr("Edit: %s"),name?name:"");
   bm_add_item(box,pop,label,G_CALLBACK(edit_cb),rx);
-  snprintf(label,sizeof(label),"Delete: %s",name?name:"");
+  snprintf(label,sizeof(label),i18n_tr("Delete: %s"),name?name:"");
   bm_add_item(box,pop,label,G_CALLBACK(delete_cb),rx);
   bm_add_item(box,pop,"Cancel",G_CALLBACK(cancel_cb),rx);
 

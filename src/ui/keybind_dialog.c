@@ -121,7 +121,7 @@ static gboolean learn_key_pressed(GtkEventControllerKey *controller, guint keyva
     if(previous>=0 && previous!=index) {
       /* keybind_set() took the combination away from that row; say so, or the
          operator only finds out when the old shortcut stops working. */
-      g_snprintf(text,sizeof(text),"%s = %s (taken from \"%s\")",
+      g_snprintf(text,sizeof(text),i18n_tr("%s = %s (taken from \"%s\")"),
                  keybind_actions[index].label,accel!=NULL?accel:"",
                  keybind_actions[previous].label);
     } else {
