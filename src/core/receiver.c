@@ -2281,19 +2281,27 @@ log_info("set_deviation: %d\n",rx->deviation);
   set_squelch(rx);
 }
 
-// Mode-aware "variable squelch". FM modes (FMN/WFM) use WDSP's FM squelch
-// (keys off the demodulated noise level); every other mode uses the amplitude
-// (voice) squelch AMSQ, which gates on the pre-AGC signal magnitude. Exactly
-// one of the two WDSP squelches runs at a time; the other is forced off so a
-// mode change can't leave a stale squelch armed on the wrong path.
+// Mode-aware "variable squelch". Exactly ONE of the three WDSP squelches runs
+// at a time; the other two are forced off so a mode change can't leave a stale
+// squelch armed on the wrong path:
+//   - FM (FMN/WFM)          -> FMSQ, keys off the demodulated noise level;
+//   - SSB voice (LSB/USB/   -> SSQL, the syllabic squelch: keys off the audio's
+//     DIGL/DIGU)               zero-crossing rate (frequency-to-voltage), so it
+//                              tells voice from band noise instead of gating on
+//                              amplitude -- an amplitude gate opens on the noise
+//                              itself, which NR (esp. NR4) leaves audible with
+//                              no signal present;
+//   - everything else       -> AMSQ, the amplitude/voice squelch, on the pre-AGC
+//     (AM/SAM/CW/...)          signal magnitude (right for a carrier mode).
 //
-// The single 0..1 SQL bar drives both: bar at minimum = squelch fully OFF
+// The single 0..1 SQL bar drives all three: bar at minimum = squelch fully OFF
 // (audio always passes) for every mode -- see the FM note below for why the
 // bar-at-minimum-is-off rule matters.
 void set_squelch(RECEIVER *rx) {
   if(rx->channel < 0) return;
   int mode=rx->mode_a;
   gboolean is_fm=(mode==FMN || mode==WFM);
+  gboolean is_voice=(mode==LSB || mode==USB || mode==DIGL || mode==DIGU);
 
   // Bar fully down = squelch OFF. For FM: fm_sq = 10^(-2*squelch) is at most 1.0
   // and the old "fm_sq > 1" disable test could never fire -- the FM squelch
@@ -2322,10 +2330,23 @@ void set_squelch(RECEIVER *rx) {
     double fm_sq=pow(10.0, -2.0*rx->squelch);
     SetRXAFMSQThreshold(rx->channel, fm_sq);
     SetRXAAMSQRun(rx->channel, 0);
+    SetRXASSQLRun(rx->channel, 0);
     SetRXAFMSQRun(rx->channel, run);
     log_info("Set FM squelch %f %f\n", rx->squelch, fm_sq);
+  } else if(is_voice) {
+    // Syllabic voice squelch (SSQL). Its threshold is a normalised 0..1 value
+    // (amplitude-independent -- it looks at the audio's zero-crossing rate, not
+    // its level), so the SQL bar drives it directly: higher bar = tighter gate.
+    // No per-station calibration is needed the way AMSQ's dB endpoints are,
+    // because the discriminator does not depend on the noise floor. The mute/
+    // unmute time constants keep WDSP's create-time defaults.
+    SetRXASSQLThreshold(rx->channel, rx->squelch);
+    SetRXAFMSQRun(rx->channel, 0);
+    SetRXAAMSQRun(rx->channel, 0);
+    SetRXASSQLRun(rx->channel, run);
+    log_info("Set SSB voice squelch %f\n", rx->squelch);
   } else {
-    // Voice/amplitude squelch. AMSQ's unmute threshold is pow(10, thresh_db/20)
+    // Amplitude squelch (AMSQ). Its unmute threshold is pow(10, thresh_db/20)
     // on the pre-AGC signal magnitude, so map the 0..1 bar linearly in dB:
     // higher bar = tighter gate. The endpoints are operator-settable (Configure
     // -> RX-N) because the useful range depends on the station's noise floor
@@ -2334,6 +2355,7 @@ void set_squelch(RECEIVER *rx) {
     SetRXAAMSQThreshold(rx->channel, thresh_db);
     SetRXAAMSQMaxTail(rx->channel, rx->amsq_tail);
     SetRXAFMSQRun(rx->channel, 0);
+    SetRXASSQLRun(rx->channel, 0);
     SetRXAAMSQRun(rx->channel, run);
     log_info("Set AM/voice squelch %f %f dB\n", rx->squelch, thresh_db);
   }

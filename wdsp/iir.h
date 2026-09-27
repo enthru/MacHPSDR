@@ -194,3 +194,69 @@ extern void setSamplerate_phrot (PHROT a, int rate);
 extern void setSize_phrot (PHROT a, int size);
 
 #endif
+
+/********************************************************************************************************
+*																										*
+*									Complex Bi-Quad Low-Pass				     						*
+*																										*
+********************************************************************************************************/
+
+#ifndef _bqlp_h
+#define _bqlp_h
+
+typedef struct _bqlp
+{
+	int run;
+	int size;
+	double* in;
+	double* out;
+	double rate;
+	double fc;
+	double Q;
+	double gain;
+	int nstages;
+	double a0, a1, a2, b1, b2;
+	double* x0, * x1, * x2, * y0, * y1, * y2;
+	CRITICAL_SECTION cs_update;
+} bqlp, *BQLP;
+
+extern BQLP create_bqlp(int run, int size, double* in, double* out, double rate, double fc, double Q, double gain, int nstages);
+
+extern void destroy_bqlp(BQLP a);
+
+extern void flush_bqlp(BQLP a);
+
+extern void xbqlp(BQLP a);
+
+extern void setBuffers_bqlp(BQLP a, double* in, double* out);
+
+extern void setSamplerate_bqlp(BQLP a, int rate);
+
+extern void setSize_bqlp(BQLP a, int size);
+
+#endif
+
+/********************************************************************************************************
+*																										*
+*									   Double Bi-Quad Low-Pass				     						*
+*																										*
+********************************************************************************************************/
+
+#ifndef _dbqlp_h
+#define _dbqlp_h
+
+extern BQLP create_dbqlp(int run, int size, double* in, double* out, double rate, double fc, double Q, double gain, int nstages);
+
+extern void destroy_dbqlp(BQLP a);
+
+extern void flush_dbqlp(BQLP a);
+
+extern void xdbqlp(BQLP a);
+
+extern void setBuffers_dbqlp(BQLP a, double* in, double* out);
+
+extern void setSamplerate_dbqlp(BQLP a, int rate);
+
+extern void setSize_dbqlp(BQLP a, int size);
+
+#endif

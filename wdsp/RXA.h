@@ -140,6 +140,10 @@ struct _rxa
 	} amsq;
 	struct
 	{
+		SSQL p;
+	} ssql;
+	struct
+	{
 		AMD p;
 	} amd;
 	struct

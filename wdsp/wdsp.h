@@ -77,6 +77,13 @@ extern void SetRXAFMSQThreshold (int channel, double threshold);
 extern void SetRXAAMSQRun (int channel, int run);
 extern void SetRXAAMSQThreshold (int channel, double threshold);
 extern void SetRXAAMSQMaxTail (int channel, double tail);
+// SSQL / syllabic (SSB voice) squelch (wdsp/ssql.c). Keys off the audio's
+// zero-crossing rate (frequency-to-voltage), so it discriminates voice from
+// band noise instead of gating on amplitude like AMSQ. Threshold is 0..1.
+extern void SetRXASSQLRun (int channel, int run);
+extern void SetRXASSQLThreshold (int channel, double threshold);
+extern void SetRXASSQLTauMute (int channel, double tau_mute);
+extern void SetRXASSQLTauUnMute (int channel, double tau_unmute);
 // APF / CW audio peaking filter (wdsp/iir.c "speak" block, in the RXA pipeline)
 extern void SetRXASPCWRun (int channel, int run);
 extern void SetRXASPCWFreq (int channel, double freq);

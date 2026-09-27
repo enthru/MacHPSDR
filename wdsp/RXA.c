@@ -206,6 +206,23 @@ void create_rxa (int channel)
 		1.500,											// maximum tail length
 		0.0);											// muted gain
 
+	// syllabic (SSB voice) squelch
+	rxa[channel].ssql.p = create_ssql (
+		0,												// run
+		ch[channel].dsp_size,							// size
+		rxa[channel].midbuff,							// pointer to input buffer
+		rxa[channel].midbuff,							// pointer to output buffer
+		ch[channel].dsp_rate,							// sample rate
+		0.070,											// signal up transition time
+		0.070,											// signal down transition time
+		0.0,											// muted gain
+		0.1,											// mute time-constant
+		0.1,											// unmute time-constant
+		0.08,											// window threshold
+		0.8197,											// trigger threshold
+		2400,											// ring size for f_to_v converter
+		2000.0);										// max freq for f_to_v converter
+
 	// AM demod
 	rxa[channel].amd.p = create_amd (
 		0,												// run - OFF by default
@@ -595,6 +612,7 @@ void destroy_rxa (int channel)
 	destroy_wfmd (rxa[channel].wfmd.p);
 	destroy_fmd (rxa[channel].fmd.p);
 	destroy_amd (rxa[channel].amd.p);
+	destroy_ssql (rxa[channel].ssql.p);
 	destroy_amsq (rxa[channel].amsq.p);
 	destroy_meter (rxa[channel].smeter.p);
 	destroy_sender (rxa[channel].sender.p);
@@ -624,6 +642,7 @@ void flush_rxa (int channel)
 	flush_sender (rxa[channel].sender.p);
 	flush_meter (rxa[channel].smeter.p);
 	flush_amsq (rxa[channel].amsq.p);
+	flush_ssql (rxa[channel].ssql.p);
 	flush_amd (rxa[channel].amd.p);
 	flush_fmd (rxa[channel].fmd.p);
 	flush_wfmd (rxa[channel].wfmd.p);
@@ -723,6 +742,7 @@ void xrxa (int channel)
 	xcbl (rxa[channel].cbl.p);
 	xspeak (rxa[channel].speak.p);
 	xmpeak (rxa[channel].mpeak.p);
+	xssql (rxa[channel].ssql.p);
 	xpanel (rxa[channel].panel.p);
 	xamsq (rxa[channel].amsq.p);
 	xresample (rxa[channel].rsmpout.p);
@@ -803,6 +823,7 @@ void setDSPSamplerate_rxa (int channel)
 	setSamplerate_meter (rxa[channel].smeter.p, ch[channel].dsp_rate);
 	setSamplerate_sender (rxa[channel].sender.p, ch[channel].dsp_rate);
 	setSamplerate_amsq (rxa[channel].amsq.p, ch[channel].dsp_rate);
+	setSamplerate_ssql (rxa[channel].ssql.p, ch[channel].dsp_rate);
 	setSamplerate_amd (rxa[channel].amd.p, ch[channel].dsp_rate);
 	setSamplerate_fmd (rxa[channel].fmd.p, ch[channel].dsp_rate);
 	setSamplerate_wfmd (rxa[channel].wfmd.p, ch[channel].dsp_rate);
@@ -860,6 +881,8 @@ void setDSPBuffsize_rxa (int channel)
 	setSize_sender (rxa[channel].sender.p, ch[channel].dsp_size);
 	setBuffers_amsq (rxa[channel].amsq.p, rxa[channel].midbuff, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_amsq (rxa[channel].amsq.p, ch[channel].dsp_size);
+	setBuffers_ssql (rxa[channel].ssql.p, rxa[channel].midbuff, rxa[channel].midbuff);
+	setSize_ssql (rxa[channel].ssql.p, ch[channel].dsp_size);
 	setBuffers_amd (rxa[channel].amd.p, rxa[channel].midbuff, rxa[channel].midbuff);
 	setSize_amd (rxa[channel].amd.p, ch[channel].dsp_size);
 	setBuffers_fmd (rxa[channel].fmd.p, rxa[channel].midbuff, rxa[channel].midbuff);

@@ -92,6 +92,7 @@ warren@wpratt.com
 #include "gen.h"
 #include "icfir.h"
 #include "iir.h"
+#include "ssql.h"
 #include "iobuffs.h"
 #include "iqc.h"
 #include "lmath.h"
