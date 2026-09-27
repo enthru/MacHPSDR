@@ -2276,13 +2276,24 @@ log_info("soapy tx_thread: exit\n");
 void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   if(soapy_device==NULL || tx_stream==NULL || changing_device_rate) return;
   output_buffer_index=0;
+  // The drive actually keyed: a Tune runs at tune_percent of the slider unless
+  // "Tune Use Drive" is ticked, exactly as protocol 1/2 do it.  On SoapySDR the
+  // drive is a position in the analogue-gain range, so scaling the percent moves
+  // the gain down that range -- a quieter Tune, which is what an ATU/dish-align
+  // carrier wants; the operator who wants Tune at speech drive ticks the box.
+  // The QO-100 transmit calibration keys through the same Tune path, so its
+  // carrier follows these settings too rather than the loop reaching behind the
+  // operator to change the drive on its own.
+  double drive=tx->drive;
+  if(radio->tune && !tx->tune_use_drive) {
+    drive=drive*tx->tune_percent/100.0;
+  }
+  if(drive<0.0) drive=0.0;
+  if(drive>100.0) drive=100.0;
   if(!tx_stream_active) {
     // Program the requested attenuation BEFORE activateStream turns on Pluto's
     // TX LO.  The old order briefly keyed it at the driver's/default gain and
     // only then moved it to Drive.
-    double drive=tx->drive;
-    if(drive<0.0) drive=0.0;
-    if(drive>100.0) drive=100.0;
     double gain=tx_gain_min+((tx_gain_max-tx_gain_min)*(drive/100.0));
     radio->dac[0].gain=gain;
     int grc=SoapySDRDevice_setGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id,gain);
@@ -2322,9 +2333,12 @@ void soapy_protocol_activate_tx(TRANSMITTER *tx) {
   {
     double got=SoapySDRDevice_getSampleRate(soapy_device,SOAPY_SDR_TX,tx->dac);
     double gain=SoapySDRDevice_getGain(soapy_device,SOAPY_SDR_TX,radio->dac[0].id);
-    log_info("%s: DAC rate %.0f Hz (WDSP is producing %d), TX gain %.1f dB of %.1f..%.1f, drive %.0f%%, "
+    // "drive" is the effective percent (a Tune already scaled by tune_percent),
+    // so the line reads as what was actually keyed rather than the slider.
+    log_info("%s: DAC rate %.0f Hz (WDSP is producing %d), TX gain %.1f dB of %.1f..%.1f, drive %.0f%%%s, "
              "DAC backoff %.1f dB\n",
-             __FUNCTION__,got,soapy_tx_sample_rate,gain,tx_gain_min,tx_gain_max,tx->drive,tx_backoff_db);
+             __FUNCTION__,got,soapy_tx_sample_rate,gain,tx_gain_min,tx_gain_max,drive,
+             (radio->tune && !tx->tune_use_drive)?" (tune)":"",tx_backoff_db);
     long long diff=(long long)fabs(got-(double)soapy_tx_sample_rate);
     if(got>0.0 && diff*10000LL>=(long long)soapy_tx_sample_rate) {
       log_error("%s: the DAC is clocked at %.0f Hz while WDSP produces %d -- the transmitted "
@@ -2395,6 +2409,12 @@ void soapy_protocol_set_tx_backoff(double db) {
 // Map the 0..100 drive slider onto the hardware TX gain range.
 void soapy_protocol_set_tx_drive(double drive) {
   if(soapy_device==NULL) return;
+  // Keep the Tune scaling when the drive is nudged mid-Tune (this is reached
+  // from the Drive slider / CAT while transmitting), or the carrier would jump
+  // to full drive -- the same rule activate_tx keys with.
+  if(radio->tune && radio->transmitter && !radio->transmitter->tune_use_drive) {
+    drive=drive*radio->transmitter->tune_percent/100.0;
+  }
   if(drive<0.0) drive=0.0;
   if(drive>100.0) drive=100.0;
   double g=tx_gain_min+((tx_gain_max-tx_gain_min)*(drive/100.0));
