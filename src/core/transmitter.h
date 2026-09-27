@@ -43,6 +43,15 @@ extern double ctcss_frequencies[CTCSS_FREQUENCIES];
    far that a mis-set control silently takes the transmitter off the air. */
 #define TX_DAC_BACKOFF_MIN_DB (-30.0)
 
+/* Two-tone Tune spacing (Hz between the two equal tones), and the range the
+   settings slider and the props restore clamp it to.  400 Hz keeps both tones
+   well inside a 2.7 kHz SSB passband; 2000 Hz is about as wide as fits with a
+   little margin.  Default is the classic 700/1900 test pair. */
+#define TX_TWOTONE_SPACING_MIN_HZ  400.0
+#define TX_TWOTONE_SPACING_MAX_HZ  2000.0
+#define TX_TWOTONE_SPACING_DEF_HZ  1200.0
+#define TX_TWOTONE_MAG             0.49
+
 /* Ceiling for the SoapySDR TX DAC rate (Hz).
 
    tx->iq_output_rate used to be radio->sample_rate outright, back when that
@@ -108,6 +117,13 @@ typedef struct _transmitter {
      so the default is per device (create_transmitter). */
   gdouble dac_backoff_db;
   gboolean tune_use_drive;
+  /* Tune emits a two-tone test signal instead of a single carrier when set:
+     two equal tones symmetric about the TX passband centre, `tune_tt_spacing`
+     Hz apart, keyed by the ordinary Tune button/action on any device (no
+     PureSignal page needed).  The QO-100 transmit calibration forces a single
+     tone regardless, because it PREDICTS the emission from radio_tune_tone_hz. */
+  gboolean tune_two_tone;
+  gdouble tune_tt_spacing;
   gint attenuation;
 
   gboolean eer;

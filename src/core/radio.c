@@ -1032,6 +1032,33 @@ double radio_tune_tone_hz(RADIO *r) {
   }
 }
 
+/* Program the PostGen block for whatever Tune signal is currently selected,
+   WITHOUT keying it -- so it is the one description of "what Tune emits", shared
+   by set_tune (which then runs the generator and keys) and the two-tone spacing
+   slider (which re-programmes it live while keyed).
+
+   A two-tone test signal when the operator has selected it (Configure -> TX),
+   otherwise the single carrier.  Both are the one PostGen block, so Tune is the
+   single entry point for either on any device -- no PureSignal page, and MOX is
+   keyed by set_tune rather than left to the operator.  The QO-100 transmit
+   calibration keys Tune too and PREDICTS the emission from radio_tune_tone_hz (a
+   single tone), so it always gets the carrier regardless of the setting. */
+void radio_tune_program_signal(RADIO *r) {
+  if(r==NULL || r->transmitter==NULL) return;
+  int ch=r->transmitter->channel;
+  if(r->transmitter->tune_two_tone && !qo100_txcal_active()) {
+    double centre=radio_tune_tone_hz(r);
+    double half=r->transmitter->tune_tt_spacing/2.0;
+    SetTXAPostGenTTFreq(ch, centre-half, centre+half);
+    SetTXAPostGenTTMag(ch, TX_TWOTONE_MAG, TX_TWOTONE_MAG);
+    SetTXAPostGenMode(ch,1);
+  } else {
+    SetTXAPostGenToneFreq(ch, radio_tune_tone_hz(r));
+    SetTXAPostGenToneMag(ch,0.99999);
+    SetTXAPostGenMode(ch,0);
+  }
+}
+
 void set_tune(RADIO *r,gboolean state) {
   if(r->mox) {
     r->mox=FALSE;
@@ -1055,9 +1082,7 @@ void set_tune(RADIO *r,gboolean state) {
         r->cw_keyer_internal=FALSE;
         break;
     }
-    SetTXAPostGenToneFreq(r->transmitter->channel, radio_tune_tone_hz(r));
-    SetTXAPostGenToneMag(r->transmitter->channel,0.99999);
-    SetTXAPostGenMode(r->transmitter->channel,0);
+    radio_tune_program_signal(r);
     SetTXAPostGenRun(r->transmitter->channel,1);
     rxtx(r);
   } else {

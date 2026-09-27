@@ -532,6 +532,11 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   sprintf(value,"%d",tx->tune_use_drive);
   setProperty(name,value);
+  sprintf(name,"transmitter[%d].tune_two_tone",tx->channel);
+  sprintf(value,"%d",tx->tune_two_tone);
+  setProperty(name,value);
+  sprintf(name,"transmitter[%d].tune_tt_spacing",tx->channel);
+  setPropertyDouble(name,tx->tune_tt_spacing);
   sprintf(name,"transmitter[%d].attenuation",tx->channel);
   sprintf(value,"%d",tx->attenuation);
   setProperty(name,value);
@@ -704,6 +709,20 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].tune_use_drive",tx->channel);
   value=getProperty(name);
   if(value) tx->tune_use_drive=atoi(value);
+  sprintf(name,"transmitter[%d].tune_two_tone",tx->channel);
+  value=getProperty(name);
+  if(value) tx->tune_two_tone=atoi(value);
+  sprintf(name,"transmitter[%d].tune_tt_spacing",tx->channel);
+  value=getProperty(name);
+  /* Clamped like anything else out of a props file, NaN-safe: this feeds the
+     PostGen tone frequencies, and an out-of-band tone is an attenuated one that
+     makes the amplitudes unequal and the IMD test meaningless. */
+  if(value) {
+    double s=propToDouble(value);
+    if(!(s>=TX_TWOTONE_SPACING_MIN_HZ)) s=TX_TWOTONE_SPACING_MIN_HZ;
+    if(s>TX_TWOTONE_SPACING_MAX_HZ)     s=TX_TWOTONE_SPACING_MAX_HZ;
+    tx->tune_tt_spacing=s;
+  }
   sprintf(name,"transmitter[%d].attenuation",tx->channel);
   value=getProperty(name);
   if(value) tx->attenuation=atoi(value);
@@ -2008,6 +2027,8 @@ log_info("create_transmitter: channel=%d\n",channel);
   tx->drive=20.0;
   tx->tune_use_drive=FALSE;
   tx->tune_percent=10.0;
+  tx->tune_two_tone=FALSE;
+  tx->tune_tt_spacing=TX_TWOTONE_SPACING_DEF_HZ;
 
   tx->temperature = 0.0;
 

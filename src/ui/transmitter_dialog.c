@@ -148,6 +148,23 @@ static void tune_use_drive_cb(GtkWidget *widget,gpointer data) {
   tx->tune_use_drive=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
 }
 
+static void tune_two_tone_cb(GtkWidget *widget,gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->tune_two_tone=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+  GtkWidget *spacing=g_object_get_data(G_OBJECT(widget),"tt_spacing");
+  if(spacing) gtk_widget_set_sensitive(spacing,tx->tune_two_tone);
+  // If Tune is already on air, switch what it emits now rather than at next key.
+  if(radio->tune) radio_tune_program_signal(radio);
+}
+
+static void tune_tt_spacing_cb(GtkWidget *widget,gpointer data) {
+  TRANSMITTER *tx=(TRANSMITTER *)data;
+  tx->tune_tt_spacing=gtk_range_get_value(GTK_RANGE(widget));
+  // Live, because this is a control an operator sweeps against an analyser while
+  // the two-tone is on air.
+  if(radio->tune && tx->tune_two_tone) radio_tune_program_signal(radio);
+}
+
 static void use_rx_filter_cb(GtkWidget *widget,gpointer data) {
   TRANSMITTER *tx=(TRANSMITTER *)data;
   tx->use_rx_filter=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
@@ -437,6 +454,28 @@ log_info("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_check_button_set_active (GTK_CHECK_BUTTON (tune_use_drive), tx->tune_use_drive);
   gtk_grid_attach(GTK_GRID(tune_grid),tune_use_drive,0,2,1,1);
   g_signal_connect(tune_use_drive,"toggled",G_CALLBACK(tune_use_drive_cb),tx);
+
+  // Two-tone test signal: Tune emits two equal tones this far apart (symmetric
+  // about the TX passband centre) instead of a single carrier -- a linearity
+  // test reachable on any device, keyed by the ordinary Tune button.
+  GtkWidget *two_tone=gtk_check_button_new_with_label("Two-Tone Test");
+  gtk_check_button_set_active (GTK_CHECK_BUTTON (two_tone), tx->tune_two_tone);
+  gtk_grid_attach(GTK_GRID(tune_grid),two_tone,0,3,1,1);
+  g_signal_connect(two_tone,"toggled",G_CALLBACK(tune_two_tone_cb),tx);
+
+  GtkWidget *tt_label=gtk_label_new("Tone Spacing (Hz):");
+  gtk_grid_attach(GTK_GRID(tune_grid),tt_label,0,4,1,1);
+
+  GtkWidget *tt_scale=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,
+                        TX_TWOTONE_SPACING_MIN_HZ,TX_TWOTONE_SPACING_MAX_HZ,50.0);
+  gtk_widget_set_size_request (tt_scale, 300, 32);
+  gtk_range_set_value (GTK_RANGE(tt_scale),tx->tune_tt_spacing);
+  sui_scale_show_value(tt_scale,0);
+  gtk_widget_set_sensitive(tt_scale,tx->tune_two_tone);
+  g_signal_connect(G_OBJECT(tt_scale),"value_changed",G_CALLBACK(tune_tt_spacing_cb),tx);
+  gtk_grid_attach(GTK_GRID(tune_grid),tt_scale,1,4,1,1);
+  // So the checkbox can grey the slider without a new TRANSMITTER field.
+  g_object_set_data(G_OBJECT(two_tone),"tt_spacing",tt_scale);
 
 #ifdef SOAPYSDR
   // SoapySDR only: on protocol 1/2 the drive level IS the digital level the
