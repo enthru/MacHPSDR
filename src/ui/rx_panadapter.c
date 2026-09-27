@@ -870,9 +870,10 @@ static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widge
   double top=(double)display_height-strip_h-16.0;
   if(top<0.0) top=0.0;
 
+  band_plan_region_t region=(band_plan_region_t)radio->band_plan_region;
   gboolean band_has_plan=FALSE;
-  for(int i=0;i<frequency_info_count();i++) {
-    const struct frequency_info *fi=frequency_info_at(i);
+  for(int i=0;i<frequency_info_count(region);i++) {
+    const struct frequency_info *fi=frequency_info_at(region,i);
     if(fi==NULL || !fi->transmit) continue;
     // QO-100 owns a more accurate, purpose-built plan; never paint the old
     // single generic QO-100 row over it.

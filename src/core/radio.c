@@ -1995,6 +1995,12 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->qo100_transponder=atoi(value);
   value=getProperty("radio.qo100_bandplan");
   if(value!=NULL) r->qo100_bandplan=atoi(value);
+  value=getProperty("radio.band_plan_region");
+  if(value!=NULL) {
+    int reg=atoi(value);
+    if(reg<BAND_PLAN_REGION_US || reg>BAND_PLAN_REGION_3) reg=BAND_PLAN_REGION_US;
+    r->band_plan_region=reg;
+  }
   value=getProperty("radio.qo100_beacon_lock");
   if(value!=NULL) r->qo100_beacon_lock=atoi(value);
   value=getProperty("radio.qo100_beacon_sel");
@@ -3917,6 +3923,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->qo100_transponder = QO100_TRANSPONDER_NB;
   r->qo100_offset = QO100_TP_OFFSET;
   r->qo100_bandplan = FALSE;
+  r->band_plan_region = BAND_PLAN_REGION_US;  // the original table; the operator picks R1/R3
   r->qo100_beacon_lock = FALSE;
   r->qo100_beacon_sel = QO100_BEACON_SEL_DEFAULT;   // the middle BPSK beacon
   r->qo100_lnb_lo = QO100_DEFAULT_LNB_LO;  // standard universal LNB, low band

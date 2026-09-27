@@ -31,10 +31,20 @@ struct frequency_info {
         int transmit;
     };
 
-/* Read-only access to the detailed band-plan table.  The panadapter uses this
- * to draw the same kind of allocation strip that QO-100 already has. */
-extern int frequency_info_count(void);
-extern const struct frequency_info* frequency_info_at(int index);
+/* Which regional band plan the overlay draws.  The values are persisted in the
+ * props file, so they must not be renumbered. */
+typedef enum {
+        BAND_PLAN_REGION_US = 0,   /* IARU Region 2 (the original US table) */
+        BAND_PLAN_REGION_1  = 1,   /* IARU Region 1 -- Europe, Africa, Russia */
+        BAND_PLAN_REGION_3  = 2    /* IARU Region 3 -- Asia-Pacific */
+} band_plan_region_t;
+
+/* Read-only access to the detailed band-plan table for a region.  The panadapter
+ * uses this to draw the same kind of allocation strip that QO-100 already has.
+ * Every region's table stays sorted by minFrequency (the draw walks it in order
+ * and stops as soon as it is past the display), and is terminated by a zero row. */
+extern int frequency_info_count(band_plan_region_t region);
+extern const struct frequency_info* frequency_info_at(band_plan_region_t region, int index);
 
 extern char* getFrequencyInfo(long long frequency,int filter_low,int filter_high);
 extern int getBand(long long frequency);

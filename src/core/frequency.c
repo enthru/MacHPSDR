@@ -20,19 +20,34 @@
 //
 // frequency.c
 //
-// A US band plan: which sub-band a frequency falls in, its human-readable name,
-// and whether it is transmittable.
+// Regional band plans: which sub-band a frequency falls in, its human-readable
+// name, and whether it is transmittable.  Three tables are carried:
 //
-// The lookup functions below remain available for the original callers, while
-// the panadapter walks this table through frequency_info_count()/at() to draw
-// modulation and activity allocations on every amateur band.
+//   frequencyInfo[]    IARU Region 2 (US) -- the original, detailed to the
+//                      channel and including non-amateur references (time
+//                      signals, broadcast, WWV).  The legacy point lookups
+//                      (getFrequencyInfo/getBand/canTransmit) use this one.
+//   frequencyInfoR1[]  IARU Region 1 (Europe/Africa/Russia)
+//   frequencyInfoR3[]  IARU Region 3 (Asia-Pacific)
 //
-// THE TABLE MUST STAY SORTED BY minFrequency.  Both lookups walk it in order and
+// The panadapter walks the selected region's table through
+// frequency_info_count()/at() to draw modulation and activity allocations on
+// every amateur band.  Only amateur (transmit==TRUE) rows are drawn, so the two
+// IARU tables carry amateur segments only -- named "<band> <mode>" so the drawing
+// code's keyword colouring reads them the same way it reads the US rows.  Sources:
+// IARU R1 HF bandplan (2016), VHF handbook v9.01 and UHF bandplan (2020); IARU R3
+// interim band plan R3-004 (2019).  Segment granularity matches the US table
+// (major mode segments + beacon sub-bands), not the source docs' per-channel
+// detail; both IARU tables stop at 13 cm (higher microwave never reaches this
+// hardware, and QO-100 has its own purpose-built overlay).
+//
+// EVERY TABLE MUST STAY SORTED BY minFrequency.  Both lookups walk in order and
 // bail out the moment `frequency < info->minFrequency`, which is only valid on a
 // sorted table -- so an entry in the wrong place is not merely untidy, it is
-// unreachable, and so is nothing else.  "AM - Long Wave" (153..279 kHz) sat
+// unreachable, and so is nothing else.  "AM - Long Wave" (153..279 kHz) once sat
 // after the 472/475 kHz entries and could therefore never be returned: every
 // frequency in it hit the early exit at 472000 and came back "Out of band".
+// tools/check_bandplan.py re-verifies the ordering of all three tables.
 
 #include <gtk/gtk.h>
 #include "band.h"
@@ -387,17 +402,230 @@ struct frequency_info frequencyInfo[]=
 
         {0,        0,        "",                               0,     FALSE}
 
-        
+
 
     };
 
-int frequency_info_count(void) {
-    return (int)(sizeof(frequencyInfo)/sizeof(frequencyInfo[0]))-1;
+// IARU Region 1 (Europe, Africa, Russia).  Amateur segments only; sorted.
+struct frequency_info frequencyInfoR1[]=
+    {
+        {135700LL, 137800LL,   "2200M CW",           band2200, TRUE},
+
+        {472000LL, 475000LL,   "630M CW",            band630,  TRUE},
+        {475000LL, 479000LL,   "630M Digimodes",     band630,  TRUE},
+
+        {1810000LL, 1838000LL, "160M CW",            band160,  TRUE},
+        {1838000LL, 1843000LL, "160M Digimodes",     band160,  TRUE},
+        {1843000LL, 2000000LL, "160M SSB",           band160,  TRUE},
+
+        {3500000LL, 3570000LL, "80M CW",             band80,   TRUE},
+        {3570000LL, 3600000LL, "80M Digimodes",      band80,   TRUE},
+        {3600000LL, 3775000LL, "80M SSB",            band80,   TRUE},
+        {3775000LL, 3800000LL, "80M SSB DX",         band80,   TRUE},
+
+        {5351500LL, 5354000LL, "60M CW",             band60,   TRUE},
+        {5354000LL, 5366000LL, "60M SSB",            band60,   TRUE},
+        {5366000LL, 5366500LL, "60M Weak Signal",    band60,   TRUE},
+
+        {7000000LL, 7040000LL, "40M CW",             band40,   TRUE},
+        {7040000LL, 7053000LL, "40M Digimodes",      band40,   TRUE},
+        {7053000LL, 7200000LL, "40M SSB",            band40,   TRUE},
+
+        {10100000LL, 10130000LL, "30M CW",           band30,   TRUE},
+        {10130000LL, 10150000LL, "30M Digimodes",    band30,   TRUE},
+
+        {14000000LL, 14070000LL, "20M CW",           band20,   TRUE},
+        {14070000LL, 14099000LL, "20M Digimodes",    band20,   TRUE},
+        {14099000LL, 14101000LL, "20M Beacons",      band20,   TRUE},
+        {14101000LL, 14350000LL, "20M SSB",          band20,   TRUE},
+
+        {18068000LL, 18095000LL, "17M CW",           band17,   TRUE},
+        {18095000LL, 18109000LL, "17M Digimodes",    band17,   TRUE},
+        {18109000LL, 18111000LL, "17M Beacons",      band17,   TRUE},
+        {18111000LL, 18168000LL, "17M SSB",          band17,   TRUE},
+
+        {21000000LL, 21070000LL, "15M CW",           band15,   TRUE},
+        {21070000LL, 21149000LL, "15M Digimodes",    band15,   TRUE},
+        {21149000LL, 21151000LL, "15M Beacons",      band15,   TRUE},
+        {21151000LL, 21450000LL, "15M SSB",          band15,   TRUE},
+
+        {24890000LL, 24915000LL, "12M CW",           band12,   TRUE},
+        {24915000LL, 24929000LL, "12M Digimodes",    band12,   TRUE},
+        {24929000LL, 24931000LL, "12M Beacons",      band12,   TRUE},
+        {24931000LL, 24990000LL, "12M SSB",          band12,   TRUE},
+
+        {28000000LL, 28070000LL, "10M CW",           band10,   TRUE},
+        {28070000LL, 28190000LL, "10M Digimodes",    band10,   TRUE},
+        {28190000LL, 28225000LL, "10M Beacons",      band10,   TRUE},
+        {28225000LL, 29000000LL, "10M SSB",          band10,   TRUE},
+        {29000000LL, 29200000LL, "10M FM",           band10,   TRUE},
+        {29200000LL, 29300000LL, "10M Digimodes",    band10,   TRUE},
+        {29300000LL, 29510000LL, "10M Satellite",    band10,   TRUE},
+        {29520000LL, 29590000LL, "10M FM Repeater",  band10,   TRUE},
+        {29600000LL, 29600000LL, "10M FM Calling",   band10,   TRUE},
+        {29620000LL, 29700000LL, "10M FM Repeater",  band10,   TRUE},
+
+        {50000000LL, 50100000LL, "6M CW",            -1,       TRUE},
+        {50100000LL, 50300000LL, "6M SSB",           -1,       TRUE},
+        {50300000LL, 50400000LL, "6M Digimodes",     -1,       TRUE},
+        {50400000LL, 50500000LL, "6M Beacons",       -1,       TRUE},
+        {50500000LL, 51200000LL, "6M All Modes",     -1,       TRUE},
+        {51200000LL, 51400000LL, "6M FM Repeater",   -1,       TRUE},
+        {51400000LL, 52000000LL, "6M FM Simplex",    -1,       TRUE},
+        {52000000LL, 54000000LL, "6M All Modes",     -1,       TRUE},
+
+        {70000000LL, 70100000LL, "4M Beacons",       -1,       TRUE},
+        {70100000LL, 70250000LL, "4M SSB",           -1,       TRUE},
+        {70250000LL, 70500000LL, "4M FM",            -1,       TRUE},
+
+        {144000000LL, 144025000LL, "2M Satellite",   -1,       TRUE},
+        {144025000LL, 144150000LL, "2M CW",          -1,       TRUE},
+        {144150000LL, 144400000LL, "2M SSB",         -1,       TRUE},
+        {144400000LL, 144490000LL, "2M Beacons",     -1,       TRUE},
+        {144500000LL, 144794000LL, "2M All Modes",   -1,       TRUE},
+        {144794000LL, 144975000LL, "2M Digimodes",   -1,       TRUE},
+        {144975000LL, 145206000LL, "2M FM Repeater", -1,       TRUE},
+        {145206000LL, 145575000LL, "2M FM",          -1,       TRUE},
+        {145575000LL, 145794000LL, "2M FM Repeater", -1,       TRUE},
+        {145806000LL, 146000000LL, "2M Satellite",   -1,       TRUE},
+
+        {430000000LL, 432000000LL, "70CM FM Repeater", -1,     TRUE},
+        {432000000LL, 432100000LL, "70CM CW",        -1,       TRUE},
+        {432100000LL, 432400000LL, "70CM SSB",       -1,       TRUE},
+        {432400000LL, 432490000LL, "70CM Beacons",   -1,       TRUE},
+        {432500000LL, 433400000LL, "70CM FM Repeater", -1,     TRUE},
+        {433400000LL, 433600000LL, "70CM FM",        -1,       TRUE},
+        {433600000LL, 434000000LL, "70CM All Modes", -1,       TRUE},
+        {434000000LL, 434594000LL, "70CM ATV",       -1,       TRUE},
+        {434594000LL, 435000000LL, "70CM FM Repeater", -1,     TRUE},
+        {435000000LL, 438000000LL, "70CM Satellite", -1,       TRUE},
+        {438000000LL, 440000000LL, "70CM All Modes", -1,       TRUE},
+
+        {1240000000LL, 1243250000LL, "23CM FM Repeater", -1,   TRUE},
+        {1243250000LL, 1260000000LL, "23CM ATV",     -1,       TRUE},
+        {1260000000LL, 1270000000LL, "23CM Satellite", -1,     TRUE},
+        {1270000000LL, 1272000000LL, "23CM FM Repeater", -1,   TRUE},
+        {1272000000LL, 1290994000LL, "23CM ATV",     -1,       TRUE},
+        {1290994000LL, 1296000000LL, "23CM FM Repeater", -1,   TRUE},
+        {1296000000LL, 1296150000LL, "23CM CW",      -1,       TRUE},
+        {1296150000LL, 1296800000LL, "23CM SSB",     -1,       TRUE},
+        {1296800000LL, 1296994000LL, "23CM Beacons", -1,       TRUE},
+        {1296994000LL, 1298000000LL, "23CM FM",      -1,       TRUE},
+        {1298000000LL, 1300000000LL, "23CM All Modes", -1,     TRUE},
+
+        {2300000000LL, 2320000000LL, "13CM All Modes", -1,     TRUE},
+        {2320000000LL, 2320800000LL, "13CM SSB",     -1,       TRUE},
+        {2320800000LL, 2321000000LL, "13CM Beacons", -1,       TRUE},
+        {2321000000LL, 2322000000LL, "13CM FM",      -1,       TRUE},
+        {2322000000LL, 2400000000LL, "13CM ATV",     -1,       TRUE},
+        {2400000000LL, 2450000000LL, "13CM Satellite", -1,     TRUE},
+
+        {0, 0, "", 0, FALSE}
+    };
+
+// IARU Region 3 (Asia-Pacific).  Amateur segments only; sorted.
+struct frequency_info frequencyInfoR3[]=
+    {
+        {135700LL, 137800LL,   "2200M CW",           band2200, TRUE},
+
+        {472000LL, 479000LL,   "630M CW",            band630,  TRUE},
+
+        {1800000LL, 1830000LL, "160M CW",            band160,  TRUE},
+        {1830000LL, 1840000LL, "160M Digimodes",     band160,  TRUE},
+        {1840000LL, 2000000LL, "160M SSB",           band160,  TRUE},
+
+        {3500000LL, 3535000LL, "80M CW",             band80,   TRUE},
+        {3535000LL, 3600000LL, "80M SSB",            band80,   TRUE},
+        {3600000LL, 3900000LL, "80M SSB",            band80,   TRUE},
+
+        {5351500LL, 5354000LL, "60M CW",             band60,   TRUE},
+        {5354000LL, 5366000LL, "60M SSB",            band60,   TRUE},
+        {5366000LL, 5366500LL, "60M Weak Signal",    band60,   TRUE},
+
+        {7000000LL, 7040000LL, "40M CW",             band40,   TRUE},
+        {7040000LL, 7200000LL, "40M SSB",            band40,   TRUE},
+
+        {10100000LL, 10130000LL, "30M CW",           band30,   TRUE},
+        {10130000LL, 10150000LL, "30M Digimodes",    band30,   TRUE},
+
+        {14000000LL, 14070000LL, "20M CW",           band20,   TRUE},
+        {14070000LL, 14099000LL, "20M Digimodes",    band20,   TRUE},
+        {14099000LL, 14101000LL, "20M Beacons",      band20,   TRUE},
+        {14101000LL, 14350000LL, "20M SSB",          band20,   TRUE},
+
+        {18068000LL, 18095000LL, "17M CW",           band17,   TRUE},
+        {18095000LL, 18110000LL, "17M Digimodes",    band17,   TRUE},
+        {18110000LL, 18168000LL, "17M SSB",          band17,   TRUE},
+
+        {21000000LL, 21070000LL, "15M CW",           band15,   TRUE},
+        {21070000LL, 21150000LL, "15M Digimodes",    band15,   TRUE},
+        {21150000LL, 21450000LL, "15M SSB",          band15,   TRUE},
+
+        {24890000LL, 24915000LL, "12M CW",           band12,   TRUE},
+        {24915000LL, 24930000LL, "12M Digimodes",    band12,   TRUE},
+        {24930000LL, 24990000LL, "12M SSB",          band12,   TRUE},
+
+        {28000000LL, 28070000LL, "10M CW",           band10,   TRUE},
+        {28070000LL, 28190000LL, "10M Digimodes",    band10,   TRUE},
+        {28190000LL, 28225000LL, "10M Beacons",      band10,   TRUE},
+        {28225000LL, 29100000LL, "10M SSB",          band10,   TRUE},
+        {29100000LL, 29300000LL, "10M All Modes",    band10,   TRUE},
+        {29300000LL, 29510000LL, "10M Satellite",    band10,   TRUE},
+        {29510000LL, 29590000LL, "10M FM Repeater",  band10,   TRUE},
+        {29600000LL, 29600000LL, "10M FM Calling",   band10,   TRUE},
+        {29620000LL, 29700000LL, "10M FM Repeater",  band10,   TRUE},
+
+        {50000000LL, 50100000LL, "6M CW",            -1,       TRUE},
+        {50100000LL, 50500000LL, "6M SSB",           -1,       TRUE},
+        {50500000LL, 54000000LL, "6M All Modes",     -1,       TRUE},
+
+        {144000000LL, 144025000LL, "2M Digimodes",   -1,       TRUE},
+        {144025000LL, 144035000LL, "2M CW",          -1,       TRUE},
+        {144035000LL, 145800000LL, "2M All Modes",   -1,       TRUE},
+        {145800000LL, 146000000LL, "2M Satellite",   -1,       TRUE},
+        {146000000LL, 148000000LL, "2M FM",          -1,       TRUE},
+
+        {430000000LL, 431900000LL, "70CM All Modes", -1,       TRUE},
+        {431900000LL, 432240000LL, "70CM Weak Signal", -1,     TRUE},
+        {432240000LL, 435000000LL, "70CM All Modes", -1,       TRUE},
+        {435000000LL, 438000000LL, "70CM Satellite", -1,       TRUE},
+        {438000000LL, 440000000LL, "70CM All Modes", -1,       TRUE},
+
+        {1240000000LL, 1260000000LL, "23CM All Modes", -1,     TRUE},
+        {1260000000LL, 1270000000LL, "23CM Satellite", -1,     TRUE},
+        {1270000000LL, 1296000000LL, "23CM All Modes", -1,     TRUE},
+        {1296000000LL, 1297000000LL, "23CM Weak Signal", -1,   TRUE},
+        {1297000000LL, 1300000000LL, "23CM All Modes", -1,     TRUE},
+
+        {2300000000LL, 2303750000LL, "13CM All Modes", -1,     TRUE},
+        {2303750000LL, 2304100000LL, "13CM Weak Signal", -1,   TRUE},
+        {2304100000LL, 2304300000LL, "13CM SSB",     -1,       TRUE},
+        {2304300000LL, 2304400000LL, "13CM Beacons", -1,       TRUE},
+        {2304400000LL, 2400000000LL, "13CM All Modes", -1,     TRUE},
+        {2400000000LL, 2450000000LL, "13CM Satellite", -1,     TRUE},
+
+        {0, 0, "", 0, FALSE}
+    };
+
+static struct frequency_info* region_table(band_plan_region_t region) {
+    switch(region) {
+        case BAND_PLAN_REGION_1: return frequencyInfoR1;
+        case BAND_PLAN_REGION_3: return frequencyInfoR3;
+        case BAND_PLAN_REGION_US:
+        default:                 return frequencyInfo;
+    }
 }
 
-const struct frequency_info* frequency_info_at(int index) {
-    if(index<0 || index>=frequency_info_count()) return NULL;
-    return &frequencyInfo[index];
+int frequency_info_count(band_plan_region_t region) {
+    struct frequency_info *t=region_table(region);
+    int n=0;
+    while(t[n].minFrequency!=0LL) n++;   // every table ends with a zero row
+    return n;
+}
+
+const struct frequency_info* frequency_info_at(band_plan_region_t region, int index) {
+    if(index<0 || index>=frequency_info_count(region)) return NULL;
+    return &region_table(region)[index];
 }
 
 /* --------------------------------------------------------------------------*/

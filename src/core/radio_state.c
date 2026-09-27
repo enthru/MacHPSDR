@@ -229,6 +229,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.qo100_offset",value);
   sprintf(value,"%d",radio->qo100_bandplan);
   setProperty("radio.qo100_bandplan",value);
+  sprintf(value,"%d",radio->band_plan_region);
+  setProperty("radio.band_plan_region",value);
   sprintf(value,"%d",radio->qo100_beacon_lock);
   setProperty("radio.qo100_beacon_lock",value);
   sprintf(value,"%d",radio->qo100_beacon_sel);

@@ -26,9 +26,11 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "frequency.h"
 #include "settings_ui.h"
 #include "css.h"
 #include "ppm_cal.h"
+#include "i18n.h"
 
 // Apply an entry's text to a stored label and update every widget that carries
 // it live: the bottom-bar toolbar button and the check button on the Radio
@@ -75,6 +77,17 @@ static void language_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   guint selected=gtk_drop_down_get_selected(widget);
   if(selected<I18N_LANGUAGE_COUNT)
     i18n_set_language((I18nLanguage)selected);
+}
+
+// Which regional band plan the panadapter overlay draws.  No redraw is forced:
+// the fps timer repaints the trace continuously and picks the new table up on
+// its next frame (the per-receiver "Band Plan" switch is what turns it on).
+static void band_region_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  (void)ps;
+  RADIO *radio=(RADIO *)data;
+  int sel=(int)gtk_drop_down_get_selected(widget);
+  if(sel<BAND_PLAN_REGION_US || sel>BAND_PLAN_REGION_3) sel=BAND_PLAN_REGION_US;
+  radio->band_plan_region=sel;
 }
 
 // ---- Font pickers ----
@@ -447,9 +460,38 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_widget_set_halign(ppm_result_label,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_result_label,0,4,3,1);
 
+  // ---- Band plan region ----
+  GtkWidget *bp_frame=gtk_frame_new(i18n_tr("Band Plan"));
+  GtkWidget *bp_grid=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(bp_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(bp_grid),FALSE);
+  gtk_grid_set_column_spacing(GTK_GRID(bp_grid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(bp_grid),5);
+  sui_style_group(bp_grid);
+  gtk_frame_set_child(GTK_FRAME(bp_frame),bp_grid);
+
+  GtkWidget *bp_info=gtk_label_new(i18n_tr(
+      "Which region's amateur allocations the panadapter draws.\n"
+      "Turn the overlay on per receiver with the RX panadapter's \"Band Plan\" switch."));
+  gtk_widget_set_halign(bp_info,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(bp_info,12);
+  gtk_grid_attach(GTK_GRID(bp_grid),bp_info,0,0,2,1);
+
+  GtkWidget *bp_lbl=gtk_label_new(i18n_tr("Region:"));
+  gtk_widget_set_halign(bp_lbl,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(bp_grid),bp_lbl,0,1,1,1);
+  const char *bp_opts[]={ "US (IARU Region 2)", "IARU Region 1", "IARU Region 3", NULL };
+  GtkWidget *bp_combo=gtk_drop_down_new_from_strings(bp_opts);
+  { int sel=r->band_plan_region;
+    if(sel<BAND_PLAN_REGION_US || sel>BAND_PLAN_REGION_3) sel=BAND_PLAN_REGION_US;
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(bp_combo),sel); }
+  gtk_grid_attach(GTK_GRID(bp_grid),bp_combo,1,1,1,1);
+  g_signal_connect(bp_combo,"notify::selected",G_CALLBACK(band_region_cb),r);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_append(GTK_BOX(vbox),skin_frame);
   gtk_box_append(GTK_BOX(vbox),ppm_frame);
+  gtk_box_append(GTK_BOX(vbox),bp_frame);
   gtk_box_append(GTK_BOX(vbox),frame);
   gtk_box_append(GTK_BOX(vbox),fm_frame);
   g_signal_connect(vbox,"destroy",G_CALLBACK(ppm_dialog_destroy),NULL);

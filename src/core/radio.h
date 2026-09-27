@@ -186,6 +186,8 @@ typedef struct _radio {
   gint     qo100_transponder;  // QO100_TRANSPONDER_NB (narrow) or _WB (wideband/DATV)
   long long qo100_offset;      // downlink - uplink, Hz (0 => the standard 8089.5 MHz)
   gboolean qo100_bandplan;     // draw the transponder band plan over the spectrum
+  gint     band_plan_region;   // which region the panadapter band-plan overlay uses
+                               // (band_plan_region_t: 0=US/R2, 1=R1, 2=R3)
   gboolean qo100_beacon_lock;  // continuously trim the LNB's LO error against a beacon
   gint     qo100_beacon_sel;   // which beacon: QO100_BEACON_SEL_* (persisted, so
                                // the middle one is appended at 3, not inserted)
