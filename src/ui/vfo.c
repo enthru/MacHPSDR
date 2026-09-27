@@ -2408,8 +2408,15 @@ void update_vfo(RECEIVER *rx) {
   // update AGC Gain scale
   gtk_level_bar_set_value(GTK_LEVEL_BAR(v->agcgain_scale),rx->agc_gain+20.0);
 
-  // update FM squelch
-  if(rx->mode_a==FMN) {
+  // Squelch bar. Shown for the modes where a squelch actually runs (see
+  // set_squelch): FMN/WFM -> FMSQ, LSB/USB -> SSQL (SSB voice squelch),
+  // AM/SAM/DSB -> AMSQ. Hidden for DIGU/DIGL (data modes: squelch is force-
+  // bypassed there, so the bar would do nothing) and for CW/SPEC/DRM. Used to
+  // be FMN-only, which left the non-FM squelches reachable only by hotkey/CAT.
+  gboolean show_sql = (rx->mode_a==FMN || rx->mode_a==WFM ||
+                       rx->mode_a==LSB || rx->mode_a==USB ||
+                       rx->mode_a==AM  || rx->mode_a==SAM || rx->mode_a==DSB);
+  if(show_sql) {
     gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
     gtk_label_set_text(GTK_LABEL(v->squelch_label),"SQL");
     gtk_widget_set_visible(v->squelch_scale, TRUE);
