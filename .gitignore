@@ -72,6 +72,8 @@ nr_offline
 nr_offline.dSYM/
 keybind_offline
 keybind_offline.dSYM/
+ui_layout_offline
+ui_layout_offline.dSYM/
 dcblock_offline
 dcblock_offline.dSYM/
 rec_offline

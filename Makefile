@@ -1047,6 +1047,25 @@ keybind_offline$(EXE): tools/keybind_offline.c keybind.o property.o log.o
 	  $(shell pkg-config --cflags gtk4) -o $@ tools/keybind_offline.c keybind.o property.o log.o \
 	  $(shell pkg-config --libs gtk4) -lm
 
+# Headless settings-page LAYOUT harness: tools/ui_layout_offline.c.  A Configure
+# page is reachable only by clicking, so a layout bug in one is invisible to the
+# build and to every other harness -- create_keybind_dialog shipped a bus error
+# (a column index one past the end of a two-element array) that nothing but a
+# click could see.  gtk_init_check() opens a display with no window, and a
+# builder that returns a widget tree is then measured/allocated and its geometry
+# asserted as a rule.  Covers only builders that take no live RADIO state (the
+# keybind page ignores its RADIO*, driving the global store).  Links the page +
+# store, stubbing keybind_run, the same split keybind_offline makes.  On a box
+# with no display it SKIPS loudly and passes.
+#   make ui-layout-offline && ./ui_layout_offline --selftest
+.PHONY: ui-layout-offline
+ui-layout-offline: ui_layout_offline$(EXE)
+ui_layout_offline$(EXE): tools/ui_layout_offline.c keybind_dialog.o keybind.o settings_ui.o property.o log.o i18n.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags gtk4) -o $@ tools/ui_layout_offline.c \
+	  keybind_dialog.o keybind.o settings_ui.o property.o log.o i18n.o \
+	  $(shell pkg-config --libs gtk4) -lm
+
 # Headless property-store harness.  Everything the operator sets goes through
 # property.c, and it is invisible to every other test: the settings are written
 # by the GUI at exit and read at start-up, so a defect there is silent until a
@@ -1165,7 +1184,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=i18n_offline$(EXE) qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
+CHECK_BINS=i18n_offline$(EXE) qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) ui_layout_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
 ifeq ($(FT8_INCLUDE),FT8)
 CHECK_BINS+=ft8_offline$(EXE)
 endif
