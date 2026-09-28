@@ -80,6 +80,7 @@ const KEYBIND_ACTION keybind_actions[] = {
   { "agc_gain_down","AGC gain -",       GRP_AUDIO, "AGC-G, 1 dB down", KB_AGC_GAIN_DOWN, FALSE },
   { "squelch_up",   "Squelch +",        GRP_AUDIO, "Squelch threshold up one step (a threshold above zero IS squelch on)", KB_SQUELCH_UP,   FALSE },
   { "squelch_down", "Squelch -",        GRP_AUDIO, "Squelch threshold down one step; zero is squelch off", KB_SQUELCH_DOWN, FALSE },
+  { "squelch_toggle","Squelch off/on",  GRP_AUDIO, "Master squelch cut-out for every mode; the per-mode threshold is remembered", KB_SQUELCH_TOGGLE, FALSE },
 
   { "agc",         "AGC speed",            GRP_DSP, "Cycle off/long/slow/med/fast", KB_AGC,  FALSE },
   { "nb",          "Noise blanker",        GRP_DSP, "Cycle off/NB/NB2", KB_NB,   FALSE },

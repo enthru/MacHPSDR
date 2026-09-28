@@ -2324,7 +2324,10 @@ void set_squelch(RECEIVER *rx) {
   // conversion, since chroma neutral is 128 not 0), i.e. green patches wherever
   // the squelch chattered. The bar value/enable is kept (still shown/persisted);
   // only the WDSP Run flag is suppressed, and returns the moment decoding stops.
-  gboolean run = rx->squelch_enable && !bypass_stream_dsp(rx);
+  // The master cut-out (rx->squelch_off, the SQL label's toggle) silences the
+  // squelch across every mode without touching the remembered per-mode bar, so
+  // one click restores exactly what each mode had.
+  gboolean run = rx->squelch_enable && !rx->squelch_off && !bypass_stream_dsp(rx);
 
   if(is_fm) {
     double fm_sq=pow(10.0, -2.0*rx->squelch);
@@ -3961,6 +3964,7 @@ log_info("create_receiver: channel=%d frequency_min=%lld frequency_max=%lld\n", 
 
   rx->deviation=2500;
   rx->squelch_enable = FALSE;
+  rx->squelch_off = FALSE;
   rx->squelch = 0.1;
   for(int i=0;i<MODES;i++) rx->mode_squelch[i]=rx->squelch;
   // AMSQ calibration defaults: the endpoints set_squelch used before they were

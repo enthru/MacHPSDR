@@ -82,6 +82,7 @@ enum {
   KB_AGC_GAIN_DOWN,
   KB_SQUELCH_UP,
   KB_SQUELCH_DOWN,
+  KB_SQUELCH_TOGGLE,
   /* DSP */
   KB_AGC,
   KB_NB,

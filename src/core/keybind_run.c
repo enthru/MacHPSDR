@@ -81,15 +81,23 @@ static void kb_agc_gain(RECEIVER *rx, double delta) {
   update_vfo(rx);
 }
 
-/* There is no separate squelch on/off anywhere in this application: set_squelch()
-   derives `squelch_enable` from the threshold being above zero, so running the
-   level down to nothing IS switching it off, and a shortcut that flipped a flag
-   of its own would be the second implementation this table refuses.  It is also
-   the mode-aware choke point that remembers the level per mode. */
+/* The threshold keys (squelch_up/down) still have no on/off of their own:
+   set_squelch() derives `squelch_enable` from the level being above zero, so
+   running it down to nothing IS switching that mode off, and it is the
+   mode-aware choke point that remembers the level per mode.  The off/on key
+   below is a DIFFERENT thing -- one master cut-out across EVERY mode
+   (rx->squelch_off, the SQL label's toggle), which leaves the remembered
+   per-mode threshold intact so the next press restores it. */
 static void kb_squelch(RECEIVER *rx, double delta) {
   rx->squelch+=delta;
   if(rx->squelch>1.0) rx->squelch=1.0;
   if(rx->squelch<0.0) rx->squelch=0.0;
+  set_squelch(rx);
+  update_vfo(rx);
+}
+
+static void kb_squelch_toggle(RECEIVER *rx) {
+  rx->squelch_off=!rx->squelch_off;
   set_squelch(rx);
   update_vfo(rx);
 }
@@ -238,6 +246,7 @@ void keybind_run(int action, gboolean pressed) {
     case KB_AGC_GAIN_DOWN:  kb_agc_gain(rx,-1.0);    break;
     case KB_SQUELCH_UP:     kb_squelch(rx,+0.01);    break;
     case KB_SQUELCH_DOWN:   kb_squelch(rx,-0.01);    break;
+    case KB_SQUELCH_TOGGLE: kb_squelch_toggle(rx);   break;
     case KB_AGC:
       rx->agc=(rx->agc>=AGC_FAST)?AGC_OFF:rx->agc+1;
       if(rx->mode_a>=0 && rx->mode_a<MODES) rx->mode_agc[rx->mode_a]=rx->agc;

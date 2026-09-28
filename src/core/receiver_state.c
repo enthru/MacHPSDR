@@ -444,6 +444,9 @@ void receiver_save_state(RECEIVER *rx) {
   // Squelch (previously not persisted) + APF (CW peak filter).
   sprintf(name,"receiver[%d].squelch",rx->channel);
   setPropertyDouble(name,rx->squelch);
+  sprintf(name,"receiver[%d].squelch_off",rx->channel);
+  sprintf(value,"%d",rx->squelch_off);
+  setProperty(name,value);
   for(i=0;i<MODES;i++) {
     sprintf(name,"receiver[%d].mode_squelch[%d]",rx->channel,i);
     setPropertyDouble(name,rx->mode_squelch[i]);
@@ -857,6 +860,9 @@ void receiver_restore_state(RECEIVER *rx) {
   if(value) rx->squelch=propToDouble(value);
   if(rx->squelch<0.0) rx->squelch=0.0;
   if(rx->squelch>1.0) rx->squelch=1.0;
+  sprintf(name,"receiver[%d].squelch_off",rx->channel);
+  value=getProperty(name);
+  if(value) rx->squelch_off=atoi(value);
   for(i=0;i<MODES;i++) {
     sprintf(name,"receiver[%d].mode_squelch[%d]",rx->channel,i);
     value=getProperty(name);

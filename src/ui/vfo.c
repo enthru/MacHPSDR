@@ -1420,6 +1420,20 @@ static gboolean agcgain_scale_scroll_event_cb(GtkEventControllerScroll *ctrl,dou
 
 //**********************************************************************************
 //**********************************************************************************
+// Clicking the "SQL" label flips the master squelch cut-out for this receiver.
+// It silences the squelch across EVERY mode with one click and restores each
+// mode's remembered threshold with the next -- the bar's per-mode memory is
+// left untouched (set_squelch just forces the WDSP run flag off). This is the
+// convenience the per-mode bar could not give: no dragging a slider to zero and
+// back on every band change. update_vfo() paints the dimmed state.
+static void squelch_label_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) {
+  (void)gesture;(void)n_press;(void)ex;(void)ey;
+  RECEIVER *rx=(RECEIVER *)data;
+  rx->squelch_off=!rx->squelch_off;
+  set_squelch(rx);
+  update_vfo(rx);
+}
+
 static gboolean squelch_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) { GtkWidget *widget=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)); guint button=gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)); (void)widget;(void)button;(void)ex;(void)ey;
   RECEIVER *rx=(RECEIVER *)data;
   pressed=TRUE;
@@ -2038,6 +2052,10 @@ GtkWidget *create_vfo(RECEIVER *rx) {
 
   v->squelch_label=gtk_label_new("SQL");
   gtk_widget_set_name(v->squelch_label,"squelch-text");
+  gtk_widget_set_tooltip_text(v->squelch_label,
+      "Click to switch the squelch off/on for every mode at once\n"
+      "(the per-mode threshold bar is remembered either way)");
+  vfo_attach_ctl(v->squelch_label, rx, G_CALLBACK(squelch_label_press_cb), NULL, NULL, NULL);
   gtk_box_append(GTK_BOX(vfo_row_freq),v->squelch_label);
 
   v->squelch_scale=gtk_level_bar_new();
@@ -2419,9 +2437,19 @@ void update_vfo(RECEIVER *rx) {
   if(show_sql) {
     gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
     gtk_label_set_text(GTK_LABEL(v->squelch_label),"SQL");
+    gtk_widget_set_visible(v->squelch_label, TRUE);
     gtk_widget_set_visible(v->squelch_scale, TRUE);
+    // Master cut-out: dim the "SQL" label and grey the bar so the switched-off
+    // state reads at a glance. The bar stays interactive on purpose -- touching
+    // it turns the squelch back on for the mode (set_squelch clears nothing).
+    if(rx->squelch_off)
+      gtk_widget_add_css_class(v->squelch_label,"sql-off");
+    else
+      gtk_widget_remove_css_class(v->squelch_label,"sql-off");
+    gtk_widget_set_opacity(v->squelch_scale, rx->squelch_off ? 0.4 : 1.0);
   }
   else {
+      gtk_widget_remove_css_class(v->squelch_label,"sql-off");
       gtk_label_set_text(GTK_LABEL(v->squelch_label),"");
       gtk_widget_set_visible(v->squelch_scale, FALSE);
   }

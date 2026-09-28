@@ -230,6 +230,12 @@ typedef struct _receiver {
   gint deviation;
   gboolean squelch_enable;
   gdouble squelch;
+  // Master squelch cut-out, ONE switch across every mode. The per-mode bar
+  // remembers a threshold per mode (below), so silencing the squelch used to
+  // mean running each mode's bar to zero by hand; this flag forces the WDSP run
+  // flag off for all modes at once and back on with a single click, leaving the
+  // remembered thresholds untouched. set_squelch() honours it.
+  gboolean squelch_off;
   // Per-mode squelch memory: each mode keeps its own SQL setting, like
   // mode_filter/mode_agc, so opening the gate on AM does not open it on FM.
   gdouble mode_squelch[MODES];
