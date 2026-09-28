@@ -1144,7 +1144,6 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         g_signal_connect(agc,"toggled",G_CALLBACK(agc_changed_cb),&radio->adc[0]);
         if(strcmp(radio->discovered->name,"plutosdr")==0) {
           GtkWidget *mode_label=gtk_label_new("AGC attack:");
-          gtk_widget_set_halign(mode_label,GTK_ALIGN_END);
           gtk_grid_attach(GTK_GRID(adc0_grid),mode_label,0,3,1,1);
           GtkStringList *modes=gtk_string_list_new(NULL);
           gtk_string_list_append(modes,"Slow");
