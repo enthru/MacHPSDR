@@ -673,6 +673,72 @@ static void read_callback(struct SoundIoInStream *instream, int frame_count_min,
 
 }
 
+static void soundio_build_device_lists(void);
+
+// Recovery after an output device dies under us (headphones unplugged, USB DAC
+// pulled).  Runs on the GTK main thread, scheduled from output_error_callback.
+// Re-scanning the device list first is what makes a *pinned* device that is now
+// gone fall back to the system default: audio_open_output stops finding its
+// name, resolves output_index to -1, and opens on the current default instead.
+// A receiver already following "System Default" is re-resolved to the new
+// default the same way.  Either way audio_open_output does the right thing, so
+// this is "switch to another available output" and "stay on default" at once.
+static gboolean output_error_recover_idle(gpointer data) {
+  RECEIVER *rx=(RECEIVER *)data;
+  if(!receiver_is_live(rx)) return G_SOURCE_REMOVE;   // deleted meanwhile
+  g_atomic_int_set(&rx->output_stream_error,0);
+  if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
+    return G_SOURCE_REMOVE;
+  if(!rx->local_audio || rx->output_stream==NULL)
+    return G_SOURCE_REMOVE;   // user turned local audio off, or already closed
+  log_info("audio: RX%d output device lost; re-opening on an available device\n",
+           rx->channel);
+  soundio_build_device_lists();     // a gone device must drop off the list
+  audio_close_output(rx);
+  if(audio_open_output(rx)<0)
+    log_info("audio: RX%d output re-open failed; monitor will retry\n",rx->channel);
+  return G_SOURCE_REMOVE;   // one-shot
+}
+
+// libsoundio's default error_callback prints to stderr and calls abort(); that
+// abort was MacHPSDR crashing the instant headphones were unplugged.  This
+// override runs on libsoundio's own write-callback thread, so it must not touch
+// soundio or GTK here — it only flags the receiver and bounces the real work
+// onto the GTK main thread (see output_error_recover_idle).
+static void output_error_callback(struct SoundIoOutStream *os,int err) {
+  RECEIVER *rx=(RECEIVER *)os->userdata;
+  if(rx==NULL) return;
+  log_info("audio: RX%d output stream error: %s\n",rx->channel,soundio_strerror(err));
+  if(g_atomic_int_compare_and_exchange(&rx->output_stream_error,0,1))
+    g_idle_add(output_error_recover_idle,rx);
+}
+
+// Mic counterpart.  Unlike the output there is no permanently-muted hazard: if
+// the re-open fails the mic just stays closed until the next TX re-opens it, so
+// this is best-effort.  Only re-open when the mic is still wanted.
+static gboolean input_error_recover_idle(gpointer data) {
+  RADIO *r=(RADIO *)data;
+  if(r==NULL || r!=radio) return G_SOURCE_REMOVE;
+  g_atomic_int_set(&r->input_stream_error,0);
+  if(radio->which_audio!=USE_SOUNDIO || soundio==NULL) return G_SOURCE_REMOVE;
+  if(r->input_stream==NULL) return G_SOURCE_REMOVE;   // already closed
+  log_info("audio: microphone device lost; re-opening\n");
+  soundio_build_device_lists();
+  gboolean want=r->local_microphone;
+  audio_close_input(r);
+  if(want && audio_open_input(r)<0)
+    log_info("audio: microphone re-open failed; next TX will retry\n");
+  return G_SOURCE_REMOVE;   // one-shot
+}
+
+static void input_error_callback(struct SoundIoInStream *is,int err) {
+  RADIO *r=(RADIO *)is->userdata;
+  if(r==NULL) return;
+  log_info("audio: microphone stream error: %s\n",soundio_strerror(err));
+  if(g_atomic_int_compare_and_exchange(&r->input_stream_error,0,1))
+    g_idle_add(input_error_recover_idle,r);
+}
+
 int audio_open_output(RECEIVER *rx) {
   int result=0;
   int err;
@@ -786,6 +852,10 @@ log_info("audio_open_output: SOUNDIO: %s\n",rx->audio_name);
       rx->output_stream->sample_rate = device_rate;
       rx->output_stream->write_callback = write_callback;
       rx->output_stream->underflow_callback = underflow_callback;
+      // Without our own error_callback libsoundio's default aborts the whole app
+      // when the device dies under it (headphones unplugged).  Ours recovers.
+      rx->output_stream->error_callback = output_error_callback;
+      g_atomic_int_set(&rx->output_stream_error,0);
       // Device buffer depth.  This was hardwired to 10 ms, which asks the
       // backend to wake us ~700 times a second; measured against a PipeWire
       // sink, that only sustained ~20-44k frames/s instead of 48000, so the ring
@@ -1060,6 +1130,10 @@ int audio_open_input(RADIO *r) {
       r->input_stream->layout = *soundio_channel_layout_get_builtin(SoundIoChannelLayoutIdMono);
       r->input_stream->sample_rate = in_device_rate;
       r->input_stream->read_callback = read_callback;
+      // See output_error_callback: override libsoundio's abort()ing default so a
+      // lost capture device recovers instead of killing the app.
+      r->input_stream->error_callback = input_error_callback;
+      g_atomic_int_set(&r->input_stream_error,0);
       r->input_stream->userdata=(void *)r;
 
       if((err = soundio_instream_open(r->input_stream))) {

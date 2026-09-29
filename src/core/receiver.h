@@ -476,6 +476,11 @@ typedef struct _receiver {
   struct SoundIoOutStream *output_stream;
   struct SoundIoRingBuffer *ring_buffer;
   gboolean output_started;
+  // Set from libsoundio's error_callback thread when the output device dies
+  // under us (headphones unplugged, USB DAC pulled).  Overriding that callback
+  // is what stops libsoundio's default from calling abort(); this flag (atomic,
+  // compare-and-exchanged) makes sure exactly one recovery idle is queued.
+  gint output_stream_error;
   // Fractional read phase for the 48 kHz -> output-device-rate resampler,
   // used when the output device does not accept 48 kHz (e.g. a Bluetooth
   // headset locked to 44.1 kHz). 0 when the device runs natively at 48 kHz.

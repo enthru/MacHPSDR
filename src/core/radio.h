@@ -276,6 +276,10 @@ typedef struct _radio {
   struct SoundIoInStream *input_stream;
   struct SoundIoRingBuffer *ring_buffer;
   gboolean input_started;
+  // Mic counterpart of RECEIVER.output_stream_error: set from libsoundio's
+  // error_callback thread when the capture device dies, gates a single recovery
+  // idle.  See output_stream_error.
+  gint input_stream_error;
   GMutex ring_buffer_mutex;
   GCond ring_buffer_cond;
   // device-rate -> 48 kHz resampler state for the local microphone input, used
