@@ -62,6 +62,21 @@ void sui_label_left(GtkWidget *label) {
   gtk_widget_set_halign(label,GTK_ALIGN_START);
 }
 
+void sui_label_desc(GtkWidget *label) {
+  if(label==NULL || !GTK_IS_LABEL(label)) return;
+  // A settings-page description is left-aligned and MUST wrap: the English text
+  // is hand-broken with '\n' at ~70 chars, but translations are longer single
+  // lines (the RU/UK/BE PPM blurb is one ~1800 px line) and without wrapping they
+  // drive a horizontal scrollbar across the whole page. Capping the natural width
+  // at SUI_DESC_WRAP_CHARS makes the label wrap to the page instead; the hard
+  // '\n's in the source still break where the author intended.
+  gtk_widget_set_halign(label,GTK_ALIGN_START);
+  gtk_label_set_xalign(GTK_LABEL(label),0.0f);
+  gtk_label_set_wrap(GTK_LABEL(label),TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(label),PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(GTK_LABEL(label),SUI_DESC_WRAP_CHARS);
+}
+
 void sui_scale_show_value(GtkWidget *scale, int digits) {
   if(scale==NULL || !GTK_IS_SCALE(scale)) return;
   gtk_scale_set_draw_value(GTK_SCALE(scale),TRUE);

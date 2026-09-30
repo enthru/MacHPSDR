@@ -35,6 +35,20 @@ void sui_style_group(GtkWidget *grid);
 /* Left-align a label (the common case for a "Name:" field caption). */
 void sui_label_left(GtkWidget *label);
 
+// The wrap width (in characters) for a settings-page description label. Sized to
+// match the English text's hand-wrapping (~70 chars) while staying well inside the
+// page so no language overflows into a horizontal scrollbar. Matches the value
+// qo100_dialog.c already wraps its descriptions at.
+#define SUI_DESC_WRAP_CHARS 96
+
+/*
+ * Turn a label into a wrapping page-description caption: left-aligned and wrapped
+ * to SUI_DESC_WRAP_CHARS. Use it for every multi-line explanatory blurb at the top
+ * of a settings group, so a longer translation wraps instead of forcing the whole
+ * page to scroll sideways. Not for short field captions (use sui_label_left).
+ */
+void sui_label_desc(GtkWidget *label);
+
 /*
  * Show the current numeric value beside a GtkScale slider. GtkScale draws its
  * value by default, but the config dialog's short (30 px) horizontal scales clip

@@ -121,6 +121,7 @@ static GtkWidget *font_button_new(RADIO *radio,gboolean mono) {
   pango_font_description_free(fd);
   g_object_set_data(G_OBJECT(btn),"mono",GINT_TO_POINTER(mono?1:0));
   g_signal_connect(btn,"notify::font-desc",G_CALLBACK(font_picked),radio);
+  gtk_widget_set_halign(btn,GTK_ALIGN_START);   // natural size, not stretched to the column
   return btn;
 }
 
@@ -272,7 +273,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *info=gtk_label_new("Custom labels for the RX front-end attenuator buttons.\n"
                                 "Leave a field empty to restore the default.\n"
                                 "This setting applies only to HPSDR devices.");
-  gtk_widget_set_halign(info,GTK_ALIGN_START);
+  sui_label_desc(info);
   gtk_widget_set_margin_bottom(info,12); // gap between the description and the fields below
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);
 
@@ -282,6 +283,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *att10_entry=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(att10_entry),sizeof(r->att10_label)-1);
   gtk_editable_set_text(GTK_EDITABLE(att10_entry),r->att10_label);
+  gtk_editable_set_width_chars(GTK_EDITABLE(att10_entry),16);
+  gtk_widget_set_halign(att10_entry,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),att10_entry,1,1,1,1);
   g_signal_connect(att10_entry,"changed",G_CALLBACK(att10_label_cb),r);
 
@@ -291,6 +294,8 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *att20_entry=gtk_entry_new();
   gtk_entry_set_max_length(GTK_ENTRY(att20_entry),sizeof(r->att20_label)-1);
   gtk_editable_set_text(GTK_EDITABLE(att20_entry),r->att20_label);
+  gtk_editable_set_width_chars(GTK_EDITABLE(att20_entry),16);
+  gtk_widget_set_halign(att20_entry,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),att20_entry,1,2,1,1);
   g_signal_connect(att20_entry,"changed",G_CALLBACK(att20_label_cb),r);
 
@@ -306,7 +311,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
 
   GtkWidget *fm_info=gtk_label_new("Audio de-emphasis time constant. Use 50 µs in Europe and\n"
                                    "most of the world, 75 µs in the Americas and South Korea.");
-  gtk_widget_set_halign(fm_info,GTK_ALIGN_START);
+  sui_label_desc(fm_info);
   gtk_widget_set_margin_bottom(fm_info,12);
   gtk_grid_attach(GTK_GRID(fm_grid),fm_info,0,0,2,1);
 
@@ -316,6 +321,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   const char *de_opts[]={"50 µs","75 µs",NULL};
   GtkWidget *de_combo=gtk_drop_down_new_from_strings(de_opts);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(de_combo),r->wfm_deemphasis?1:0);
+  gtk_widget_set_halign(de_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(fm_grid),de_combo,1,1,1,1);
   g_signal_connect(de_combo,"notify::selected",G_CALLBACK(wfm_deemph_cb),r);
 
@@ -325,6 +331,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   const char *pty_opts[]={"RDS (Europe)","RBDS (North America)",NULL};
   GtkWidget *pty_combo=gtk_drop_down_new_from_strings(pty_opts);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(pty_combo),r->rds_rbds?1:0);
+  gtk_widget_set_halign(pty_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(fm_grid),pty_combo,1,2,1,1);
   g_signal_connect(pty_combo,"notify::selected",G_CALLBACK(rds_rbds_cb),r);
 
@@ -340,7 +347,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
 
   GtkWidget *skin_info=gtk_label_new("Color skin for the main window and this dialog.\n"
                                      "Applied immediately and remembered per radio.");
-  gtk_widget_set_halign(skin_info,GTK_ALIGN_START);
+  sui_label_desc(skin_info);
   gtk_widget_set_margin_bottom(skin_info,12);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_info,0,0,2,1);
 
@@ -359,6 +366,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *skin_combo=gtk_drop_down_new(G_LIST_MODEL(skin_sl),NULL);
   gtk_drop_down_set_enable_search(GTK_DROP_DOWN(skin_combo),TRUE);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(skin_combo),skin_position_from_theme(r->theme));
+  gtk_widget_set_halign(skin_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(skin_grid),skin_combo,1,1,1,1);
   g_signal_connect(skin_combo,"notify::selected",G_CALLBACK(theme_cb),r);
 
@@ -385,12 +393,13 @@ GtkWidget *create_labels_dialog(RADIO *r) {
     gtk_string_list_append(language_list,i18n_language_name((I18nLanguage)language));
   GtkWidget *language_combo=gtk_drop_down_new(G_LIST_MODEL(language_list),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo),i18n_language());
+  gtk_widget_set_halign(language_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(skin_grid),language_combo,1,5,1,1);
   g_signal_connect(language_combo,"notify::selected",G_CALLBACK(language_cb),NULL);
 
   GtkWidget *language_info=gtk_label_new(
       "The language applies immediately across the open windows.");
-  gtk_widget_set_halign(language_info,GTK_ALIGN_START);
+  sui_label_desc(language_info);
   gtk_grid_attach(GTK_GRID(skin_grid),language_info,0,6,2,1);
 
   { char note[192];
@@ -399,7 +408,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
                      "This machine's defaults: %s / %s."),
              css_ui_font_default(),css_mono_font_default());
     GtkWidget *font_info=gtk_label_new(note);
-    gtk_widget_set_halign(font_info,GTK_ALIGN_START);
+    sui_label_desc(font_info);
     gtk_grid_attach(GTK_GRID(skin_grid),font_info,0,7,2,1); }
 
   // ---- Frequency Calibration (PPM) ----
@@ -416,7 +425,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
       "Correct the radio's reference-oscillator error in parts-per-million.\n"
       "Pick a time/frequency-standard station and press Calibrate to measure the\n"
       "carrier and set the correction automatically, or Tune to zero-beat it by ear.");
-  gtk_widget_set_halign(ppm_info,GTK_ALIGN_START);
+  sui_label_desc(ppm_info);
   gtk_widget_set_margin_bottom(ppm_info,12);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_info,0,0,3,1);
 
@@ -426,6 +435,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   ppm_spin=gtk_spin_button_new_with_range(-500,500,0.01);
   gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ppm_spin),2);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(ppm_spin),r->ppm_correction_value);
+  gtk_widget_set_halign(ppm_spin,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_spin,1,1,1,1);
   g_signal_connect(ppm_spin,"value_changed",G_CALLBACK(ppm_value_cb),r);
 
@@ -438,6 +448,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   }
   ppm_station_combo=gtk_drop_down_new(G_LIST_MODEL(station_sl),NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(ppm_station_combo),r->ppm_ref_station);
+  gtk_widget_set_halign(ppm_station_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(ppm_grid),ppm_station_combo,1,2,1,1);
   g_signal_connect(ppm_station_combo,"notify::selected",G_CALLBACK(ppm_station_cb),r);
 
@@ -473,7 +484,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   GtkWidget *bp_info=gtk_label_new(i18n_tr(
       "Which region's amateur allocations the panadapter draws.\n"
       "Turn the overlay on per receiver with the RX panadapter's \"Band Plan\" switch."));
-  gtk_widget_set_halign(bp_info,GTK_ALIGN_START);
+  sui_label_desc(bp_info);
   gtk_widget_set_margin_bottom(bp_info,12);
   gtk_grid_attach(GTK_GRID(bp_grid),bp_info,0,0,2,1);
 
@@ -485,6 +496,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   { int sel=r->band_plan_region;
     if(sel<BAND_PLAN_REGION_US || sel>BAND_PLAN_REGION_3) sel=BAND_PLAN_REGION_US;
     gtk_drop_down_set_selected(GTK_DROP_DOWN(bp_combo),sel); }
+  gtk_widget_set_halign(bp_combo,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(bp_grid),bp_combo,1,1,1,1);
   g_signal_connect(bp_combo,"notify::selected",G_CALLBACK(band_region_cb),r);
 
