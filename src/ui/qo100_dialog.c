@@ -329,6 +329,7 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
 
   GtkWidget *rf_hint=gtk_label_new("Keep your own downlink below that line \342\200\224 the transponder is shared.");
   gtk_widget_set_halign(rf_hint,GTK_ALIGN_START);
+  wrap_long_label(rf_hint);
   gtk_widget_set_margin_bottom(rf_hint,12);
   gtk_grid_attach(GTK_GRID(grid),rf_hint,0,row++,2,1);
 

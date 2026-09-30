@@ -339,6 +339,10 @@ GtkWidget *create_diversity_dialog(RADIO *radio) {
   gtk_label_set_markup(GTK_LABEL(note),note_markup);
   g_free(note_markup);
   gtk_label_set_wrap(GTK_LABEL(note), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(note), PANGO_WRAP_WORD_CHAR);
+  // Cap the natural width, or the wrapped label still asks for its longest line and
+  // widens the whole page (its embedded newlines alone cannot hold it in).
+  gtk_label_set_max_width_chars(GTK_LABEL(note), SUI_DESC_WRAP_CHARS);
   gtk_label_set_justify(GTK_LABEL(note), GTK_JUSTIFY_LEFT);
   gtk_label_set_xalign(GTK_LABEL(note), 0.0);
   gtk_grid_attach(GTK_GRID(page), note, 0, 1, 1, 1);   // below the frame

@@ -86,7 +86,7 @@ GtkWidget *create_tci_dialog(RADIO *r) {
       "TCI (Expert Electronics) control server over WebSocket. Lets loggers\n"
       "and skimmers (Log4OM, N1MM+, SkookumLogger, …) set and follow VFO,\n"
       "mode and PTT, and stream the receiver's IQ and audio.");
-  gtk_widget_set_halign(info,GTK_ALIGN_START);
+  sui_label_desc(info);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);
 
@@ -100,6 +100,7 @@ GtkWidget *create_tci_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),port_lbl,0,2,1,1);
   GtkWidget *port=gtk_spin_button_new_with_range(1,65535,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(port),r->tci_port>0?r->tci_port:TCI_DEFAULT_PORT);
+  gtk_widget_set_halign(port,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),port,1,2,1,1);
   g_signal_connect(port,"value-changed",G_CALLBACK(port_cb),r);
 

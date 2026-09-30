@@ -321,7 +321,7 @@ GtkWidget *create_keybind_dialog(RADIO *radio) {
     gtk_box_append(GTK_BOX(box),clear_all);
     status_label=gtk_label_new("Shortcuts act on the ACTIVE receiver, and only "
                                "when the main window has the keyboard.");
-    sui_label_left(status_label);
+    sui_label_desc(status_label);
     gtk_box_append(GTK_BOX(box),status_label);
     gtk_box_append(GTK_BOX(page),box);
   }

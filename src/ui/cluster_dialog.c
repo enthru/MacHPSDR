@@ -138,7 +138,7 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   GtkWidget *info=gtk_label_new("Connect to a telnet DX cluster and overlay decoded spots on\n"
                                 "the RX panadapter and/or waterfall, colour-keyed by DXCC entity.\n"
                                 "Left-click a spot marker to tune the RX to its exact frequency.");
-  gtk_widget_set_halign(info,GTK_ALIGN_START);
+  sui_label_desc(info);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,row++,2,1);
 
@@ -168,6 +168,7 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),font_lbl,0,row,1,1);
   GtkWidget *font=gtk_spin_button_new_with_range(7,28,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(font),r->cluster_spots_font);
+  gtk_widget_set_halign(font,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),font,1,row++,1,1);
   g_signal_connect(font,"value-changed",G_CALLBACK(font_cb),r);
 
@@ -209,6 +210,7 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   gtk_entry_set_max_length(GTK_ENTRY(host),sizeof(r->cluster_host)-1);
   gtk_editable_set_width_chars(GTK_EDITABLE(host),22);
   gtk_editable_set_text(GTK_EDITABLE(host),r->cluster_host);
+  gtk_widget_set_halign(host,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),host,1,row++,1,1);
   g_signal_connect(host,"changed",G_CALLBACK(host_cb),r);
 
@@ -217,6 +219,7 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),port_lbl,0,row,1,1);
   GtkWidget *port=gtk_spin_button_new_with_range(1,65535,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(port),r->cluster_port);
+  gtk_widget_set_halign(port,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),port,1,row++,1,1);
   g_signal_connect(port,"value-changed",G_CALLBACK(port_cb),r);
 
@@ -227,6 +230,7 @@ GtkWidget *create_cluster_dialog(RADIO *r) {
   gtk_entry_set_max_length(GTK_ENTRY(login),sizeof(r->cluster_login)-1);
   gtk_editable_set_width_chars(GTK_EDITABLE(login),12);
   gtk_editable_set_text(GTK_EDITABLE(login),r->cluster_login);
+  gtk_widget_set_halign(login,GTK_ALIGN_START);
   gtk_grid_attach(GTK_GRID(grid),login,1,row++,1,1);
   g_signal_connect(login,"changed",G_CALLBACK(login_cb),r);
 
