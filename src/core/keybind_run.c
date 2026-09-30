@@ -86,7 +86,7 @@ static void kb_agc_gain(RECEIVER *rx, double delta) {
    running it down to nothing IS switching that mode off, and it is the
    mode-aware choke point that remembers the level per mode.  The off/on key
    below is a DIFFERENT thing -- one master cut-out across EVERY mode
-   (rx->squelch_off, the SQL label's toggle), which leaves the remembered
+   (rx->squelch_off, the SQL toggle button), which leaves the remembered
    per-mode threshold intact so the next press restores it. */
 static void kb_squelch(RECEIVER *rx, double delta) {
   rx->squelch+=delta;

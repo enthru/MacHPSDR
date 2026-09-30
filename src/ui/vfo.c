@@ -1420,16 +1420,16 @@ static gboolean agcgain_scale_scroll_event_cb(GtkEventControllerScroll *ctrl,dou
 
 //**********************************************************************************
 //**********************************************************************************
-// Clicking the "SQL" label flips the master squelch cut-out for this receiver.
-// It silences the squelch across EVERY mode with one click and restores each
-// mode's remembered threshold with the next -- the bar's per-mode memory is
-// left untouched (set_squelch just forces the WDSP run flag off). This is the
-// convenience the per-mode bar could not give: no dragging a slider to zero and
-// back on every band change. update_vfo() paints the dimmed state.
-static void squelch_label_press_cb(GtkGestureClick *gesture,int n_press,double ex,double ey,gpointer data) {
-  (void)gesture;(void)n_press;(void)ex;(void)ey;
+// The "SQL" toggle button is the master squelch cut-out for this receiver.
+// Lit (checked) means the squelch is armed; clicking it off silences the
+// squelch across EVERY mode at once, and clicking it back on restores each
+// mode's remembered threshold -- the bar's per-mode memory is left untouched
+// (set_squelch just forces the WDSP run flag off). This is the convenience the
+// per-mode bar could not give: no dragging a slider to zero and back on every
+// band change. `squelch_off` is the inverse of the button's active state.
+static void squelch_toggle_cb(GtkToggleButton *button,gpointer data) {
   RECEIVER *rx=(RECEIVER *)data;
-  rx->squelch_off=!rx->squelch_off;
+  rx->squelch_off=!gtk_toggle_button_get_active(button);
   set_squelch(rx);
   update_vfo(rx);
 }
@@ -2050,12 +2050,14 @@ GtkWidget *create_vfo(RECEIVER *rx) {
   g_signal_connect(v->mute_b, "toggled", G_CALLBACK(mute_b_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_freq),v->mute_b);
 
-  v->squelch_label=gtk_label_new("SQL");
-  gtk_widget_set_name(v->squelch_label,"squelch-text");
+  v->squelch_label=gtk_toggle_button_new_with_label("SQL");
+  gtk_widget_set_name(v->squelch_label,"vfo-toggle");
   gtk_widget_set_tooltip_text(v->squelch_label,
-      "Click to switch the squelch off/on for every mode at once\n"
-      "(the per-mode threshold bar is remembered either way)");
-  vfo_attach_ctl(v->squelch_label, rx, G_CALLBACK(squelch_label_press_cb), NULL, NULL, NULL);
+      "Squelch on/off for every mode at once — lit means armed.\n"
+      "Click to cut the squelch out across all modes; click again to\n"
+      "restore each mode's remembered threshold bar.");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->squelch_label),!rx->squelch_off);
+  g_signal_connect(v->squelch_label,"toggled",G_CALLBACK(squelch_toggle_cb),rx);
   gtk_box_append(GTK_BOX(vfo_row_freq),v->squelch_label);
 
   v->squelch_scale=gtk_level_bar_new();
@@ -2436,21 +2438,19 @@ void update_vfo(RECEIVER *rx) {
                        rx->mode_a==AM  || rx->mode_a==SAM || rx->mode_a==DSB);
   if(show_sql) {
     gtk_level_bar_set_value(GTK_LEVEL_BAR(v->squelch_scale),rx->squelch);
-    gtk_label_set_text(GTK_LABEL(v->squelch_label),"SQL");
     gtk_widget_set_visible(v->squelch_label, TRUE);
     gtk_widget_set_visible(v->squelch_scale, TRUE);
-    // Master cut-out: dim the "SQL" label and grey the bar so the switched-off
-    // state reads at a glance. The bar stays interactive on purpose -- touching
-    // it turns the squelch back on for the mode (set_squelch clears nothing).
-    if(rx->squelch_off)
-      gtk_widget_add_css_class(v->squelch_label,"sql-off");
-    else
-      gtk_widget_remove_css_class(v->squelch_label,"sql-off");
+    // Master cut-out: the SQL button shows armed (lit) vs cut out (grey) through
+    // its own checked state, and the bar is greyed to match. The bar stays
+    // interactive on purpose -- touching it edits the remembered per-mode level
+    // even while cut out (set_squelch clears nothing).
+    g_signal_handlers_block_by_func(v->squelch_label,G_CALLBACK(squelch_toggle_cb),rx);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->squelch_label),!rx->squelch_off);
+    g_signal_handlers_unblock_by_func(v->squelch_label,G_CALLBACK(squelch_toggle_cb),rx);
     gtk_widget_set_opacity(v->squelch_scale, rx->squelch_off ? 0.4 : 1.0);
   }
   else {
-      gtk_widget_remove_css_class(v->squelch_label,"sql-off");
-      gtk_label_set_text(GTK_LABEL(v->squelch_label),"");
+      gtk_widget_set_visible(v->squelch_label, FALSE);
       gtk_widget_set_visible(v->squelch_scale, FALSE);
   }
   // update Lock button

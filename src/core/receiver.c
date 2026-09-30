@@ -2324,7 +2324,7 @@ void set_squelch(RECEIVER *rx) {
   // conversion, since chroma neutral is 128 not 0), i.e. green patches wherever
   // the squelch chattered. The bar value/enable is kept (still shown/persisted);
   // only the WDSP Run flag is suppressed, and returns the moment decoding stops.
-  // The master cut-out (rx->squelch_off, the SQL label's toggle) silences the
+  // The master cut-out (rx->squelch_off, the SQL toggle button) silences the
   // squelch across every mode without touching the remembered per-mode bar, so
   // one click restores exactly what each mode had.
   gboolean run = rx->squelch_enable && !rx->squelch_off && !bypass_stream_dsp(rx);
