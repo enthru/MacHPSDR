@@ -35,7 +35,7 @@ int main(void) {
   if(strcmp(i18n_tr("<b>Gain</b>"),"<b>Усиление</b>")!=0) return 38;
   if(strcmp(i18n_tr("Sample Rate"),"Частота дискретизации")!=0) return 39;
   if(strcmp(i18n_tr("Span"),"Полоса")!=0) return 40;
-  if(strcmp(i18n_tr("Diversity"),"Разнесённый приём")!=0) return 41;
+  if(strcmp(i18n_tr("Diversity"),"Diversity")!=0) return 41; /* kept as the term */
   if(strcmp(i18n_tr("Equalizer"),"Эквалайзер")!=0) return 42;
   if(strcmp(i18n_tr("Phase Rotator"),"Фазовращатель")!=0) return 43;
   if(strcmp(i18n_tr("TCI Server"),"Сервер TCI")!=0) return 44;
@@ -69,7 +69,7 @@ int main(void) {
             "Узкополосный, 10489,500–10490,000 MHz (SSB/CW/digi)")!=0)
     return 36;
   if(strcmp(i18n_tr("This device does not support diversity reception (it needs Protocol 1 or Protocol 2, two receivers and two ADCs), so it cannot be enabled here."),
-            "Это устройство не поддерживает разнесённый приём: нужны Protocol 1 или Protocol 2, два приёмника и два ADC. Поэтому включить его здесь нельзя.")!=0)
+            "Это устройство не поддерживает Diversity: нужны Protocol 1 или Protocol 2, два приёмника и два ADC. Поэтому включить его здесь нельзя.")!=0)
     return 33;
   if(strcmp(i18n_tr("Active device rate: %s. Maximum receiver span: %s."),
             "Активная частота устройства: %s. Максимальная полоса приёмника: %s.")!=0)
