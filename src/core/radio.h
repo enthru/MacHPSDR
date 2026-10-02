@@ -374,6 +374,12 @@ typedef struct _radio {
   char ui_font[64];
   char ui_font_mono[64];
 
+  // Scroll-wheel tuning direction, independently per surface (see vfo.c /
+  // receiver_scroll_cb). FALSE keeps the default "scroll up tunes up"; TRUE
+  // reverses it for operators used to the opposite convention.
+  gboolean vfo_scroll_reversed;  // the VFO digit readouts
+  gboolean pan_scroll_reversed;  // the panadapter / waterfall
+
   GtkWidget *dialog;
   
   GtkWidget *txmeter_info;

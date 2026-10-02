@@ -90,6 +90,16 @@ static void band_region_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   radio->band_plan_region=sel;
 }
 
+static void vfo_scroll_rev_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  radio->vfo_scroll_reversed=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+}
+
+static void pan_scroll_rev_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  radio->pan_scroll_reversed=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+}
+
 // ---- Font pickers ----
 // GtkFontDialogButton at FAMILY level: the operator picks from what is actually
 // installed, which is the whole point — the previous hard-coded "Noto Sans" is
@@ -500,8 +510,36 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(bp_grid),bp_combo,1,1,1,1);
   g_signal_connect(bp_combo,"notify::selected",G_CALLBACK(band_region_cb),r);
 
+  // ---- Scroll-wheel tuning direction ----
+  GtkWidget *sc_frame=gtk_frame_new(i18n_tr("Scrolling"));
+  GtkWidget *sc_grid=gtk_grid_new();
+  gtk_grid_set_row_homogeneous(GTK_GRID(sc_grid),FALSE);
+  gtk_grid_set_column_homogeneous(GTK_GRID(sc_grid),FALSE);
+  gtk_grid_set_column_spacing(GTK_GRID(sc_grid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(sc_grid),5);
+  sui_style_group(sc_grid);
+  gtk_frame_set_child(GTK_FRAME(sc_frame),sc_grid);
+
+  GtkWidget *sc_info=gtk_label_new(i18n_tr(
+      "Which way the scroll wheel tunes. By default scrolling up tunes up;\n"
+      "tick a box to reverse it. The two surfaces are set independently."));
+  sui_label_desc(sc_info);
+  gtk_widget_set_margin_bottom(sc_info,12);
+  gtk_grid_attach(GTK_GRID(sc_grid),sc_info,0,0,2,1);
+
+  GtkWidget *vfo_rev=gtk_check_button_new_with_label(i18n_tr("Reverse the VFO digit readout"));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(vfo_rev),r->vfo_scroll_reversed);
+  gtk_grid_attach(GTK_GRID(sc_grid),vfo_rev,0,1,2,1);
+  g_signal_connect(vfo_rev,"toggled",G_CALLBACK(vfo_scroll_rev_cb),r);
+
+  GtkWidget *pan_rev=gtk_check_button_new_with_label(i18n_tr("Reverse the panadapter and waterfall"));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(pan_rev),r->pan_scroll_reversed);
+  gtk_grid_attach(GTK_GRID(sc_grid),pan_rev,0,2,2,1);
+  g_signal_connect(pan_rev,"toggled",G_CALLBACK(pan_scroll_rev_cb),r);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_append(GTK_BOX(vbox),skin_frame);
+  gtk_box_append(GTK_BOX(vbox),sc_frame);
   gtk_box_append(GTK_BOX(vbox),ppm_frame);
   gtk_box_append(GTK_BOX(vbox),bp_frame);
   gtk_box_append(GTK_BOX(vbox),frame);

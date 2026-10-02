@@ -337,6 +337,10 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.theme",value);
   setProperty("radio.ui_font",radio->ui_font);
   setProperty("radio.ui_font_mono",radio->ui_font_mono);
+  sprintf(value,"%d",radio->vfo_scroll_reversed);
+  setProperty("radio.vfo_scroll_reversed",value);
+  sprintf(value,"%d",radio->pan_scroll_reversed);
+  setProperty("radio.pan_scroll_reversed",value);
 
   for(int i=0;i<radio->discovered->adcs;i++) {
     sprintf(name,"radio.adc[%d].filters",i);
@@ -709,6 +713,10 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) g_strlcpy(radio->ui_font,value,sizeof(radio->ui_font));
   value=getProperty("radio.ui_font_mono");
   if(value!=NULL) g_strlcpy(radio->ui_font_mono,value,sizeof(radio->ui_font_mono));
+  value=getProperty("radio.vfo_scroll_reversed");
+  if(value!=NULL) radio->vfo_scroll_reversed=atoi(value);
+  value=getProperty("radio.pan_scroll_reversed");
+  if(value!=NULL) radio->pan_scroll_reversed=atoi(value);
   // Fonts BEFORE the skin: css_set_fonts() re-applies the stylesheet itself, so
   // doing it in this order costs one reload instead of two.
   css_set_fonts(radio->ui_font,radio->ui_font_mono);

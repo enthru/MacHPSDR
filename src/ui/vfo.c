@@ -1666,6 +1666,7 @@ static gboolean frequency_a_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   // Trackpad-aware: 1 notch per wheel detent, threshold-accumulated notches for
   // a trackpad so smooth scroll doesn't over-tune (n>1 on a fast flick).
   int n=scroll_notches(ctrl,dy);
+  if(radio->vfo_scroll_reversed) n=-n;   // operator preference (Configure > Display)
   if(!rx->locked && n!=0) {
     digit=freq_digit_at(v->frequency_a_text,freq_hover_x);
     long long step=0LL;
@@ -1742,6 +1743,7 @@ static gboolean frequency_b_scroll_event_cb(GtkEventControllerScroll *ctrl,doubl
   int digit;
 
   int n=scroll_notches(ctrl,dy);
+  if(radio->vfo_scroll_reversed) n=-n;   // operator preference (Configure > Display)
   if(!rx->locked && n!=0) {
     digit=freq_digit_at(v->frequency_b_text,freq_hover_x);
     long long step=0LL;

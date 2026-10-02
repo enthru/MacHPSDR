@@ -2055,17 +2055,23 @@ gboolean receiver_scroll_cb(GtkEventControllerScroll *controller, double dx, dou
           rx->panadapter_low=rx->panadapter_low+5*mag;
         }
       }
-    } else if(up) {
-      if(rx->ctun || rx->freetune) {
-        receiver_move(rx,rx->step*mag,TRUE);
-      } else {
-        receiver_move(rx,-rx->step*mag,TRUE);
-      }
     } else {
-      if(rx->ctun || rx->freetune) {
-        receiver_move(rx,-rx->step*mag,TRUE);
+      // Tuning direction only (the dB-scale and zoom-pan gestures above keep
+      // their natural sense); reversible per operator preference (Configure >
+      // Display > Scrolling).
+      gboolean tune_up = radio->pan_scroll_reversed ? !up : up;
+      if(tune_up) {
+        if(rx->ctun || rx->freetune) {
+          receiver_move(rx,rx->step*mag,TRUE);
+        } else {
+          receiver_move(rx,-rx->step*mag,TRUE);
+        }
       } else {
-        receiver_move(rx,+rx->step*mag,TRUE);
+        if(rx->ctun || rx->freetune) {
+          receiver_move(rx,-rx->step*mag,TRUE);
+        } else {
+          receiver_move(rx,+rx->step*mag,TRUE);
+        }
       }
     }
   }
