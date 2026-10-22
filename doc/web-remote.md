@@ -11,9 +11,10 @@ The implementation is deliberately incremental.  Every phase must leave a
 usable, testable application and must not make the GTK or RX audio threads wait
 for a network client.
 
-Current status (2026-10-22): Phase 0 is complete and Phase 1 is implemented.
-The headless protocol, routing and regression suites pass.  A live faker/browser
-acceptance run remains to be performed on a normal desktop session; the
+Current status (2026-10-22): Phase 0 is complete; Phases 1 and 2 are implemented
+and headlessly verified.  The binary protocol, routing and regression suites
+pass.  A live faker/browser acceptance run for both phases remains to be
+performed on a normal desktop session; the
 repository's isolated macOS test session cannot create the application's first
 GTK window, before the radio and web server are started.
 
@@ -182,6 +183,20 @@ State changes are authoritative only when echoed by a later `state` or `event`
 message.  The browser may render an optimistic value, but must replace it with
 the server value.
 
+A spectrum subscription is explicit and per receiver.  Profile names are
+case-insensitive on input; acknowledgements and status use the canonical names.
+Balanced is the browser default:
+
+```json
+{"type":"spectrum_subscribe","id":3,"rx":0,"profile":"Balanced"}
+{"type":"spectrum_subscription","id":3,"rx":0,"enabled":true,"profile":"Balanced","bins":512,"fps":10,"dropped":0}
+{"type":"spectrum_unsubscribe","id":4,"rx":0}
+```
+
+`spectrum_status` reports the current effective profile, bin and FPS caps and
+the cumulative per-connection replacement/expiry drop count.  During
+backpressure the caps may temporarily be below the selected profile.
+
 ### Binary frames
 
 Binary DataChannel/WebSocket fallback payloads use a 32-byte little-endian
@@ -205,7 +220,18 @@ Spectrum stream `1` begins with signed `int16 floor_db_x10` and unsigned
 `uint16 span_db_x10`, followed by exactly `count` unsigned eight-bit bins.  A
 bin reconstructs as `floor + value / 255 * span`.  Rows older than 500 ms may be
 dropped by the sender or client and are never retransmitted merely to complete a
-waterfall history.
+waterfall history.  `payload byte count` is therefore `4 + count`, and
+`rate_or_width` equals `count`.  For spectrum, flag bits 0-1 carry the effective
+profile (`0` Low, `1` Balanced, `2` High); the remaining flag bits are zero in
+protocol v1.
+
+The localhost WebSocket implementation treats three consecutive replacement,
+expiry or over-100-ms send-pressure observations as congestion.  It first
+reduces FPS to the next profile's rate, then reduces width; a quiet ten-second
+interval advances recovery toward the requested profile.  Socket sends have a
+250-ms timeout, and shutdown wakes and joins every sender before freeing its
+single-row slots.  These constants define the current fallback behaviour, not
+the future WebRTC congestion controller.
 
 Audio stream `2` is the compatibility fallback.  Its codec and rate are agreed
 by the subscription acknowledgement; production WAN audio is Opus, mono,

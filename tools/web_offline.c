@@ -36,6 +36,15 @@ int main(int argc, char **argv) {
   check("MOX requires and keeps a boolean",
         parse("{\"type\":\"command\",\"id\":4,\"action\":\"set_mox\",\"value\":true}",&r) &&
         r.type==WEB_REQUEST_SET_MOX && r.flag);
+  check("Balanced spectrum subscription parses",
+        parse("{\"type\":\"spectrum_subscribe\",\"id\":5,\"rx\":1,\"profile\":\"Balanced\"}",&r) &&
+        r.type==WEB_REQUEST_SPECTRUM_SUBSCRIBE && r.rx==1 && r.profile==WEB_SPECTRUM_BALANCED);
+  check("spectrum unsubscribe parses",
+        parse("{\"type\":\"spectrum_unsubscribe\",\"id\":6,\"rx\":0}",&r) &&
+        r.type==WEB_REQUEST_SPECTRUM_UNSUBSCRIBE);
+  check("filter edges parse",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_filter\",\"rx\":0,\"low\":-3000,\"high\":2700}",&r) &&
+        r.type==WEB_REQUEST_SET_FILTER && r.low==-3000 && r.high==2700);
 
   check("missing id is rejected",!parse("{\"type\":\"get_state\"}",&r));
   check("unknown command is rejected",
@@ -67,6 +76,38 @@ int main(int argc, char **argv) {
         !web_protocol_route("/%2e%2e/radio.props",&asset,&type,&ws));
   check("queries are not a second routing language",
         !web_protocol_route("/app.js?anything",&asset,&type,&ws));
+
+  guint8 header[WEB_BINARY_HEADER_SIZE];
+  WEB_BINARY_HEADER bh={WEB_PROTOCOL_VERSION,1,2,3,0x78563412u,
+                        G_GUINT64_CONSTANT(0x1122334455667788),512,512,516}, decoded;
+  check("MPSD header encodes exact little-endian fields",
+        web_binary_header_encode(header,&bh) && memcmp(header,"MPSD",4)==0 &&
+        header[8]==0x12 && header[11]==0x78 && header[12]==0x88 && header[19]==0x11 &&
+        header[20]==0x00 && header[21]==0x02 && header[28]==0x04 && header[29]==0x02);
+  check("MPSD header round-trips timestamp/count/size",
+        web_binary_header_decode(header,sizeof(header),&decoded) &&
+        decoded.sequence==bh.sequence && decoded.timestamp_us==bh.timestamp_us &&
+        decoded.count==512 && decoded.rate_or_width==512 && decoded.payload_bytes==516);
+  header[0]='X';
+  check("bad MPSD magic is rejected",!web_binary_header_decode(header,sizeof(header),&decoded));
+
+  WEB_SPECTRUM_LIMITS low=web_spectrum_profile_limits((WEB_SPECTRUM_PROFILE)-9);
+  WEB_SPECTRUM_LIMITS high=web_spectrum_profile_limits((WEB_SPECTRUM_PROFILE)99);
+  check("spectrum profiles clamp to 256/5 and 1024/15",
+        low.bins==256 && low.fps==5 && high.bins==1024 && high.fps==15);
+  float bins[]={-120.0f,-80.0f,-110.0f,-70.0f,-130.0f,-90.0f,-100.0f,-60.0f};
+  guint8 quantized[4];
+  check("downsampling preserves each bucket peak",
+        web_spectrum_quantize(bins,8,quantized,4,-140.0f,100.0f) &&
+        quantized[0]==153 && quantized[1]==178 && quantized[2]==128 && quantized[3]==204);
+  WEB_LATEST_FRAME latest={0};
+  GBytes *one=g_bytes_new_static("one",3), *two=g_bytes_new_static("two",3);
+  web_latest_frame_replace(&latest,one); web_latest_frame_replace(&latest,two);
+  GBytes *taken=web_latest_frame_take(&latest);
+  gsize taken_len=0; const char *taken_data=g_bytes_get_data(taken,&taken_len);
+  check("latest-frame replacement drops the older frame",
+        latest.dropped==1 && taken_len==3 && memcmp(taken_data,"two",3)==0 && latest.frame==NULL);
+  g_bytes_unref(one); g_bytes_unref(two); g_bytes_unref(taken);
 
   printf("\n%d failure%s\n",failures,failures==1?"":"s");
   return failures?1:0;

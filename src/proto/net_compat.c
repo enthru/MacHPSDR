@@ -50,6 +50,12 @@ int net_set_rcvtimeo(int fd, int ms) {
                     &timeout, sizeof(timeout)) == 0 ? 0 : -1;
 }
 
+int net_set_sndtimeo(int fd, int ms) {
+  DWORD timeout = (DWORD)ms;
+  return setsockopt((SOCKET)fd, SOL_SOCKET, SO_SNDTIMEO,
+                    (const char *)&timeout, sizeof(timeout));
+}
+
 void net_perror(const char *msg) {
   fprintf(stderr, "%s: winsock error %d\n", msg ? msg : "socket", WSAGetLastError());
 }
@@ -199,6 +205,13 @@ int net_set_rcvtimeo(int fd, int ms) {
   tv.tv_sec  = ms / 1000;
   tv.tv_usec = (ms % 1000) * 1000;
   return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+
+int net_set_sndtimeo(int fd, int ms) {
+  struct timeval timeout;
+  timeout.tv_sec=ms/1000;
+  timeout.tv_usec=(ms%1000)*1000;
+  return setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
 }
 
 int net_send_nowait(int fd, const void *buf, size_t len, int flags) {

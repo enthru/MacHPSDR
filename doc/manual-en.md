@@ -799,13 +799,20 @@ have not been tested on the air (no transmit hardware).*
 
 **Browser remote (Configure → Network).** Tick **Enable browser remote**, keep
 or change the port (default 8080), then open `http://127.0.0.1:8080` in a browser
-on the same computer. The page shows every visible receiver's frequency, mode
-and S-meter; it can retune and change mode and follows the MOX state. Browser
+on the same computer. The page shows every visible receiver's frequency, mode,
+S-meter, live panadapter and rolling waterfall; it can retune, change mode and
+follows the MOX state. Choose **Low** (256 bins/5 fps), **Balanced** (the default,
+512/10) or **High** (1024/15) for each receiver. Click the spectrum to tune,
+drag it to move the tuning frequency, use the wheel for one tuning step, or drag
+either highlighted filter edge. The status beside the profile reports the
+effective profile, received FPS, row age and rows dropped for a slow browser;
+MacHPSDR automatically reduces FPS before width and recovers after congestion.
+Browser
 PTT is disabled separately: tick **Allow browser PTT (this session only)** when
 it is deliberately needed. That permission resets to off at every MacHPSDR
 start. This first version listens on this computer only, so another computer,
-phone or the Internet cannot connect yet. Panadapter, waterfall and receive
-audio are also not in this first version. The status line shows the local URL
+phone or the Internet cannot connect yet. Receive audio is not available yet.
+The status line shows the local URL
 and connected-client count.
 
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied

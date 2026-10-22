@@ -32,6 +32,12 @@ typedef struct _RX_GAIN {
   double gain;
 } RX_GAIN;
 
+typedef struct _RX_FILTER_EDGES {
+  RECEIVER *rx;
+  int low;
+  int high;
+} RX_FILTER_EDGES;
+
 typedef struct _MOX_STATE {
   RADIO *radio;
   gboolean state;
@@ -52,9 +58,9 @@ extern int ext_set_mox(void *data);
 extern int ext_set_frequency_a(void *data);
 extern int ext_set_frequency_b(void *data);
 extern int ext_set_mode(void *data);
+extern int ext_set_filter_edges(void *data);
 extern int ext_tx_set_ps(void *data);
 //extern int ext_ps_twotone(void *data);
 extern int ext_vfo_update(void *data);
 extern int ext_vfo_step(void *data);
 extern int ext_set_afgain(void *data);
-

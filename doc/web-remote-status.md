@@ -21,22 +21,26 @@ handoff sections accurate.
 
 ## Current handoff
 
-Baseline commit: `7072382` (`Add localhost browser remote foundation`), pushed
-to `origin/master` on 2026-10-22.
+Baseline before the current work: `7072382` (`Add localhost browser remote
+foundation`), pushed to `origin/master` on 2026-10-22.
 
 - Phase 0: complete.
 - Phase 1: implemented and headlessly verified.
-- Phase 1 desktop acceptance: pending on a normal graphical session.
-- Next implementation slice: Phase 2, bandwidth-bounded panadapter and
-  browser-derived waterfall transport.
-- Not implemented yet: spectrum/waterfall, RX audio, full RX controls, pushed
+- Phase 2: implemented and headlessly verified.
+- Phase 1/2 desktop acceptance: pending on a normal graphical session.
+- Next implementation slice: run and record the Phase 2 faker/browser desktop
+  acceptance described below before beginning receive audio.
+- Not implemented yet: RX audio, full RX controls, pushed
   state events, authenticated LAN access, control leases and browser TX audio.
 
-The first slice provides a disabled-by-default listener bound to
+The local remote provides a disabled-by-default listener bound to
 `127.0.0.1`, bundled static assets, the `machpsdr.v1` WebSocket subprotocol,
 state polling, VFO-A frequency and mode commands, meters, and MOX.  Browser PTT
 is additionally gated by `web_tx_enable`, a desktop checkbox that is deliberately
-session-only and resets to false on every application start.
+session-only and resets to false on every application start.  Phase 2 adds one
+quantized latest-only spectrum row per subscribed receiver, a Canvas panadapter
+and browser-derived waterfall, Low/Balanced/High profiles, adaptive fallback,
+click/drag/wheel tuning and draggable filter edges.
 
 ## File map
 
@@ -91,6 +95,15 @@ session-only and resets to false on every application start.
 13. Operator documentation ships atomically in English, Russian, Ukrainian and
     Belarusian.  A feature is not complete if any of `manual-en.md`,
     `manual-ru.md`, `manual-uk.md` or `manual-be.md` is stale.
+14. The display timer makes only a calibrated bounded copy after its existing
+    `GetPixels()` call and never waits for a sender.  Each client owns one sender,
+    one serialized WebSocket send mutex and one replaceable `GBytes` reference
+    per RX.  Shutdown wakes senders and waits for all client workers before
+    releasing the global latest snapshots.
+15. Backpressure is observable.  Replacement and expiry increment the client/RX
+    drop count; three pressure observations first lower FPS, then bins, and ten
+    healthy seconds recover toward the selected profile.  A binary send may
+    block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
 
@@ -128,37 +141,78 @@ Not verified in that session:
   observed in both GTK and the browser.
 - Real-radio or on-air behaviour.
 
-## Exact next slice: Phase 2
+### 2026-10-22 — Phase 2 headless verification
 
-Implement spectrum transport before audio or LAN access:
+Verified on macOS:
 
-1. Find the existing receiver display-timer path that calls `GetPixels()` and
-   publish the bins it has already fetched.  The web path must not call WDSP.
-2. Add explicit binary-header encode/decode helpers and tests in
-   `web_protocol.c/.h` for the 32-byte timestamped `MPSD` header specified in
-   `web-remote.md`; do not cast a C struct onto the wire.
-3. Add validated `spectrum_subscribe`/`spectrum_unsubscribe` requests with a
-   receiver and Low/Balanced/High profile.  Default to 512 bins / 10 fps and
-   clamp the hard maximum to 1024 bins / 15 fps.
-4. Maintain one latest immutable spectrum snapshot per visible receiver.  Each
-   client may have at most one unsent spectrum frame per receiver; replacement
-   drops the older frame and increments an observable drop counter.
-5. Send binary frames only from a web worker/sender, never from the display
-   callback.  Define lock ownership and shutdown order before adding the first
-   queue.
-6. Downsample before sending, encode the per-row dB floor/span plus one byte per
-   bin, and render both panadapter and rolling waterfall from that row in
-   `assets/web/`.  Start with Canvas 2D and preserve a future WebGL path.
-7. Add backpressure thresholds with hysteresis: discard expired rows first,
-   then step Balanced → Low.  Never let a spectrum queue exceed one row per RX.
-8. Add deterministic headless tests for header endianness/timestamp,
-   sequence/count/size, profile clamping, quantization and latest-frame
-   replacement.  Then perform the normal desktop faker acceptance and record
-   measured bitrate, FPS and capture-to-draw age here.
+```text
+make -j4
+make check
+./web_offline --selftest
+git diff --check
+python3 -m http.server 8765 --bind 127.0.0.1 --directory assets/web
+```
 
-Phase 2 is complete only when a throttled or disconnected browser cannot alter
-the receiver/display cadence and the browser peak position matches the faker
-signal.
+Results:
+
+- the complete application builds and links;
+- `make check` completed with exit status 0 and every project self-test passed;
+- all 29 browser protocol/route cases pass, including subscription validation,
+  exact MPSD little-endian sequence/timestamp/count/size fields, bad magic,
+  profile limits, peak-preserving quantization and latest-frame replacement;
+- the three browser assets loaded in the in-app browser from the temporary
+  static server, the responsive shell rendered, and JavaScript ran through the
+  expected WebSocket failure/reconnect state (`Disconnected`); Node.js was not
+  installed, so no separate `node --check` was performed;
+- no whitespace errors were reported.
+
+Not verified in this session:
+
+- A live faker/browser spectrum connection.  The existing isolated macOS
+  AppKit limitation occurs before a RADIO or listener exists, so the desktop
+  acceptance below remains mandatory and no bitrate, delivered FPS,
+  capture-to-draw age, peak alignment or throttled-client cadence result is
+  claimed.
+- Real-radio or on-air behaviour.
+
+### 2026-10-22 — Phase 2 headless implementation
+
+Implemented:
+
+- the receiver display timer publishes the calibrated, already-fetched visible
+  bins only after `GetPixels()` succeeds; it does not call WDSP again;
+- field-by-field 32-byte little-endian `MPSD` header helpers, profile validation,
+  peak-preserving reduction and eight-bit floor/span quantization;
+- explicit per-RX subscribe/unsubscribe, default Balanced selection in the page,
+  a hard 1024-bin/15-fps ceiling, latest-only replacement and drop reporting;
+- a dedicated sender per WebSocket client, serialized text/binary writes,
+  500-ms expiry, staged FPS/width fallback, hysteretic recovery and bounded
+  shutdown;
+- a dependency-free Canvas 2D panadapter and rolling waterfall generated from
+  the same row, with click/drag/wheel tuning and draggable filter edges;
+- matching operator documentation in all four supported manuals.
+
+Headless verification performed in this session is recorded below.  It does not
+prove GTK/browser peak alignment, measured browser bitrate or unchanged RX
+cadence under a throttled real socket.
+
+## Exact next slice: Phase 2 desktop acceptance
+
+On a normal graphical desktop, start `MACHPSDR_WEB=8080 ./machpsdr --faker`, open
+the page in current Safari and one Chromium/Firefox browser, and record:
+
+1. matching GTK/browser faker peak X position and dB scale for Low, Balanced and
+   High, plus successful click/drag/wheel/filter-edge gestures;
+2. measured binary payload bitrate, delivered FPS and capture-to-draw age for
+   all three profiles;
+3. RX/display cadence while the browser reads normally, is throttled for at
+   least 20 seconds and is disconnected, confirming drops/adaptation without a
+   cadence change or memory growth;
+4. profile recovery after pressure clears and clean application shutdown with a
+   stalled client.
+
+Only after these observations are recorded should Phase 2 be marked complete
+and the Phase 3 WebRTC/Opus packaging spike begin.
 
 ### 2026-10-22 — WAN/jitter design decision
 
@@ -168,10 +222,10 @@ control/signaling, WebRTC Opus for production receive audio, and an
 unordered/limited-retransmission DataChannel for disposable spectrum rows.
 Waterfall pixels are generated in the browser and are never a second stream.
 
-This entry is a design decision only.  No encoder, WebRTC dependency, spectrum
-binary frame or impairment result exists in the implementation yet.  Phase 2
-must preserve transport independence so the spectrum format can be exercised
-over the current WebSocket before the WebRTC packaging spike in Phase 3.
+At the time of this design decision no encoder, WebRTC dependency, spectrum
+binary frame or impairment result existed.  Phase 2 has since added the
+transport-independent spectrum format over the current WebSocket; the WebRTC
+dependency and impairment spike still belongs to Phase 3.
 
 ### 2026-10-22 — localized operator documentation requirement
 
@@ -179,7 +233,10 @@ The documentation contract now requires every operator-visible browser-remote
 change to update the English, Russian, Ukrainian and Belarusian manuals in the
 same commit.  Phase 1 has been backfilled in all four manuals, including the
 localhost URL/default port, available controls, session-only PTT arm, current
-localhost limitation and the not-yet-implemented spectrum/audio features.
+localhost limitation and the then-not-yet-implemented spectrum/audio features.
+The Phase 2 change above replaces that operator text in all four manuals with
+the shipped panadapter/waterfall profiles and gestures; receive audio remains
+unimplemented.
 
 This was a documentation-only change.  Validation checks all four files for one
 Browser Remote section and one `MACHPSDR_WEB` entry, plus `git diff --check`;

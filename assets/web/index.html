@@ -27,6 +27,19 @@
         <span class="meter-text">−200.0 dB</span>
       </div>
       <div class="meter" aria-label="Signal level"><span></span></div>
+      <div class="spectrum-toolbar">
+        <label>
+          Spectrum
+          <select class="spectrum-profile">
+            <option>Low</option>
+            <option selected>Balanced</option>
+            <option>High</option>
+          </select>
+        </label>
+        <span class="spectrum-status">Waiting for spectrum</span>
+      </div>
+      <canvas class="spectrum" height="300" tabindex="0"
+              aria-label="Live panadapter and waterfall. Click or drag to tune, use the wheel to step, or drag a filter edge."></canvas>
       <label class="frequency-label">
         Frequency, Hz
         <input class="frequency" inputmode="numeric" autocomplete="off">

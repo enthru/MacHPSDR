@@ -249,6 +249,7 @@ int  net_set_nonblocking(int fd, int on);
  * lives here.  Returns 0 on success, -1 on failure.
  */
 int  net_set_rcvtimeo(int fd, int ms);
+int  net_set_sndtimeo(int fd, int ms);
 
 /*
  * A send that must never block the calling thread, whatever the peer is doing.

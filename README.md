@@ -588,16 +588,20 @@ can be replayed separately in the I/Q Player.
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
 
-- **Browser remote (first vertical slice).** An optional web server built into
+- **Browser remote (local control and spectrum).** An optional web server built into
   MacHPSDR, enabled in **Configure → Network** and bound to localhost by default.
   Open `http://127.0.0.1:8080` to see every visible receiver's frequency, mode
-  and S-meter, retune or change mode, and follow/toggle MOX on a transmit-capable
+  and S-meter plus a bandwidth-bounded live panadapter and browser-generated
+  waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
+  (1024/15) profiles stay latest-only and automatically back off for a slow
+  browser. Click/drag/wheel tuning and draggable filter edges are available;
+  the page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
   session. The dependency-free page talks the versioned `machpsdr.v1` JSON
-  protocol over WebSocket and reconnects automatically. This is Phase 1 of the
+  protocol over WebSocket and reconnects automatically. This is Phase 2 of the
   [browser-remote plan](doc/web-remote.md) and
-  [implementation record](doc/web-remote-status.md); panadapter/waterfall,
-  receive audio, complete controls and authenticated LAN access are the next
+  [implementation record](doc/web-remote-status.md); receive audio, complete
+  controls and authenticated LAN access are the next
   isolated phases. Until authentication lands the listener deliberately accepts
   loopback only.
 

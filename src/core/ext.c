@@ -160,6 +160,15 @@ int ext_set_mode(void *data) {
   return 0;
 }
 
+int ext_set_filter_edges(void *data) {
+  RX_FILTER_EDGES *f=(RX_FILTER_EDGES *)data;
+  if(!receiver_is_live(f->rx)) { g_free(f); return 0; }
+  set_filter(f->rx,f->low,f->high);
+  update_vfo(f->rx);
+  g_free(f);
+  return 0;
+}
+
 
 // PureSignal on/off from a thread that is not the GTK one (CAT ZZLI, MIDI).
 // transmitter_set_ps() adds and deletes the hidden feedback receivers, i.e. it
@@ -229,4 +238,3 @@ int ext_set_afgain(void *data) {
   g_free(s);
   return 0;
 }
-

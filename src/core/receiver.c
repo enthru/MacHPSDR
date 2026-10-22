@@ -75,6 +75,7 @@
 #include "subrx.h"
 #include "dxcluster.h"
 #include "tci.h"
+#include "web_server.h"
 #ifdef FT8
 #include "ft8_decoder.h"
 #include "ft8_waterfall.h"
@@ -2198,6 +2199,19 @@ static gboolean update_timer_cb(void *data) {
            what the eye sees; everything else measures samples. */
         rx_wf_cadence_note(rx);
         update_rx_panadapter(rx,running);
+        int web_offset=MAX(0,rx->pan);
+        int web_count=MIN(rx->panadapter_width,rx->pixels-web_offset);
+        if(web_count>0) {
+          double web_calibration=radio->adc[rx->adc].attenuation;
+          if(radio->divmixer[rx->dmix_id]!=NULL &&
+             radio->divmixer[rx->dmix_id]->calibrate_gain) web_calibration=0.0;
+          if(radio->discovered->device==DEVICE_HERMES_LITE2) web_calibration=-web_calibration;
+          web_calibration+=radio->panadapter_calibration;
+          web_server_publish_spectrum(rx->channel,rx->pixel_samples+web_offset,
+                                      (unsigned)web_count,(float)web_calibration,
+                                      (float)rx->panadapter_low,
+                                      (float)(rx->panadapter_high-rx->panadapter_low));
+        }
         update_waterfall(rx);
       } else if(!running) {
         update_rx_panadapter(rx,running);

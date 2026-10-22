@@ -64,8 +64,8 @@ GtkWidget *create_web_dialog(RADIO *radio) {
   gtk_frame_set_child(GTK_FRAME(frame),grid);
 
   GtkWidget *info=gtk_label_new(
-      "Built-in browser control for VFO, mode, meter and PTT. Phase 1 listens\n"
-      "on this computer only; spectrum, waterfall and audio come next.");
+      "Browser VFO, mode, meter, panadapter, waterfall and session-armed PTT.\n"
+      "This computer only; receive audio and authenticated LAN access come later.");
   sui_label_desc(info);
   gtk_widget_set_margin_bottom(info,12);
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);

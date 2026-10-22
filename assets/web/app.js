@@ -2,12 +2,8 @@
 
 const modes = ["LSB", "USB", "DSB", "CWL", "CWU", "FMN", "AM", "DIGU", "SPEC", "DIGL", "SAM", "DRM", "WFM"];
 const cards = new Map();
-let socket;
-let reconnectTimer;
-let pollTimer;
-let nextId = 1;
-let radioState;
-
+let socket, reconnectTimer, pollTimer, radioState;
+let nextId = 1, socketGeneration = 0;
 const connection = document.querySelector("#connection");
 const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
@@ -19,15 +15,89 @@ function setConnection(text, online = false) {
   connection.textContent = text;
   connection.classList.toggle("offline", !online);
 }
-
 function send(message) {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify({ id: nextId++, ...message }));
   return true;
 }
+function command(action, fields) { send({ type: "command", action, ...fields }); }
+function subscribe(card, rx) {
+  if (card.dataset.subscription === String(socketGeneration)) return;
+  card.dataset.subscription = String(socketGeneration);
+  send({ type: "spectrum_subscribe", rx, profile: card.querySelector(".spectrum-profile").value });
+}
+function canvasX(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+}
+function displayGeometry(card) {
+  const state = card._rx;
+  if (!state) return null;
+  const span = state.display_high - state.display_low;
+  return span > 0 ? { low: state.display_low, high: state.display_high, span } : null;
+}
+function filterPixels(card) {
+  const geometry = displayGeometry(card);
+  if (!geometry) return null;
+  const width = card.querySelector(".spectrum").getBoundingClientRect().width;
+  return {
+    left: (card._rx.frequency + card._rx.filter_low - geometry.low) / geometry.span * width,
+    right: (card._rx.frequency + card._rx.filter_high - geometry.low) / geometry.span * width
+  };
+}
 
-function command(action, fields) {
-  send({ type: "command", action, ...fields });
+function installSpectrumGestures(card, rxId) {
+  const canvas = card.querySelector(".spectrum");
+  const sendDrag = (drag, x) => {
+    const now = performance.now();
+    if (now - drag.lastSent < 45) return;
+    drag.lastSent = now;
+    const geometry = displayGeometry(card);
+    const width = canvas.getBoundingClientRect().width;
+    if (!geometry || width <= 0) return;
+    const delta = Math.round((x - drag.startX) / width * geometry.span);
+    if (drag.kind === "left") command("set_filter", { rx: rxId, low: drag.low + delta, high: drag.high });
+    else if (drag.kind === "right") command("set_filter", { rx: rxId, low: drag.low, high: drag.high + delta });
+    else command("set_frequency", { rx: rxId, value: Math.max(1, Math.round(drag.frequency - delta)) });
+  };
+  canvas.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || !card._rx) return;
+    const x = canvasX(event, canvas), edges = filterPixels(card);
+    let kind = "tune";
+    if (edges && Math.abs(x - edges.left) <= 10) kind = "left";
+    else if (edges && Math.abs(x - edges.right) <= 10) kind = "right";
+    canvas._drag = { kind, startX: x, moved: false, lastSent: 0,
+      frequency: card._rx.frequency, low: card._rx.filter_low, high: card._rx.filter_high };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", event => {
+    const drag = canvas._drag;
+    if (!drag) return;
+    const x = canvasX(event, canvas);
+    if (Math.abs(x - drag.startX) >= 4) drag.moved = true;
+    if (drag.moved) sendDrag(drag, x);
+  });
+  canvas.addEventListener("pointerup", event => {
+    const drag = canvas._drag;
+    if (!drag) return;
+    const x = canvasX(event, canvas);
+    if (drag.moved) sendDrag({ ...drag, lastSent: 0 }, x);
+    else {
+      const geometry = displayGeometry(card), width = canvas.getBoundingClientRect().width;
+      if (geometry && width > 0)
+        command("set_frequency", { rx: rxId, value: Math.max(1, Math.round(geometry.low + x / width * geometry.span)) });
+    }
+    canvas._drag = null;
+  });
+  canvas.addEventListener("pointercancel", () => { canvas._drag = null; });
+  canvas.addEventListener("wheel", event => {
+    if (!card._rx) return;
+    event.preventDefault();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const value = Math.max(1, card._rx.frequency + direction * Math.max(1, card._rx.step));
+    card._rx.frequency = value;
+    command("set_frequency", { rx: rxId, value });
+  }, { passive: false });
 }
 
 function makeCard(rx) {
@@ -37,6 +107,8 @@ function makeCard(rx) {
   const select = card.querySelector(".mode");
   modes.forEach((name, value) => select.add(new Option(name, value)));
   select.addEventListener("change", () => command("set_mode", { rx: rx.id, value: Number(select.value) }));
+  const profile = card.querySelector(".spectrum-profile");
+  profile.addEventListener("change", () => send({ type: "spectrum_subscribe", rx: rx.id, profile: profile.value }));
   const input = card.querySelector(".frequency");
   const tune = () => {
     const value = Number(input.value.replace(/[^0-9]/g, ""));
@@ -44,24 +116,30 @@ function makeCard(rx) {
   };
   card.querySelector(".apply-frequency").addEventListener("click", tune);
   input.addEventListener("keydown", event => { if (event.key === "Enter") tune(); });
+  installSpectrumGestures(card, rx.id);
   receivers.append(card);
   cards.set(rx.id, card);
+  subscribe(card, rx.id);
   return card;
 }
 
 function render(state) {
   radioState = state.radio;
   const live = new Set(state.receivers.map(rx => rx.id));
-  for (const [id, card] of cards) if (!live.has(id)) { card.remove(); cards.delete(id); }
+  for (const [id, card] of cards) if (!live.has(id)) {
+    send({ type: "spectrum_unsubscribe", rx: id });
+    card.remove(); cards.delete(id);
+  }
   for (const rx of state.receivers) {
     const card = cards.get(rx.id) || makeCard(rx);
+    card._rx = rx;
+    subscribe(card, rx.id);
     card.classList.toggle("active", state.radio.active_rx === rx.id);
     const input = card.querySelector(".frequency");
     if (document.activeElement !== input) input.value = String(rx.frequency);
     card.querySelector(".mode").value = String(rx.mode);
     card.querySelector(".meter-text").textContent = `${rx.meter_db.toFixed(1)} dB`;
-    const level = Math.max(0, Math.min(100, (rx.meter_db + 140) / 1.2));
-    card.querySelector(".meter span").style.width = `${level}%`;
+    card.querySelector(".meter span").style.width = `${Math.max(0, Math.min(100, (rx.meter_db + 140) / 1.2))}%`;
     card.querySelector(".lock-state").textContent = rx.locked ? "VFO locked" : "";
   }
   empty.hidden = state.receivers.length !== 0;
@@ -71,28 +149,102 @@ function render(state) {
   revision.textContent = `State revision ${state.revision}`;
 }
 
+function waterfallColor(value) {
+  const t = value / 255;
+  if (t < .3) return [0, Math.round(t / .3 * 65), Math.round(30 + t / .3 * 130)];
+  if (t < .65) return [Math.round((t - .3) / .35 * 35), Math.round(65 + (t - .3) / .35 * 190), Math.round(160 - (t - .3) / .35 * 100)];
+  return [Math.round(35 + (t - .65) / .35 * 220), Math.round(255 - (t - .65) / .35 * 85), Math.round(60 - (t - .65) / .35 * 40)];
+}
+
+function drawSpectrum(card, bins, floor, span) {
+  const canvas = card.querySelector(".spectrum"), rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.round(rect.width * dpr)), height = Math.max(1, Math.round(rect.height * dpr));
+  const panHeight = Math.round(height * .56);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width; canvas.height = height;
+    card._waterfall = document.createElement("canvas");
+    card._waterfall.width = width; card._waterfall.height = Math.max(1, height - panHeight);
+  }
+  const ctx = canvas.getContext("2d", { alpha: false }), wf = card._waterfall;
+  const wctx = wf.getContext("2d", { alpha: false });
+  wctx.drawImage(wf, 0, 0, width, wf.height - 1, 0, 1, width, wf.height - 1);
+  const row = wctx.createImageData(width, 1);
+  for (let x = 0; x < width; x++) {
+    const value = bins[Math.min(bins.length - 1, Math.floor(x * bins.length / width))];
+    const [r, g, b] = waterfallColor(value), p = x * 4;
+    row.data[p] = r; row.data[p + 1] = g; row.data[p + 2] = b; row.data[p + 3] = 255;
+  }
+  wctx.putImageData(row, 0, 0);
+  ctx.fillStyle = "#030a0f"; ctx.fillRect(0, 0, width, panHeight);
+  ctx.strokeStyle = "#17303f"; ctx.lineWidth = dpr;
+  for (let i = 1; i < 5; i++) { const y = i * panHeight / 5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+  const edges = filterPixels(card);
+  if (edges) {
+    ctx.fillStyle = "rgba(69,217,255,.10)";
+    ctx.fillRect(edges.left * dpr, 0, (edges.right - edges.left) * dpr, panHeight);
+    ctx.strokeStyle = "rgba(69,217,255,.75)";
+    for (const edge of [edges.left, edges.right]) { ctx.beginPath(); ctx.moveTo(edge * dpr, 0); ctx.lineTo(edge * dpr, panHeight); ctx.stroke(); }
+  }
+  ctx.strokeStyle = "#68f59b"; ctx.lineWidth = Math.max(1, 1.25 * dpr); ctx.beginPath();
+  for (let i = 0; i < bins.length; i++) {
+    const x = i / Math.max(1, bins.length - 1) * width;
+    const db = floor + bins[i] / 255 * span;
+    const y = Math.max(0, Math.min(panHeight, (floor + span - db) / span * panHeight));
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke(); ctx.drawImage(wf, 0, panHeight);
+  ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, panHeight); ctx.stroke();
+}
+
+function handleBinary(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 36) return;
+  const view = new DataView(buffer);
+  if (view.getUint8(0) !== 77 || view.getUint8(1) !== 80 || view.getUint8(2) !== 83 || view.getUint8(3) !== 68 ||
+      view.getUint8(4) !== 1 || view.getUint8(5) !== 1) return;
+  const rx = view.getUint8(6), count = view.getUint32(20, true), payload = view.getUint32(28, true);
+  if (count === 0 || count > 1024 || payload !== count + 4 || buffer.byteLength !== 32 + payload) return;
+  const card = cards.get(rx);
+  if (!card) return;
+  const timestamp = Number(view.getBigUint64(12, true));
+  const floor = view.getInt16(32, true) / 10, span = view.getUint16(34, true) / 10;
+  if (!(span > 0)) return;
+  const bins = new Uint8Array(buffer, 36, count), arrival = performance.now() * 1000;
+  const offset = arrival - timestamp;
+  card._clockOffset = Math.min(card._clockOffset ?? offset, offset);
+  card._age = Math.max(0, (offset - card._clockOffset) / 1000);
+  card._frames = (card._frames || []).filter(t => arrival - t < 1000000);
+  card._frames.push(arrival);
+  drawSpectrum(card, bins, floor, span);
+}
+
+function updateSpectrumStatus(message) {
+  const card = cards.get(message.rx);
+  if (!card) return;
+  const fps = card._frames?.length || 0;
+  const age = Number.isFinite(card._age) ? `${Math.round(card._age)} ms` : "—";
+  card.querySelector(".spectrum-status").textContent = `${message.profile} · ${fps} fps · ${age} · ${message.dropped} dropped`;
+  card.querySelector(".spectrum-profile").value = message.profile;
+}
+
 function connect() {
-  clearTimeout(reconnectTimer);
-  clearInterval(pollTimer);
-  setConnection("Connecting…");
+  clearTimeout(reconnectTimer); clearInterval(pollTimer); setConnection("Connecting…");
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${scheme}://${location.host}/ws`, "machpsdr.v1");
+  socket.binaryType = "arraybuffer";
   socket.addEventListener("open", () => {
-    setConnection("Connected", true);
-    send({ type: "get_state" });
+    socketGeneration++; setConnection("Connected", true); send({ type: "get_state" });
     pollTimer = setInterval(() => send({ type: "get_state" }), 500);
   });
   socket.addEventListener("message", event => {
-    if (typeof event.data !== "string") return;
-    let message;
-    try { message = JSON.parse(event.data); } catch { return; }
+    if (typeof event.data !== "string") { handleBinary(event.data); return; }
+    let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === "state") render(message);
+    if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
     if (message.type === "error") revision.textContent = `Command failed: ${message.message}`;
   });
   socket.addEventListener("close", () => {
-    clearInterval(pollTimer);
-    setConnection("Disconnected");
-    reconnectTimer = setTimeout(connect, 1500);
+    clearInterval(pollTimer); setConnection("Disconnected"); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }
@@ -100,5 +252,4 @@ function connect() {
 mox.addEventListener("click", () => {
   if (radioState?.can_transmit) command("set_mox", { value: !radioState.mox });
 });
-
 connect();
