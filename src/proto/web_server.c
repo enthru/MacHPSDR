@@ -22,6 +22,9 @@
 #include "tci_ws.h"
 #include "web_protocol.h"
 #include "web_server.h"
+#ifdef WEBRTC
+#include "web_rtc.h"
+#endif
 
 #define WEB_MAX_CLIENTS 8
 #define WEB_HTTP_MAX 8192
@@ -59,6 +62,13 @@ typedef struct {
   guint pressure[MAX_RECEIVERS];
   guint64 expired[MAX_RECEIVERS];
   gint64 last_status_us[MAX_RECEIVERS];
+#ifdef WEBRTC
+  /* One receive-audio peer connection per client (slice 2b/3).  Created from
+     the client's recv thread; its callbacks run on libdatachannel threads and
+     send through the serialized client_send() path, never touching GTK. */
+  WEB_RTC_SESSION *rtc;
+  gint rtc_rx;
+#endif
 } WEB_CLIENT;
 
 static RADIO *web_radio;
@@ -251,6 +261,55 @@ static gboolean ws_send_state(WEB_CLIENT *client, gint64 id) {
   return ok;
 }
 
+#ifdef WEBRTC
+/* WebRTC signaling out (runs on a libdatachannel worker thread): wrap the offer
+   or ICE candidate as a text frame and push it through the serialized send
+   path.  client_send() early-returns once the client is closing, so a callback
+   that races teardown cannot touch a half-freed client. */
+static void web_rtc_on_signal(void *user, const char *kind, const char *data,
+                              const char *mid) {
+  WEB_CLIENT *client=(WEB_CLIENT *)user;
+  if(client==NULL || data==NULL) return;
+  gchar *edata=web_json_escape(data);
+  gchar *msg;
+  if(g_strcmp0(kind,"candidate")==0) {
+    gchar *emid=web_json_escape(mid!=NULL?mid:"");
+    msg=g_strdup_printf("{\"type\":\"rtc_candidate\",\"rx\":%d,"
+                        "\"candidate\":\"%s\",\"mid\":\"%s\"}",
+                        client->rtc_rx,edata,emid);
+    g_free(emid);
+  } else {
+    /* The server is always the offerer. */
+    msg=g_strdup_printf("{\"type\":\"rtc_offer\",\"rx\":%d,\"sdp\":\"%s\"}",
+                        client->rtc_rx,edata);
+  }
+  client_send(client,1,msg,strlen(msg));
+  g_free(edata);
+  g_free(msg);
+}
+
+static void web_rtc_on_state(void *user, gboolean connected, gboolean failed) {
+  WEB_CLIENT *client=(WEB_CLIENT *)user;
+  if(client==NULL) return;
+  log_info("web: rtc rx %d %s\n",client->rtc_rx,
+           connected?"connected":(failed?"failed":"closed"));
+  char msg[96];
+  g_snprintf(msg,sizeof(msg),
+             "{\"type\":\"rtc_state\",\"rx\":%d,\"connected\":%s}",
+             client->rtc_rx,connected?"true":"false");
+  client_send(client,1,msg,strlen(msg));
+}
+
+/* Free the audio session.  Must be called with NO client lock held: the free
+   joins libdatachannel threads whose signal callback takes send_mutex. */
+static void web_rtc_teardown(WEB_CLIENT *client) {
+  if(client->rtc!=NULL) {
+    web_rtc_session_free(client->rtc);
+    client->rtc=NULL;
+  }
+}
+#endif /* WEBRTC */
+
 static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request) {
   if(request->type==WEB_REQUEST_GET_STATE) return ws_send_state(client,request->id);
 
@@ -286,6 +345,46 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         web_spectrum_profile_name(effective),bins,fps,
         (unsigned long long)dropped);
     return ws_send_text(client,reply);
+  }
+
+  if(request->type==WEB_REQUEST_AUDIO_SUBSCRIBE ||
+     request->type==WEB_REQUEST_AUDIO_UNSUBSCRIBE ||
+     request->type==WEB_REQUEST_RTC_ANSWER ||
+     request->type==WEB_REQUEST_RTC_CANDIDATE) {
+#ifdef WEBRTC
+    if(visible_rx(request->rx)==NULL)
+      return ws_send_error(client,request->id,"invalid_receiver","receiver is not available");
+    switch(request->type) {
+      case WEB_REQUEST_AUDIO_SUBSCRIBE:
+        web_rtc_teardown(client);            /* replace any existing session */
+        client->rtc_rx=request->rx;
+        client->rtc=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client);
+        if(client->rtc==NULL || !web_rtc_session_offer(client->rtc)) {
+          web_rtc_teardown(client);
+          return ws_send_error(client,request->id,"rtc_failed","could not start audio");
+        }
+        break;
+      case WEB_REQUEST_AUDIO_UNSUBSCRIBE:
+        web_rtc_teardown(client);
+        break;
+      case WEB_REQUEST_RTC_ANSWER:
+        if(client->rtc==NULL)
+          return ws_send_error(client,request->id,"no_session","no audio session");
+        web_rtc_session_set_answer(client->rtc,request->sdp);
+        break;
+      case WEB_REQUEST_RTC_CANDIDATE:
+        if(client->rtc!=NULL)
+          web_rtc_session_add_candidate(client->rtc,request->candidate,request->mid);
+        break;
+      default: break;
+    }
+    char ack[96];
+    g_snprintf(ack,sizeof(ack),"{\"type\":\"ack\",\"id\":%lld}",(long long)request->id);
+    return ws_send_text(client,ack);
+#else
+    return ws_send_error(client,request->id,"webrtc_unavailable",
+                         "this build has no WebRTC audio");
+#endif
   }
 
   RECEIVER *rx=NULL;
@@ -466,7 +565,11 @@ static gboolean websocket_session(WEB_CLIENT *client) {
   int fd=client->fd;
   const char *hello=
       "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
+#ifdef WEBRTC
+      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"]}";
+#else
       "\"capabilities\":[\"control\",\"spectrum\"]}";
+#endif
   g_atomic_int_set(&client->upgraded,TRUE);
   client->sender=g_thread_new("web-spectrum",web_sender_thread,client);
   if(!ws_send_text(client,hello)) return FALSE;
@@ -507,6 +610,11 @@ static void web_client_release(WEB_CLIENT *client) {
     g_thread_join(client->sender);
     client->sender=NULL;
   }
+#ifdef WEBRTC
+  /* closing is set above, so any in-flight signal callback early-returns from
+     client_send(); this joins the libdatachannel threads with no lock held. */
+  web_rtc_teardown(client);
+#endif
   g_mutex_lock(&client->queue_mutex);
   for(int i=0;i<MAX_RECEIVERS;i++) {
     web_latest_frame_clear(&client->pending[i]);
@@ -641,6 +749,10 @@ static gpointer web_server_thread(gpointer data) {
         slot->expired[j]=0;
         slot->last_status_us[j]=0;
       }
+#ifdef WEBRTC
+      slot->rtc=NULL;
+      slot->rtc_rx=-1;
+#endif
       g_mutex_unlock(&slot->queue_mutex);
       web_client_workers++;
       break;

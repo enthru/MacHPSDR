@@ -36,6 +36,7 @@ main { padding: clamp(1rem, 4vw, 3rem); padding-bottom: 7rem; }
 .spectrum-toolbar { display: flex; align-items: end; justify-content: space-between; gap: .8rem; margin-bottom: .55rem; }
 .spectrum-toolbar label { min-width: 8rem; }
 .spectrum-toolbar select { padding: .38rem .55rem; }
+.audio-toggle { padding: .38rem .8rem; font-size: .82rem; background: #123041; color: var(--cyan); border: 1px solid #2f5566; align-self: center; }
 .spectrum-status { color: #8298a6; font-size: .75rem; font-variant-numeric: tabular-nums; text-align: right; }
 .spectrum { display: block; width: 100%; height: 300px; margin-bottom: 1rem; border: 1px solid #294150; border-radius: 10px; background: #02080d; touch-action: none; cursor: crosshair; }
 .spectrum:focus { outline: 2px solid var(--cyan); outline-offset: 2px; }

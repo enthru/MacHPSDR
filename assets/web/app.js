@@ -4,6 +4,7 @@ const modes = ["LSB", "USB", "DSB", "CWL", "CWU", "FMN", "AM", "DIGU", "SPEC", "
 const cards = new Map();
 let socket, reconnectTimer, pollTimer, radioState;
 let nextId = 1, socketGeneration = 0;
+let capabilities = [];
 const connection = document.querySelector("#connection");
 const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
@@ -116,6 +117,10 @@ function makeCard(rx) {
   };
   card.querySelector(".apply-frequency").addEventListener("click", tune);
   input.addEventListener("keydown", event => { if (event.key === "Enter") tune(); });
+  card._audio = card.querySelector(".rx-audio");
+  const audioBtn = card.querySelector(".audio-toggle");
+  audioBtn.hidden = !capabilities.includes("audio");
+  audioBtn.addEventListener("click", () => toggleAudio(card, rx.id));
   installSpectrumGestures(card, rx.id);
   receivers.append(card);
   cards.set(rx.id, card);
@@ -128,6 +133,7 @@ function render(state) {
   const live = new Set(state.receivers.map(rx => rx.id));
   for (const [id, card] of cards) if (!live.has(id)) {
     send({ type: "spectrum_unsubscribe", rx: id });
+    if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
     card.remove(); cards.delete(id);
   }
   for (const rx of state.receivers) {
@@ -227,6 +233,70 @@ function updateSpectrumStatus(message) {
   card.querySelector(".spectrum-profile").value = message.profile;
 }
 
+function setAudioLabel(card, text) {
+  const button = card.querySelector(".audio-toggle");
+  if (button) button.textContent = text;
+}
+function updateAudioAvailability() {
+  const available = capabilities.includes("audio");
+  for (const card of cards.values()) {
+    const button = card.querySelector(".audio-toggle");
+    if (button) button.hidden = !available;
+  }
+}
+function stopAudio(card, rxId) {
+  send({ type: "audio_unsubscribe", rx: rxId });
+  if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
+  if (card._audio) card._audio.srcObject = null;
+  setAudioLabel(card, "Listen");
+}
+function startAudio(card, rxId) {
+  // The server is the offerer; we create the connection, then ask for audio and
+  // answer the offer it sends back over the WebSocket.
+  const pc = new RTCPeerConnection();
+  card._pc = pc;
+  setAudioLabel(card, "Connecting…");
+  pc.addEventListener("track", event => {
+    card._audio.srcObject = event.streams[0];
+    card._audio.play().catch(() => {});
+  });
+  pc.addEventListener("icecandidate", event => {
+    if (event.candidate)
+      send({ type: "rtc_candidate", rx: rxId, candidate: event.candidate.candidate, mid: event.candidate.sdpMid || "" });
+  });
+  pc.addEventListener("connectionstatechange", () => {
+    if (!card._pc) return;
+    if (pc.connectionState === "connected") setAudioLabel(card, "Stop");
+    else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) setAudioLabel(card, "Listen");
+  });
+  send({ type: "audio_subscribe", rx: rxId });
+}
+function toggleAudio(card, rxId) {
+  if (card._pc) stopAudio(card, rxId); else startAudio(card, rxId);
+}
+async function handleRtcOffer(rxId, sdp) {
+  const card = cards.get(rxId);
+  if (!card || !card._pc || !sdp) return;
+  try {
+    await card._pc.setRemoteDescription({ type: "offer", sdp });
+    const answer = await card._pc.createAnswer();
+    await card._pc.setLocalDescription(answer);
+    send({ type: "rtc_answer", rx: rxId, sdp: card._pc.localDescription.sdp });
+  } catch { setAudioLabel(card, "Audio error"); }
+}
+async function handleRtcCandidate(rxId, candidate, mid) {
+  const card = cards.get(rxId);
+  if (!card || !card._pc || !candidate) return;
+  try { await card._pc.addIceCandidate({ candidate, sdpMid: mid || null }); } catch {}
+}
+function closeAllAudio() {
+  for (const card of cards.values()) {
+    if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
+    if (card._audio) card._audio.srcObject = null;
+    setAudioLabel(card, "Listen");
+  }
+}
+
 function connect() {
   clearTimeout(reconnectTimer); clearInterval(pollTimer); setConnection("Connecting…");
   const scheme = location.protocol === "https:" ? "wss" : "ws";
@@ -239,12 +309,16 @@ function connect() {
   socket.addEventListener("message", event => {
     if (typeof event.data !== "string") { handleBinary(event.data); return; }
     let message; try { message = JSON.parse(event.data); } catch { return; }
+    if (message.type === "hello") { capabilities = message.capabilities || []; updateAudioAvailability(); }
     if (message.type === "state") render(message);
     if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
+    if (message.type === "rtc_offer") handleRtcOffer(message.rx, message.sdp);
+    if (message.type === "rtc_candidate") handleRtcCandidate(message.rx, message.candidate, message.mid);
+    if (message.type === "rtc_state") { const c = cards.get(message.rx); if (c && c._pc) setAudioLabel(c, message.connected ? "Stop" : "Connecting…"); }
     if (message.type === "error") revision.textContent = `Command failed: ${message.message}`;
   });
   socket.addEventListener("close", () => {
-    clearInterval(pollTimer); setConnection("Disconnected"); reconnectTimer = setTimeout(connect, 1500);
+    clearInterval(pollTimer); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }

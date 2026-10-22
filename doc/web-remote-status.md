@@ -116,6 +116,37 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-23 — Phase 3 slice 2b: signaling over the WebSocket + browser peer
+
+The WebRTC session is now reachable from a browser: offer/answer/ICE are
+carried over the existing control WebSocket and the browser builds a real
+`RTCPeerConnection`.
+
+- Protocol: `audio_subscribe`/`audio_unsubscribe` and the `rtc_answer`/
+  `rtc_candidate` signaling replies, with a JSON escaper for outgoing offers and
+  span-then-unescape parsing so a large escaped SDP cannot leak on a bad message
+  (`web_offline` covers all of this).
+- Server (`web_server.c`, under `#ifdef WEBRTC`): one `WEB_RTC_SESSION` per
+  client.  `audio_subscribe` creates the session and offers; the signal callback
+  wraps the offer/candidate as `rtc_offer`/`rtc_candidate` text frames through the
+  serialized `client_send`; `rtc_answer`/`rtc_candidate` feed the session; the
+  session is town down on `audio_unsubscribe` and on disconnect with no lock
+  held (so joining libdatachannel threads cannot deadlock on `send_mutex`).  The
+  `hello` advertises the `audio` capability only in a WEBRTC build; a default
+  build answers `webrtc_unavailable`.
+- Browser (`assets/web/`): a per-receiver "Listen" button (shown only when the
+  server advertises `audio`) creates the peer, answers the server's offer,
+  trickles candidates and attaches the received track to an `<audio>` element.
+
+Verified on macOS: both `make` (no datachannel linked) and `make
+WEBRTC_INCLUDE=WEBRTC` (linked) build clean; `make check` and the webrtc
+loopback harness still pass; `web_offline` covers the new messages; app.js
+balances.  NOT yet verified: the live browser round-trip to the connected state
+— that needs a desktop run of a WEBRTC build (next, operator test).  There is no
+audio in the track yet (silent until slice 3), so this slice proves the
+connection, not sound; the four manuals are intentionally deferred to slice 3,
+when audio is actually operator-usable.
+
 ### 2026-10-23 — Phase 3 slice 2a: native WebRTC session + connect harness
 
 The server side of one peer connection per browser audio subscription now
