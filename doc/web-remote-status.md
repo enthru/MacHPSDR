@@ -107,6 +107,21 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-22 — locale-independent state JSON (bug fix)
+
+The `state` frame formatted `meter_db` with `g_snprintf("%.1f", …)`.  GTK runs
+under the operator's locale, so on a comma-decimal machine (`ru_RU`, confirmed
+with `LC_NUMERIC=ru_RU.UTF-8`) it emitted `"meter_db":-200,0`, i.e. invalid
+JSON.  The browser's `JSON.parse` failed silently (`catch { return; }`), so
+`render()` never ran: the page connected and then sat on "Waiting for radio
+state" with no receiver card, which also meant no panadapter and no waterfall.
+`ws_send_state()` now formats the one float with `g_ascii_formatd`, matching the
+tree's rule for every ASCII interchange format.  Verified: `g_ascii_formatd`
+gives `-200.0` and `g_snprintf("%.1f")` gives `-200,0` under this locale; the
+binary relinks; `web_offline --selftest` passes.  Live browser render of the
+restored card/panadapter/waterfall is still to be confirmed from a desktop
+session running the relinked binary.
+
 ### 2026-10-22 — phases 0 and 1
 
 Verified on macOS:

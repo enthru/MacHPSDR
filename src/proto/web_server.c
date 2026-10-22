@@ -224,16 +224,22 @@ static gboolean ws_send_state(WEB_CLIENT *client, gint64 id) {
     RECEIVER *rx=visible_rx(i);
     if(rx==NULL) continue;
     double meter=isfinite(rx->meter_db)?rx->meter_db:-200.0;
+    // JSON is an ASCII interchange format: GTK runs under the operator's locale,
+    // so "%.1f" on a comma-decimal machine (ru_RU) emits "-200,0" and the whole
+    // state frame becomes invalid JSON the browser silently drops. Format the one
+    // float locale-independently, like every other ASCII format this tree writes.
+    char meter_text[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(meter_text,sizeof(meter_text),"%.1f",meter);
     if(!first) g_string_append_c(s,',');
     first=FALSE;
     int mode=(rx->mode_a>=0 && rx->mode_a<MODES)?rx->mode_a:USB;
     g_string_append_printf(s,
         "{\"id\":%d,\"frequency\":%lld,\"frequency_b\":%lld,"
-        "\"mode\":%d,\"mode_name\":\"%s\",\"meter_db\":%.1f,\"locked\":%s,"
+        "\"mode\":%d,\"mode_name\":\"%s\",\"meter_db\":%s,\"locked\":%s,"
         "\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
         "\"display_low\":%lld,\"display_high\":%lld}",
         i,(long long)receiver_tuned_frequency(rx),(long long)rx->frequency_b,
-        mode,mode_string[mode],meter,rx->locked?"true":"false",(long long)rx->step,
+        mode,mode_string[mode],meter_text,rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
