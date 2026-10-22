@@ -63,6 +63,7 @@
 #include "keybind_dialog.h"
 #include "cluster_dialog.h"
 #include "tci_dialog.h"
+#include "web_dialog.h"
 
 int rx_base=3; // number of tabs before receivers
 
@@ -496,7 +497,7 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   //   Audio  = radio-audio frames + Recording
   //   Bands  = OC + XVTR (both band-indexed hardware matrices)
   //   PA / Linearity = PA + EER + Pure Signal (TX amplifier/linearity)
-  //   Network = DX Cluster + TCI
+  //   Network = DX Cluster + TCI + browser remote
   add_page(create_radio_dialog(radio),"Radio");
   add_page(merge_pages(2,create_radio_audio_dialog(radio),
                          create_recording_dialog(radio)),"Audio");
@@ -551,8 +552,9 @@ GtkWidget *create_configure_dialog(RADIO *radio,int tab) {
   add_page(create_ft8_dialog(radio),"FT8");
 #endif
 
-  add_page(merge_pages(2,create_cluster_dialog(radio),
-                         create_tci_dialog(radio)),"Network");
+  add_page(merge_pages(3,create_cluster_dialog(radio),
+                         create_tci_dialog(radio),
+                         create_web_dialog(radio)),"Network");
 
   add_page(create_about_dialog(radio),"About");
 

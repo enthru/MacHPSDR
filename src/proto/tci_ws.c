@@ -139,6 +139,33 @@ int tci_ws_recv(int fd, char **out, size_t *out_len) {
   }
 }
 
+gboolean tci_ws_accept(int fd, const char *key, const char *protocol) {
+  if(key==NULL || *key=='\0') return FALSE;
+  char concat[256];
+  g_snprintf(concat, sizeof(concat), "%s%s", key, TCI_WS_GUID);
+  GChecksum *ck = g_checksum_new(G_CHECKSUM_SHA1);
+  g_checksum_update(ck, (const guchar *)concat, strlen(concat));
+  guint8 digest[20];
+  gsize dlen = sizeof(digest);
+  g_checksum_get_digest(ck, digest, &dlen);
+  char *accept = g_base64_encode(digest, dlen);
+  g_checksum_free(ck);
+
+  char resp[384];
+  int rl = g_snprintf(resp, sizeof(resp),
+      "HTTP/1.1 101 Switching Protocols\r\n"
+      "Upgrade: websocket\r\n"
+      "Connection: Upgrade\r\n"
+      "Sec-WebSocket-Accept: %s\r\n"
+      "%s%s%s"
+      "\r\n", accept,
+      protocol!=NULL ? "Sec-WebSocket-Protocol: " : "",
+      protocol!=NULL ? protocol : "",
+      protocol!=NULL ? "\r\n" : "");
+  g_free(accept);
+  return tci_ws_send_all(fd, resp, (size_t)rl);
+}
+
 // HTTP Upgrade handshake: read the request, compute Sec-WebSocket-Accept via
 // GLib SHA1+base64, reply 101. TRUE on success.
 gboolean tci_ws_handshake(int fd) {
@@ -164,23 +191,5 @@ gboolean tci_ws_handshake(int fd) {
   while (*key_hdr && *key_hdr != '\r' && *key_hdr != '\n' && ki < (int)sizeof(key) - 1)
     key[ki++] = *key_hdr++;
   key[ki] = '\0';
-
-  char concat[256];
-  g_snprintf(concat, sizeof(concat), "%s%s", key, TCI_WS_GUID);
-  GChecksum *ck = g_checksum_new(G_CHECKSUM_SHA1);
-  g_checksum_update(ck, (const guchar *)concat, strlen(concat));
-  guint8 digest[20];
-  gsize dlen = sizeof(digest);
-  g_checksum_get_digest(ck, digest, &dlen);
-  char *accept = g_base64_encode(digest, dlen);
-  g_checksum_free(ck);
-
-  char resp[256];
-  int rl = g_snprintf(resp, sizeof(resp),
-      "HTTP/1.1 101 Switching Protocols\r\n"
-      "Upgrade: websocket\r\n"
-      "Connection: Upgrade\r\n"
-      "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-  g_free(accept);
-  return tci_ws_send_all(fd, resp, (size_t)rl);
+  return tci_ws_accept(fd,key,NULL);
 }

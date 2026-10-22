@@ -57,4 +57,8 @@ int tci_ws_recv(int fd, char **out, size_t *out_len);
  * Sec-WebSocket-Accept.  TRUE on success. */
 gboolean tci_ws_handshake(int fd);
 
+/* Finish an Upgrade after the caller has already parsed the HTTP request.
+ * `protocol` may be NULL; the browser remote uses it to select machpsdr.v1. */
+gboolean tci_ws_accept(int fd, const char *key, const char *protocol);
+
 #endif /* TCI_WS_H */

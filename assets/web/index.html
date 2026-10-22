@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MacHPSDR Remote</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">MAC HPSDR</p>
+      <h1>Browser Remote</h1>
+    </div>
+    <div id="connection" class="connection offline" role="status">Connecting…</div>
+  </header>
+
+  <main>
+    <section id="empty" class="empty" hidden>No visible receiver is available.</section>
+    <section id="receivers" class="receivers" aria-live="polite"></section>
+  </main>
+
+  <template id="receiver-template">
+    <article class="receiver-card">
+      <div class="receiver-heading">
+        <span class="rx-name">RX</span>
+        <span class="meter-text">−200.0 dB</span>
+      </div>
+      <div class="meter" aria-label="Signal level"><span></span></div>
+      <label class="frequency-label">
+        Frequency, Hz
+        <input class="frequency" inputmode="numeric" autocomplete="off">
+      </label>
+      <div class="control-row">
+        <button class="apply-frequency" type="button">Tune</button>
+        <label>
+          Mode
+          <select class="mode"></select>
+        </label>
+      </div>
+      <p class="lock-state"></p>
+    </article>
+  </template>
+
+  <footer>
+    <button id="mox" class="mox" type="button" disabled>MOX</button>
+    <span id="revision">Waiting for radio state</span>
+  </footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>

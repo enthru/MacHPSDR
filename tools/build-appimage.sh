@@ -74,6 +74,11 @@ install -m755 ./wdsp/libwdsp.so   "$APPDIR/usr/bin/wdsp/libwdsp.so"
 for f in machpsdr.png machpsdr_icon.png machpsdr_small.png cty.dat coastline.bin; do
     [ -f "assets/$f" ] && install -m644 "assets/$f" "$APPDIR/usr/share/machpsdr/$f"
 done
+if [ -d assets/web ]; then
+    mkdir -p "$APPDIR/usr/share/machpsdr/web"
+    install -m644 assets/web/index.html assets/web/app.css assets/web/app.js \
+        "$APPDIR/usr/share/machpsdr/web/"
+fi
 
 # The desktop entry and the themed icon it names.  Icon=machpsdr (a NAME, not a
 # path) is what both freedesktop icon lookup and appimagetool want, and it is

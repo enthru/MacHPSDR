@@ -97,6 +97,7 @@
 #include "cwdaemon.h"
 #include "dxcluster.h"
 #include "tci.h"
+#include "web_server.h"
 #include "qo100.h"
 
 #ifdef MIDI
@@ -2084,6 +2085,13 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->tci_enable=atoi(value);
   value=getProperty("radio.tci_port");
   if(value!=NULL) r->tci_port=atoi(value);
+  value=getProperty("radio.web_enable");
+  if(value!=NULL) r->web_enable=atoi(value);
+  value=getProperty("radio.web_port");
+  if(value!=NULL) {
+    int port=atoi(value);
+    if(port>0 && port<=65535) r->web_port=port;
+  }
   value=getProperty("radio.rec_dir");
   if(value!=NULL) { strncpy(r->rec_dir,value,sizeof(r->rec_dir)-1); r->rec_dir[sizeof(r->rec_dir)-1]='\0'; }
   value=getProperty("radio.rec_iq");
@@ -3975,6 +3983,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   r->tci_enable = FALSE;
   r->tci_port = TCI_DEFAULT_PORT;
+  r->web_enable = FALSE;
+  r->web_tx_enable = FALSE;
+  r->web_port = WEB_DEFAULT_PORT;
 
   r->rec_dir[0] = '\0';        // recorder: empty => default ~/.local/share/machpsdr
   r->rec_iq = TRUE;            // record both streams by default
@@ -4187,6 +4198,10 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   // TCI control server (Phase A): remember the RADIO and auto-start if enabled.
   tci_init(r);
+
+  // Browser remote: Phase 1 is intentionally localhost-only. It owns a
+  // separate protocol and port from TCI even though both share WS framing.
+  web_server_init(r);
 
   // Diversity must be on BEFORE the churn timer starts, so a cycle can close a
   // receiver while a mixer is live.

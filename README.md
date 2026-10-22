@@ -588,6 +588,17 @@ can be replayed separately in the I/Q Player.
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
 
+- **Browser remote (first vertical slice).** An optional web server built into
+  MacHPSDR, enabled in **Configure → Network** and bound to localhost by default.
+  Open `http://127.0.0.1:8080` to see every visible receiver's frequency, mode
+  and S-meter, retune or change mode, and follow/toggle MOX on a transmit-capable
+  radio after **Allow browser PTT** has been armed for the current desktop
+  session. The dependency-free page talks the versioned `machpsdr.v1` JSON
+  protocol over WebSocket and reconnects automatically. This is Phase 1 of the
+  [browser-remote plan](doc/web-remote.md); panadapter/waterfall, receive audio,
+  complete controls and authenticated LAN access are the next isolated phases.
+  Until authentication lands the listener deliberately accepts loopback only.
+
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
 weak or overloaded source. The output limiter
@@ -1371,6 +1382,7 @@ in four languages, are in the [user manual](#user-manual) (§15).
 | `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up. |
 | `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR; the Network device row in the selection window is the permanent way. |
 | `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
+| `MACHPSDR_WEB[=port]` | Start the localhost browser remote even if it is off in Configure, optionally on another port. |
 
 **Streaming and DSP (SoapySDR devices)**
 

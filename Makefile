@@ -773,7 +773,10 @@ cluster_dialog.o \
 tci.o \
 tci_cw.o \
 tci_ws.o \
-tci_dialog.o
+tci_dialog.o \
+web_protocol.o \
+web_server.o \
+web_dialog.o
 
 
 $(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
@@ -1018,6 +1021,15 @@ tci_offline$(EXE): tools/tci_offline.c src/proto/tci_stream.h tci_cw.o tci_ws.o 
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/tci_offline.c tci_cw.o tci_ws.o net_compat.o \
 	  $(shell pkg-config --libs glib-2.0) $(WIN_NET_LIBS)
 
+# Browser-remote protocol and fixed HTTP route parser. No radio, GTK or socket
+# is needed, so malformed network input is covered without starting the app.
+.PHONY: web-offline
+web-offline: web_offline$(EXE)
+web_offline$(EXE): tools/web_offline.c web_protocol.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/web_offline.c web_protocol.o \
+	  $(shell pkg-config --libs glib-2.0)
+
 # Headless DC-blocker harness.  The zero-IF spike remover runs on the raw
 # SoapySDR block, ahead of every receiver's mixer and decimator, so a mistake
 # there reaches the panadapter, the decoders and the I/Q recorder at once -- and
@@ -1184,7 +1196,7 @@ qo100_offline$(EXE): tools/qo100_offline.c qo100.o log.o
 # all (the binary is nothing but the self-test), every other harness wants
 # --selftest, which is its mode that needs no recording.  All of them exit
 # non-zero on a failed assertion, so the loop below stops at the first one.
-CHECK_BINS=i18n_offline$(EXE) qo100_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) ui_layout_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
+CHECK_BINS=i18n_offline$(EXE) qo100_offline$(EXE) tci_offline$(EXE) web_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) ui_layout_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE)
 ifeq ($(FT8_INCLUDE),FT8)
 CHECK_BINS+=ft8_offline$(EXE)
 endif
@@ -1256,9 +1268,9 @@ clean:
 	-$(MAKE) -C sgp4sdp4 clean
 	-$(MAKE) -C $(WDSP_DIR) clean
 	-rm -f $(PROGRAM) i18n_offline$(EXE) hfdl_offline$(EXE) acars_offline$(EXE) apt_offline$(EXE) qo100_offline$(EXE) \
-	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
+	       sstv_offline$(EXE) cw_offline$(EXE) wefax_offline$(EXE) tci_offline$(EXE) web_offline$(EXE) props_offline$(EXE) agc_offline$(EXE) nr_offline$(EXE) keybind_offline$(EXE) dcblock_offline$(EXE) rec_offline$(EXE) reconnect_offline$(EXE) ft8_offline$(EXE) metis_emu p2_emu
 	-rm -rf $(PROGRAM).dSYM i18n_offline.dSYM hfdl_offline.dSYM acars_offline.dSYM apt_offline.dSYM qo100_offline.dSYM \
-	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM rec_offline.dSYM reconnect_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
+	        sstv_offline.dSYM cw_offline.dSYM wefax_offline.dSYM tci_offline.dSYM web_offline.dSYM props_offline.dSYM agc_offline.dSYM nr_offline.dSYM keybind_offline.dSYM dcblock_offline.dSYM rec_offline.dSYM reconnect_offline.dSYM ft8_offline.dSYM metis_emu.dSYM \
 	        p2_emu.dSYM
 	-rm -rf $(APP_NAME).app
 	-rm -rf $(WIN_PKG_DIR)
@@ -1462,6 +1474,16 @@ app: $(PROGRAM)
 	@if [ -f assets/coastline.bin ]; then \
 		cp assets/coastline.bin $(APP_BUNDLE)/Contents/Resources/; \
 		cp assets/coastline.bin $(APP_BUNDLE)/Contents/Resources/share/machpsdr/; \
+	fi
+
+	@# Bundle the dependency-free browser remote application.
+	@if [ -d assets/web ]; then \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/web; \
+		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/machpsdr/web; \
+		cp assets/web/index.html assets/web/app.css assets/web/app.js \
+		   $(APP_BUNDLE)/Contents/Resources/web/; \
+		cp assets/web/index.html assets/web/app.css assets/web/app.js \
+		   $(APP_BUNDLE)/Contents/Resources/share/machpsdr/web/; \
 	fi
 
 	@# Create app icon
