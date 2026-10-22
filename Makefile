@@ -190,17 +190,22 @@ endif
 # WebRTC stack; it is in neither Homebrew nor the mingw repos, so it is built
 # from source (tools/build-libdatachannel.sh) and linked from a local prefix,
 # exactly like FreeDV above.  usrsctp/libsrtp are linked into it statically; its
-# only extra runtime dependency is OpenSSL (already a dependency here).  Opt-in,
-# off by default:
+# only extra runtime dependency is OpenSSL (already a dependency here).
 #
-#   tools/build-libdatachannel.sh
-#   make WEBRTC_INCLUDE=WEBRTC
-#
-#WEBRTC_INCLUDE=WEBRTC
+# It AUTO-ENABLES once that prefix is built: an ordinary `make` with no
+# dependency present links without WebRTC, and the same `make` after the one-time
+# tools/build-libdatachannel.sh picks it up with no flag.  The effective value
+# rides in OPTIONS, so appearing/disappearing triggers a .build-flags rebuild.
+# Force it off with `make WEBRTC_INCLUDE=off`.
+WEBRTC_PREFIX?=build/libdatachannel
+ifeq ($(WEBRTC_INCLUDE),)
+ifneq ($(wildcard $(WEBRTC_PREFIX)/include/rtc/rtc.h),)
+WEBRTC_INCLUDE=WEBRTC
+endif
+endif
 
 ifeq ($(WEBRTC_INCLUDE),WEBRTC)
 WEBRTC_OPTIONS=-D WEBRTC
-WEBRTC_PREFIX?=build/libdatachannel
 WEBRTC_INCLUDES=-I$(WEBRTC_PREFIX)/include
 WEBRTC_LIBS=-L$(WEBRTC_PREFIX)/lib -ldatachannel
 ifeq ($(UNAME_S),Linux)

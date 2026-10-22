@@ -75,4 +75,4 @@ echo
 echo "libdatachannel installed into: $PREFIX"
 echo "  headers: $PREFIX/include/rtc"
 echo "  libs:    $PREFIX/lib"
-echo "build with: make WEBRTC_INCLUDE=WEBRTC"
+echo "the next 'make' auto-detects it (force off with: make WEBRTC_INCLUDE=off)"

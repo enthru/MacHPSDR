@@ -181,10 +181,12 @@ The WebRTC dependency is now buildable and linkable, off by default.
   usrsctp/libsrtp it statically links, on OpenSSL) from source into
   `build/libdatachannel`, following the `build-soapy-plutosdr.sh` precedent; the
   tag is pinned so a CI cache keys on the script.
-- `Makefile` gains a `WEBRTC` feature flag modelled on `FREEDV`: off by default,
-  enabled with `make WEBRTC_INCLUDE=WEBRTC`, wiring `-D WEBRTC`, the prefix
-  include/lib paths and an rpath (`@loader_path`/`$ORIGIN`) into every platform's
-  link.
+- `Makefile` gains a `WEBRTC` feature flag modelled on `FREEDV`, wiring
+  `-D WEBRTC`, the prefix include/lib paths and an rpath (`@loader_path`/`$ORIGIN`)
+  into every platform's link.  It AUTO-ENABLES when `build/libdatachannel` is
+  present (run the build script once, then a plain `make` includes it with no
+  flag); a tree without the dependency links without it, and `make
+  WEBRTC_INCLUDE=off` forces it off.
 - `src/proto/web_rtc.c/.h` wraps the libdatachannel C API: logger setup and a
   `web_rtc_selftest()` that creates and destroys a real `rtcPeerConnection`.
 
