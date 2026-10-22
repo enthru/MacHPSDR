@@ -3,7 +3,8 @@
  * The browser remote carries control/signaling over its WebSocket; receive
  * audio is a DTLS-SRTP Opus track the browser decodes with its own jitter
  * buffer, so the server never ships I/Q or display-rate data over the Internet.
- * This unit wraps libdatachannel's C API (rtc/rtc.h).
+ * This unit wraps libdatachannel's C API (rtc/rtc.h) as the offering (server)
+ * side of one peer connection per browser audio subscription.
  *
  * Compiled only under -D WEBRTC (make WEBRTC_INCLUDE=WEBRTC).  The dependency is
  * built from source by tools/build-libdatachannel.sh; see doc/web-remote.md and
@@ -21,8 +22,42 @@ void web_rtc_init(void);
 void web_rtc_cleanup(void);
 
 /* Create and immediately destroy a PeerConnection: proves the stack links and
- * initialises.  TRUE on success.  Used by the offline harness and as a startup
- * sanity check. */
+ * initialises.  TRUE on success. */
 gboolean web_rtc_selftest(void);
+
+/* One offering peer connection toward a single browser. */
+typedef struct WEB_RTC_SESSION WEB_RTC_SESSION;
+
+/* Outgoing signaling, delivered from a libdatachannel worker thread.  For a
+ * local description `kind` is "offer"/"answer" and `data` is the SDP, `mid` is
+ * NULL; for a local ICE candidate `kind` is "candidate", `data` is the candidate
+ * line and `mid` its media id.  The callback must copy what it needs and must
+ * not block on the network (the server forwards it on its serialized WebSocket
+ * send path). */
+typedef void (*web_rtc_signal_cb)(void *user, const char *kind,
+                                  const char *data, const char *mid);
+
+/* Connection-state change, from a libdatachannel worker thread. */
+typedef void (*web_rtc_state_cb)(void *user, gboolean connected, gboolean failed);
+
+/* Create a session (does not negotiate yet).  Returns NULL on failure. */
+WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
+                                     web_rtc_state_cb state, void *user);
+
+/* Add the Opus send-only audio track and emit the SDP offer via the signal
+ * callback.  Call once, after creation. */
+gboolean web_rtc_session_offer(WEB_RTC_SESSION *s);
+
+/* Feed the browser's SDP answer. */
+void web_rtc_session_set_answer(WEB_RTC_SESSION *s, const char *sdp);
+
+/* Feed a remote ICE candidate from the browser (`mid` may be NULL). */
+void web_rtc_session_add_candidate(WEB_RTC_SESSION *s, const char *cand, const char *mid);
+
+/* The Opus track id to push RTP into (slice 3); -1 until offered. */
+int web_rtc_session_track(const WEB_RTC_SESSION *s);
+
+/* Close and free the session. */
+void web_rtc_session_free(WEB_RTC_SESSION *s);
 
 #endif /* WEB_RTC_H */

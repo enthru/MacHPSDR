@@ -116,6 +116,32 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-23 — Phase 3 slice 2a: native WebRTC session + connect harness
+
+The server side of one peer connection per browser audio subscription now
+exists and is proven to connect, without a browser.
+
+- `src/proto/web_rtc.c/.h` gains a `WEB_RTC_SESSION`: the offering (server) role.
+  It creates a PeerConnection (auto-negotiation off), adds an Opus send-only
+  audio track (PT 111, fixed SSRC for the slice-3 packetizer), emits the SDP
+  offer and ICE candidates through a structured signal callback, and accepts the
+  browser's answer and remote candidates.  Callbacks run on libdatachannel
+  worker threads and only hand structured strings back to the owner — they never
+  touch GTK or the socket directly, matching the server's existing dispatch
+  rules.
+- `tools/webrtc_offline.c` (`make WEBRTC_INCLUDE=WEBRTC webrtc-offline`) drives
+  that session as the server and stands in for the browser with a second
+  libdatachannel peer (the answerer) built from the raw C API, wiring the two
+  peers' signaling together in-process.
+
+Verified on macOS: `./webrtc_offline --selftest` reports
+`offer/answer/ICE/DTLS loopback connect PASS` — both peers reach the connected
+state over loopback, exercising offer/answer exchange, ICE candidate trickle and
+the DTLS handshake.  The harness is opt-in (needs the WEBRTC dependency) and is
+deliberately not in `make check`.  Not yet done: wiring the session into
+`web_server`/`web_protocol` and the browser `RTCPeerConnection` (slice 2b), and
+feeding Opus RTP into the track from the AF tap (slice 3).
+
 ### 2026-10-23 — Phase 3 slice 1: libdatachannel build integration
 
 The WebRTC dependency is now buildable and linkable, off by default.

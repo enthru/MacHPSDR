@@ -1059,6 +1059,17 @@ web_offline$(EXE): tools/web_offline.c web_protocol.o
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/web_offline.c web_protocol.o \
 	  $(shell pkg-config --libs glib-2.0)
 
+# Headless WebRTC harness.  Two libdatachannel peers connect over loopback,
+# proving offer/answer/ICE/DTLS without a browser.  Opt-in: it needs the WEBRTC
+# dependency (tools/build-libdatachannel.sh) and is NOT part of `make check`.
+#   make WEBRTC_INCLUDE=WEBRTC webrtc-offline && ./webrtc_offline --selftest
+.PHONY: webrtc-offline
+webrtc-offline: webrtc_offline$(EXE)
+webrtc_offline$(EXE): tools/webrtc_offline.c web_rtc.o log.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(WEBRTC_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/webrtc_offline.c web_rtc.o log.o \
+	  $(WEBRTC_LIBS) $(WEBRTC_RPATH) $(shell pkg-config --libs glib-2.0)
+
 # Headless DC-blocker harness.  The zero-IF spike remover runs on the raw
 # SoapySDR block, ahead of every receiver's mixer and decimator, so a mistake
 # there reaches the panadapter, the decoders and the I/Q recorder at once -- and
