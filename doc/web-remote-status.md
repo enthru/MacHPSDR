@@ -27,9 +27,18 @@ foundation`), pushed to `origin/master` on 2026-10-22.
 - Phase 0: complete.
 - Phase 1: implemented and headlessly verified.
 - Phase 2: implemented and headlessly verified.
-- Phase 1/2 desktop acceptance: pending on a normal graphical session.
-- Next implementation slice: run and record the Phase 2 faker/browser desktop
-  acceptance described below before beginning receive audio.
+- Phase 1/2 desktop acceptance: confirmed working live on 2026-10-22 (operator
+  ran the relinked faker on a normal macOS session; the receiver card,
+  panadapter and waterfall render and tune).  The quantitative measurements in
+  "Exact next slice" were waived by the operator rather than recorded.
+- Next implementation slice: Phase 3 receive audio over WebRTC.  The dependency
+  spike is done (see "Phase 3 WebRTC dependency spike" below); the next concrete
+  step is the `libdatachannel` build integration, then the DTLS-SRTP Opus track
+  and browser `RTCPeerConnection`.
+- Decision: there is no local/PCM audio mode.  The product is Internet remote
+  operation; a localhost-only convenience path is throwaway work and is not
+  built.  WebRTC is the single audio transport; the WebSocket stays the
+  signaling/control plane.
 - Not implemented yet: RX audio, full RX controls, pushed
   state events, authenticated LAN access, control leases and browser TX audio.
 
@@ -106,6 +115,30 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-22 — Phase 3 WebRTC dependency spike
+
+Decision #12 required a measured dependency spike before selecting a native
+WebRTC implementation.  Result:
+
+- **Selected: `libdatachannel`.**  It is the lightest native WebRTC stack with
+  a C API (`rtc/rtc.h`) and macOS/Linux/Windows support — the alternatives are
+  Google `libwebrtc` (enormous) or non-C runtimes (Pion/Go, aiortc/Python).
+- **License: MPL-2.0** since 0.18, which is GPL-compatible; this tree is already
+  effectively GPLv3 via the HFDL port, so there is no new licensing obstacle.
+- **Transitive deps:** `usrsctp` (BSD; already present, brew 0.9.5.0),
+  `libsrtp` (BSD; needed for the SRTP media path), a DTLS backend (`openssl`
+  4.0.3 is present; Mbed TLS/GnuTLS are alternatives), and `libjuice` for ICE
+  (bundled as a submodule).  Packaged shared build is ~2.8 MB (Arch 0.24.5).
+- **Packaging:** not in Homebrew or the mingw repos, so it is built from source
+  via CMake, following the `tools/build-soapy-plutosdr.sh` precedent rather than
+  vendoring the C++ tree into the repo; `make app` then bundles the dylib plus
+  openssl/usrsctp/srtp, and CI builds it on Linux/Windows.
+- **Localhost testability:** WebRTC connects on loopback with host ICE
+  candidates and needs no STUN/TURN; TURN belongs to the Phase 5 WAN/auth work.
+
+No code, build script or dependency has been committed from this spike yet; it
+records the decision only.
 
 ### 2026-10-22 — locale-independent state JSON (bug fix)
 
