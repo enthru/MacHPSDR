@@ -70,6 +70,102 @@ static gboolean parse_value(const char **p, const char *end, JSON_VALUE *v) {
   return FALSE;
 }
 
+/* Validate a JSON string and record its raw (still-escaped) span, advancing p
+   past the closing quote.  Nothing is allocated, so an in-loop parse failure can
+   never leak a large SDP: the owning request only allocates in its terminal
+   branch, from this span, while the source text is still alive. */
+static gboolean scan_string(const char **p, const char *end,
+                            const char **tok, size_t *tok_len) {
+  if(*p>=end || **p!='\"') return FALSE;
+  (*p)++;
+  const char *start=*p;
+  while(*p<end && **p!='\"') {
+    unsigned char c=(unsigned char)**p;
+    if(c=='\\') {
+      (*p)++;
+      if(*p>=end) return FALSE;   /* dangling escape */
+      (*p)++;                      /* skip the escaped char; decoded later */
+      continue;
+    }
+    if(c<0x20) return FALSE;       /* raw control char */
+    (*p)++;
+  }
+  if(*p>=end || **p!='\"') return FALSE;
+  *tok=start; *tok_len=(size_t)(*p-start);
+  (*p)++;                          /* past closing quote */
+  return TRUE;
+}
+
+static int hex_value(char c) {
+  if(c>='0' && c<='9') return c-'0';
+  if(c>='a' && c<='f') return c-'a'+10;
+  if(c>='A' && c<='F') return c-'A'+10;
+  return -1;
+}
+
+/* Decode a JSON string span into a newly allocated UTF-8 string; NULL on a bad
+   escape.  SDP uses CRLF, so \r/\n/\" are the escapes that actually occur. */
+static gchar *json_unescape(const char *s, size_t len) {
+  GString *out=g_string_sized_new(len+1);
+  for(size_t i=0;i<len;i++) {
+    char c=s[i];
+    if(c!='\\') { g_string_append_c(out,c); continue; }
+    if(++i>=len) { g_string_free(out,TRUE); return NULL; }
+    switch(s[i]) {
+      case '\"': g_string_append_c(out,'\"'); break;
+      case '\\': g_string_append_c(out,'\\'); break;
+      case '/':  g_string_append_c(out,'/'); break;
+      case 'b':  g_string_append_c(out,'\b'); break;
+      case 'f':  g_string_append_c(out,'\f'); break;
+      case 'n':  g_string_append_c(out,'\n'); break;
+      case 'r':  g_string_append_c(out,'\r'); break;
+      case 't':  g_string_append_c(out,'\t'); break;
+      case 'u': {
+        if(i+4>=len) { g_string_free(out,TRUE); return NULL; }
+        int h0=hex_value(s[i+1]),h1=hex_value(s[i+2]);
+        int h2=hex_value(s[i+3]),h3=hex_value(s[i+4]);
+        if(h0<0||h1<0||h2<0||h3<0) { g_string_free(out,TRUE); return NULL; }
+        gunichar cp=(gunichar)((h0<<12)|(h1<<8)|(h2<<4)|h3);
+        /* Surrogates are not expected in SDP/candidates; reject rather than
+           mis-decode a split pair. */
+        if(cp>=0xD800 && cp<=0xDFFF) { g_string_free(out,TRUE); return NULL; }
+        g_string_append_unichar(out,cp);
+        i+=4;
+        break;
+      }
+      default: g_string_free(out,TRUE); return NULL;
+    }
+  }
+  return g_string_free(out,FALSE);
+}
+
+gchar *web_json_escape(const char *s) {
+  if(s==NULL) return g_strdup("");
+  GString *out=g_string_new(NULL);
+  for(const unsigned char *p=(const unsigned char *)s; *p!='\0'; p++) {
+    switch(*p) {
+      case '\"': g_string_append(out,"\\\""); break;
+      case '\\': g_string_append(out,"\\\\"); break;
+      case '\b': g_string_append(out,"\\b"); break;
+      case '\f': g_string_append(out,"\\f"); break;
+      case '\n': g_string_append(out,"\\n"); break;
+      case '\r': g_string_append(out,"\\r"); break;
+      case '\t': g_string_append(out,"\\t"); break;
+      default:
+        if(*p<0x20) g_string_append_printf(out,"\\u%04x",*p);
+        else g_string_append_c(out,(char)*p);
+    }
+  }
+  return g_string_free(out,FALSE);
+}
+
+void web_request_clear(WEB_REQUEST *req) {
+  if(req==NULL) return;
+  g_clear_pointer(&req->sdp,g_free);
+  g_clear_pointer(&req->candidate,g_free);
+  g_clear_pointer(&req->mid,g_free);
+}
+
 gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
                             char *error, size_t error_len) {
   if(out==NULL) return FALSE;
@@ -87,6 +183,9 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   gboolean have_type=FALSE, have_action=FALSE;
   gboolean have_id=FALSE, have_rx=FALSE, have_value=FALSE;
   gboolean have_low=FALSE, have_high=FALSE, have_profile=FALSE;
+  gboolean have_sdp=FALSE, have_candidate=FALSE, have_mid=FALSE;
+  const char *sdp_tok=NULL, *cand_tok=NULL, *mid_tok=NULL;
+  size_t sdp_len=0, cand_len=0, mid_len=0;
   skip_ws(&p,end);
   if(p>=end || *p!='{') { set_error(error,error_len,"expected JSON object"); return FALSE; }
   p++;
@@ -99,6 +198,24 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
     skip_ws(&p,end);
     if(p>=end || *p!=':') { set_error(error,error_len,"expected colon"); return FALSE; }
     p++; skip_ws(&p,end);
+
+    /* sdp/candidate/mid are large and escaped (SDP carries CRLF); record the
+       span now and decode it only in the terminal rtc_* branch, so an in-loop
+       failure never allocates. */
+    if(strcmp(key,"sdp")==0 || strcmp(key,"candidate")==0 || strcmp(key,"mid")==0) {
+      const char *tok=NULL; size_t tl=0;
+      if(!scan_string(&p,end,&tok,&tl)) { set_error(error,error_len,"invalid value"); return FALSE; }
+      if(strcmp(key,"sdp")==0) {
+        if(have_sdp) { set_error(error,error_len,"duplicate sdp"); return FALSE; }
+        sdp_tok=tok; sdp_len=tl; have_sdp=TRUE;
+      } else if(strcmp(key,"candidate")==0) {
+        if(have_candidate) { set_error(error,error_len,"duplicate candidate"); return FALSE; }
+        cand_tok=tok; cand_len=tl; have_candidate=TRUE;
+      } else {
+        if(have_mid) { set_error(error,error_len,"duplicate mid"); return FALSE; }
+        mid_tok=tok; mid_len=tl; have_mid=TRUE;
+      }
+    } else {
     if(!parse_value(&p,end,&v)) { set_error(error,error_len,"invalid value"); return FALSE; }
 
     if(strcmp(key,"type")==0) {
@@ -134,6 +251,7 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
               strcmp(key,"profile")==0 || strcmp(key,"low")==0 || strcmp(key,"high")==0) {
       set_error(error,error_len,"invalid field type"); return FALSE;
     }
+    } /* end non-signaling value branch */
 
     skip_ws(&p,end);
     if(p<end && *p==',') { p++; continue; }
@@ -161,6 +279,37 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   if(strcmp(type,"spectrum_unsubscribe")==0) {
     if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
     out->type=WEB_REQUEST_SPECTRUM_UNSUBSCRIBE;
+    return TRUE;
+  }
+  if(strcmp(type,"audio_subscribe")==0) {
+    if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
+    out->type=WEB_REQUEST_AUDIO_SUBSCRIBE;
+    return TRUE;
+  }
+  if(strcmp(type,"audio_unsubscribe")==0) {
+    if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
+    out->type=WEB_REQUEST_AUDIO_UNSUBSCRIBE;
+    return TRUE;
+  }
+  /* The two signaling replies allocate their payload here, only on success. */
+  if(strcmp(type,"rtc_answer")==0) {
+    if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
+    if(!have_sdp) { set_error(error,error_len,"missing sdp"); return FALSE; }
+    out->sdp=json_unescape(sdp_tok,sdp_len);
+    if(out->sdp==NULL) { set_error(error,error_len,"invalid sdp escape"); return FALSE; }
+    out->type=WEB_REQUEST_RTC_ANSWER;
+    return TRUE;
+  }
+  if(strcmp(type,"rtc_candidate")==0) {
+    if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
+    if(!have_candidate) { set_error(error,error_len,"missing candidate"); return FALSE; }
+    out->candidate=json_unescape(cand_tok,cand_len);
+    if(out->candidate==NULL) { set_error(error,error_len,"invalid candidate escape"); return FALSE; }
+    if(have_mid) {
+      out->mid=json_unescape(mid_tok,mid_len);
+      if(out->mid==NULL) { web_request_clear(out); set_error(error,error_len,"invalid mid escape"); return FALSE; }
+    }
+    out->type=WEB_REQUEST_RTC_CANDIDATE;
     return TRUE;
   }
   if(strcmp(type,"command")!=0) { set_error(error,error_len,"unknown request type"); return FALSE; }

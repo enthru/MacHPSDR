@@ -491,7 +491,9 @@ static gboolean websocket_session(WEB_CLIENT *client) {
       continue;
     }
     g_free(payload);
-    if(!dispatch_request(client,&request)) return FALSE;
+    gboolean ok=dispatch_request(client,&request);
+    web_request_clear(&request); /* release any sdp/candidate/mid the parse took */
+    if(!ok) return FALSE;
   }
 }
 

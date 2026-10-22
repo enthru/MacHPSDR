@@ -109,6 +109,47 @@ int main(int argc, char **argv) {
         latest.dropped==1 && taken_len==3 && memcmp(taken_data,"two",3)==0 && latest.frame==NULL);
   g_bytes_unref(one); g_bytes_unref(two); g_bytes_unref(taken);
 
+  /* WebRTC signaling messages. */
+  check("audio subscribe parses with a receiver",
+        parse("{\"type\":\"audio_subscribe\",\"id\":20,\"rx\":0}",&r) &&
+        r.type==WEB_REQUEST_AUDIO_SUBSCRIBE && r.rx==0);
+  web_request_clear(&r);
+  check("audio unsubscribe parses",
+        parse("{\"type\":\"audio_unsubscribe\",\"id\":21,\"rx\":1}",&r) &&
+        r.type==WEB_REQUEST_AUDIO_UNSUBSCRIBE && r.rx==1);
+  web_request_clear(&r);
+
+  /* rtc_answer carries an escaped multi-line SDP that must decode to CRLF. */
+  check("rtc_answer unescapes the SDP body",
+        parse("{\"type\":\"rtc_answer\",\"id\":22,\"rx\":0,"
+              "\"sdp\":\"v=0\\r\\no=- 1 2 IN IP4 0.0.0.0\\r\\n\"}",&r) &&
+        r.type==WEB_REQUEST_RTC_ANSWER && r.sdp!=NULL &&
+        strcmp(r.sdp,"v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\n")==0);
+  web_request_clear(&r);
+  check("rtc_answer without sdp is rejected",
+        !parse("{\"type\":\"rtc_answer\",\"id\":23,\"rx\":0}",&r));
+  web_request_clear(&r);
+  check("rtc_candidate carries candidate and mid",
+        parse("{\"type\":\"rtc_candidate\",\"id\":24,\"rx\":0,"
+              "\"candidate\":\"candidate:1 1 udp 2 127.0.0.1 5000 typ host\",\"mid\":\"audio\"}",&r) &&
+        r.type==WEB_REQUEST_RTC_CANDIDATE && r.candidate!=NULL && r.mid!=NULL &&
+        strcmp(r.mid,"audio")==0 &&
+        strcmp(r.candidate,"candidate:1 1 udp 2 127.0.0.1 5000 typ host")==0);
+  web_request_clear(&r);
+  check("a bad escape in the SDP is rejected",
+        !parse("{\"type\":\"rtc_answer\",\"id\":25,\"rx\":0,\"sdp\":\"v=0\\x\"}",&r));
+  web_request_clear(&r);
+
+  /* web_json_escape round-trips through the parser's unescaper. */
+  gchar *escaped=web_json_escape("a\"b\\c\r\nd");
+  check("web_json_escape escapes quote, backslash and CRLF",
+        escaped!=NULL && strcmp(escaped,"a\\\"b\\\\c\\r\\nd")==0);
+  gchar *frame=g_strdup_printf("{\"type\":\"rtc_answer\",\"id\":26,\"rx\":0,\"sdp\":\"%s\"}",escaped);
+  check("escaped payload parses back to the original",
+        parse(frame,&r) && r.sdp!=NULL && strcmp(r.sdp,"a\"b\\c\r\nd")==0);
+  web_request_clear(&r);
+  g_free(escaped); g_free(frame);
+
   printf("\n%d failure%s\n",failures,failures==1?"":"s");
   return failures?1:0;
 }

@@ -47,7 +47,11 @@ typedef enum {
   WEB_REQUEST_SET_MOX,
   WEB_REQUEST_SET_FILTER,
   WEB_REQUEST_SPECTRUM_SUBSCRIBE,
-  WEB_REQUEST_SPECTRUM_UNSUBSCRIBE
+  WEB_REQUEST_SPECTRUM_UNSUBSCRIBE,
+  WEB_REQUEST_AUDIO_SUBSCRIBE,
+  WEB_REQUEST_AUDIO_UNSUBSCRIBE,
+  WEB_REQUEST_RTC_ANSWER,
+  WEB_REQUEST_RTC_CANDIDATE
 } WEB_REQUEST_TYPE;
 
 typedef struct {
@@ -60,11 +64,26 @@ typedef struct {
   gint low;
   gint high;
   WEB_SPECTRUM_PROFILE profile;
+  /* WebRTC signaling payloads, heap-allocated and unescaped only on a
+     successful parse; released by web_request_clear(). */
+  gchar *sdp;
+  gchar *candidate;
+  gchar *mid;
 } WEB_REQUEST;
 
-/* Parse one flat protocol-v1 JSON request.  Returns TRUE on success. */
+/* Parse one flat protocol-v1 JSON request.  Returns TRUE on success.  On
+   success the caller must call web_request_clear() to release any heap fields
+   (sdp/candidate/mid); on failure nothing is allocated. */
 gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
                             char *error, size_t error_len);
+
+/* Free the heap fields of a parsed request (safe on a zeroed struct). */
+void web_request_clear(WEB_REQUEST *req);
+
+/* JSON-escape a NUL-terminated string into a newly allocated string (control
+   chars, quote and backslash), for embedding SDP/candidates in a text frame.
+   Caller frees with g_free(). */
+gchar *web_json_escape(const char *s);
 
 /* Fixed HTTP route allow-list.  asset_name is NULL for /ws. */
 gboolean web_protocol_route(const char *target, const char **asset_name,
