@@ -17,6 +17,21 @@ acceptance run remains to be performed on a normal desktop session; the
 repository's isolated macOS test session cannot create the application's first
 GTK window, before the radio and web server are started.
 
+The continuously updated engineering handoff, verification record and exact
+next task are in [web-remote-status.md](web-remote-status.md).
+
+## Documentation contract
+
+This file is the normative product, safety, architecture and wire-protocol
+specification.  `web-remote-status.md` is the factual implementation record.
+README.md describes only functionality available to an operator now.
+
+Any change to browser-remote behaviour, protocol, architecture or delivery
+phase must update this specification and the status record in the same commit.
+The record must include the commands actually run, distinguish headless proof
+from desktop/on-air verification, preserve unresolved limitations, and leave
+one concrete next step for the next developer or coding agent.
+
 ## Product scope
 
 The finished remote should provide:

@@ -595,9 +595,11 @@ can be replayed separately in the I/Q Player.
   radio after **Allow browser PTT** has been armed for the current desktop
   session. The dependency-free page talks the versioned `machpsdr.v1` JSON
   protocol over WebSocket and reconnects automatically. This is Phase 1 of the
-  [browser-remote plan](doc/web-remote.md); panadapter/waterfall, receive audio,
-  complete controls and authenticated LAN access are the next isolated phases.
-  Until authentication lands the listener deliberately accepts loopback only.
+  [browser-remote plan](doc/web-remote.md) and
+  [implementation record](doc/web-remote-status.md); panadapter/waterfall,
+  receive audio, complete controls and authenticated LAN access are the next
+  isolated phases. Until authentication lands the listener deliberately accepts
+  loopback only.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
