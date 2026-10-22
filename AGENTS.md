@@ -14,3 +14,8 @@ Update both in the same commit whenever behaviour, protocol, architecture,
 verification status, limitations, or the next implementation step changes.
 The status document must say exactly what was tested and must not turn an
 unverified desktop or on-air claim into a completed one.
+
+Every operator-visible browser-remote change must update all four user manuals
+in the same commit: `doc/manual-en.md`, `doc/manual-ru.md`, `doc/manual-uk.md`
+and `doc/manual-be.md`. A phase is not complete while any supported-language
+manual describes an older UI, capability, limitation, safety step or default.

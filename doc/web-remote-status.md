@@ -88,6 +88,9 @@ session-only and resets to false on every application start.
     a candidate combination because the former has a C API and
     macOS/Linux/Windows support, but adoption requires a measured bundle-size,
     license, build and browser-interoperability spike.
+13. Operator documentation ships atomically in English, Russian, Ukrainian and
+    Belarusian.  A feature is not complete if any of `manual-en.md`,
+    `manual-ru.md`, `manual-uk.md` or `manual-be.md` is stale.
 
 ## Verification record
 
@@ -170,6 +173,18 @@ binary frame or impairment result exists in the implementation yet.  Phase 2
 must preserve transport independence so the spectrum format can be exercised
 over the current WebSocket before the WebRTC packaging spike in Phase 3.
 
+### 2026-10-22 — localized operator documentation requirement
+
+The documentation contract now requires every operator-visible browser-remote
+change to update the English, Russian, Ukrainian and Belarusian manuals in the
+same commit.  Phase 1 has been backfilled in all four manuals, including the
+localhost URL/default port, available controls, session-only PTT arm, current
+localhost limitation and the not-yet-implemented spectrum/audio features.
+
+This was a documentation-only change.  Validation checks all four files for one
+Browser Remote section and one `MACHPSDR_WEB` entry, plus `git diff --check`;
+no code or runtime behaviour changed.
+
 ## Update checklist
 
 For every browser-remote commit:
@@ -179,7 +194,8 @@ For every browser-remote commit:
 3. Update Current handoff, Decisions (when needed), Verification record and
    Exact next slice in this file.
 4. Update README only for newly usable operator functionality.
-5. Run the narrow harness while iterating, then `make` and the proportionate
+5. Update all four localized user manuals for every operator-visible change.
+6. Run the narrow harness while iterating, then `make` and the proportionate
    regression suite; use full `make check` for a completed phase.
-6. Record caveats as pending verification rather than implied success.
-7. Commit and push according to `AGENTS.md`, reporting branch and commit.
+7. Record caveats as pending verification rather than implied success.
+8. Commit and push according to `AGENTS.md`, reporting branch and commit.

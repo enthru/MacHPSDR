@@ -32,6 +32,12 @@ The record must include the commands actually run, distinguish headless proof
 from desktop/on-air verification, preserve unresolved limitations, and leave
 one concrete next step for the next developer or coding agent.
 
+Every operator-visible change must also update all supported user manuals in
+the same commit: `manual-en.md`, `manual-ru.md`, `manual-uk.md` and
+`manual-be.md`.  This includes controls, defaults, limitations, security/PTT
+steps and troubleshooting.  A delivery phase is not complete until all four
+manuals describe the same shipped behaviour.
+
 ## Product scope
 
 The finished remote should provide:

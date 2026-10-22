@@ -724,9 +724,10 @@ The **Configure** dialog groups settings into pages: **Radio**, **Audio**
 (device audio + Recording), **CW**, **Bands** (transverters + open collector),
 **QO-100**, one **RX-*n*** page per open receiver, **Diversity**, **TX**,
 **PA / Linearity** (PA + PureSignal + EER), **Wideband** (when that window is
-open), **MIDI**, **Hotkeys**, **Display**, **FT8**, **Network** (DX cluster +
-TCI) and **About**. All settings are saved automatically to a per-device
-properties file under `~/.local/share/machpsdr/` and restored on the next start.
+open), **MIDI**, **Hotkeys**, **Display**, **FT8**, **Network** (DX cluster,
+TCI and Browser Remote) and **About**. All settings are saved automatically to a
+per-device properties file under `~/.local/share/machpsdr/` and restored on the
+next start.
 
 **Rates, on a SoapySDR device (Radio page).** Two different things, and it is
 worth keeping them apart:
@@ -795,6 +796,17 @@ client may ask for another rate (MacHPSDR resamples). A TCI client can also send
 CW: a `cw_msg` command keys the built-in keyer to transmit the text (speed from
 the CW settings, or set with `cw_macros_speed`). *The TX paths (audio and CW)
 have not been tested on the air (no transmit hardware).*
+
+**Browser remote (Configure → Network).** Tick **Enable browser remote**, keep
+or change the port (default 8080), then open `http://127.0.0.1:8080` in a browser
+on the same computer. The page shows every visible receiver's frequency, mode
+and S-meter; it can retune and change mode and follows the MOX state. Browser
+PTT is disabled separately: tick **Allow browser PTT (this session only)** when
+it is deliberately needed. That permission resets to off at every MacHPSDR
+start. This first version listens on this computer only, so another computer,
+phone or the Internet cannot connect yet. Panadapter, waterfall and receive
+audio are also not in this first version. The status line shows the local URL
+and connected-client count.
 
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
 immediately to the shared device stream, before individual receivers are tuned
@@ -967,6 +979,7 @@ of them.
 | `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up (§14). |
 | `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR. The Network device row in the selection window is the permanent way to do this. |
 | `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
+| `MACHPSDR_WEB[=port]` | Start the localhost browser remote even if it is off in Configure, optionally on another port. |
 
 **Streaming and DSP (SoapySDR devices)**
 
