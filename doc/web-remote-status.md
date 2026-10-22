@@ -27,7 +27,8 @@ to `origin/master` on 2026-10-22.
 - Phase 0: complete.
 - Phase 1: implemented and headlessly verified.
 - Phase 1 desktop acceptance: pending on a normal graphical session.
-- Next implementation slice: Phase 2, panadapter and waterfall transport.
+- Next implementation slice: Phase 2, bandwidth-bounded panadapter and
+  browser-derived waterfall transport.
 - Not implemented yet: spectrum/waterfall, RX audio, full RX controls, pushed
   state events, authenticated LAN access, control leases and browser TX audio.
 
@@ -72,6 +73,21 @@ session-only and resets to false on every application start.
    layout changes require a new WebSocket subprotocol version.
 8. Keep the page dependency-free and package-local: no CDN, external font,
    framework build chain or runtime download.
+9. Internet media is not I/Q and not waterfall video.  Send demodulated Opus
+   audio plus one quantized spectrum row from which the browser draws both
+   panadapter and waterfall.
+10. Reliable WebSocket traffic is the control/signaling plane.  WebRTC is the
+    target WAN media plane because browsers provide Opus, jitter buffering,
+    congestion handling and lossy/unordered DataChannels there.  Keep the
+    application framing usable over WebSocket as a local fallback, but do not
+    claim TCP head-of-line behaviour is loss tolerant.
+11. Audio wins congestion arbitration.  Spectrum is latest-only and adapts in
+    this order: drop expired rows, reduce FPS, reduce bins.  Audio bitrate falls
+    only after the display reaches its Low profile; commands/state never drop.
+12. No WebRTC library has been selected yet.  `libdatachannel` plus `libopus` is
+    a candidate combination because the former has a C API and
+    macOS/Linux/Windows support, but adoption requires a measured bundle-size,
+    license, build and browser-interoperability spike.
 
 ## Verification record
 
@@ -116,26 +132,43 @@ Implement spectrum transport before audio or LAN access:
 1. Find the existing receiver display-timer path that calls `GetPixels()` and
    publish the bins it has already fetched.  The web path must not call WDSP.
 2. Add explicit binary-header encode/decode helpers and tests in
-   `web_protocol.c/.h` for the 24-byte `MPSD` header specified in
+   `web_protocol.c/.h` for the 32-byte timestamped `MPSD` header specified in
    `web-remote.md`; do not cast a C struct onto the wire.
 3. Add validated `spectrum_subscribe`/`spectrum_unsubscribe` requests with a
-   receiver, requested width and FPS.  Clamp v1 to 1024 bins and 15 fps by
-   default, with documented hard maxima.
+   receiver and Low/Balanced/High profile.  Default to 512 bins / 10 fps and
+   clamp the hard maximum to 1024 bins / 15 fps.
 4. Maintain one latest immutable spectrum snapshot per visible receiver.  Each
    client may have at most one unsent spectrum frame per receiver; replacement
    drops the older frame and increments an observable drop counter.
 5. Send binary frames only from a web worker/sender, never from the display
    callback.  Define lock ownership and shutdown order before adding the first
    queue.
-6. Render the panadapter and rolling waterfall from the same bins in
-   `assets/web/`; start with Canvas 2D and preserve a future WebGL path.
-7. Add deterministic headless tests for header endianness, sequence/count/size,
-   width/FPS clamping and latest-frame replacement.  Then perform the normal
-   desktop faker acceptance and record measured FPS/latency here.
+6. Downsample before sending, encode the per-row dB floor/span plus one byte per
+   bin, and render both panadapter and rolling waterfall from that row in
+   `assets/web/`.  Start with Canvas 2D and preserve a future WebGL path.
+7. Add backpressure thresholds with hysteresis: discard expired rows first,
+   then step Balanced → Low.  Never let a spectrum queue exceed one row per RX.
+8. Add deterministic headless tests for header endianness/timestamp,
+   sequence/count/size, profile clamping, quantization and latest-frame
+   replacement.  Then perform the normal desktop faker acceptance and record
+   measured bitrate, FPS and capture-to-draw age here.
 
 Phase 2 is complete only when a throttled or disconnected browser cannot alter
 the receiver/display cadence and the browser peak position matches the faker
 signal.
+
+### 2026-10-22 — WAN/jitter design decision
+
+The specification now makes the Internet budget part of the protocol rather
+than a later optimization.  The selected direction is reliable WebSocket for
+control/signaling, WebRTC Opus for production receive audio, and an
+unordered/limited-retransmission DataChannel for disposable spectrum rows.
+Waterfall pixels are generated in the browser and are never a second stream.
+
+This entry is a design decision only.  No encoder, WebRTC dependency, spectrum
+binary frame or impairment result exists in the implementation yet.  Phase 2
+must preserve transport independence so the spectrum format can be exercised
+over the current WebSocket before the WebRTC packaging spike in Phase 3.
 
 ## Update checklist
 

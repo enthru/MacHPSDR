@@ -41,6 +41,8 @@ The finished remote should provide:
   squelch, mute, split/RIT/XIT and signal meter;
 - live panadapter and waterfall with click/drag/scroll tuning;
 - low-latency receive audio and, after an explicit safety opt-in, microphone/PTT;
+- adaptive low-bandwidth operation over an ordinary Internet connection without
+  forwarding receiver I/Q or uncompressed display-rate data;
 - transmitter drive, tune and status controls on radios that can transmit;
 - bookmarks, spots and the active decoder's output;
 - reconnect and state resynchronisation without restarting the radio;
@@ -55,8 +57,10 @@ assets.
 1. The server is disabled by default.
 2. Phase 1 binds only to `127.0.0.1`.  LAN binding is not enabled until token
    authentication exists.
-3. Internet-facing operation is unsupported.  Remote use outside a trusted LAN
-   should be placed behind a VPN or a TLS reverse proxy.
+3. Directly exposing the embedded HTTP listener to the Internet is unsupported.
+   Internet use goes through a VPN or an authenticated HTTPS/WSS entry point;
+   WebRTC media is encrypted with DTLS-SRTP and does not replace control-plane
+   authentication.
 4. Browser commands never touch GTK or radio state from a socket thread.  They
    use the existing `ext_*` main-loop dispatch pattern.
 5. PTT is separately armed in the desktop application.  A disconnect, expired
@@ -97,6 +101,50 @@ and an Upgrade request for `/ws`.
 - The RX audio thread feeds a bounded single-producer queue.  Encoding and
   socket writes happen elsewhere.
 
+### Transport classes and bandwidth adaptation
+
+Control/state and live media have different delivery rules:
+
+- Commands, acknowledgements, state and authentication use the reliable
+  WebSocket control channel.  They are small and must arrive in order.
+- The Internet-grade media path is WebRTC: demodulated mono audio as an Opus RTP
+  track, and spectrum rows on an unordered, limited-retransmission DataChannel.
+  The spectrum channel uses `ordered: false` and a short
+  `maxPacketLifeTime` rather than retransmitting a row after it is useful.
+  The existing WebSocket remains signaling plus a localhost/LAN compatibility
+  fallback.  A cross-platform dependency/packaging spike is required before a
+  particular native WebRTC implementation is selected.
+- The fallback may carry timestamped Opus packets in binary WebSocket frames.
+  PCM exists only as a diagnostic/local compatibility mode, never the default
+  WAN profile.  TCP head-of-line blocking means this fallback cannot claim the
+  same loss behaviour as WebRTC.
+- The server never transmits I/Q for the browser display.  It downsamples the
+  already-fetched display bins to the subscribed width, quantizes each dB bin to
+  one byte, and sends one spectrum row.  The browser draws both the panadapter
+  and the next waterfall line from that same row; there is no waterfall video
+  or second bulk stream.
+- Audio has priority over spectrum.  On congestion, discard expired spectrum,
+  then reduce spectrum FPS, then width.  Reduce Opus bitrate only after display
+  traffic reaches its low profile.  Control/state is never discarded.
+- Every media unit has a sequence number and monotonic capture timestamp.  A
+  spectrum sender/client keeps the newest row only.  Audio uses a bounded
+  adaptive jitter buffer; sequence gaps invoke Opus FEC/packet-loss concealment
+  on WebRTC and never cause an unbounded wait.
+
+Initial per-receiver profiles are budgets, not promises to fill the link:
+
+| Profile | Spectrum | Spectrum payload | Opus target | Total target |
+| --- | --- | ---: | ---: | ---: |
+| Low | 256 bins × 5 fps | about 10 kbit/s | 16 kbit/s mono | at most 40 kbit/s |
+| Balanced | 512 bins × 10 fps | about 41 kbit/s | 24 kbit/s mono | at most 80 kbit/s |
+| High | 1024 bins × 15 fps | about 123 kbit/s | 48 kbit/s mono | at most 200 kbit/s |
+
+Payload estimates are the uncompressed eight-bit rows and deliberately do not
+depend on noise being compressible.  Protocol overhead fits inside the total
+budget.  Opus uses 20 ms packets and constrained VBR.  DTX is off by default
+because receiver noise and weak signals are meaningful; in-band FEC is useful on
+the lossy WebRTC path and is not added to the reliable WebSocket fallback.
+
 ## Protocol version 1
 
 The WebSocket subprotocol is `machpsdr.v1`.  Text frames are UTF-8 JSON; bulk
@@ -130,23 +178,33 @@ the server value.
 
 ### Binary frames
 
-Binary payloads use a 24-byte little-endian header:
+Binary DataChannel/WebSocket fallback payloads use a 32-byte little-endian
+header.  It is encoded field-by-field; a compiler-dependent C struct is never
+placed directly on the wire:
 
 | Offset | Type | Meaning |
 | --- | --- | --- |
 | 0 | `char[4]` | `MPSD` magic |
 | 4 | `uint8` | protocol version (`1`) |
-| 5 | `uint8` | stream: `1` spectrum, `2` audio, `3` waterfall metadata |
+| 5 | `uint8` | stream: `1` spectrum, `2` fallback audio; other values reserved |
 | 6 | `uint8` | receiver index |
 | 7 | `uint8` | flags |
 | 8 | `uint32` | sequence number |
-| 12 | `uint32` | sample/count field |
-| 16 | `uint32` | rate or width |
-| 20 | `uint32` | payload byte count |
+| 12 | `uint64` | monotonic capture timestamp, microseconds |
+| 20 | `uint32` | sample/bin count |
+| 24 | `uint32` | sample rate or spectrum width |
+| 28 | `uint32` | payload byte count |
 
-Spectrum payloads are float32 dBm bins.  Audio is initially float32 mono at
-48 kHz; the production transport will prefer Opus when a portable, bundled
-encoder is available and retain PCM as the compatibility path.
+Spectrum stream `1` begins with signed `int16 floor_db_x10` and unsigned
+`uint16 span_db_x10`, followed by exactly `count` unsigned eight-bit bins.  A
+bin reconstructs as `floor + value / 255 * span`.  Rows older than 500 ms may be
+dropped by the sender or client and are never retransmitted merely to complete a
+waterfall history.
+
+Audio stream `2` is the compatibility fallback.  Its codec and rate are agreed
+by the subscription acknowledgement; production WAN audio is Opus, mono,
+48 kHz clock, normally one 20 ms frame per payload.  The WebRTC RTP audio track
+uses standard Opus framing rather than this private binary header.
 
 ## Delivery phases
 
@@ -176,10 +234,13 @@ and `make check` passes.
 ### Phase 2 - panadapter and waterfall
 
 - Publish the already-fetched WDSP bins from the display timer.
-- Per-client subscription, width and FPS limits (default 1024 bins / 15 fps).
+- Per-client Low/Balanced/High subscription; default 512 bins / 10 fps.
+- Peak-preserving downsampling and eight-bit dB quantization; do not send I/Q,
+  float32 bins or a separate waterfall image.
 - WebGL2/canvas panadapter and rolling waterfall.
 - Click tune, drag tune, wheel step and filter-edge gestures.
-- Drop old frames for a slow browser rather than queueing latency.
+- Latest-only delivery, timestamps and automatic FPS/width downgrade under
+  backpressure; old rows are dropped rather than queued or retransmitted.
 
 Acceptance: the faker trace in GTK and browser has matching peak positions and
 dB scale; disconnecting or throttling a browser does not change RX cadence.
@@ -187,12 +248,16 @@ dB scale; disconnecting or throttling a browser does not change RX cadence.
 ### Phase 3 - receive audio
 
 - Subscribe per receiver; bounded queue and resampling where required.
-- Web Audio playback with a jitter buffer, mute and volume local to the browser.
-- PCM compatibility transport, followed by Opus if the bundle can carry it on
-  all supported platforms.
+- Run a macOS/Linux/Windows packaging spike for the native WebRTC/Opus
+  dependency before committing it to the bundle.
+- WebRTC Opus mono track, 20 ms packets, adaptive bitrate and in-band FEC from
+  measured loss; timestamped Opus-over-WebSocket fallback for local use.
+- Adaptive 150-600 ms receive jitter target, packet-loss concealment, mute and
+  volume local to the browser.  PCM is diagnostic/local only.
 
 Acceptance: continuous audio for 30 minutes, bounded memory, automatic recovery
-after a tab sleeps, and no RX-thread socket writes.
+after a tab sleeps, no RX-thread socket writes, and the shaped-WAN target below
+does not accumulate latency.
 
 ### Phase 4 - complete receive controls
 
@@ -204,12 +269,14 @@ after a tab sleeps, and no RX-thread socket writes.
 Acceptance: two browsers stay consistent with GTK and with each other while
 controls are changed from all three surfaces.
 
-### Phase 5 - authenticated LAN operation
+### Phase 5 - authenticated LAN/Internet operation
 
 - Loopback/LAN selector and generated high-entropy bearer token.
 - Pairing flow (QR/manual code), Origin validation and failed-auth throttling.
 - Read-only viewers plus a renewable single control lease.
 - Optional mDNS advertisement on trusted interfaces.
+- HTTPS/WSS termination or documented VPN deployment, plus WebRTC ICE/STUN and
+  optional TURN for networks where direct media cannot connect.
 
 Acceptance: unauthenticated LAN requests receive no state, a stolen stale lease
 cannot transmit, and loopback-only remains the default after upgrade.
@@ -230,11 +297,18 @@ there is no TX hardware on the development machine.
 
 - Control round-trip on a LAN: under 100 ms at p95.
 - Spectrum latency: under 250 ms at p95, with no unbounded queue.
-- Receive-audio latency: 150-300 ms selectable target.
+- WAN Balanced profile: at most 80 kbit/s per receiver before IP/crypto
+  overhead; Low profile at most 40 kbit/s.
+- Receive-audio jitter target: adaptive 150-600 ms, with clock-drift correction
+  and no growing buffer.
+- Under a shaped 300 kbit/s path with 150 ms RTT, 50 ms jitter and 2% random
+  media loss, spectrum age stays below 500 ms and audio remains continuous via
+  FEC/PLC; exact audible acceptance is recorded after the transport spike.
 - Server memory: bounded by client count and configured stream buffers.
 - Initial UI payload: under 250 KiB compressed; no CDN or runtime dependency.
-- Supported browsers: current Safari, Chrome and Firefox; graceful Canvas/PCM
-  fallback where WebGL2 or the preferred audio codec is unavailable.
+- Supported browsers: current Safari, Chrome and Firefox; Canvas and
+  Opus-over-WebSocket local fallbacks where the preferred WebRTC path is
+  unavailable.  PCM is diagnostic rather than an Internet fallback.
 
 ## Test strategy
 
@@ -244,4 +318,18 @@ there is no TX hardware on the development machine.
   the authoritative response.
 - Deterministic spectrum test using a known faker tone.
 - Audio sequence/jitter tests without opening a physical audio device.
+- Deterministic impairment tests for bandwidth, delay, jitter, packet loss,
+  backpressure, adaptation hysteresis and recovery after a two-second outage.
 - Sanitized `make SANITIZE=1 check` before enabling LAN or microphone/PTT.
+
+## Standards rationale
+
+- [RFC 6716](https://www.rfc-editor.org/rfc/rfc6716.html) defines Opus, 20 ms as
+  the usual real-time trade-off, constrained VBR, FEC and packet-loss concealment.
+- [RFC 7587](https://www.rfc-editor.org/rfc/rfc7587.html) defines Opus over RTP,
+  including dynamic bitrate, DTX and in-band FEC negotiation.
+- [RFC 7874](https://www.rfc-editor.org/rfc/rfc7874.html) requires WebRTC audio
+  endpoints to implement Opus, avoiding a browser-specific decoder requirement.
+- The [WebRTC Recommendation](https://www.w3.org/TR/webrtc/) defines unordered
+  DataChannels and limited retransmission through `maxRetransmits` or
+  `maxPacketLifeTime`, which match disposable spectrum rows.
