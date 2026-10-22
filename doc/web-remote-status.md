@@ -116,6 +116,30 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-23 — Phase 3 slice 1: libdatachannel build integration
+
+The WebRTC dependency is now buildable and linkable, off by default.
+
+- `tools/build-libdatachannel.sh` builds libdatachannel `v0.24.6` (and the
+  usrsctp/libsrtp it statically links, on OpenSSL) from source into
+  `build/libdatachannel`, following the `build-soapy-plutosdr.sh` precedent; the
+  tag is pinned so a CI cache keys on the script.
+- `Makefile` gains a `WEBRTC` feature flag modelled on `FREEDV`: off by default,
+  enabled with `make WEBRTC_INCLUDE=WEBRTC`, wiring `-D WEBRTC`, the prefix
+  include/lib paths and an rpath (`@loader_path`/`$ORIGIN`) into every platform's
+  link.
+- `src/proto/web_rtc.c/.h` wraps the libdatachannel C API: logger setup and a
+  `web_rtc_selftest()` that creates and destroys a real `rtcPeerConnection`.
+
+Verified on macOS: the dependency builds (exit 0); a standalone C program against
+`rtc/rtc.h` links and creates a PeerConnection at runtime; `make
+WEBRTC_INCLUDE=WEBRTC` links the application against `@rpath/libdatachannel.0.dylib`
+(confirmed with `otool -L`), while the default `make` does not link it and
+`web_offline --selftest` still passes.  The dependency's only non-system runtime
+dylib is OpenSSL (already bundled by `make app`).  Not yet done: `make app`
+bundling of `libdatachannel.dylib`, CI build on Linux/Windows, and any signaling
+or audio — those are the next slices.
+
 ### 2026-10-22 — Phase 3 WebRTC dependency spike
 
 Decision #12 required a measured dependency spike before selecting a native

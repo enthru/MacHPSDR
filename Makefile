@@ -185,6 +185,35 @@ FREEDV_HEADERS=freedv_decoder.h
 FREEDV_OBJS=freedv_decoder.o
 endif
 
+# Browser-remote receive audio over WebRTC (DTLS-SRTP Opus track the browser
+# decodes with its own jitter buffer).  libdatachannel is the native C-API
+# WebRTC stack; it is in neither Homebrew nor the mingw repos, so it is built
+# from source (tools/build-libdatachannel.sh) and linked from a local prefix,
+# exactly like FreeDV above.  usrsctp/libsrtp are linked into it statically; its
+# only extra runtime dependency is OpenSSL (already a dependency here).  Opt-in,
+# off by default:
+#
+#   tools/build-libdatachannel.sh
+#   make WEBRTC_INCLUDE=WEBRTC
+#
+#WEBRTC_INCLUDE=WEBRTC
+
+ifeq ($(WEBRTC_INCLUDE),WEBRTC)
+WEBRTC_OPTIONS=-D WEBRTC
+WEBRTC_PREFIX?=build/libdatachannel
+WEBRTC_INCLUDES=-I$(WEBRTC_PREFIX)/include
+WEBRTC_LIBS=-L$(WEBRTC_PREFIX)/lib -ldatachannel
+ifeq ($(UNAME_S),Linux)
+WEBRTC_RPATH=-Wl,-rpath,'$$ORIGIN/$(WEBRTC_PREFIX)/lib'
+endif
+ifeq ($(UNAME_S),Darwin)
+WEBRTC_RPATH=-Wl,-rpath,@loader_path/$(WEBRTC_PREFIX)/lib
+endif
+WEBRTC_SOURCES=web_rtc.c
+WEBRTC_HEADERS=web_rtc.h
+WEBRTC_OBJS=web_rtc.o
+endif
+
 # SSTV receive decoder (analogue image, Scottie/Martin) + WEFAX / HF radiofax
 # receive decoder.  Self-contained (their own Hilbert-transform FM discriminator;
 # no external DSP dependency).  Comment out SSTV_INCLUDE to build without SSTV /
@@ -353,7 +382,7 @@ CFLAGS= -g -O3 $(STD_FLAG) -Wall -Wextra \
         -Wno-unused-parameter -Wno-unused-variable \
         -Wno-sign-compare -Wno-missing-field-initializers
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS) $(PURESIGNAL_OPTIONS) $(SOAPYSDR_OPTIONS) \
-          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(FREEDV_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
+          $(CWDAEMON_OPTIONS) $(OPENGL_OPTIONS) $(FT8_OPTIONS) $(FREEDV_OPTIONS) $(WEBRTC_OPTIONS) $(SSTV_OPTIONS) $(HFDL_OPTIONS) \
           $(WIN_OPTIONS) $(SAN_OPTIONS) \
           -D USE_VFO_B_MODE_AND_FILTER="USE_VFO_B_MODE_AND_FILTER" \
           -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
@@ -409,27 +438,27 @@ ifeq ($(UNAME_S), Linux)
 # (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
 # but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
 # require `sudo make install` of an upstream WDSP.
-LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(FREEDV_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
 # so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
 # make; single-quoted so the shell passes $ORIGIN through to the linker literally.)
-RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)' $(FREEDV_RPATH)
+RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)' $(FREEDV_RPATH) $(WEBRTC_RPATH)
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(FREEDV_LIBS) $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(FREEDV_LIBS) $(WEBRTC_LIBS) $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
-RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks $(FREEDV_RPATH)
+RPATH_FLAGS=-Wl,-rpath,@loader_path/$(WDSP_DIR) -Wl,-rpath,@executable_path/../Frameworks $(FREEDV_RPATH) $(WEBRTC_RPATH)
 endif
 ifneq ($(ISMINGW),)
 # -lws2_32 is Winsock, -liphlpapi backs the getifaddrs() shim in net_compat.c,
 # -lwinmm is timeBeginPeriod (the default 15.6 ms timer tick is far too coarse
 # for the protocol-1 output pacing).
 LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) \
-     $(MIDI_LIBS) $(FREEDV_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
+     $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
 # The same two for a harness that links net_compat.o without the whole app.
 # Empty off Windows, where net_compat.o needs nothing beyond libc.
 WIN_NET_LIBS=-lws2_32 -liphlpapi
@@ -487,7 +516,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(FREEDV_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(FREEDV_INCLUDES) $(WEBRTC_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -779,8 +808,8 @@ web_server.o \
 web_dialog.o
 
 
-$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
-	$(LINK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
+$(PROGRAM): $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(WEBRTC_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS)
+	$(LINK) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(WEBRTC_OBJS) $(SSTV_OBJS) $(HFDL_OBJS) $(WIN_RES_OBJS) $(LIBS) $(RPATH_FLAGS) $(WIN_LDFLAGS)
 
 # Windows resources.  Both WIN_RES_OBJS and WIN_LDFLAGS above are EMPTY off
 # Windows and this rule does not exist there, so the two lines above are the
@@ -799,7 +828,7 @@ endif
 # them in here makes a plain `make` recompile every object that includes a
 # changed header (e.g. a struct field added to radio.h) — without this, stale
 # objects keep the old struct layout and corrupt memory at run time.
-ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
+ALL_OBJS=$(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS) $(PURESIGNAL_OBJS) $(FT8_OBJS) $(FREEDV_OBJS) $(WEBRTC_OBJS) $(SSTV_OBJS) $(HFDL_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
 # Build the in-tree WDSP (patched: WFM demod + tweaks) on BOTH platforms, so the
@@ -853,7 +882,7 @@ endif
 
 all: prebuild $(PROGRAM) $(HEADERS) $(MIDI_HEADERS) $(SOURCES) $(SOAPYSDR_SOURCES) \
                          $(CWDAEMON_SOURCES) $(MIDI_SOURCES) $(PURESIGNAL_SOURCES) \
-                         $(FREEDV_SOURCES) $(FREEDV_HEADERS)
+                         $(FREEDV_SOURCES) $(FREEDV_HEADERS) $(WEBRTC_SOURCES) $(WEBRTC_HEADERS)
 
 # Headless HFDL harness: feeds an I/Q WAV straight into the decoder with an
 # explicit receiver centre and tuned-channel frequency and prints every message.
