@@ -237,7 +237,9 @@ function render(state) {
       if (filterSel._key !== key) {
         filterSel._key = key;
         filterSel.textContent = "";
-        rx.filters.forEach((f, i) => filterSel.add(new Option(`${f.n} (${formatWidth(f.h - f.l)})`, i)));
+        // The preset title already IS the width label (e.g. "2.7k"), so show it
+        // as-is — appending formatWidth() repeated it ("2.7k (2.7k)").
+        rx.filters.forEach((f, i) => filterSel.add(new Option(f.n, i)));
       }
       if (rx.filter !== undefined && document.activeElement !== filterSel) filterSel.value = String(rx.filter);
     }
