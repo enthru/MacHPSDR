@@ -841,7 +841,13 @@ permission immediately unkeys the radio. After control is granted, the page asks
 shows a local **MIC** level meter and sends mono Opus over WebRTC. **MOX** stays
 disabled until the media connection is ready. Denying permission returns the
 page to receive-only; losing microphone media for 500 ms while keyed revokes the
-lease and immediately unkeys. Enter a username and at least eight characters in **New password**, then
+lease and immediately unkeys.
+With the TX lease held, the lower bar also enables **TUNE**, transmit **DRV**,
+tune power, microphone **GAIN**, compressor gain and its **COMP** switch,
+**LVLR**, and **CESSB**. Tune uses the radio's test generator and therefore does
+not require microphone media. Tune-off and MOX-off remain emergency actions;
+losing the lease switches off either form of transmission. Enter a username and
+at least eight characters in **New password**, then
 press **Set password**; the browser prompts for those credentials.
 **Require password on browser remote** can turn the challenge off
 without deleting the saved password, while **Clear password** removes it. When

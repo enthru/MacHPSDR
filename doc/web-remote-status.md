@@ -164,8 +164,16 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   permission failure releases the lease and leaves receive audio running.  The
   pushed `tx_media_active` field makes the page wait for an actual incoming
   media packet, rather than only ICE connection state, before enabling MOX.
+- Phase 6 slice 3 is implemented in the current work: the lower bar exposes
+  Tune, drive, tune power, microphone gain, compressor gain/on-off, leveler and
+  CESSB.  State remains authoritative and every mutation is dispatched to the
+  GTK thread, where it reuses the desktop WDSP/hardware appliers.  All changes
+  require the live TX lease.  Tune-on also requires the lease but not microphone
+  media; Tune-off and MOX-off remain emergency actions.  Lease loss now drops
+  both Tune and MOX, so the emergency path no longer assumes MOX is the only RF
+  source.
 - Not implemented yet: failed-auth throttling, token/QR pairing, general
-  viewer/controller roles and the remaining Phase 6 controls/PWA polish.
+  viewer/controller roles and the Phase 6 PWA/accessibility polish.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -242,6 +250,26 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 6 slice 3: remaining transmit controls
+
+Added lease-gated Tune, drive, tune power, microphone gain, compressor
+gain/on-off, leveler and CESSB to the pushed radio state, protocol allow-list and
+responsive lower bar.  The GTK-thread applier uses the same WDSP calls and
+Protocol 2/Soapy drive updates as the desktop controls.  Tune-on is lease-gated
+but does not require microphone media.  Tune-off and MOX-off are emergency
+actions; disconnect, timeout, release or desktop disarm now schedules both
+`set_tune(FALSE)` and `ext_set_mox(FALSE)`.
+
+Verified in this work session on macOS: normal and ASan/UBSan
+`web_offline --selftest` pass all 73 cases, including Tune and global TX-control
+parsing; bundled Node.js accepts `assets/web/app.js` with `--check`;
+`make check-build` builds every configured harness; `make -j4` compiles and
+links the full WebRTC/Soapy build; the bidirectional WebRTC loopback still
+passes 75/75 receive packets and 72,000 decoded TX samples; TLS and all four
+localized-manual checks pass; and `git diff --check` passes.  NOT verified live: control
+read-back in a real browser, Tune/MOX emergency-off against a running desktop,
+physical drive changes, processed microphone audio or any on-air effect.
 
 ### 2026-10-23 — Phase 6 slice 2: browser microphone TX audio
 
@@ -819,14 +847,14 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: Phase 6 — remaining transmit controls
+## Exact next slice: Phase 6 — PWA and accessibility polish
 
-Add the browser's Tune, drive and essential TX-processing controls through the
-same desktop choke points, keeping Tune and MOX state authoritative and the
-emergency-unkey path independent of ordinary command acknowledgements.  Extend
-state, allow-list tests and all four manuals together.  Keep on-air verification
-separate from headless/UI proof.  The remaining Phase 5 pairing/roles/throttling
-work is intentionally deferred by operator request.
+Add an installable manifest and service-worker shell without caching live
+control/media traffic, then complete keyboard/focus labels, reduced-motion and
+small-screen checks.  Keep offline installation separate from radio-state
+claims and preserve the rule that reconnect always re-authenticates and
+re-synchronises state.  The remaining Phase 5 pairing/roles/throttling work is
+intentionally deferred by operator request.
 
 ### 2026-10-22 — WAN/jitter design decision
 

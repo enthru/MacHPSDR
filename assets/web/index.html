@@ -170,7 +170,17 @@
       <label id="mic-level-wrap" class="mic-level" hidden>
         <span>MIC</span><meter id="mic-level" min="0" max="1" value="0">0</meter>
       </label>
+      <button id="tune" class="tune" type="button" disabled>TUNE</button>
       <button id="mox" class="mox" type="button" disabled>MOX</button>
+      <div id="tx-settings" class="tx-settings" aria-label="Transmit settings">
+        <label title="Transmit drive"><span>DRV <b id="drive-value">0</b></span><input id="drive" type="range" min="0" max="100" step="1"></label>
+        <label title="Tune power as a percentage of drive"><span>TUNE <b id="tune-drive-value">0</b></span><input id="tune-drive" type="range" min="0" max="100" step="1"></label>
+        <label title="Microphone gain in dB"><span>GAIN <b id="mic-gain-value">0</b></span><input id="mic-gain" type="range" min="-10" max="50" step="1"></label>
+        <label title="Speech compressor gain in dB"><span>COMP <b id="comp-level-value">0</b></span><input id="comp-level" type="range" min="0" max="20" step="1"></label>
+        <label class="tx-check"><input id="compressor" type="checkbox">COMP</label>
+        <label class="tx-check"><input id="leveler" type="checkbox">LVLR</label>
+        <label class="tx-check"><input id="cessb" type="checkbox">CESSB</label>
+      </div>
       <span id="remote-ptt" class="remote-ptt" hidden>REMOTE PTT</span>
     </div>
     <div class="panel panel-status">

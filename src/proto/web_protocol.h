@@ -48,8 +48,10 @@ typedef enum {
   WEB_REQUEST_SET_FREQUENCY,
   WEB_REQUEST_SET_MODE,
   WEB_REQUEST_SET_MOX,
+  WEB_REQUEST_SET_TUNE,
   WEB_REQUEST_SET_FILTER,
   WEB_REQUEST_SET_CONTROL,
+  WEB_REQUEST_SET_TX_CONTROL,
   WEB_REQUEST_SPECTRUM_SUBSCRIBE,
   WEB_REQUEST_SPECTRUM_UNSUBSCRIBE,
   WEB_REQUEST_AUDIO_SUBSCRIBE,
@@ -87,6 +89,19 @@ typedef enum {
   WEB_CTRL_BOOKMARK    /* recall bookmark by zero-based index */
 } WEB_CONTROL;
 
+/* Scalar transmitter controls.  They are global (no receiver index) and may
+   only be applied by the current browser TX-lease holder. */
+typedef enum {
+  WEB_TX_CTRL_NONE = 0,
+  WEB_TX_CTRL_DRIVE,        /* 0..100 percent */
+  WEB_TX_CTRL_TUNE_DRIVE,   /* 0..100 percent */
+  WEB_TX_CTRL_MIC_GAIN,     /* -10..+50 dB */
+  WEB_TX_CTRL_COMPRESSOR,   /* 0/1 */
+  WEB_TX_CTRL_COMP_LEVEL,   /* 0..20 dB */
+  WEB_TX_CTRL_LEVELER,      /* 0/1 */
+  WEB_TX_CTRL_CESSB         /* 0/1 */
+} WEB_TX_CONTROL;
+
 typedef struct {
   WEB_REQUEST_TYPE type;
   gint64 id;
@@ -97,6 +112,7 @@ typedef struct {
   gint low;
   gint high;
   WEB_CONTROL control;
+  WEB_TX_CONTROL tx_control;
   WEB_SPECTRUM_PROFILE profile;
   /* WebRTC signaling payloads, heap-allocated and unescaped only on a
      successful parse; released by web_request_clear(). */

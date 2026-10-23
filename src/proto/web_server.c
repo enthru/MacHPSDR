@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <wdsp.h>
+
 #include "log.h"
 #include "mode.h"
 #include "resource_path.h"
@@ -23,6 +25,10 @@
 #include "ext.h"
 #include "bookmark_dialog.h"
 #include "tci_ws.h"
+#include "protocol2.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 #include "web_protocol.h"
 #include "web_server.h"
 #include "web_tls.h"
@@ -114,7 +120,10 @@ static GMutex web_lease_mutex;
 static WEB_CLIENT *web_tx_lease_owner;
 static gint64 web_tx_lease_deadline_us;
 static volatile gint web_remote_ptt;
+static volatile gint web_remote_mox;
 static volatile gint web_remote_mox_seen;
+static volatile gint web_remote_tune;
+static volatile gint web_remote_tune_seen;
 static GMutex web_tx_audio_mutex;
 static float web_tx_audio_ring[WEB_TX_AUDIO_RING];
 static volatile gint web_tx_audio_head;
@@ -125,6 +134,75 @@ static volatile gint web_tx_audio_dropped;
 static volatile gint web_tx_audio_underruns;
 static gboolean web_state_tick(gpointer data);  /* defined below, armed in start */
 static gboolean ws_send_lease_state(WEB_CLIENT *client, gint64 id, gboolean held);
+
+typedef struct {
+  RADIO *radio;
+  WEB_TX_CONTROL control;
+  gint64 value;
+} WEB_TX_CONTROL_CMD;
+
+typedef struct {
+  RADIO *radio;
+  gboolean state;
+} WEB_TUNE_STATE;
+
+static gboolean web_set_tune_idle(gpointer data) {
+  WEB_TUNE_STATE *t=data;
+  if(t->radio==web_radio && t->radio!=NULL && t->radio->can_transmit &&
+     t->radio->transmitter!=NULL)
+    set_tune(t->radio,t->state);
+  g_free(t);
+  return G_SOURCE_REMOVE;
+}
+
+/* GTK-thread counterpart of the desktop TX widgets.  Keep the actual WDSP and
+   hardware calls identical to mic_gain.c, transmitter_dialog.c and
+   drive_level.c; the browser is only another front end. */
+static gboolean web_set_tx_control_idle(gpointer data) {
+  WEB_TX_CONTROL_CMD *c=data;
+  RADIO *r=c->radio;
+  if(r!=web_radio || r==NULL || r->transmitter==NULL) { g_free(c); return G_SOURCE_REMOVE; }
+  TRANSMITTER *tx=r->transmitter;
+  switch(c->control) {
+    case WEB_TX_CTRL_DRIVE:
+      tx->drive=CLAMP((double)c->value,0.0,100.0);
+      if(r->discovered!=NULL && r->discovered->protocol==PROTOCOL_2)
+        protocol2_high_priority();
+#ifdef SOAPYSDR
+      if(r->discovered!=NULL && r->discovered->protocol==PROTOCOL_SOAPYSDR)
+        soapy_protocol_set_tx_drive(tx->drive);
+#endif
+      if(r->drive_level!=NULL) gtk_widget_queue_draw(r->drive_level);
+      break;
+    case WEB_TX_CTRL_TUNE_DRIVE:
+      tx->tune_percent=CLAMP((double)c->value,0.0,100.0);
+      break;
+    case WEB_TX_CTRL_MIC_GAIN:
+      tx->mic_gain=CLAMP((double)c->value,-10.0,50.0);
+      SetTXAPanelGain1(tx->channel,pow(10.0,tx->mic_gain/20.0));
+      if(r->mic_gain!=NULL) gtk_widget_queue_draw(r->mic_gain);
+      break;
+    case WEB_TX_CTRL_COMPRESSOR:
+      tx->compressor=c->value!=0;
+      SetTXACompressorRun(tx->channel,tx->compressor);
+      break;
+    case WEB_TX_CTRL_COMP_LEVEL:
+      tx->compressor_level=CLAMP((double)c->value,0.0,20.0);
+      SetTXACompressorGain(tx->channel,tx->compressor_level);
+      break;
+    case WEB_TX_CTRL_LEVELER:
+      tx->leveler=c->value!=0;
+      SetTXALevelerSt(tx->channel,tx->leveler);
+      break;
+    case WEB_TX_CTRL_CESSB:
+      tx->cessb=c->value!=0;
+      SetTXAosctrlRun(tx->channel,tx->cessb);
+      break;
+    default: break;
+  }
+  g_free(c);
+  return G_SOURCE_REMOVE;
+}
 
 static const char *http_reason(int code) {
   switch(code) {
@@ -324,9 +402,15 @@ static gboolean web_tx_audio_fresh(void) {
 }
 
 static void web_remote_unkey(void) {
+  g_atomic_int_set(&web_remote_mox,FALSE);
   g_atomic_int_set(&web_remote_mox_seen,FALSE);
+  g_atomic_int_set(&web_remote_tune,FALSE);
+  g_atomic_int_set(&web_remote_tune_seen,FALSE);
   if(!g_atomic_int_compare_and_exchange(&web_remote_ptt,TRUE,FALSE)) return;
   if(web_radio==NULL) return;
+  WEB_TUNE_STATE *t=g_new(WEB_TUNE_STATE,1);
+  t->radio=web_radio; t->state=FALSE;
+  g_idle_add(web_set_tune_idle,t);
   MOX_STATE *m=g_new(MOX_STATE,1);
   m->radio=web_radio; m->state=FALSE;
   g_idle_add(ext_set_mox,m);
@@ -400,15 +484,25 @@ static void append_state_body(GString *s, gboolean include_meter) {
   gchar *decoder_title=web_json_escape(web_radio->decoder_status_title);
   gchar *decoder_text=web_json_escape(web_radio->decoder_status_text);
   g_string_append_printf(s,
-      "\"radio\":{\"mox\":%s,\"remote_ptt\":%s,\"tx_lease_active\":%s,"
+      "\"radio\":{\"mox\":%s,\"tune\":%s,\"remote_ptt\":%s,\"tx_lease_active\":%s,"
       "\"tx_media_active\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
+      "\"drive\":%d,\"tune_drive\":%d,\"mic_gain\":%d,"
+      "\"compressor\":%s,\"comp_level\":%d,\"leveler\":%s,\"cessb\":%s,"
       "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
       "\"bookmarks\":[",
       web_radio->mox?"true":"false",
+      web_radio->tune?"true":"false",
       g_atomic_int_get(&web_remote_ptt)?"true":"false",
       web_lease_active()?"true":"false",
       g_atomic_int_get(&web_tx_audio_active)?"true":"false",
       (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active,
+      web_radio->transmitter?(int)lround(web_radio->transmitter->drive):0,
+      web_radio->transmitter?(int)lround(web_radio->transmitter->tune_percent):0,
+      web_radio->transmitter?(int)lround(web_radio->transmitter->mic_gain):0,
+      (web_radio->transmitter && web_radio->transmitter->compressor)?"true":"false",
+      web_radio->transmitter?(int)lround(web_radio->transmitter->compressor_level):0,
+      (web_radio->transmitter && web_radio->transmitter->leveler)?"true":"false",
+      (web_radio->transmitter && web_radio->transmitter->cessb)?"true":"false",
       web_radio->decode_mode,decoder_title,decoder_text);
   g_free(decoder_title); g_free(decoder_text);
   gboolean first_bookmark=TRUE;
@@ -732,7 +826,8 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
   }
 
   RECEIVER *rx=NULL;
-  if(request->type!=WEB_REQUEST_SET_MOX) {
+  if(request->type!=WEB_REQUEST_SET_MOX && request->type!=WEB_REQUEST_SET_TUNE &&
+     request->type!=WEB_REQUEST_SET_TX_CONTROL) {
     rx=visible_rx(request->rx);
     if(rx==NULL) return ws_send_error(client,request->id,"invalid_receiver","receiver is not available");
   }
@@ -764,11 +859,56 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         return ws_send_error(client,request->id,"lease_required","take TX control before keying");
       if(request->flag && !web_tx_audio_fresh())
         return ws_send_error(client,request->id,"audio_required","microphone audio is not available");
+      g_atomic_int_set(&web_remote_mox,request->flag);
+      g_atomic_int_set(&web_remote_tune,FALSE);
+      g_atomic_int_set(&web_remote_tune_seen,FALSE);
       g_atomic_int_set(&web_remote_ptt,request->flag);
       g_atomic_int_set(&web_remote_mox_seen,FALSE);
       MOX_STATE *m=g_new(MOX_STATE,1);
       m->radio=web_radio; m->state=request->flag;
       g_idle_add(ext_set_mox,m);
+      break;
+    }
+    case WEB_REQUEST_SET_TUNE: {
+      if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable ||
+         web_radio->transmitter==NULL)
+        return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
+      /* Tune is an RF-emitting action but does not consume microphone media.
+         On is lease-gated; off remains an emergency action for every client. */
+      if(request->flag && !web_lease_is_owner(client,TRUE))
+        return ws_send_error(client,request->id,"lease_required","take TX control before tuning");
+      g_atomic_int_set(&web_remote_tune,request->flag);
+      g_atomic_int_set(&web_remote_tune_seen,FALSE);
+      g_atomic_int_set(&web_remote_mox,FALSE);
+      g_atomic_int_set(&web_remote_mox_seen,FALSE);
+      g_atomic_int_set(&web_remote_ptt,request->flag);
+      WEB_TUNE_STATE *t=g_new(WEB_TUNE_STATE,1);
+      t->radio=web_radio; t->state=request->flag;
+      g_idle_add(web_set_tune_idle,t);
+      break;
+    }
+    case WEB_REQUEST_SET_TX_CONTROL: {
+      if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable ||
+         web_radio->transmitter==NULL)
+        return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
+      if(!web_lease_is_owner(client,TRUE))
+        return ws_send_error(client,request->id,"lease_required","take TX control before changing transmit settings");
+      gboolean valid=FALSE;
+      switch(request->tx_control) {
+        case WEB_TX_CTRL_DRIVE:
+        case WEB_TX_CTRL_TUNE_DRIVE: valid=request->value>=0 && request->value<=100; break;
+        case WEB_TX_CTRL_MIC_GAIN: valid=request->value>=-10 && request->value<=50; break;
+        case WEB_TX_CTRL_COMP_LEVEL: valid=request->value>=0 && request->value<=20; break;
+        case WEB_TX_CTRL_COMPRESSOR:
+        case WEB_TX_CTRL_LEVELER:
+        case WEB_TX_CTRL_CESSB: valid=request->value==0 || request->value==1; break;
+        default: break;
+      }
+      if(!valid)
+        return ws_send_error(client,request->id,"invalid_value","transmit control value is out of range");
+      WEB_TX_CONTROL_CMD *c=g_new(WEB_TX_CONTROL_CMD,1);
+      c->radio=web_radio; c->control=request->tx_control; c->value=request->value;
+      g_idle_add(web_set_tx_control_idle,c);
       break;
     }
     case WEB_REQUEST_SET_FILTER: {
@@ -1199,7 +1339,10 @@ void web_server_start(void) {
   web_tx_lease_deadline_us=0;
   g_mutex_unlock(&web_lease_mutex);
   g_atomic_int_set(&web_remote_ptt,FALSE);
+  g_atomic_int_set(&web_remote_mox,FALSE);
   g_atomic_int_set(&web_remote_mox_seen,FALSE);
+  g_atomic_int_set(&web_remote_tune,FALSE);
+  g_atomic_int_set(&web_remote_tune_seen,FALSE);
   web_tx_audio_reset();
   g_snprintf(web_status_line,sizeof(web_status_line),"starting HTTPS on port %d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
@@ -1297,7 +1440,7 @@ static gboolean web_state_tick(gpointer data) {
   }
   if(g_atomic_int_get(&web_tx_audio_active) && !web_tx_audio_fresh()) {
     g_atomic_int_set(&web_tx_audio_active,FALSE);
-    if(g_atomic_int_get(&web_remote_ptt)) {
+    if(g_atomic_int_get(&web_remote_mox)) {
       g_mutex_lock(&web_lease_mutex);
       lease_owner=web_tx_lease_owner;
       g_mutex_unlock(&web_lease_mutex);
@@ -1305,9 +1448,13 @@ static gboolean web_state_tick(gpointer data) {
       else web_remote_unkey();
     }
   }
-  if(g_atomic_int_get(&web_remote_ptt)) {
+  if(g_atomic_int_get(&web_remote_mox)) {
     if(web_radio->mox) g_atomic_int_set(&web_remote_mox_seen,TRUE);
     else if(g_atomic_int_get(&web_remote_mox_seen)) web_remote_unkey();
+  }
+  if(g_atomic_int_get(&web_remote_tune)) {
+    if(web_radio->tune) g_atomic_int_set(&web_remote_tune_seen,TRUE);
+    else if(g_atomic_int_get(&web_remote_tune_seen)) web_remote_unkey();
   }
 
   gboolean have=FALSE;
@@ -1411,7 +1558,7 @@ void web_server_audio_tap(int receiver, const double *stereo, int frames) {
 
 gboolean web_server_tx_audio_active(void) {
   return g_atomic_int_get(&web_tx_audio_active) &&
-         g_atomic_int_get(&web_remote_ptt) && web_radio!=NULL && web_radio->mox;
+         g_atomic_int_get(&web_remote_mox) && web_radio!=NULL && web_radio->mox;
 }
 
 float web_server_tx_audio_next_sample(void) {

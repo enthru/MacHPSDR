@@ -36,6 +36,16 @@ int main(int argc, char **argv) {
   check("MOX requires and keeps a boolean",
         parse("{\"type\":\"command\",\"id\":4,\"action\":\"set_mox\",\"value\":true}",&r) &&
         r.type==WEB_REQUEST_SET_MOX && r.flag);
+  check("Tune requires and keeps a boolean",
+        parse("{\"type\":\"command\",\"id\":40,\"action\":\"set_tune\",\"value\":true}",&r) &&
+        r.type==WEB_REQUEST_SET_TUNE && r.flag);
+  check("global TX controls parse without a receiver",
+        parse("{\"type\":\"command\",\"id\":44,\"action\":\"set_drive\",\"value\":73}",&r) &&
+        r.type==WEB_REQUEST_SET_TX_CONTROL && r.tx_control==WEB_TX_CTRL_DRIVE && r.value==73 &&
+        parse("{\"type\":\"command\",\"id\":45,\"action\":\"set_mic_gain\",\"value\":-4}",&r) &&
+        r.tx_control==WEB_TX_CTRL_MIC_GAIN && r.value==-4 &&
+        parse("{\"type\":\"command\",\"id\":46,\"action\":\"set_compressor\",\"value\":1}",&r) &&
+        r.tx_control==WEB_TX_CTRL_COMPRESSOR && r.value==1);
   check("TX control lease lifecycle messages parse",
         parse("{\"type\":\"lease_acquire\",\"id\":41}",&r) &&
         r.type==WEB_REQUEST_LEASE_ACQUIRE &&

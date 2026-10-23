@@ -330,8 +330,24 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   if(strcmp(action,"set_frequency")==0) out->type=WEB_REQUEST_SET_FREQUENCY;
   else if(strcmp(action,"set_mode")==0) out->type=WEB_REQUEST_SET_MODE;
   else if(strcmp(action,"set_mox")==0) out->type=WEB_REQUEST_SET_MOX;
+  else if(strcmp(action,"set_tune")==0) out->type=WEB_REQUEST_SET_TUNE;
   else if(strcmp(action,"set_filter")==0) out->type=WEB_REQUEST_SET_FILTER;
   else {
+    static const struct { const char *action; WEB_TX_CONTROL control; } tx_controls[]={
+      {"set_drive",       WEB_TX_CTRL_DRIVE},
+      {"set_tune_drive",  WEB_TX_CTRL_TUNE_DRIVE},
+      {"set_mic_gain",    WEB_TX_CTRL_MIC_GAIN},
+      {"set_compressor",  WEB_TX_CTRL_COMPRESSOR},
+      {"set_comp_level",  WEB_TX_CTRL_COMP_LEVEL},
+      {"set_leveler",     WEB_TX_CTRL_LEVELER},
+      {"set_cessb",       WEB_TX_CTRL_CESSB},
+    };
+    for(size_t i=0;i<G_N_ELEMENTS(tx_controls);i++)
+      if(strcmp(action,tx_controls[i].action)==0) {
+        out->tx_control=tx_controls[i].control; break;
+      }
+    if(out->tx_control!=WEB_TX_CTRL_NONE) out->type=WEB_REQUEST_SET_TX_CONTROL;
+
     /* Scalar receiver controls: allow-listed here (unknown names are rejected,
        exactly like a bad frequency action), dispatched by WEB_CONTROL. */
     static const struct { const char *action; WEB_CONTROL control; } controls[]={
@@ -356,10 +372,12 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
       {"set_subrx_mix", WEB_CTRL_SUBRX_MIX},
       {"recall_bookmark", WEB_CTRL_BOOKMARK},
     };
-    for(size_t i=0;i<G_N_ELEMENTS(controls);i++)
-      if(strcmp(action,controls[i].action)==0) { out->control=controls[i].control; break; }
-    if(out->control==WEB_CTRL_NONE) { set_error(error,error_len,"unknown action"); return FALSE; }
-    out->type=WEB_REQUEST_SET_CONTROL;
+    if(out->type!=WEB_REQUEST_SET_TX_CONTROL) {
+      for(size_t i=0;i<G_N_ELEMENTS(controls);i++)
+        if(strcmp(action,controls[i].action)==0) { out->control=controls[i].control; break; }
+      if(out->control==WEB_CTRL_NONE) { set_error(error,error_len,"unknown action"); return FALSE; }
+      out->type=WEB_REQUEST_SET_CONTROL;
+    }
   }
 
   if(out->type==WEB_REQUEST_SET_FILTER) {
@@ -370,13 +388,16 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
     return TRUE;
   }
   if(!have_value) { set_error(error,error_len,"missing command value"); return FALSE; }
-  if(out->type==WEB_REQUEST_SET_MOX && !out->value_is_bool) {
-    set_error(error,error_len,"set_mox requires a boolean value"); return FALSE;
+  if((out->type==WEB_REQUEST_SET_MOX || out->type==WEB_REQUEST_SET_TUNE) &&
+     !out->value_is_bool) {
+    set_error(error,error_len,"set_mox/set_tune requires a boolean value"); return FALSE;
   }
-  if(out->type!=WEB_REQUEST_SET_MOX && out->value_is_bool) {
+  if(out->type!=WEB_REQUEST_SET_MOX && out->type!=WEB_REQUEST_SET_TUNE &&
+     out->value_is_bool) {
     set_error(error,error_len,"numeric command requires an integer value"); return FALSE;
   }
-  if(out->type!=WEB_REQUEST_SET_MOX && !have_rx) {
+  if(out->type!=WEB_REQUEST_SET_MOX && out->type!=WEB_REQUEST_SET_TUNE &&
+     out->type!=WEB_REQUEST_SET_TX_CONTROL && !have_rx) {
     set_error(error,error_len,"missing receiver index"); return FALSE;
   }
   return TRUE;

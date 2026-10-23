@@ -20,7 +20,8 @@ that path, without STUN or another external discovery service.  The binary
 protocol, routing and regression suites pass.  Phase 6 now has its exclusive
 renewable browser-TX lease, heartbeat/disconnect emergency unkey, visible
 remote-PTT indication and browser microphone audio over the bidirectional
-WebRTC Opus track.
+WebRTC Opus track, plus lease-gated Tune, drive, tune power, mic gain,
+compressor, leveler and CESSB controls.
 Per-slice live acceptance is
 recorded in the status record; the repository's isolated macOS test session
 cannot create the application's first GTK window, so live runs happen in a
@@ -444,8 +445,11 @@ it and emergency-unkeys.  Every viewer receives the lease/remote-PTT state and
 shows a visible `REMOTE PTT` indicator.  Once it owns the lease, the browser
 requests microphone permission, displays a local level meter and sends mono
 Opus on the bidirectional WebRTC audio track.  MOX requires fresh media; a
-500 ms media gap during remote PTT revokes the lease and emergency-unkeys.
-Tune/drive/TX-processing controls and the PWA/accessibility pass remain.
+500 ms media gap during remote MOX revokes the lease and emergency-unkeys.  The
+same lease exposes Tune, drive, tune power, microphone gain, compressor
+gain/on-off, leveler and CESSB.  Tune does not require microphone media; Tune
+off and MOX off remain emergency actions, and lease loss drops both.  The
+PWA/accessibility pass remains.
 
 ## Non-functional targets
 

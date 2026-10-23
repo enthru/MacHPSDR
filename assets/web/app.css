@@ -12,6 +12,7 @@
   --cyan: #4fd6f2;
   --cyan-deep: #1f6b86;
   --orange: #e8936b;
+  --amber: #ffbe46;
   --green: #68f59b;
   --red: #ff5f6d;
   --chip: #203240;
@@ -168,12 +169,21 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .mox { min-width: 6rem; color: #fff; background: #3a2226; border: 1px solid #773c45; border-radius: 7px; padding: .5rem 1rem; font-weight: 800; cursor: pointer; }
 .mox:disabled { opacity: .45; cursor: default; }
 .mox.on { background: var(--red); border-color: var(--red); color: #190407; box-shadow: 0 0 20px rgba(255,95,109,.4); }
+.tune { color: #fff; background: #3b3219; border: 1px solid #78652a; border-radius: 7px; padding: .5rem .75rem; font-weight: 800; cursor: pointer; }
+.tune:disabled { opacity: .45; cursor: default; }
+.tune.on { color: #201700; background: var(--amber); border-color: var(--amber); box-shadow: 0 0 18px rgba(255,190,70,.35); }
 .tx-control { color: var(--text); background: #162731; border: 1px solid #315064; border-radius: 7px; padding: .5rem .75rem; cursor: pointer; }
 .tx-control:disabled { opacity: .45; cursor: default; }
 .tx-control.held { color: #07140b; background: var(--green); border-color: var(--green); }
 .mic-level { display: flex; align-items: center; gap: .35rem; color: var(--ink-dim); font-size: .65rem; font-weight: 800; letter-spacing: .08em; }
 .mic-level[hidden] { display: none; }
 .mic-level meter { width: 5rem; height: .65rem; accent-color: var(--green); }
+.tx-settings { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
+.tx-settings > label:not(.tx-check) { display: grid; gap: .12rem; color: var(--ink-dim); font-size: .58rem; font-weight: 800; letter-spacing: .05em; }
+.tx-settings b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.tx-settings input[type="range"] { width: 4.8rem; accent-color: var(--cyan); }
+.tx-settings input:disabled { opacity: .4; }
+.tx-check { display: flex; align-items: center; gap: .15rem; color: var(--ink-dim); font-size: .58rem; font-weight: 800; }
 .remote-ptt { color: #190407; background: var(--red); border-radius: 999px; padding: .35rem .65rem; font-size: .72rem; font-weight: 900; letter-spacing: .08em; box-shadow: 0 0 18px rgba(255,95,109,.45); }
 
 /* ---- Narrow screens ---- */

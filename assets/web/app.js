@@ -13,7 +13,13 @@ const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
 const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
+const tune = document.querySelector("#tune");
 const txControl = document.querySelector("#tx-control");
+const txSettings = document.querySelector("#tx-settings");
+const drive = document.querySelector("#drive"), tuneDrive = document.querySelector("#tune-drive");
+const micGain = document.querySelector("#mic-gain"), compLevel = document.querySelector("#comp-level");
+const compressor = document.querySelector("#compressor"), leveler = document.querySelector("#leveler");
+const cessb = document.querySelector("#cessb");
 const remotePtt = document.querySelector("#remote-ptt");
 const micLevelWrap = document.querySelector("#mic-level-wrap");
 const micLevel = document.querySelector("#mic-level");
@@ -70,9 +76,24 @@ function renderTx(radio) {
   txControl.classList.toggle("held", leaseHeld);
   txControl.textContent = leaseHeld ? (micReady ? "Release TX control" : "Starting microphone…") :
                           (busy ? "TX control in use" : "Take TX control");
-  mox.disabled = !radio.can_transmit || !leaseHeld || !txMediaReady(radio);
+  mox.disabled = !radio.can_transmit || (!radio.mox && (!leaseHeld || !txMediaReady(radio)));
   mox.classList.toggle("on", radio.mox);
   mox.textContent = radio.mox ? "MOX ON" : "MOX";
+  tune.disabled = !radio.can_transmit || (!leaseHeld && !radio.tune);
+  tune.classList.toggle("on", !!radio.tune);
+  tune.textContent = radio.tune ? "TUNE ON" : "TUNE";
+  for (const input of txSettings.querySelectorAll("input")) input.disabled = !radio.can_transmit || !leaseHeld;
+  const setTxRange = (input, valueId, value) => {
+    if (document.activeElement !== input) input.value = String(value ?? 0);
+    document.querySelector(valueId).textContent = input.value;
+  };
+  setTxRange(drive,"#drive-value",radio.drive);
+  setTxRange(tuneDrive,"#tune-drive-value",radio.tune_drive);
+  setTxRange(micGain,"#mic-gain-value",radio.mic_gain);
+  setTxRange(compLevel,"#comp-level-value",radio.comp_level);
+  if (document.activeElement !== compressor) compressor.checked = !!radio.compressor;
+  if (document.activeElement !== leveler) leveler.checked = !!radio.leveler;
+  if (document.activeElement !== cessb) cessb.checked = !!radio.cessb;
   remotePtt.hidden = !radio.remote_ptt;
   micLevelWrap.hidden = !leaseHeld;
 }
@@ -638,8 +659,20 @@ function connect() {
 }
 
 mox.addEventListener("click", () => {
-  if (radioState?.can_transmit && leaseHeld) command("set_mox", { value: !radioState.mox });
+  if (radioState?.can_transmit && (leaseHeld || radioState.mox)) command("set_mox", { value: !radioState.mox });
 });
+tune.addEventListener("click", () => {
+  if (radioState?.can_transmit && (leaseHeld || radioState.tune)) command("set_tune", { value: !radioState.tune });
+});
+for (const [input, valueId, action] of [
+  [drive,"#drive-value","set_drive"], [tuneDrive,"#tune-drive-value","set_tune_drive"],
+  [micGain,"#mic-gain-value","set_mic_gain"], [compLevel,"#comp-level-value","set_comp_level"]
+]) {
+  input.addEventListener("input", () => { document.querySelector(valueId).textContent = input.value; });
+  input.addEventListener("change", () => { if (leaseHeld) command(action,{ value: Number(input.value) }); });
+}
+for (const [input, action] of [[compressor,"set_compressor"],[leveler,"set_leveler"],[cessb,"set_cessb"]])
+  input.addEventListener("change", () => { if (leaseHeld) command(action,{ value: input.checked ? 1 : 0 }); });
 txControl.addEventListener("click", () => {
   send({ type: leaseHeld ? "lease_release" : "lease_acquire" });
 });

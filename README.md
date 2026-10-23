@@ -611,7 +611,11 @@ can be replayed separately in the I/Q Player.
   the page requests microphone permission, shows a local **MIC** level meter and
   sends mono Opus over the same WebRTC session. MOX stays disabled until media is
   ready; denial remains receive-only, and a 500 ms media loss while keyed revokes
-  the lease and emergency-unkeys. The server pushes state as it changes rather than the page polling, so
+  the lease and emergency-unkeys. The same lease unlocks **TUNE**, transmit drive,
+  tune power, microphone gain, compressor gain/on-off, leveler and CESSB in the
+  lower bar. Tune does not require microphone media; Tune-off and MOX-off remain
+  emergency actions, and every lease-loss path drops both kinds of transmission.
+  The server pushes state as it changes rather than the page polling, so
   a control moved on the desktop or in one browser echoes to every browser live.
   Each receiver's demodulated audio plays automatically over a **WebRTC
   Opus** stream (libdatachannel + libopus; the browser's own jitter buffer makes
