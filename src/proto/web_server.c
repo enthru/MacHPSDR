@@ -31,6 +31,11 @@
 #define WEB_SPECTRUM_MAX_AGE_US 500000
 #define WEB_SLOW_SEND_US 100000
 #define WEB_RECOVERY_US 10000000
+/* Phase 4 pushed-state cadence: the detector tick that catches a discrete
+   change, and the interval at which the S-meter is refreshed when nothing else
+   moved. */
+#define WEB_STATE_TICK_MS 50
+#define WEB_METER_PUSH_US 200000
 
 typedef struct {
   guint8 receiver;
@@ -86,6 +91,12 @@ static guint32 web_spectrum_sequence[MAX_RECEIVERS];
 static gboolean web_sync_initialized;
 static char web_status_line[128]="stopped";
 static gint web_revision;
+/* Phase 4 pushed state (GTK thread only): the last discrete-field signature
+   broadcast, and when the last state frame went out. */
+static guint web_state_source;
+static GString *web_last_discrete;
+static gint64 web_last_state_push_us;
+static gboolean web_state_tick(gpointer data);  /* defined below, armed in start */
 
 static const char *http_reason(int code) {
   switch(code) {
@@ -218,44 +229,65 @@ static gboolean ws_send_error(WEB_CLIENT *client, gint64 id, const char *code, c
   return ws_send_text(client,line);
 }
 
-static gboolean ws_send_state(WEB_CLIENT *client, gint64 id) {
-  if(web_radio==NULL || web_radio->discovered==NULL)
-    return ws_send_error(client,id,"radio_unavailable","radio is not ready");
-  GString *s=g_string_sized_new(1024);
+/* Append the radio + per-receiver body shared by the get_state reply, the pushed
+   state frame and the change-detector signature.  With include_meter FALSE it is
+   the discrete signature (the fields a control can move); the live S-meter is
+   excluded so meter noise never reads as a state change. */
+static void append_state_body(GString *s, gboolean include_meter) {
   int active=web_radio->active_receiver ? web_radio->active_receiver->channel : -1;
-  int revision=g_atomic_int_add(&web_revision,1)+1;
   g_string_append_printf(s,
-      "{\"type\":\"state\",\"id\":%lld,\"revision\":%d,"
       "\"radio\":{\"mox\":%s,\"can_transmit\":%s,\"active_rx\":%d},\"receivers\":[",
-      (long long)id,revision,web_radio->mox?"true":"false",
+      web_radio->mox?"true":"false",
       (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active);
   gboolean first=TRUE;
   for(int i=0;i<web_radio->discovered->supported_receivers;i++) {
     RECEIVER *rx=visible_rx(i);
     if(rx==NULL) continue;
-    double meter=isfinite(rx->meter_db)?rx->meter_db:-200.0;
-    // JSON is an ASCII interchange format: GTK runs under the operator's locale,
-    // so "%.1f" on a comma-decimal machine (ru_RU) emits "-200,0" and the whole
-    // state frame becomes invalid JSON the browser silently drops. Format the one
-    // float locale-independently, like every other ASCII format this tree writes.
-    char meter_text[G_ASCII_DTOSTR_BUF_SIZE];
-    g_ascii_formatd(meter_text,sizeof(meter_text),"%.1f",meter);
     if(!first) g_string_append_c(s,',');
     first=FALSE;
     int mode=(rx->mode_a>=0 && rx->mode_a<MODES)?rx->mode_a:USB;
     g_string_append_printf(s,
         "{\"id\":%d,\"frequency\":%lld,\"frequency_b\":%lld,"
-        "\"mode\":%d,\"mode_name\":\"%s\",\"meter_db\":%s,\"locked\":%s,"
-        "\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
-        "\"display_low\":%lld,\"display_high\":%lld}",
+        "\"mode\":%d,\"mode_name\":\"%s\",",
         i,(long long)receiver_tuned_frequency(rx),(long long)rx->frequency_b,
-        mode,mode_string[mode],meter_text,rx->locked?"true":"false",(long long)rx->step,
+        mode,mode_string[mode]);
+    if(include_meter) {
+      double meter=isfinite(rx->meter_db)?rx->meter_db:-200.0;
+      // JSON is an ASCII interchange format: GTK runs under the operator's
+      // locale, so "%.1f" on a comma-decimal machine (ru_RU) emits "-200,0" and
+      // the whole frame becomes invalid JSON the browser silently drops. Format
+      // the one float locale-independently, like every ASCII format this tree
+      // writes.
+      char meter_text[G_ASCII_DTOSTR_BUF_SIZE];
+      g_ascii_formatd(meter_text,sizeof(meter_text),"%.1f",meter);
+      g_string_append_printf(s,"\"meter_db\":%s,",meter_text);
+    }
+    g_string_append_printf(s,
+        "\"locked\":%s,\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
+        "\"display_low\":%lld,\"display_high\":%lld}",
+        rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));
   }
-  g_string_append(s,"]}");
+  g_string_append_c(s,']');
+}
+
+static void build_state_frame(GString *s, gint64 id, int revision) {
+  g_string_append_printf(s,"{\"type\":\"state\",\"id\":%lld,\"revision\":%d,",
+                         (long long)id,revision);
+  append_state_body(s,TRUE);
+  g_string_append_c(s,'}');
+}
+
+static gboolean ws_send_state(WEB_CLIENT *client, gint64 id) {
+  if(web_radio==NULL || web_radio->discovered==NULL)
+    return ws_send_error(client,id,"radio_unavailable","radio is not ready");
+  GString *s=g_string_sized_new(1024);
+  /* A snapshot reply reports the current revision; only a real discrete change
+     (detected by web_state_tick) advances it. */
+  build_state_frame(s,id,g_atomic_int_get(&web_revision));
   gboolean ok=client_send(client,1,s->str,s->len);
   g_string_free(s,TRUE);
   return ok;
@@ -815,11 +847,18 @@ void web_server_start(void) {
   g_atomic_int_set(&web_running,1);
   g_snprintf(web_status_line,sizeof(web_status_line),"starting on localhost:%d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
+  /* Pushed-state detector on the GTK main loop (start is always called on the
+     GTK thread: web_server_init in create_radio, or the Configure dialog). */
+  web_last_state_push_us=0;
+  web_state_source=g_timeout_add(WEB_STATE_TICK_MS,web_state_tick,NULL);
 }
 
 void web_server_stop(void) {
   if(!g_atomic_int_get(&web_running) && web_thread==NULL) return;
   g_atomic_int_set(&web_running,0);
+  /* Stop runs on the GTK thread, so the detector cannot be mid-tick here. */
+  if(web_state_source!=0) { g_source_remove(web_state_source); web_state_source=0; }
+  if(web_last_discrete!=NULL) { g_string_free(web_last_discrete,TRUE); web_last_discrete=NULL; }
   if(web_listen>=0) {
     shutdown(web_listen,SHUT_RDWR);
     closesocket(web_listen); web_listen=-1;
@@ -844,6 +883,69 @@ void web_server_stop(void) {
   }
   g_mutex_unlock(&web_spectrum_mutex);
   g_strlcpy(web_status_line,"stopped",sizeof(web_status_line));
+}
+
+/* Broadcast one text frame to every upgraded client.  The client set is
+   snapshotted under web_clients_mutex, then the mutex is dropped before any
+   send: client_send() is serialized per client by send_mutex and re-checks
+   closing/fd, so a client released right after the snapshot is a safe no-op, and
+   a (up-to-250 ms) blocking send never stalls the accept thread or a sibling
+   broadcast. */
+static void web_broadcast_text(const char *text, gsize len) {
+  WEB_CLIENT *targets[WEB_MAX_CLIENTS];
+  int n=0;
+  g_mutex_lock(&web_clients_mutex);
+  for(int i=0;i<WEB_MAX_CLIENTS;i++) {
+    WEB_CLIENT *c=&web_clients[i];
+    if(c->fd>=0 && g_atomic_int_get(&c->upgraded) && !g_atomic_int_get(&c->closing))
+      targets[n++]=c;
+  }
+  g_mutex_unlock(&web_clients_mutex);
+  for(int i=0;i<n;i++) client_send(targets[i],1,text,len);
+}
+
+/* GTK-thread change detector (Phase 4): the browser no longer polls get_state.
+   Each tick builds the discrete signature; a push goes out whenever it changed
+   (frequency, mode, MOX, active RX, lock, step, filter, display window, receiver
+   add/remove) and otherwise every WEB_METER_PUSH_US to keep the S-meter live.
+   It is self-correcting -- a new mutation site cannot be "left off a list" of
+   notify calls -- and touches no socket itself (web_broadcast_text hands each
+   frame to the client's own serialized send path). Only a real discrete change
+   advances web_revision, so the revision counts state changes, not meter ticks. */
+static gboolean web_state_tick(gpointer data) {
+  (void)data;
+  if(!g_atomic_int_get(&web_running)) { web_state_source=0; return G_SOURCE_REMOVE; }
+  if(web_radio==NULL || web_radio->discovered==NULL) return G_SOURCE_CONTINUE;
+
+  gboolean have=FALSE;
+  g_mutex_lock(&web_clients_mutex);
+  for(int i=0;i<WEB_MAX_CLIENTS;i++)
+    if(web_clients[i].fd>=0 && g_atomic_int_get(&web_clients[i].upgraded) &&
+       !g_atomic_int_get(&web_clients[i].closing)) { have=TRUE; break; }
+  g_mutex_unlock(&web_clients_mutex);
+  if(!have) return G_SOURCE_CONTINUE;
+
+  GString *sig=g_string_sized_new(256);
+  append_state_body(sig,FALSE);
+  gboolean changed=(web_last_discrete==NULL) ||
+                   strcmp(sig->str,web_last_discrete->str)!=0;
+  gint64 now=g_get_monotonic_time();
+  gboolean meter_due=(now-web_last_state_push_us)>=WEB_METER_PUSH_US;
+  if(changed || meter_due) {
+    if(changed) {
+      if(web_last_discrete!=NULL) g_string_free(web_last_discrete,TRUE);
+      web_last_discrete=sig;
+      sig=NULL;
+      g_atomic_int_add(&web_revision,1);
+    }
+    GString *frame=g_string_sized_new(1024);
+    build_state_frame(frame,0,g_atomic_int_get(&web_revision));
+    web_broadcast_text(frame->str,frame->len);
+    g_string_free(frame,TRUE);
+    web_last_state_push_us=now;
+  }
+  if(sig!=NULL) g_string_free(sig,TRUE);
+  return G_SOURCE_CONTINUE;
 }
 
 void web_server_publish_spectrum(int receiver, const float *bins, unsigned count,

@@ -11,12 +11,13 @@ The implementation is deliberately incremental.  Every phase must leave a
 usable, testable application and must not make the GTK or RX audio threads wait
 for a network client.
 
-Current status (2026-10-22): Phase 0 is complete; Phases 1 and 2 are implemented
-and headlessly verified.  The binary protocol, routing and regression suites
-pass.  A live faker/browser acceptance run for both phases remains to be
-performed on a normal desktop session; the
-repository's isolated macOS test session cannot create the application's first
-GTK window, before the radio and web server are started.
+Current status (2026-10-23): Phases 0-3 are complete and live-confirmed on macOS
+(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is in progress:
+its first slice replaces the browser's state polling with server-pushed state on
+change.  The binary protocol, routing and regression suites pass.  Per-slice live
+acceptance is recorded in the status record; the repository's isolated macOS test
+session cannot create the application's first GTK window, so live runs happen in a
+normal desktop session.
 
 The continuously updated engineering handoff, verification record and exact
 next task are in [web-remote-status.md](web-remote-status.md).

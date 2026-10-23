@@ -68,9 +68,19 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   `client->rtc` under `queue_mutex` (the lock the tap holds) and frees — joining
   the worker — with no lock held, so the audio thread never touches a freed
   session and the join never stalls the RX thread.
-- Not implemented yet: full RX controls, pushed state events (the page still
-  polls `get_state` every 500 ms), authenticated LAN access, control leases and
-  browser TX audio.
+- Phase 4 is IN PROGRESS.  Its first slice is done on `origin/master`:
+  server-pushed state replaces the browser's 500 ms `get_state` poll.  A GTK
+  main-loop detector (`web_state_tick`, 50 ms) broadcasts a full `state` frame
+  the instant a discrete field moves (frequency, mode, MOX, active RX, lock,
+  step, filter, display window, receiver add/remove) and otherwise refreshes the
+  S-meter every 200 ms; the detector compares a meter-free signature so meter
+  noise never reads as a change, and `web_revision` now counts real changes, not
+  ticks.  The browser sends one `get_state` on connect for the snapshot and keeps
+  it as a 2 s quiet-link watchdog fallback; the periodic poll is gone.
+- Not implemented yet (rest of Phase 4 and beyond): the fuller RX control surface
+  (AGC, AF/RF gain, attenuation, squelch, noise controls, step, band, RIT/split,
+  sub-receiver, bookmarks) and decoder status/output; authenticated LAN access,
+  control leases and browser TX audio.
 
 The local remote provides a disabled-by-default listener bound to
 `127.0.0.1`, bundled static assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -145,6 +155,42 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 4 slice 1: server-pushed state replaces polling
+
+The browser no longer polls `get_state` every 500 ms; the server pushes state on
+change.
+
+- Server (`web_server.c`): `ws_send_state`'s body is refactored into
+  `append_state_body(include_meter)` + `build_state_frame()`, shared by the
+  `get_state` reply and the push.  `web_state_tick()` is a `g_timeout_add` (50 ms)
+  armed in `web_server_start` and torn down in `web_server_stop` (both GTK-thread
+  only, so the source cannot be mid-tick at teardown).  Each tick skips out when
+  no client is upgraded; otherwise it builds the meter-free signature and pushes a
+  full `state` frame when the signature changed (and bumps `web_revision`) or when
+  200 ms have passed (meter refresh, same revision).  `web_broadcast_text()`
+  snapshots the client set under `web_clients_mutex`, then sends with the mutex
+  dropped — `client_send` is serialized per client by `send_mutex` and re-checks
+  `closing`/`fd`, so a client released right after the snapshot is a safe no-op and
+  a slow send never stalls the accept thread.  The design is self-correcting: a new
+  mutation site cannot be "left off a list" of notify calls, unlike TCI's scattered
+  `tci_notify_*`.  `get_state` now reports the current revision without bumping it.
+- Browser (`assets/web/app.js`): the 500 ms `setInterval` poll is removed.  One
+  `get_state` is sent on connect for the initial snapshot; a 2 s watchdog, re-armed
+  on every received `state`, re-requests a snapshot if the link goes quiet (it never
+  fires in healthy operation, since the server refreshes the meter at 5 Hz).
+
+Verified on macOS: both `make` (WebRTC auto-enabled, libdatachannel+libopus linked)
+and the link succeed; `make check` passes (exit 0, every self-test); `web_offline
+--selftest` passes (0 failures); `app.js`'s added block is brace-balanced (the
+raw `{`/`}` count carries the same +2 string-literal skew as the committed file).
+This is a responsiveness/architecture change with no new operator control, default,
+limitation or step, so the four manuals and README are intentionally unchanged.
+NOT yet verified: the live browser round-trip — control echo latency, two-browser
+consistency and a live S-meter under the push — needs a desktop faker run (next,
+operator test), as in Phases 2 and 3.  The full Phase 4 acceptance (two browsers
+consistent with GTK and each other across all three surfaces) also waits on the
+rest of the control surface.
 
 ### 2026-10-23 — Phase 3 slice 2b: signaling over the WebSocket + browser peer
 
@@ -377,16 +423,21 @@ not separately reported by the operator — sustained-duration continuity, the
 autoplay-unlock affordance, mute/unmute, tab sleep/resume and multi-receiver
 audio are confirmed only as "audio works", the rest harness/implementation-only.
 
-## Exact next slice: Phase 4 — pushed state + controls
+## Exact next slice: Phase 4 — the RX control surface
 
-Phase 3 is complete (code shipped, live-confirmed above).  The next
-implementation slice is Phase 4's first step: replace the browser's
-500 ms `get_state` poll with server-pushed state events on change (frequency,
-mode, MOX, active RX, receiver add/remove), keeping `get_state` as the initial
-snapshot and a fallback.  This removes the fixed latency floor on every control
-and is the precondition for the fuller RX control surface (AGC, filter, NB/NR,
-step, band) that follows.  Authenticated LAN access and control leases remain
-gated behind their own phase and the loopback-only rule (decision #2/#5).
+Phase 4 slice 1 (server-pushed state) is shipped and live-pending above.  The
+pushed `state` frame is now the authoritative echo for every control, so the next
+slice adds the fuller receive controls on top of it: AGC mode, AF/RF gain,
+attenuation, squelch, the noise controls (NB/NR/ANF/SNB, honouring the DIGU/DIGL
+and decoder bypass rule), tuning step, band up/down, and RIT/split.  Each follows
+the Phase 1 command pattern — a validated `command` with an `ext_*`/`g_idle_add`
+setter on the GTK thread — and the matching read-back fields are added to
+`append_state_body` so a change made from any surface echoes to every browser.
+Decoder status/textual output and sub-receiver/bookmark controls are the later
+steps.  This slice is the first that is operator-visible (new controls), so it
+must update the four manuals and README.  Authenticated LAN access and control
+leases remain gated behind their own phase and the loopback-only rule (decision
+#2/#5).
 
 ### 2026-10-22 — WAN/jitter design decision
 

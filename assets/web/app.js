@@ -2,7 +2,7 @@
 
 const modes = ["LSB", "USB", "DSB", "CWL", "CWU", "FMN", "AM", "DIGU", "SPEC", "DIGL", "SAM", "DRM", "WFM"];
 const cards = new Map();
-let socket, reconnectTimer, pollTimer, radioState;
+let socket, reconnectTimer, stateWatchdog, radioState;
 let nextId = 1, socketGeneration = 0;
 let capabilities = [];
 const connection = document.querySelector("#connection");
@@ -334,20 +334,30 @@ function closeAllAudio() {
   }
 }
 
+// The server pushes `state` on change plus a steady meter refresh, so the page
+// no longer polls.  This watchdog is the fallback the server contract keeps:
+// if no state arrives for a few refresh intervals the link has gone quiet, so
+// re-request a snapshot before giving up on it.
+function armStateWatchdog() {
+  clearTimeout(stateWatchdog);
+  stateWatchdog = setTimeout(() => {
+    if (socket?.readyState === WebSocket.OPEN) { send({ type: "get_state" }); armStateWatchdog(); }
+  }, 2000);
+}
+
 function connect() {
-  clearTimeout(reconnectTimer); clearInterval(pollTimer); setConnection("Connecting…");
+  clearTimeout(reconnectTimer); clearTimeout(stateWatchdog); setConnection("Connecting…");
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${scheme}://${location.host}/ws`, "machpsdr.v1");
   socket.binaryType = "arraybuffer";
   socket.addEventListener("open", () => {
-    socketGeneration++; setConnection("Connected", true); send({ type: "get_state" });
-    pollTimer = setInterval(() => send({ type: "get_state" }), 500);
+    socketGeneration++; setConnection("Connected", true); send({ type: "get_state" }); armStateWatchdog();
   });
   socket.addEventListener("message", event => {
     if (typeof event.data !== "string") { handleBinary(event.data); return; }
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === "hello") { capabilities = message.capabilities || []; updateAudioAvailability(); }
-    if (message.type === "state") render(message);
+    if (message.type === "state") { render(message); armStateWatchdog(); }
     if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
     if (message.type === "rtc_offer") handleRtcOffer(message.rx, message.sdp);
     if (message.type === "rtc_candidate") handleRtcCandidate(message.rx, message.candidate, message.mid);
@@ -356,7 +366,7 @@ function connect() {
     if (message.type === "error") revision.textContent = `Command failed: ${message.message}`;
   });
   socket.addEventListener("close", () => {
-    clearInterval(pollTimer); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
+    clearTimeout(stateWatchdog); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }
