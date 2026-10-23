@@ -43,7 +43,8 @@ typedef void (*web_rtc_state_cb)(void *user, gboolean connected, gboolean failed
 /* Create a session (does not negotiate yet).  Returns NULL on failure. */
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
                                      web_rtc_state_cb state, void *user,
-                                     const char *ice_server, guint16 udp_port);
+                                     const char *advertised_address,
+                                     guint16 udp_port);
 
 /* Add the Opus send-only audio track and emit the SDP offer via the signal
  * callback.  Call once, after creation. */

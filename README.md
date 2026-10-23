@@ -615,9 +615,10 @@ can be replayed separately in the I/Q Player.
   salted PBKDF2 hash. With protection disabled, anyone who can reach the port can
   control the radio. Direct Internet use requires forwarding the selected HTTPS
   TCP port and the WebRTC audio UDP port (8081 by default) to the MacHPSDR
-  computer, and should always keep password protection enabled. The bundled
-  default uses Cloudflare's public STUN service to advertise the forwarded media
-  path; the STUN address is editable, and may be cleared for LAN-only use.
+  computer, and should always keep password protection enabled. No STUN, TURN or
+  other third-party service is involved: the server advertises the same address
+  through which the browser opened the page, together with the configured UDP
+  port.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a

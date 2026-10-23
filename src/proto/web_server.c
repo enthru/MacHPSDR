@@ -76,6 +76,7 @@ typedef struct {
      send through the serialized client_send() path, never touching GTK. */
   WEB_RTC_SESSION *rtc;
   gint rtc_rx;
+  char rtc_address[INET_ADDRSTRLEN];
 #endif
 } WEB_CLIENT;
 
@@ -202,6 +203,30 @@ static gboolean origin_allowed(const char *request) {
   return header_value(request,"Host",host,sizeof(host))!=NULL &&
          web_origin_matches_host(origin,host);
 }
+
+#ifdef WEBRTC
+/* Resolve the authority the browser actually used for this HTTPS/WebSocket
+   connection.  With an explicit UDP port-forward that same public/LAN address
+   is the WebRTC destination, so no third-party STUN discovery is needed. */
+static gboolean request_ipv4_address(const char *request, char *out, size_t out_len) {
+  char authority[256], name[256];
+  if(header_value(request,"Host",authority,sizeof(authority))==NULL || authority[0]=='[')
+    return FALSE; /* the embedded listener is currently IPv4-only */
+  const char *colon=strrchr(authority,':');
+  size_t name_len=(colon!=NULL && strchr(authority,':')==colon)
+                    ? (size_t)(colon-authority) : strlen(authority);
+  if(name_len==0 || name_len>=sizeof(name)) return FALSE;
+  memcpy(name,authority,name_len); name[name_len]='\0';
+  struct addrinfo hints={0}, *result=NULL;
+  hints.ai_family=AF_INET;
+  hints.ai_socktype=SOCK_DGRAM;
+  if(getaddrinfo(name,NULL,&hints,&result)!=0 || result==NULL) return FALSE;
+  struct sockaddr_in *address=(struct sockaddr_in *)result->ai_addr;
+  gboolean ok=inet_ntop(AF_INET,&address->sin_addr,out,(socklen_t)out_len)!=NULL;
+  freeaddrinfo(result);
+  return ok;
+}
+#endif
 
 static gboolean request_authenticated(const char *request) {
   if(web_radio==NULL || !web_radio->web_auth_enable) return TRUE;
@@ -433,7 +458,7 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         client->rtc_rx=request->rx;
         g_mutex_unlock(&client->queue_mutex);
         WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client,
-                                               web_radio->web_stun_server,
+                                               client->rtc_address,
                                                (guint16)web_radio->web_rtc_port);
         if(s==NULL || !web_rtc_session_offer(s)) {
           if(s!=NULL) web_rtc_session_free(s);
@@ -650,16 +675,14 @@ static gpointer web_sender_thread(gpointer data) {
 }
 
 static gboolean websocket_session(WEB_CLIENT *client) {
-  gchar *ice_server=web_json_escape(web_radio->web_stun_server);
   gchar *hello=g_strdup_printf(
       "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
 #ifdef WEBRTC
-      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"],\"ice_server\":\"%s\"}",
+      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"],\"audio_udp_port\":%d}",
 #else
-      "\"capabilities\":[\"control\",\"spectrum\"],\"ice_server\":\"%s\"}",
+      "\"capabilities\":[\"control\",\"spectrum\"],\"audio_udp_port\":%d}",
 #endif
-      ice_server);
-  g_free(ice_server);
+      web_radio->web_rtc_port);
   g_atomic_int_set(&client->upgraded,TRUE);
   client->sender=g_thread_new("web-spectrum",web_sender_thread,client);
   gboolean hello_ok=ws_send_text(client,hello);
@@ -782,6 +805,11 @@ static gpointer web_client_thread(gpointer data) {
     } else if(!origin_allowed(request)) {
       http_error(&client->io,403,"WebSocket origin is not allowed\n");
     } else if(tci_ws_io_accept(&client->io,key,"machpsdr.v1")) {
+#ifdef WEBRTC
+      client->rtc_address[0]='\0';
+      if(!request_ipv4_address(request,client->rtc_address,sizeof(client->rtc_address)))
+        log_debug("web: could not resolve request Host for the WebRTC UDP candidate\n");
+#endif
       net_set_rcvtimeo(fd,0);
       net_set_sndtimeo(fd,250);
       websocket_session(client);

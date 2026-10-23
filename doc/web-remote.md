@@ -15,11 +15,12 @@ Current status (2026-10-23): Phases 0-3 are complete and live-confirmed on macOS
 (control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is in progress,
 and the first three Phase 5 slices make the listener reachable on every IPv4
 interface with optional password protection, built-in HTTPS and a fixed
-STUN-discovered WebRTC UDP path for port forwarding.  The binary protocol,
-routing and regression suites pass.  Per-slice live acceptance is recorded in
-the status record; the repository's isolated macOS test session cannot create
-the application's first GTK window, so live runs happen in a normal desktop
-session.
+WebRTC UDP path for port forwarding.  The page's own address is advertised as
+that path, without STUN or another external discovery service.  The binary
+protocol, routing and regression suites pass.  Per-slice live acceptance is
+recorded in the status record; the repository's isolated macOS test session
+cannot create the application's first GTK window, so live runs happen in a
+normal desktop session.
 
 The continuously updated engineering handoff, verification record and exact
 next task are in [web-remote-status.md](web-remote-status.md).
@@ -137,9 +138,10 @@ Control/state and live media have different delivery rules:
   The existing WebSocket remains the signaling and control path.  The selected
   native implementation is libdatachannel with libopus.  It uses one
   operator-configurable UDP-mux port for all server peer connections (8081 by
-  default), with a configurable STUN server advertised to both peers.  Forward
-  that UDP port alongside the HTTPS TCP port for direct Internet use.  Empty
-  STUN configuration keeps host candidates only; TURN is not yet configured.
+  default).  The server resolves the Host used for the accepted WebSocket
+  and advertises that page address with the UDP port as an additional host
+  candidate.  Forward that UDP port alongside the HTTPS TCP port for direct
+  Internet use.  No STUN, TURN or other external service participates.
 - The fallback may carry timestamped Opus packets in binary WebSocket frames.
   PCM exists only as a diagnostic/local compatibility mode, never the default
   WAN profile.  TCP head-of-line blocking means this fallback cannot claim the
@@ -177,11 +179,12 @@ The WebSocket subprotocol is `machpsdr.v1`.  Text frames are UTF-8 JSON; bulk
 streams use binary frames.  Every connection starts with:
 
 ```json
-{"type":"hello","protocol":1,"server":"MacHPSDR","capabilities":["control","spectrum","audio"],"ice_server":"stun:stun.cloudflare.com:3478"}
+{"type":"hello","protocol":1,"server":"MacHPSDR","capabilities":["control","spectrum","audio"],"audio_udp_port":8081}
 ```
 
-`ice_server` is the operator-selected ICE/STUN URL (or the empty string).  A
-browser uses the same value as the server when constructing its peer connection.
+`audio_udp_port` is the server's fixed WebRTC UDP-mux port.  The address is the
+Host of this accepted WebSocket connection; the server resolves it and
+advertises it as an ICE host candidate, so no external discovery is required.
 The client then requests a complete snapshot:
 
 ```json
@@ -358,19 +361,19 @@ bookmarks and decoder status/output.
 - Pairing flow (QR/manual code) and failed-auth throttling.
 - Read-only viewers plus a renewable single control lease.
 - Optional mDNS advertisement on trusted interfaces.
-- HTTPS/WSS termination or documented VPN deployment, plus WebRTC ICE/STUN and
-  optional TURN for networks where direct media cannot connect.
+- HTTPS/WSS termination plus a fixed-port WebRTC ICE path that uses the page's
+  own address and needs no third-party traversal service.
 
 Implemented so far (2026-10-23): the TLS 1.2+ listener binds all IPv4 interfaces;
 optional HTTP Basic authentication covers assets and WebSocket Upgrade, persists
 only a salted PBKDF2 hash, and enforces same-origin WebSocket connections.  It
 generates a self-signed certificate or loads a custom PEM bundle.  With
 protection disabled the service is intentionally open.  Receive-audio ICE uses
-one configurable UDP-mux port for every client plus a configurable STUN server;
-the browser receives the same ICE server in `hello`.  A direct Internet setup
-forwards both the HTTPS TCP port and that WebRTC UDP port to the server.  TURN
-for networks where a direct candidate cannot connect, failed-auth throttling,
-viewer roles and a control lease remain future work.
+one configurable UDP-mux port for every client and advertises the address from
+which that client opened the page.  A direct Internet setup forwards both the
+HTTPS TCP port and that WebRTC UDP port to the server; no STUN/TURN service is
+used.  Failed-auth throttling, viewer roles and a control lease remain future
+work.
 
 Acceptance: with protection enabled, unauthenticated LAN requests receive no
 state; a stolen stale lease cannot transmit; open mode is unambiguously reported

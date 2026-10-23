@@ -5,7 +5,6 @@ const cards = new Map();
 let socket, reconnectTimer, stateWatchdog, radioState;
 let nextId = 1, socketGeneration = 0;
 let capabilities = [];
-let iceServer = "";
 const connection = document.querySelector("#connection");
 const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
@@ -348,7 +347,7 @@ function stopAudio(card, rxId) {
 function startAudio(card, rxId) {
   // The server is the offerer; we create the connection, then ask for audio and
   // answer the offer it sends back over the WebSocket.
-  const pc = new RTCPeerConnection(iceServer ? { iceServers: [{ urls: iceServer }] } : {});
+  const pc = new RTCPeerConnection();
   card._pc = pc;
   card._connected = false;
   refreshAudioButton(card);
@@ -426,7 +425,6 @@ function connect() {
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === "hello") {
       capabilities = message.capabilities || [];
-      iceServer = typeof message.ice_server === "string" ? message.ice_server : "";
       updateAudioAvailability();
     }
     if (message.type === "state") { render(message); armStateWatchdog(); }

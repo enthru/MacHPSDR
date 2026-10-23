@@ -103,18 +103,17 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   layer is inside MacHPSDR, so forwarding its TCP port requires no reverse proxy.
 - Phase 5 slice 3 adds the Internet receive-audio path.  Every server-side
   libdatachannel peer uses one persisted UDP-mux port (8081 by default), so the
-  router needs one stable UDP forwarding rule rather than a dynamic range.  A
-  persisted ICE/STUN URL defaults to `stun:stun.cloudflare.com:3478`; it is used
-  by the server and sent as additive `hello.ice_server` data so the browser uses
-  the same service.  Clearing the field disables STUN for LAN-only use.  The
-  status and Configure -> Network show both ports and tell the operator to
-  forward HTTPS/TCP plus WebRTC/UDP.
+  router needs one stable UDP forwarding rule rather than a dynamic range.  The
+  server resolves the Host of each accepted WebSocket and advertises that
+  same page address with the UDP port as an additional ICE host candidate.  No
+  STUN/TURN or third-party discovery service is used.  The status and Configure
+  -> Network show both ports and tell the operator to forward HTTPS/TCP plus
+  WebRTC/UDP.
 - Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
   gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
   decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
   decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
-  control leases, TURN relay support for networks where direct ICE cannot
-  connect, and browser TX audio.
+  control leases and browser TX audio.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -251,32 +250,30 @@ GTK settings page, receiving a 401 challenge in a real browser, the authenticate
 WebSocket Upgrade, or connecting over a second physical LAN device.  Those are
 operator desktop tests; no live/on-air claim is made.
 
-### 2026-10-23 — Phase 5 slice 3: fixed WebRTC UDP port and STUN
+### 2026-10-23 — Phase 5 slice 3: direct fixed-port WebRTC audio
 
 Receive audio can now follow the browser remote through an ordinary router port
 forward.  Configure -> Network persists a **WebRTC audio UDP port** (default
-8081) and **STUN server** (default `stun:stun.cloudflare.com:3478`).  The native
-offerer enables libdatachannel/libjuice UDP multiplexing and constrains candidate
-gathering to that one port for every client.  The server's ICE URL is included
-in the additive `hello.ice_server` field, and `app.js` supplies it to the browser
-`RTCPeerConnection`.  Editing the UDP port restarts the listener immediately;
-editing the STUN URL applies on Enter and restarts it.  An empty URL deliberately
-leaves host candidates only for LAN operation.
+8081).  The native offerer enables libdatachannel/libjuice UDP multiplexing and
+constrains candidate gathering to that one port for every client.  For each
+WebSocket the server resolves the HTTP Host through which that browser opened
+the page, then advertises that address and the UDP port as an additional ICE
+host candidate.  The additive `hello.audio_udp_port` field exposes the selected
+port.  Editing it restarts the listener immediately.  No STUN, TURN or other
+third-party service is contacted.
 
 Verified on macOS: `make -j4` links the WebRTC-enabled application and `make
 check-build` builds every configured harness.  The native `webrtc_offline
 --selftest`, run with permission to bind UDP 49001, reports a host candidate on
 exactly that port, a successful offer/answer/ICE/DTLS loopback connection, and
-75/75 Opus RTP packets at 49.8/s with PT 111, no other payloads and no bad
-sequence/timestamp steps.  A second run with
-`MACHPSDR_TEST_STUN=stun:stun.cloudflare.com:3478` also receives a public
-server-reflexive candidate and passes the media checks (49.7/s).  `web_offline
---selftest` passes all 52 protocol/routing/authentication cases;
+the explicitly advertised page address on that port, followed by 75/75 Opus RTP
+packets at 49.9/s with PT 111, no other payloads and no bad sequence/timestamp
+steps.  `web_offline --selftest` passes all 52
+protocol/routing/authentication cases;
 `web_tls_offline` completes its certificate/handshake round trip; JavaScriptCore
 parses `assets/web/app.js`; and `git diff --check` passes.  NOT verified in this
 isolated session: real router TCP/UDP forwarding, browser audio from outside the
-LAN, or restrictive-NAT behaviour.  TURN relay is not implemented; it remains
-necessary where a direct ICE route cannot be formed.
+LAN, or split-DNS behaviour.
 
 ### 2026-10-23 — Browser page re-laid-out to mirror the desktop window
 
@@ -477,7 +474,9 @@ WebRTC implementation.  Result:
   vendoring the C++ tree into the repo; `make app` then bundles the dylib plus
   openssl/usrsctp/srtp, and CI builds it on Linux/Windows.
 - **Localhost testability:** WebRTC connects on loopback with host ICE
-  candidates and needs no STUN/TURN; TURN belongs to the Phase 5 WAN/auth work.
+  candidates and needs no STUN/TURN.  The spike originally left WAN traversal
+  to Phase 5; the shipped design uses the known page address and fixed forwarded
+  UDP port instead of a traversal service.
 
 No code, build script or dependency has been committed from this spike yet; it
 records the decision only.

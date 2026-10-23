@@ -64,6 +64,8 @@ struct WEB_RTC_SESSION {
   web_rtc_signal_cb signal;
   web_rtc_state_cb state;
   void *user;
+  char advertised_address[64];
+  guint16 udp_port;
 
   /* Audio feed: a bounded single-producer ring (the RX audio thread) drained by
      one encoder worker thread.  af_w/af_r are free-running sample counters; the
@@ -126,10 +128,36 @@ static void on_local_description(int pc, const char *sdp, const char *type, void
   if(s != NULL && s->signal != NULL) s->signal(s->user, type, sdp, NULL);
 }
 
+static char *web_rtc_advertised_candidate(const char *candidate,
+                                          const char *address, guint16 port) {
+  if(candidate==NULL || address==NULL || *address=='\0' || port==0) return NULL;
+  gchar **fields=g_strsplit_set(candidate," \t",-1);
+  int index[8], count=0;
+  for(int i=0;fields[i]!=NULL && count<8;i++)
+    if(*fields[i]!='\0') index[count++]=i;
+  char *alias=NULL;
+  if(count==8 && g_ascii_strcasecmp(fields[index[2]],"udp")==0 &&
+     g_strcmp0(fields[index[6]],"typ")==0 &&
+     g_ascii_strcasecmp(fields[index[7]],"host")==0) {
+    g_free(fields[index[4]]);
+    fields[index[4]]=g_strdup(address);
+    g_free(fields[index[5]]);
+    fields[index[5]]=g_strdup_printf("%u",port);
+    alias=g_strjoinv(" ",fields);
+  }
+  g_strfreev(fields);
+  return alias;
+}
+
 static void on_local_candidate(int pc, const char *cand, const char *mid, void *ptr) {
   (void)pc;
   WEB_RTC_SESSION *s = (WEB_RTC_SESSION *)ptr;
-  if(s != NULL && s->signal != NULL) s->signal(s->user, "candidate", cand, mid);
+  if(s == NULL || s->signal == NULL) return;
+  s->signal(s->user, "candidate", cand, mid);
+  char *alias=web_rtc_advertised_candidate(cand,s->advertised_address,s->udp_port);
+  if(alias!=NULL && g_strcmp0(alias,cand)!=0)
+    s->signal(s->user,"candidate",alias,mid);
+  g_free(alias);
 }
 
 static void on_state_change(int pc, rtcState state, void *ptr) {
@@ -149,24 +177,22 @@ static void on_state_change(int pc, rtcState state, void *ptr) {
 
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
                                      web_rtc_state_cb state, void *user,
-                                     const char *ice_server, guint16 udp_port) {
+                                     const char *advertised_address,
+                                     guint16 udp_port) {
   web_rtc_init();
   WEB_RTC_SESSION *s = g_new0(WEB_RTC_SESSION, 1);
   s->track = -1;
   s->signal = signal;
   s->state = state;
   s->user = user;
+  if(advertised_address!=NULL)
+    g_strlcpy(s->advertised_address,advertised_address,sizeof(s->advertised_address));
+  s->udp_port=udp_port;
   g_mutex_init(&s->af_mutex);
   g_cond_init(&s->af_cond);
 
   rtcConfiguration cfg;
   memset(&cfg, 0, sizeof(cfg));
-  const char *ice_servers[1];
-  if(ice_server!=NULL && *ice_server!='\0') {
-    ice_servers[0]=ice_server;
-    cfg.iceServers=ice_servers;
-    cfg.iceServersCount=1;
-  }
   if(udp_port>0) {
     cfg.enableIceUdpMux=true;
     cfg.portRangeBegin=udp_port;

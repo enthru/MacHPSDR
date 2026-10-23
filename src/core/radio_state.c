@@ -279,7 +279,6 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.web_tls_bundle",radio->web_tls_bundle);
   sprintf(value,"%d",radio->web_rtc_port);
   setProperty("radio.web_rtc_port",value);
-  setProperty("radio.web_stun_server",radio->web_stun_server);
   setProperty("radio.rec_dir",radio->rec_dir);
   sprintf(value,"%d",radio->rec_iq);
   setProperty("radio.rec_iq",value);

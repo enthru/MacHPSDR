@@ -34,7 +34,7 @@ static volatile gint g_offerer_failed;
 static volatile gint g_answerer_connected;
 static volatile gint g_answerer_failed;
 static volatile gint g_fixed_port_candidate;
-static volatile gint g_srflx_candidate;
+static volatile gint g_advertised_candidate;
 
 /* RTP counters, written from the answerer track's message callback. */
 static volatile gint g_rtp_pt111;    /* RTP packets with the expected PT */
@@ -57,8 +57,8 @@ static void offerer_signal(void *user, const char *kind, const char *data, const
   } else if(g_strcmp0(kind, "candidate") == 0) {
     if(data != NULL && strstr(data, " 49001 typ host") != NULL)
       g_atomic_int_set(&g_fixed_port_candidate, 1);
-    if(data != NULL && strstr(data, " typ srflx") != NULL)
-      g_atomic_int_set(&g_srflx_candidate, 1);
+    if(data != NULL && strstr(data, " 127.0.0.1 49001 typ host") != NULL)
+      g_atomic_int_set(&g_advertised_candidate, 1);
     rtcAddRemoteCandidate(g_answerer, data, mid);
   }
 }
@@ -118,7 +118,6 @@ static void answerer_track(int pc, int tr, void *ptr) {
 
 static int run_selftest(void) {
   web_rtc_init();
-  const char *test_stun=g_getenv("MACHPSDR_TEST_STUN");
 
   rtcConfiguration cfg;
   memset(&cfg, 0, sizeof(cfg));
@@ -130,7 +129,8 @@ static int run_selftest(void) {
   rtcSetStateChangeCallback(g_answerer, answerer_state);
   rtcSetTrackCallback(g_answerer, answerer_track);
 
-  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, NULL, test_stun, 49001);
+  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, NULL,
+                                  "127.0.0.1", 49001);
   if(g_offerer == NULL) { fprintf(stderr, "offerer session create failed\n"); return 1; }
 
   if(!web_rtc_session_offer(g_offerer)) { fprintf(stderr, "offer failed\n"); return 1; }
@@ -204,12 +204,10 @@ static int run_selftest(void) {
   printf("offerer host candidate uses fixed UDP port 49001   %s\n",
          fixed_port_ok ? "PASS" : "FAIL");
   if(!fixed_port_ok) failures++;
-  if(test_stun != NULL && *test_stun != '\0') {
-    int srflx_ok=g_atomic_int_get(&g_srflx_candidate);
-    printf("STUN produces a public server-reflexive candidate  %s\n",
-           srflx_ok ? "PASS" : "FAIL");
-    if(!srflx_ok) failures++;
-  }
+  int advertised_ok=g_atomic_int_get(&g_advertised_candidate);
+  printf("page address is advertised on the audio UDP port   %s\n",
+         advertised_ok ? "PASS" : "FAIL");
+  if(!advertised_ok) failures++;
 
   /* Expect ~75 packets over ~1.5 s; allow DTLS warm-up loss and timer jitter but
      insist the stream is clearly ~50/s, every packet is Opus (PT 111) and the

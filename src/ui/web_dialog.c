@@ -60,15 +60,6 @@ static void rtc_port_cb(GtkWidget *widget, gpointer data) {
   refresh_status();
 }
 
-static void stun_server_cb(GtkWidget *widget, gpointer data) {
-  RADIO *radio=data;
-  const char *server=gtk_editable_get_text(GTK_EDITABLE(widget));
-  if(strlen(server)>=sizeof(radio->web_stun_server)) return;
-  g_strlcpy(radio->web_stun_server,server,sizeof(radio->web_stun_server));
-  if(radio->web_enable) { web_server_stop(); web_server_start(); }
-  refresh_status();
-}
-
 static void tx_enable_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->web_tx_enable=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
@@ -299,24 +290,14 @@ GtkWidget *create_web_dialog(RADIO *radio) {
   gtk_grid_attach(GTK_GRID(grid),rtc_port,1,12,1,1);
   g_signal_connect(rtc_port,"value-changed",G_CALLBACK(rtc_port_cb),radio);
 
-  GtkWidget *stun_label=gtk_label_new("ICE/STUN server (advanced):");
-  gtk_widget_set_halign(stun_label,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),stun_label,0,13,1,1);
-  GtkWidget *stun=gtk_entry_new();
-  gtk_entry_set_max_length(GTK_ENTRY(stun),255);
-  gtk_editable_set_text(GTK_EDITABLE(stun),radio->web_stun_server);
-  gtk_widget_set_tooltip_text(stun,"The default works for normal Internet access. Press Enter to apply; clear for LAN only.");
-  gtk_grid_attach(GTK_GRID(grid),stun,1,13,1,1);
-  g_signal_connect(stun,"activate",G_CALLBACK(stun_server_cb),radio);
-
   GtkWidget *hint=gtk_label_new("Internet: forward the HTTPS TCP port and WebRTC UDP port to this computer.");
   gtk_widget_set_halign(hint,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),hint,0,14,2,1);
+  gtk_grid_attach(GTK_GRID(grid),hint,0,13,2,1);
 
   status_label=gtk_label_new("Status: stopped");
   gtk_widget_set_halign(status_label,GTK_ALIGN_START);
   gtk_widget_set_margin_top(status_label,8);
-  gtk_grid_attach(GTK_GRID(grid),status_label,0,15,2,1);
+  gtk_grid_attach(GTK_GRID(grid),status_label,0,14,2,1);
   refresh_status();
 
   if(poll_id!=0) g_source_remove(poll_id);
