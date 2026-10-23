@@ -77,7 +77,11 @@ typedef enum {
   WEB_CTRL_XIT,        /* XIT offset, Hz (clamped to +/-10000) */
   WEB_CTRL_XIT_ENABLE, /* 0/1 XIT on */
   WEB_CTRL_SPLIT,      /* 0/1 split (A/B) */
-  WEB_CTRL_BAND        /* +1 up / -1 down through the band table */
+  WEB_CTRL_BAND,       /* +1 up / -1 down through the band table */
+  WEB_CTRL_RF_GAIN,    /* device-shaped RX gain or attenuation, dB */
+  WEB_CTRL_SUBRX,      /* 0/1 second demodulator */
+  WEB_CTRL_SUBRX_MIX,  /* 0 hard L/R split .. 100 mono blend */
+  WEB_CTRL_BOOKMARK    /* recall bookmark by zero-based index */
 } WEB_CONTROL;
 
 typedef struct {

@@ -71,6 +71,10 @@
               <span class="gain-tag">AGC<b class="agc-gain-val"></b></span>
               <input class="agc-gain" type="range" min="-20" max="120" step="1">
             </label>
+            <label class="gain gain-rf" title="Receiver RF front-end gain or attenuation">
+              <span class="gain-tag"><span class="rf-label">RF</span><b class="rf-gain-val"></b></span>
+              <input class="rf-gain" type="range" min="0" max="31" step="1">
+            </label>
           </div>
 
           <div class="smeter" title="Signal meter">
@@ -124,7 +128,15 @@
         <button class="chip xit-chip" type="button" title="XIT — click to toggle, wheel to adjust">XIT</button>
         <button class="chip dead" type="button" disabled title="Click-tune — not yet available in the browser remote">CTUN</button>
         <button class="chip dead" type="button" disabled title="Duplex — not yet available in the browser remote">DUP</button>
-        <button class="chip dead" type="button" disabled title="Bookmark — not yet available in the browser remote">BMK</button>
+        <button class="chip subrx-chip" type="button" title="Enable the sub-receiver on VFO B">SUB RX</button>
+        <label class="chip chip-sql subrx-mix-wrap" title="Sub-RX crossfeed: split to mono">
+          <span class="chip-select-prefix">MIX<b class="subrx-mix-val"></b></span>
+          <input class="subrx-mix" type="range" min="0" max="100" step="1">
+        </label>
+        <label class="chip chip-select-wrap bookmark-wrap" title="Recall a saved desktop bookmark">
+          <span class="chip-select-prefix">BMK</span>
+          <select class="bookmark-sel chip-select"><option value="">—</option></select>
+        </label>
         <label class="chip chip-sql" title="Squelch threshold">
           <span class="chip-select-prefix">SQL<b class="squelch-val"></b></span>
           <input class="squelch" type="range" min="0" max="100" step="1">
@@ -158,7 +170,7 @@
     </div>
     <div class="panel panel-status">
       <span class="panel-tag">STATUS</span>
-      <span id="revision">Waiting for radio state</span>
+      <div class="status-copy"><span id="decoder-title"></span><span id="decoder-text"></span><span id="revision">Waiting for radio state</span></div>
     </div>
   </footer>
   <script src="/app.js" defer></script>

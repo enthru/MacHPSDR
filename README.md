@@ -593,14 +593,16 @@ can be replayed separately in the I/Q Player.
   IPv4 interfaces; open `https://<this-computer-IP>:8080` to see every visible receiver's frequency, mode
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
-  (1024/15) profiles stay latest-only and automatically back off for a slow
+  (1024/15) plus LAN-oriented Ultra (2048/30) profiles stay latest-only and automatically back off for a slow
   browser. Click/drag/wheel tuning and draggable filter edges are available, plus
   per-receiver tuning step, AGC mode, AF gain, squelch, AGC gain, the noise
   controls (NB/NR dropdowns off/NB/NB2 and off/NR/NR2/NR3/NR4, SNB/ANF toggles —
   dimmed and suppressed in DIGU/DIGL or under a decoder, exactly as on the desktop),
   band down/up (lock-aware),
   a filter-width preset dropdown, SPLIT, and click-to-arm/scroll-to-nudge RIT/XIT; the
-  page also follows/toggles MOX on a transmit-capable
+  device-shaped RF gain/attenuation slider, sub-receiver enable and crossfeed,
+  saved-bookmark recall, and the active decoder's status/text readout are also
+  available. The page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
   session. The server pushes state as it changes rather than the page polling, so
   a control moved on the desktop or in one browser echoes to every browser live.
@@ -609,7 +611,7 @@ can be replayed separately in the I/Q Player.
   it lossy-link tolerant), with a per-receiver mute and a one-tap autoplay unlock.
   The control/signaling page is dependency-free and talks the versioned
   `machpsdr.v1` JSON protocol over WebSocket and reconnects automatically. This is
-  Phase 4 (receive controls, in progress) of the
+  the complete Phase 4 receive-control surface of the
   [browser-remote plan](doc/web-remote.md) and
   [implementation record](doc/web-remote-status.md). The server uses built-in
   HTTPS/WSS and creates a persistent self-signed certificate automatically; an

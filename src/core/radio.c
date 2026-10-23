@@ -66,6 +66,7 @@
 #include "css.h"
 //#include "rigctl.h"
 #include "receiver_dialog.h"
+#include "bookmark_dialog.h"
 #include "subrx.h"
 #include "hl2.h"
 #ifdef FT8
@@ -3261,6 +3262,22 @@ static gboolean rds_update_cb(gpointer data) {
   for(int i=0;i<3;i++) if(r->rds_label[i]!=NULL)
     gtk_label_set_text(GTK_LABEL(r->rds_label[i]),i==0?l0:i==1?l1:l2);
 #endif
+  /* Cache exactly the operator-visible readout as plain text.  The web server
+     may build a snapshot on a socket worker, so it must never call GTK label
+     accessors itself.  gtk_label_get_text() also strips FT8 Pango markup. */
+  g_strlcpy(r->decoder_status_title,
+            r->rds_title?gtk_label_get_text(GTK_LABEL(r->rds_title)):"Decode",
+            sizeof(r->decoder_status_title));
+#ifdef FT8
+  if(show_ft8 && r->ft8_label!=NULL) {
+    g_strlcpy(r->decoder_status_text,gtk_label_get_text(GTK_LABEL(r->ft8_label)),
+              sizeof(r->decoder_status_text));
+  } else
+#endif
+  {
+    g_snprintf(r->decoder_status_text,sizeof(r->decoder_status_text),"%s%s%s%s%s",
+               l0,l0[0]&&l1[0]?"\n":"",l1,(l0[0]||l1[0])&&l2[0]?"\n":"",l2);
+  }
   return TRUE;   // keep the timer running
 }
 #undef RDS_APP
@@ -3637,6 +3654,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
 
   radio=g_new0(RADIO,1);
   r=radio;
+  bookmarks_initialize();
   r->discovered=d;
   switch(d->device) {
     case DEVICE_METIS:

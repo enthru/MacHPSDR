@@ -43,6 +43,12 @@
 #include "main.h"
 #include "vfo.h"
 #include "ext.h"
+#include "subrx.h"
+#include "bookmark_dialog.h"
+#include "protocol2.h"
+#ifdef SOAPYSDR
+#include "soapy_protocol.h"
+#endif
 
 int ext_num_pad(void *data) {
   gint val=GPOINTER_TO_INT(data);
@@ -336,6 +342,48 @@ int ext_set_rx_control(void *data) {
     case WEB_CTRL_BAND:
       if(c->value>0) set_band(rx,next_band(rx->band_a),-1);
       else if(c->value<0) set_band(rx,previous_band(rx->band_a),-1);
+      break;
+    // One device-shaped front-end value.  Soapy calls it gain and exposes its
+    // range during discovery; HPSDR-family radios expose the existing ADC
+    // attenuation/LNA value.  Both paths use the same fields and hardware
+    // appliers as Configure -> Radio.
+    case WEB_CTRL_RF_GAIN:
+#ifdef SOAPYSDR
+      if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+        double lo=0.0,hi=100.0;
+        if(radio->discovered->info.soapy.rx_gains>0) {
+          lo=hi=0.0;
+          for(size_t i=0;i<radio->discovered->info.soapy.rx_gains;i++) {
+            lo+=radio->discovered->info.soapy.rx_range[i].minimum;
+            hi+=radio->discovered->info.soapy.rx_range[i].maximum;
+          }
+        }
+        radio->adc[rx->adc].gain=CLAMP((double)c->value,lo,hi);
+        soapy_protocol_set_gain(&radio->adc[rx->adc]);
+        break;
+      }
+#endif
+      if(radio->discovered->device==DEVICE_HERMES_LITE ||
+         radio->discovered->device==DEVICE_HERMES_LITE2)
+        radio->adc[rx->adc].attenuation=(int)CLAMP(c->value,(gint64)-12,(gint64)48);
+      else
+        radio->adc[rx->adc].attenuation=(int)CLAMP(c->value,(gint64)0,(gint64)31);
+      if(radio->discovered->protocol==PROTOCOL_2) protocol2_high_priority();
+      break;
+    case WEB_CTRL_SUBRX:
+      if(c->value!=0 && !rx->subrx_enable) {
+        create_subrx(rx);
+        rx->subrx_enable=TRUE;
+      } else if(c->value==0 && rx->subrx_enable) {
+        rx->subrx_enable=FALSE;
+        destroy_subrx(rx);
+      }
+      break;
+    case WEB_CTRL_SUBRX_MIX:
+      rx->subrx_mix=(int)CLAMP(c->value,(gint64)0,(gint64)100);
+      break;
+    case WEB_CTRL_BOOKMARK:
+      bookmarks_recall(rx,(int)c->value);
       break;
     default: break;
   }

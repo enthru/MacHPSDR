@@ -12,7 +12,8 @@ usable, testable application and must not make the GTK or RX audio threads wait
 for a network client.
 
 Current status (2026-10-23): Phases 0-3 are complete and live-confirmed on macOS
-(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is in progress,
+(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is fully
+implemented and awaits operator live acceptance,
 and the first three Phase 5 slices make the listener reachable on every IPv4
 interface with optional password protection, built-in HTTPS and a fixed
 WebRTC UDP path for port forwarding.  The page's own address is advertised as
@@ -224,6 +225,15 @@ with an integer `value` and a receiver `rx`: `set_step` (Hz), `set_agc`
 GTK thread, and reports the result in `state` as `step`, `agc`, `af_gain`,
 `squelch` and `agc_gain`.  Unknown actions are rejected, not ignored.
 
+The completed Phase 4 control family also includes `set_rf_gain` (the
+device-reported Soapy gain range or the existing HPSDR attenuation/LNA range),
+`set_subrx`, `set_subrx_mix` (0 hard left/right split through 100 mono blend)
+and `recall_bookmark` (zero-based index from `radio.bookmarks`).  Receiver state
+reports `rf_gain`, `rf_min`, `rf_max`, `rf_kind`, `subrx` and `subrx_mix`.
+Radio state reports the saved bookmark names/frequencies and the active
+decoder's `decoder_title`/plain-text `decoder_text`; these are pushed through
+the same state-change detector as the other controls.
+
 A spectrum subscription is explicit and per receiver.  Profile names are
 case-insensitive on input; acknowledgements and status use the canonical names.
 Balanced is the browser default:
@@ -350,19 +360,22 @@ as in Phase 2.
 - Server-pushed state events replace Phase 1 polling.
 - Active decoder status and textual output.
 
-Acceptance: two browsers stay consistent with GTK and with each other while
-controls are changed from all three surfaces.
+Acceptance: a browser stays consistent with GTK while controls are changed from
+either surface, and the broadcast regression proves the same authoritative
+state is sent to every connected browser.
 
-Implemented so far (2026-10-23, see the status record): server-pushed state
+Implemented (2026-10-23, awaiting operator live acceptance; see the status
+record): server-pushed state
 replaces the 500 ms poll (a GTK detector broadcasts a full `state` frame on any
 discrete change and refreshes the S-meter at 5 Hz; the browser keeps `get_state`
 for the connect snapshot and a quiet-link fallback), and the first receive
-controls — tuning step, AGC mode, AF gain, squelch and AGC gain — ship as
+controls — tuning step, AGC mode, AF/RF gain or attenuation, squelch and AGC
+gain — ship as
 allow-listed `command` actions whose read-back fields are in `state`, so a change
-from any surface echoes to every browser. Still to come in this phase: filter
-presets, RF gain/attenuation, the noise controls (NB/NR/ANF/SNB under the
-DIGU/DIGL and decoder bypass rule), band up/down, RIT/split, sub-receiver,
-bookmarks and decoder status/output.
+from any surface echoes to every browser. Filter presets, the noise controls
+(NB/NR/ANF/SNB under the DIGU/DIGL and decoder bypass rule), band up/down,
+RIT/split, sub-receiver enable/crossfeed, saved-bookmark recall and the active
+decoder's textual readout are included.
 
 ### Phase 5 - authenticated LAN/Internet operation
 

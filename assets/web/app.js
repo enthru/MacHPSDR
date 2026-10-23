@@ -11,6 +11,8 @@ const empty = document.querySelector("#empty");
 const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
 const revision = document.querySelector("#revision");
+const decoderTitle = document.querySelector("#decoder-title");
+const decoderText = document.querySelector("#decoder-text");
 const enableSound = document.querySelector("#enable-sound");
 
 // 135205200 Hz -> "00135.205.200": three-digit groups from the right, the top
@@ -159,6 +161,8 @@ function makeCard(rx) {
   bindSlider(".af-gain", ".af-gain-val", "set_af_gain");
   bindSlider(".squelch", ".squelch-val", "set_squelch");
   bindSlider(".agc-gain", ".agc-gain-val", "set_agc_gain");
+  bindSlider(".rf-gain", ".rf-gain-val", "set_rf_gain");
+  bindSlider(".subrx-mix", ".subrx-mix-val", "set_subrx_mix");
   const agc = card.querySelector(".agc");
   agc.addEventListener("change", () => command("set_agc", { rx: rx.id, value: Number(agc.value) }));
   const step = card.querySelector(".step");
@@ -198,6 +202,12 @@ function makeCard(rx) {
   };
   offsetChip(".rit-chip", "set_rit_enable", "set_rit", "rit", "rit_on");
   offsetChip(".xit-chip", "set_xit_enable", "set_xit", "xit", "xit_on");
+  card.querySelector(".subrx-chip").addEventListener("click", () =>
+    command("set_subrx", { rx: rx.id, value: card._rx?.subrx ? 0 : 1 }));
+  card.querySelector(".bookmark-sel").addEventListener("change", event => {
+    if (event.target.value !== "") command("recall_bookmark", { rx: rx.id, value: Number(event.target.value) });
+    event.target.value = "";
+  });
   card._audio = card.querySelector(".rx-audio");
   card._muted = false;
   const audioBtn = card.querySelector(".audio-toggle");
@@ -266,6 +276,12 @@ function render(state) {
     setSlider(".af-gain", ".af-gain-val", rx.af_gain);
     setSlider(".squelch", ".squelch-val", rx.squelch);
     setSlider(".agc-gain", ".agc-gain-val", rx.agc_gain);
+    const rf = card.querySelector(".rf-gain");
+    if (rx.rf_min !== undefined) rf.min = String(rx.rf_min);
+    if (rx.rf_max !== undefined) rf.max = String(rx.rf_max);
+    card.querySelector(".rf-label").textContent = rx.rf_kind === "attenuation" ? "ATT" : "RF";
+    setSlider(".rf-gain", ".rf-gain-val", rx.rf_gain);
+    setSlider(".subrx-mix", ".subrx-mix-val", rx.subrx_mix);
     setSelect(".agc", rx.agc);
     setSelect(".step", rx.step);
     // Noise controls: NB/NR dropdowns reflect the state (highlight the wrapper when
@@ -291,11 +307,26 @@ function render(state) {
     xitChip.textContent = rx.xit_on ? `XIT ${fmtOffset(rx.xit || 0)}` : "XIT";
     xitChip.classList.toggle("chip-on", !!rx.xit_on);
     xitChip.classList.toggle("chip-suppressed", !state.radio.can_transmit);
+    card.querySelector(".subrx-chip").classList.toggle("chip-on", !!rx.subrx);
+    card.querySelector(".subrx-mix-wrap").classList.toggle("chip-suppressed", !rx.subrx);
+    const bookmarkSel = card.querySelector(".bookmark-sel");
+    const bookmarkKey = JSON.stringify(state.radio.bookmarks || []);
+    if (bookmarkSel._key !== bookmarkKey) {
+      bookmarkSel._key = bookmarkKey;
+      bookmarkSel.textContent = "";
+      bookmarkSel.add(new Option("—", ""));
+      for (const b of state.radio.bookmarks || [])
+        bookmarkSel.add(new Option(`${b.name || "Bookmark"} · ${formatFreq(b.frequency)}`, b.id));
+    }
   }
   empty.hidden = state.receivers.length !== 0;
   mox.disabled = !state.radio.can_transmit;
   mox.classList.toggle("on", state.radio.mox);
   mox.textContent = state.radio.mox ? "MOX ON" : "MOX";
+  decoderTitle.textContent = state.radio.decoder_title || "";
+  decoderText.textContent = state.radio.decoder_text || "";
+  decoderTitle.hidden = !state.radio.decoder_text;
+  decoderText.hidden = !state.radio.decoder_text;
   revision.textContent = `State revision ${state.revision}`;
 }
 

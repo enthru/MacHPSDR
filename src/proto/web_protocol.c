@@ -339,6 +339,10 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
       {"set_xit_enable", WEB_CTRL_XIT_ENABLE},
       {"set_split",    WEB_CTRL_SPLIT},
       {"band_step",    WEB_CTRL_BAND},
+      {"set_rf_gain",  WEB_CTRL_RF_GAIN},
+      {"set_subrx",    WEB_CTRL_SUBRX},
+      {"set_subrx_mix", WEB_CTRL_SUBRX_MIX},
+      {"recall_bookmark", WEB_CTRL_BOOKMARK},
     };
     for(size_t i=0;i<G_N_ELEMENTS(controls);i++)
       if(strcmp(action,controls[i].action)==0) { out->control=controls[i].control; break; }

@@ -43,3 +43,13 @@ typedef struct _bookmark_info {
 } BOOKMARK_INFO;
 
 extern GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark);
+/* Load the shared bookmark file once.  Called on the GTK thread during radio
+   construction so web state snapshots never have to touch the property store. */
+extern void bookmarks_initialize(void);
+extern int bookmarks_count(void);
+extern const BOOKMARK *bookmarks_get(int index);
+/* Thread-safe summary for a web socket snapshot; caller frees *name. */
+extern gboolean bookmarks_copy_summary(int index,gchar **name,gint64 *frequency);
+/* Recall through the same complete state transition as a desktop activation.
+   FALSE covers an invalid index, a stale receiver or a locked VFO. */
+extern gboolean bookmarks_recall(RECEIVER *rx,int index);

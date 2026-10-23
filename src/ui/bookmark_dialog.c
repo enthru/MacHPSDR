@@ -44,6 +44,8 @@ static GtkWidget *name_text;
 
 static BOOKMARK *bookmark_head=NULL;
 static BOOKMARK *bookmark_tail=NULL;
+static gboolean bookmarks_loaded=FALSE;
+static GMutex bookmark_mutex;
 
 enum {
   NAME_COLUMN,
@@ -230,6 +232,56 @@ static void restore_bookmarks(void) {
     i++;
   }
   popPropertyStore();
+  bookmarks_loaded=TRUE;
+}
+
+void bookmarks_initialize(void) {
+  if(!bookmarks_loaded) restore_bookmarks();
+}
+
+int bookmarks_count(void) {
+  int n=0;
+  g_mutex_lock(&bookmark_mutex);
+  for(BOOKMARK *b=bookmark_head;b!=NULL;b=(BOOKMARK *)b->next) n++;
+  g_mutex_unlock(&bookmark_mutex);
+  return n;
+}
+
+gboolean bookmarks_copy_summary(int index,gchar **name,gint64 *frequency) {
+  if(name==NULL || frequency==NULL || index<0) return FALSE;
+  *name=NULL; *frequency=0;
+  g_mutex_lock(&bookmark_mutex);
+  BOOKMARK *b=bookmark_head;
+  while(b!=NULL && index-->0) b=(BOOKMARK *)b->next;
+  if(b!=NULL) { *name=g_strdup(b->name?b->name:""); *frequency=b->frequency_a; }
+  g_mutex_unlock(&bookmark_mutex);
+  return b!=NULL;
+}
+
+const BOOKMARK *bookmarks_get(int index) {
+  if(index<0) return NULL;
+  BOOKMARK *b=bookmark_head;
+  while(b!=NULL && index-->0) b=(BOOKMARK *)b->next;
+  return b;
+}
+
+gboolean bookmarks_recall(RECEIVER *rx,int index) {
+  const BOOKMARK *bookmark=bookmarks_get(index);
+  if(bookmark==NULL || rx==NULL || rx->locked) return FALSE;
+  rx->frequency_a=bookmark->frequency_a;
+  rx->frequency_b=bookmark->frequency_b;
+  rx->ctun_frequency=bookmark->ctun_frequency;
+  rx->ctun=bookmark->ctun;
+  rx->mode_a=bookmark->mode;
+  rx->filter_a=bookmark->filter;
+  rx->split=bookmark->split;
+  rx->band_a=bookmark->band;
+  receiver_mode_changed(rx,rx->mode_a);
+  receiver_filter_changed(rx,rx->filter_a);
+  frequency_changed(rx);
+  if(radio->transmitter && radio->transmitter->rx==rx)
+    transmitter_set_mode(radio->transmitter,rx->split?rx->mode_b:rx->mode_a);
+  return TRUE;
 }
 
 // GTK4: window "close-request" replaces "delete-event".
@@ -255,6 +307,7 @@ static gboolean add_cb(GtkWidget *widget,gpointer data) {
   bookmark->split=rx->split;
   bookmark->next=NULL;
 
+  g_mutex_lock(&bookmark_mutex);
   if(bookmark_tail==NULL) {
     bookmark_head=bookmark;
     bookmark_tail=bookmark;
@@ -262,6 +315,7 @@ static gboolean add_cb(GtkWidget *widget,gpointer data) {
     bookmark_tail->next=(void *)bookmark;
     bookmark_tail=bookmark;
   }
+  g_mutex_unlock(&bookmark_mutex);
 
   gtk_window_destroy(GTK_WINDOW(rx->bookmark_dialog));
   rx->bookmark_dialog=NULL;
@@ -272,9 +326,11 @@ static gboolean add_cb(GtkWidget *widget,gpointer data) {
 static gboolean update_cb(GtkWidget *widget,gpointer data) {
   BOOKMARK_INFO *info=(BOOKMARK_INFO *)data;
 
+  g_mutex_lock(&bookmark_mutex);
   g_free(info->bookmark->name);
   info->bookmark->name=g_new0(gchar,strlen(gtk_editable_get_text(GTK_EDITABLE(name_text)))+1);
   strcpy(info->bookmark->name,gtk_editable_get_text(GTK_EDITABLE(name_text)));
+  g_mutex_unlock(&bookmark_mutex);
 
   gtk_window_destroy(GTK_WINDOW(info->rx->bookmark_dialog));
   info->rx->bookmark_dialog=NULL;
@@ -304,6 +360,7 @@ void delete_cb(GtkWidget *menuitem,gpointer data) {
   BmItem *it = bm_selection ? gtk_single_selection_get_selected_item(bm_selection) : NULL;
   BOOKMARK *bookmark = it ? it->bmk : NULL;
   if(bookmark!=NULL) {
+    g_mutex_lock(&bookmark_mutex);
     // unlink from the bookmark list
     if(bookmark->previous==NULL) {
       bookmark_head=bookmark->next;
@@ -317,6 +374,7 @@ void delete_cb(GtkWidget *menuitem,gpointer data) {
       BOOKMARK *n=(BOOKMARK *)bookmark->next;
       n->previous=bookmark->previous;
     }
+    g_mutex_unlock(&bookmark_mutex);
     // remove the row from the store (found by identity)
     guint pos;
     if(g_list_store_find(store, it, &pos)) g_list_store_remove(store, pos);
@@ -374,27 +432,10 @@ void tree_selection_activated_cb(GtkColumnView *cv,guint pos,gpointer data) {
     /* A double-click in a list is one of the cheapest ways to lose a frequency,
        and recall writes frequency_a/b and the cursor straight in -- past every
        guard in receiver_move*(). LOCK has to be honoured here explicitly. */
-    if(bookmark!=NULL && !rx->locked) {
-      rx->frequency_a=bookmark->frequency_a;
-      rx->frequency_b=bookmark->frequency_b;
-      rx->ctun_frequency=bookmark->ctun_frequency;
-      rx->ctun=bookmark->ctun;
-      rx->mode_a=bookmark->mode;
-      rx->filter_a=bookmark->filter;
-      rx->split=bookmark->split;
-      rx->band_a=bookmark->band;
-      receiver_mode_changed(rx,rx->mode_a);
-      receiver_filter_changed(rx,rx->filter_a);
-      frequency_changed(rx);
-      if(radio->transmitter) {
-      if(radio->transmitter->rx==rx) {
-          if(rx->split) {
-            transmitter_set_mode(radio->transmitter,rx->mode_b);
-          } else {
-            transmitter_set_mode(radio->transmitter,rx->mode_a);
-          }
-        }
-      }
+    if(bookmark!=NULL) {
+      int index=0;
+      for(const BOOKMARK *b=bookmark_head;b!=NULL && b!=bookmark;b=(const BOOKMARK *)b->next) index++;
+      bookmarks_recall(rx,index);
     }
   }
 }
@@ -408,9 +449,7 @@ GtkWidget *create_bookmark_dialog(RECEIVER *rx,gint function,BOOKMARK *bookmark)
   gchar temp_ctun_frequency[128];
   gchar temp_ctun[128];
 
-  if(bookmark_head==NULL) {
-    restore_bookmarks();
-  }
+  bookmarks_initialize();
   // GTK4: GtkDialog is deprecated; use a plain GtkWindow with a content box.
   GtkWidget *dialog=gtk_window_new();
   gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(main_window));

@@ -140,6 +140,11 @@ typedef struct _radio {
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   gint decode_mode;        // decode_mode_t: which decoder taps DIGU/DIGL audio (OFF by default)
   GtkWidget *decode_sel;   // bottom-bar decoder selector combo (Off/FT8/FT4/SSTV)
+  /* Plain-text mirror of the active bottom-bar decoder/RDS readout.  Updated on
+     the GTK thread and consumed by the browser remote without touching widgets
+     from a socket worker. */
+  char decoder_status_title[32];
+  char decoder_status_text[2048];
   GtkWidget *sstv_panel;   // embedded SSTV image panel (NULL unless open in DIGU/DIGL+SSTV)
   gboolean sstv_panel_open;// user toggled the SSTV image panel on (in place of RX2)
   GtkWidget *wefax_panel;  // embedded WEFAX image panel (NULL unless open in DIGU/DIGL+WEFAX)

@@ -68,7 +68,8 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   `client->rtc` under `queue_mutex` (the lock the tap holds) and frees — joining
   the worker — with no lock held, so the audio thread never touches a freed
   session and the join never stalls the RX thread.
-- Phase 4 is IN PROGRESS.  Its first slice is done on `origin/master`:
+- Phase 4 implementation is COMPLETE and awaits operator live acceptance.  Its
+  first slice is done on `origin/master`:
   server-pushed state replaces the browser's 500 ms `get_state` poll.  A GTK
   main-loop detector (`web_state_tick`, 50 ms) broadcasts a full `state` frame
   the instant a discrete field moves (frequency, mode, MOX, active RX, lock,
@@ -136,18 +137,21 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   not change" (a thin edge on a 20%-tall panadapter is impractical to grab, so
   drags read as tune).  The previously-greyed SPLIT/RIT/XIT chips and new band
   down/up + filter dropdown are live; `web_offline` gains seven cases.
-- Not implemented yet (rest of Phase 4 and beyond): RF gain/attenuation
-  (device-dependent — the slider bounds are each device's gain range, which
-  discovery already reads into `info.soapy.rx_range`, so the work is state
-  plumbing plus a device-shaped slider, not new hardware-gated code; the Soapy
-  path is verifiable on the attached HackRF/Pluto, only the HPSDR attenuator
-  needs the absent HPSDR radio), sub-receiver, bookmarks and decoder status/output;
-  failed-auth throttling, token/QR pairing, viewer roles, control leases and
-  browser TX audio.
+- Phase 4 slice 5 is implemented in the current work: a device-shaped RF
+  gain/attenuation slider, sub-receiver enable plus 0..100 stereo/mono
+  crossfeed, saved-bookmark listing/recall and the active decoder's status and
+  plain-text output.  Each command uses the desktop field/choke point; no web
+  hardware path was added.  Soapy bounds come from the discovered gain-element
+  ranges, HPSDR-family bounds match Configure -> Radio, and actual RF hardware
+  effect is not a separate requirement of the web adapter.  Bookmarks are
+  loaded once on the GTK thread and recall honours VFO lock.  The decoder cache
+  is populated on the GTK timer, so socket workers never inspect GTK widgets.
+- Not implemented yet (Phase 5/6): failed-auth throttling, token/QR pairing,
+  viewer roles, control leases and browser TX audio.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
-state polling, VFO-A frequency and mode commands, meters, and MOX.  Browser PTT
+server-pushed state, VFO-A frequency and mode commands, meters, and MOX.  Browser PTT
 is additionally gated by `web_tx_enable`, a desktop checkbox that is deliberately
 session-only and resets to false on every application start.  Phase 2 adds one
 quantized latest-only spectrum row per subscribed receiver, a Canvas panadapter
@@ -203,10 +207,8 @@ click/drag/wheel tuning and draggable filter edges.
 11. Audio wins congestion arbitration.  Spectrum is latest-only and adapts in
     this order: drop expired rows, reduce FPS, reduce bins.  Audio bitrate falls
     only after the display reaches its Low profile; commands/state never drop.
-12. No WebRTC library has been selected yet.  `libdatachannel` plus `libopus` is
-    a candidate combination because the former has a C API and
-    macOS/Linux/Windows support, but adoption requires a measured bundle-size,
-    license, build and browser-interoperability spike.
+12. WebRTC uses `libdatachannel` plus `libopus`; the dependency spike and native
+    loopback/RTP proof are recorded below.
 13. Operator documentation ships atomically in English, Russian, Ukrainian and
     Belarusian.  A feature is not complete if any of `manual-en.md`,
     `manual-ru.md`, `manual-uk.md` or `manual-be.md` is stale.
@@ -728,30 +730,35 @@ not separately reported by the operator — sustained-duration continuity, the
 autoplay-unlock affordance, mute/unmute, tab sleep/resume and multi-receiver
 audio are confirmed only as "audio works", the rest harness/implementation-only.
 
-## Exact next slice: Phase 4 — RF gain, then sub-RX/bookmarks
+### 2026-10-23 — Phase 4 slice 5: remaining receive surface
 
-Slices 1 (pushed state), 2 (step/AGC/AF gain/squelch/AGC gain), 3 (NB/NR/ANF/SNB
-under the bypass rule) and 4 (filter presets, band up/down, split, RIT/XIT) are
-shipped and live-pending above.  The next slice is the one remaining receive
-control, **RF gain / attenuation**, which is device-dependent: unlike the scalars
-so far it needs each device's real gain range carried in `state` (so the browser
-can bound a slider) and gated on what the device exposes (HPSDR attenuator vs. a
-Soapy analog-gain range), applied through `soapy_protocol_set_gain`/
-`soapy_protocol_set_attenuation` or the HPSDR path.  The range is NOT new work —
-discovery already reads it (`getGainElementRange` → `info.soapy.rx_range`), and
-the apply path is the existing desktop choke point, so the slice is the same
-allow-list/`ext_set_rx_control`/clamp shape as slices 2-4.  It is kept separate
-only for the device-shaped slider.  The Soapy half is verifiable here on the
-attached HackRF/Pluto; only the HPSDR attenuator waits on the absent HPSDR radio.
+Implemented the final Phase 4 surface: `set_rf_gain`, `set_subrx`,
+`set_subrx_mix` and `recall_bookmark`, with matching state fields and browser
+controls.  The radio state now carries saved bookmark names/frequencies plus the
+active decoder title/plain-text output.  Bookmark recall and the desktop list
+share one implementation, including the VFO-lock guard; decoder text is cached
+on the GTK timer instead of reading widgets from a socket thread.
 
-After that: sub-receiver and bookmarks, then decoder status/textual output.  The
-remaining LAN/WAN security work — failed-auth throttling, pairing, viewer roles
-and control leases — stays in Phase 5 (decision #2/#5).
+Verified in this work session on macOS: `make -j4` links the full
+WebRTC/Soapy/decoder-enabled application; `make check-build` builds every
+configured harness; `web_offline --selftest` passes all 70 cases, including the
+four new allow-listed controls; bundled Node.js accepts `assets/web/app.js` with
+`--check`; `git diff --check` passes; and every configured offline harness except
+`qo100_offline` was run directly and passed.  `make check` was attempted, but the
+pre-existing `qo100_offline` hang recurred immediately after its `beacon lock
+stopped` diagnostic and was interrupted after 30 seconds; no web test failed.
+NOT yet verified live: moving the new controls in
+a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
+bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
+needed for this web adapter; the existing desktop hardware path is reused.
 
-Then sub-receiver and bookmarks, and finally decoder status/textual output.  Each
-operator-visible slice updates the four manuals and README.  The remaining LAN/WAN
-security work — failed-auth throttling, pairing, viewer roles and control leases —
-stays in Phase 5 (decision #2/#5).
+## Exact next slice: Phase 5 — authentication abuse and control ownership
+
+After operator live acceptance of Phase 4, implement failed-auth throttling,
+then pairing and viewer/controller roles with one renewable control lease.  The
+lease is also the prerequisite for Phase 6 browser transmit audio and its
+disconnect/heartbeat emergency-unkey rules.  Optional trusted-interface mDNS
+remains a separate Phase 5 convenience slice.
 
 ### 2026-10-22 — WAN/jitter design decision
 

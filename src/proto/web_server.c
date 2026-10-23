@@ -21,6 +21,7 @@
 #include "dac.h"
 #include "radio.h"
 #include "ext.h"
+#include "bookmark_dialog.h"
 #include "tci_ws.h"
 #include "web_protocol.h"
 #include "web_server.h"
@@ -290,10 +291,28 @@ static gboolean ws_send_error(WEB_CLIENT *client, gint64 id, const char *code, c
    excluded so meter noise never reads as a state change. */
 static void append_state_body(GString *s, gboolean include_meter) {
   int active=web_radio->active_receiver ? web_radio->active_receiver->channel : -1;
+  gchar *decoder_title=web_json_escape(web_radio->decoder_status_title);
+  gchar *decoder_text=web_json_escape(web_radio->decoder_status_text);
   g_string_append_printf(s,
-      "\"radio\":{\"mox\":%s,\"can_transmit\":%s,\"active_rx\":%d},\"receivers\":[",
+      "\"radio\":{\"mox\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
+      "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
+      "\"bookmarks\":[",
       web_radio->mox?"true":"false",
-      (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active);
+      (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active,
+      web_radio->decode_mode,decoder_title,decoder_text);
+  g_free(decoder_title); g_free(decoder_text);
+  gboolean first_bookmark=TRUE;
+  int bookmark_count=bookmarks_count();
+  for(int bi=0;bi<bookmark_count;bi++) {
+    gchar *raw_name=NULL; gint64 frequency=0;
+    if(!bookmarks_copy_summary(bi,&raw_name,&frequency)) continue;
+    gchar *name=web_json_escape(raw_name);
+    g_string_append_printf(s,"%s{\"id\":%d,\"name\":\"%s\",\"frequency\":%lld}",
+                           first_bookmark?"":",",bi,name,(long long)frequency);
+    first_bookmark=FALSE;
+    g_free(raw_name); g_free(name);
+  }
+  g_string_append(s,"]},\"receivers\":[");
   gboolean first=TRUE;
   for(int i=0;i<web_radio->discovered->supported_receivers;i++) {
     RECEIVER *rx=visible_rx(i);
@@ -322,10 +341,32 @@ static void append_state_body(GString *s, gboolean include_meter) {
     // desktop keeps the selection but suppresses the WDSP run flags; the browser
     // shows them suppressed rather than pretending they took effect.
     int nb = rx->nb2 ? 2 : (rx->nb ? 1 : 0);
+    int rf_value=web_radio->adc[rx->adc].attenuation,rf_min=0,rf_max=31;
+    const char *rf_kind="attenuation";
+#ifdef SOAPYSDR
+    if(web_radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
+      double lo=0.0,hi=100.0;
+      if(web_radio->discovered->info.soapy.rx_gains>0) {
+        lo=hi=0.0;
+        for(size_t gi=0;gi<web_radio->discovered->info.soapy.rx_gains;gi++) {
+          lo+=web_radio->discovered->info.soapy.rx_range[gi].minimum;
+          hi+=web_radio->discovered->info.soapy.rx_range[gi].maximum;
+        }
+      }
+      rf_value=(int)lrint(web_radio->adc[rx->adc].gain);
+      rf_min=(int)ceil(lo); rf_max=(int)floor(hi); rf_kind="gain";
+    } else
+#endif
+    if(web_radio->discovered->device==DEVICE_HERMES_LITE ||
+       web_radio->discovered->device==DEVICE_HERMES_LITE2) {
+      rf_min=-12; rf_max=48; rf_kind="gain";
+    }
     g_string_append_printf(s,
         "\"locked\":%s,\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
         "\"af_gain\":%d,\"agc\":%d,\"agc_gain\":%d,\"squelch\":%d,"
         "\"nb\":%d,\"nr\":%d,\"anf\":%s,\"snb\":%s,\"noise_bypassed\":%s,"
+        "\"rf_gain\":%d,\"rf_min\":%d,\"rf_max\":%d,\"rf_kind\":\"%s\","
+        "\"subrx\":%s,\"subrx_mix\":%d,"
         "\"display_low\":%lld,\"display_high\":%lld,",
         rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
@@ -333,6 +374,7 @@ static void append_state_body(GString *s, gboolean include_meter) {
         (int)lrint(rx->squelch*100.0),
         nb,receiver_nr_mode(rx),rx->anf?"true":"false",rx->snb?"true":"false",
         receiver_dsp_bypassed(rx)?"true":"false",
+        rf_value,rf_min,rf_max,rf_kind,rx->subrx_enable?"true":"false",rx->subrx_mix,
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));

@@ -99,6 +99,17 @@ int main(int argc, char **argv) {
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_BAND && r.value==-1);
   check("band step still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"band_step\",\"value\":1}",&r));
+  check("RF front-end control parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_rf_gain\",\"rx\":0,\"value\":24}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_RF_GAIN && r.value==24);
+  check("sub-RX controls parse",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_subrx_mix\",\"rx\":0,\"value\":50}",&r) &&
+        r.control==WEB_CTRL_SUBRX_MIX &&
+        parse("{\"type\":\"command\",\"id\":8,\"action\":\"set_subrx\",\"rx\":0,\"value\":1}",&r) &&
+        r.control==WEB_CTRL_SUBRX);
+  check("bookmark recall parses",
+        parse("{\"type\":\"command\",\"id\":9,\"action\":\"recall_bookmark\",\"rx\":0,\"value\":2}",&r) &&
+        r.control==WEB_CTRL_BOOKMARK && r.value==2);
   check("a control still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_af_gain\",\"value\":40}",&r));
   check("a control rejects a boolean value",
