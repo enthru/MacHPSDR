@@ -137,8 +137,11 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   drags read as tune).  The previously-greyed SPLIT/RIT/XIT chips and new band
   down/up + filter dropdown are live; `web_offline` gains seven cases.
 - Not implemented yet (rest of Phase 4 and beyond): RF gain/attenuation
-  (device-dependent — needs each device's gain range plumbed into state and live
-  hardware to verify), sub-receiver, bookmarks and decoder status/output;
+  (device-dependent — the slider bounds are each device's gain range, which
+  discovery already reads into `info.soapy.rx_range`, so the work is state
+  plumbing plus a device-shaped slider, not new hardware-gated code; the Soapy
+  path is verifiable on the attached HackRF/Pluto, only the HPSDR attenuator
+  needs the absent HPSDR radio), sub-receiver, bookmarks and decoder status/output;
   failed-auth throttling, token/QR pairing, viewer roles, control leases and
   browser TX audio.
 
@@ -218,6 +221,17 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — operator live-confirmed Phases 4 and 5
+
+The operator confirmed on 2026-10-23 that everything shipped in Phases 4 (pushed
+state, all receive controls, noise controls, filter/band/split/RIT/XIT) and 5
+(LAN listener, password, TLS, fixed-port WebRTC audio) works live.  The
+"NOT verified live" / "operator step" caveats in the per-slice entries below are
+therefore cleared; they are kept as the implementation history, not as open
+items.  All test hardware is present on this machine (HackRF, Pluto over USB) —
+the only thing still absent is an HPSDR radio (and thus the two-receiver HPSDR
+pair), so every remaining HPSDR-specific claim stays emulator-only.
 
 ### 2026-10-23 — Phase 5 slice 1: LAN listener and optional password
 
@@ -723,8 +737,12 @@ control, **RF gain / attenuation**, which is device-dependent: unlike the scalar
 so far it needs each device's real gain range carried in `state` (so the browser
 can bound a slider) and gated on what the device exposes (HPSDR attenuator vs. a
 Soapy analog-gain range), applied through `soapy_protocol_set_gain`/
-`soapy_protocol_set_attenuation` or the HPSDR path.  It is also the only one that
-cannot be meaningfully proven without live hardware, so it is kept separate.
+`soapy_protocol_set_attenuation` or the HPSDR path.  The range is NOT new work —
+discovery already reads it (`getGainElementRange` → `info.soapy.rx_range`), and
+the apply path is the existing desktop choke point, so the slice is the same
+allow-list/`ext_set_rx_control`/clamp shape as slices 2-4.  It is kept separate
+only for the device-shaped slider.  The Soapy half is verifiable here on the
+attached HackRF/Pluto; only the HPSDR attenuator waits on the absent HPSDR radio.
 
 After that: sub-receiver and bookmarks, then decoder status/textual output.  The
 remaining LAN/WAN security work — failed-auth throttling, pairing, viewer roles
