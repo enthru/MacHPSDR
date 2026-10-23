@@ -291,6 +291,16 @@ Acceptance: continuous audio for 30 minutes, bounded memory, automatic recovery
 after a tab sleeps, no RX-thread socket writes, and the shaped-WAN target below
 does not accumulate latency.
 
+Implemented (2026-10-23, see the status record): libdatachannel + libopus
+WebRTC Opus mono track, 20 ms packets, 32 kbps with in-band FEC; a bounded
+200 ms per-session ring fed from the RX thread (no socket writes there) and
+drained by a per-session encoder worker; auto-start per receiver with a local
+mute and a one-tap autoplay unlock in the browser; the browser's own jitter
+buffer and Opus PLC serve the 150-600 ms target.  Deliberately NOT built: the
+Opus-over-WebSocket PCM/local fallback — WebRTC is the single audio transport
+(see "Decisions" in the status record).  The 30-minute on-air acceptance is the
+operator's pending step.
+
 ### Phase 4 - complete receive controls
 
 - Filters, step, AGC, AF/RF gain, attenuation, squelch, noise controls, RIT,

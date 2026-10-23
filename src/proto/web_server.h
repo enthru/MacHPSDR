@@ -15,4 +15,9 @@ const char *web_server_status(void);
 void web_server_publish_spectrum(int receiver, const float *bins, unsigned count,
                                  float calibration_db, float floor_db, float span_db);
 
+/* RX-audio-thread seam: hand one 48 kHz interleaved-stereo block to any client
+   subscribed to this receiver's WebRTC audio.  Bounded enqueue only; no-op
+   without WebRTC or subscribers. */
+void web_server_audio_tap(int receiver, const double *stereo, int frames);
+
 #endif

@@ -300,13 +300,17 @@ static void web_rtc_on_state(void *user, gboolean connected, gboolean failed) {
   client_send(client,1,msg,strlen(msg));
 }
 
-/* Free the audio session.  Must be called with NO client lock held: the free
-   joins libdatachannel threads whose signal callback takes send_mutex. */
+/* Free the audio session.  The pointer is cleared under queue_mutex (the lock
+   the RX-audio tap holds while feeding the session), so the tap never touches a
+   session being freed; the actual free -- which joins libdatachannel and the
+   encoder worker -- happens with NO lock held, both because those threads' own
+   callbacks take send_mutex and so the join never stalls the audio thread. */
 static void web_rtc_teardown(WEB_CLIENT *client) {
-  if(client->rtc!=NULL) {
-    web_rtc_session_free(client->rtc);
-    client->rtc=NULL;
-  }
+  g_mutex_lock(&client->queue_mutex);
+  WEB_RTC_SESSION *s=client->rtc;
+  client->rtc=NULL;
+  g_mutex_unlock(&client->queue_mutex);
+  if(s!=NULL) web_rtc_session_free(s);
 }
 #endif /* WEBRTC */
 
@@ -355,15 +359,26 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
     if(visible_rx(request->rx)==NULL)
       return ws_send_error(client,request->id,"invalid_receiver","receiver is not available");
     switch(request->type) {
-      case WEB_REQUEST_AUDIO_SUBSCRIBE:
+      case WEB_REQUEST_AUDIO_SUBSCRIBE: {
         web_rtc_teardown(client);            /* replace any existing session */
+        /* rtc_rx must be set before the offer: web_rtc_session_offer() can fire
+           the signal callback synchronously, and that callback tags the SDP
+           with rtc_rx.  Build and offer the session with no client lock held
+           (gathering starts here), then publish the pointer under queue_mutex
+           so the audio tap can begin feeding it. */
+        g_mutex_lock(&client->queue_mutex);
         client->rtc_rx=request->rx;
-        client->rtc=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client);
-        if(client->rtc==NULL || !web_rtc_session_offer(client->rtc)) {
-          web_rtc_teardown(client);
+        g_mutex_unlock(&client->queue_mutex);
+        WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client);
+        if(s==NULL || !web_rtc_session_offer(s)) {
+          if(s!=NULL) web_rtc_session_free(s);
           return ws_send_error(client,request->id,"rtc_failed","could not start audio");
         }
+        g_mutex_lock(&client->queue_mutex);
+        client->rtc=s;
+        g_mutex_unlock(&client->queue_mutex);
         break;
+      }
       case WEB_REQUEST_AUDIO_UNSUBSCRIBE:
         web_rtc_teardown(client);
         break;
@@ -872,6 +887,31 @@ void web_server_publish_spectrum(int receiver, const float *bins, unsigned count
   }
   g_mutex_unlock(&web_clients_mutex);
   g_bytes_unref(raw);
+}
+
+/* Fan a receiver's demodulated audio block out to every client subscribed to
+   that receiver's audio.  Called from the RX audio thread via receiver.c; the
+   per-session feed only converts and enqueues under a short lock, and the whole
+   call is a no-op with no WebRTC build or no audio subscribers.  queue_mutex
+   guards client->rtc against a concurrent teardown (see web_rtc_teardown). */
+void web_server_audio_tap(int receiver, const double *stereo, int frames) {
+#ifdef WEBRTC
+  if(!g_atomic_int_get(&web_running) || stereo==NULL || frames<=0 ||
+     receiver<0 || receiver>=MAX_RECEIVERS) return;
+  g_mutex_lock(&web_clients_mutex);
+  for(int i=0;i<WEB_MAX_CLIENTS;i++) {
+    WEB_CLIENT *client=&web_clients[i];
+    if(client->fd<0) continue;
+    g_mutex_lock(&client->queue_mutex);
+    if(client->rtc!=NULL && client->rtc_rx==receiver &&
+       g_atomic_int_get(&client->upgraded) && !g_atomic_int_get(&client->closing))
+      web_rtc_session_feed(client->rtc,stereo,frames);
+    g_mutex_unlock(&client->queue_mutex);
+  }
+  g_mutex_unlock(&web_clients_mutex);
+#else
+  (void)receiver; (void)stereo; (void)frames;
+#endif
 }
 
 const char *web_server_status(void) {

@@ -57,6 +57,17 @@ void web_rtc_session_add_candidate(WEB_RTC_SESSION *s, const char *cand, const c
 /* The Opus track id to push RTP into (slice 3); -1 until offered. */
 int web_rtc_session_track(const WEB_RTC_SESSION *s);
 
+/* Hand one block of demodulated receive audio to the session's Opus encoder.
+ * `stereo` is interleaved L/R at 48 kHz (the RX audio_output_buffer layout) and
+ * `frames` the number of sample pairs; the left channel is taken as the mono
+ * source.  This is the audio producer's only touch point: it converts and
+ * enqueues into a bounded ring under a short lock and never encodes, allocates
+ * or writes a socket (decision #6/#14).  A per-session worker thread drains the
+ * ring, encodes 20 ms Opus frames and packetizes them into the track.  Safe to
+ * call before the connection is up (the frames are consumed and dropped) and
+ * when `s` is NULL (no-op). */
+void web_rtc_session_feed(WEB_RTC_SESSION *s, const double *stereo, int frames);
+
 /* Close and free the session. */
 void web_rtc_session_free(WEB_RTC_SESSION *s);
 

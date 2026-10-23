@@ -30,29 +30,46 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   faker on macOS 2026-10-22/23; the receiver card, panadapter and waterfall
   render and tune in the browser).  The quantitative measurements in "Exact next
   slice" were waived by the operator rather than recorded.
-- Phase 3 (receive audio over WebRTC) is IN PROGRESS.  Done so far, all on
-  `origin/master`: slice 1 (libdatachannel build integration behind an
-  auto-enabling `WEBRTC` make flag), slice 2a (the server `WEB_RTC_SESSION`
-  offer/Opus-track + the `webrtc_offline` loopback-connect harness, PASS), slice
-  2b (signaling over the WebSocket and the browser `RTCPeerConnection`).  The
-  live browser connect was confirmed by the operator on 2026-10-23: the "Listen"
-  button appears and reaches the connected state.  There is NO audio in the track
-  yet — that is the next slice.
-- Next implementation slice: slice 3 — feed Opus RTP into the track from the AF
-  tap, with the audio UX below.  See "Exact next slice" for the full task.
-- Decisions that bind slice 3:
+- Phase 3 (receive audio over WebRTC) is IMPLEMENTED end to end, pending the
+  operator's on-air listen.  Done, all on `origin/master`: slice 1
+  (libdatachannel build integration behind an auto-enabling `WEBRTC` make flag),
+  slice 2a (the server `WEB_RTC_SESSION` offer/Opus-track + the `webrtc_offline`
+  loopback-connect harness), slice 2b (signaling over the WebSocket and the
+  browser `RTCPeerConnection`; live connect confirmed by the operator
+  2026-10-23), and slice 3 (the Opus audio feed itself + the auto-start/mute
+  browser UX).  Slice 3 is proven natively: `webrtc_offline --selftest` now also
+  feeds real-time audio into the server session and pulls RTP off the answerer's
+  track — 75 packets, PT 111, 0 stray, 50.0/s over 1.50 s, zero loss.  What
+  remains for Phase 3 is the operator confirming audible, continuous audio in the
+  browser from the faker, and that mute/unmute and tab sleep/resume behave.
+- Decisions realised in slice 3 (were "binding", now shipped):
   - There is no local/PCM audio mode.  WebRTC is the single audio transport; the
     WebSocket stays the signaling/control plane.
-  - No explicit "Listen" button.  Audio auto-starts when a receiver appears
-    (auto `audio_subscribe`); the per-receiver button becomes mute/unmute.
-    Browsers block autoplay without a user gesture, so when the first `play()` is
-    blocked, show a small one-tap "enable sound" affordance, then never again.
+  - No explicit "Listen" button.  Audio auto-starts when a receiver card appears
+    (`audio_subscribe` from `makeCard`/`updateAudioAvailability`); the
+    per-receiver button is mute/unmute (local `<audio>.muted`).  Browsers block
+    autoplay without a gesture, so a blocked first `play()` raises a one-tap
+    "Tap to enable sound" affordance, then never again (`audioUnlocked`).
   - The `WEBRTC` make flag auto-enables when `build/libdatachannel` is present
     (run `tools/build-libdatachannel.sh` once), so a plain `make` includes it;
-    `make WEBRTC_INCLUDE=off` forces it off.  The operator's `./machpsdr` is a
-    WebRTC build.
-- Not implemented yet: the Opus audio feed itself, full RX controls, pushed
-  state events, authenticated LAN access, control leases and browser TX audio.
+    `make WEBRTC_INCLUDE=off` forces it off.  libopus is a hard companion of the
+    flag, found through `pkg-config` (brew `opus` / `libopus-dev` / mingw `opus`).
+    The operator's `./machpsdr` is a WebRTC build.
+- How the audio flows: `process_rx_buffer()` taps the clean 48 kHz
+  interleaved-stereo demod block (beside the AF recorder, before the software
+  listen gain) and calls `web_server_audio_tap()`, which fans it to every client
+  subscribed to that receiver.  `web_rtc_session_feed()` takes the left channel
+  into a bounded 200 ms ring under `queue_mutex` (never encodes or writes a
+  socket on the RX thread — decision #6/#14).  A per-session worker thread drains
+  the ring, encodes 20 ms Opus frames (`libopus`, 48 kHz mono, 32 kbps, in-band
+  FEC), sets the RTP timestamp and pushes each frame into the track's Opus
+  packetizer (PT 111, SSRC `0x4d485344`).  Lifetime: `web_rtc_teardown()` nulls
+  `client->rtc` under `queue_mutex` (the lock the tap holds) and frees — joining
+  the worker — with no lock held, so the audio thread never touches a freed
+  session and the join never stalls the RX thread.
+- Not implemented yet: full RX controls, pushed state events (the page still
+  polls `get_state` every 500 ms), authenticated LAN access, control leases and
+  browser TX audio.
 
 The local remote provides a disabled-by-default listener bound to
 `127.0.0.1`, bundled static assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -339,40 +356,39 @@ Headless verification performed in this session is recorded below.  It does not
 prove GTK/browser peak alignment, measured browser bitrate or unchanged RX
 cadence under a throttled real socket.
 
-## Exact next slice: Phase 3 slice 3 — Opus audio into the track
+## Verification record
 
-The connection is up; it carries no audio yet.  This slice makes the browser
-hear the receiver.
+### 2026-10-23 — Phase 3 slice 3 (Opus audio into the track) implemented
 
-Server (`web_rtc.c` + a tap in `receiver.c`):
+The server now produces receive audio and the browser auto-plays it.  Native
+proof: `make WEBRTC_INCLUDE=WEBRTC webrtc-offline && ./webrtc_offline --selftest`
+reports both the loopback connect PASS and, with real-time synthetic audio fed
+into the live `web_rtc.c` session, RTP arriving on the answerer's track at
+**75 packets, PT 111, 0 stray, 50.0/s over 1.50 s, zero loss** (two runs).  The
+RTP/RTCP demux in the harness correctly discards the SR reporter's sender
+reports.  `make check` passes; `make` (WebRTC auto-enabled) links the app with
+libopus.  Not yet done: the operator's on-air listen (audible/continuous audio
+from the faker, mute/unmute, tab sleep/resume).  The four manuals, README and
+this record were updated in the same commit.
 
-1. Tap demodulated AF where the AF recorder does — `process_rx_buffer()` around
-   `receiver.c:2881`, 48 kHz mono, before the software listen gain — and hand the
-   block to a bounded single-producer queue.  The RX audio thread only converts
-   and enqueues; it never encodes or writes a socket (decision #6/#14).
-2. A per-session worker (not the RX thread) encodes 20 ms Opus frames with
-   `libopus` (brew `opus` 1.6.1, BSD; add an `opus` dependency alongside
-   `libdatachannel`, auto-detected the same way) and pushes them into the track
-   with `rtcSendMessage` on the Opus track id (`web_rtc_session_track()`), using
-   the PT/SSRC already offered (111 / `0x4d485344`).  libdatachannel packetizes
-   to RTP; set up the RTP packetizer/clock on the track (`rtcSetOpusPacketizer`
-   or the media-handler API — check the installed `rtc/rtc.h`).
-3. The track is sendonly from the server; the session already negotiates it.
+Remaining caveats, pending the operator: nobody has HEARD the browser audio;
+decoder-under-load behaviour, the autoplay-unlock affordance and multi-receiver
+audio are harness/implementation-only.
 
-Browser (`assets/web/`):
+## Exact next slice: Phase 3 close-out, then Phase 4 — pushed state + controls
 
-4. Remove the explicit "Listen" button.  Auto-`audio_subscribe` when a receiver
-   card appears and attach the track to the `<audio>` element.
-5. The per-receiver button becomes mute/unmute (local `<audio>.muted` / volume).
-6. Autoplay: if the first `play()` rejects, show a small one-tap "enable sound"
-   affordance, then proceed automatically afterwards.
+Phase 3 has no code left; it closes when the operator confirms the browser audio
+on the faker (audible, continuous, correct receiver), that the per-receiver
+mute/unmute works, and that a tab sleep/resume recovers the stream.  Record the
+result here (waive the measurement or capture it, operator's call).
 
-Verify: native first — extend `webrtc_offline` (or a new harness) to pull RTP
-off the answerer's track and confirm Opus frames arrive at ~50/s with the right
-PT.  Then the operator confirms audible, continuous RX audio in the browser from
-the faker, and that muting/unmuting and a tab sleep/resume behave.  Update the
-four manuals (`manual-{en,ru,uk,be}.md`) in the same commit — they were
-intentionally deferred from slice 2b until audio is operator-usable.
+The next implementation slice is Phase 4's first step: replace the browser's
+500 ms `get_state` poll with server-pushed state events on change (frequency,
+mode, MOX, active RX, receiver add/remove), keeping `get_state` as the initial
+snapshot and a fallback.  This removes the fixed latency floor on every control
+and is the precondition for the fuller RX control surface (AGC, filter, NB/NR,
+step, band) that follows.  Authenticated LAN access and control leases remain
+gated behind their own phase and the loopback-only rule (decision #2/#5).
 
 ### 2026-10-22 — WAN/jitter design decision
 

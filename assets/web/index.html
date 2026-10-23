@@ -16,6 +16,7 @@
   </header>
 
   <main>
+    <button id="enable-sound" class="enable-sound" type="button" hidden>🔈 Tap to enable sound</button>
     <section id="empty" class="empty" hidden>No visible receiver is available.</section>
     <section id="receivers" class="receivers" aria-live="polite"></section>
   </main>
@@ -36,7 +37,7 @@
             <option>High</option>
           </select>
         </label>
-        <button class="audio-toggle" type="button" hidden>Listen</button>
+        <button class="audio-toggle" type="button" hidden aria-pressed="false">Mute</button>
         <span class="spectrum-status">Waiting for spectrum</span>
       </div>
       <audio class="rx-audio" hidden></audio>

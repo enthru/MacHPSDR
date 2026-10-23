@@ -206,8 +206,12 @@ endif
 
 ifeq ($(WEBRTC_INCLUDE),WEBRTC)
 WEBRTC_OPTIONS=-D WEBRTC
-WEBRTC_INCLUDES=-I$(WEBRTC_PREFIX)/include
-WEBRTC_LIBS=-L$(WEBRTC_PREFIX)/lib -ldatachannel
+# libopus encodes the receive audio into the track; it is a tiny, ubiquitous
+# dependency (brew opus / libopus-dev / mingw opus) found through pkg-config the
+# same way GTK is.  WebRTC audio is the only reason WEBRTC is built, so opus is a
+# hard companion of the flag rather than a second auto-detect.
+WEBRTC_INCLUDES=-I$(WEBRTC_PREFIX)/include $(shell pkg-config --cflags opus)
+WEBRTC_LIBS=-L$(WEBRTC_PREFIX)/lib -ldatachannel $(shell pkg-config --libs opus)
 ifeq ($(UNAME_S),Linux)
 WEBRTC_RPATH=-Wl,-rpath,'$$ORIGIN/$(WEBRTC_PREFIX)/lib'
 endif

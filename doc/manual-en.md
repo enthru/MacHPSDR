@@ -807,12 +807,17 @@ drag it to move the tuning frequency, use the wheel for one tuning step, or drag
 either highlighted filter edge. The status beside the profile reports the
 effective profile, received FPS, row age and rows dropped for a slow browser;
 MacHPSDR automatically reduces FPS before width and recovers after congestion.
-Browser
+Each receiver's demodulated audio plays automatically — there is no "listen"
+step — as a WebRTC Opus stream the browser decodes with its own jitter buffer,
+so it rides a lossy link far better than the control channel would. The
+per-receiver **Mute**/**Unmute** button silences it locally without tearing the
+stream down. Because browsers block sound until you interact with the page, the
+first time you may see a green **Tap to enable sound** button; one tap starts the
+audio and it does not appear again. Browser
 PTT is disabled separately: tick **Allow browser PTT (this session only)** when
 it is deliberately needed. That permission resets to off at every MacHPSDR
 start. This first version listens on this computer only, so another computer,
-phone or the Internet cannot connect yet. Receive audio is not available yet.
-The status line shows the local URL
+phone or the Internet cannot connect yet. The status line shows the local URL
 and connected-client count.
 
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied

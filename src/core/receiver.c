@@ -2937,6 +2937,10 @@ static void process_rx_buffer(RECEIVER *rx) {
 
   // Tap the clean demodulated audio (pre listen-volume) for recording.
   recorder_audio(rx, rx->audio_output_buffer, rx->output_samples);
+  // Browser remote: the same clean 48 kHz demod audio feeds the WebRTC Opus
+  // encoder for any browser subscribed to this receiver.  Bounded enqueue only
+  // (no encode or socket on this thread); a no-op without WebRTC/subscribers.
+  web_server_audio_tap(rx->channel, rx->audio_output_buffer, rx->output_samples);
   // TCI (Phase C): stream this receiver's audio to any audio_start client --
   // from the pre-AGC tap when there is one. No-op with no subscribers (single
   // atomic read inside).

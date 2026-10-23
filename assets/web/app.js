@@ -11,6 +11,11 @@ const empty = document.querySelector("#empty");
 const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
 const revision = document.querySelector("#revision");
+const enableSound = document.querySelector("#enable-sound");
+// Browsers block autoplay with sound until the page has had a user gesture.
+// Once any play() succeeds (or the viewer taps the affordance), the whole tab is
+// unlocked and the prompt never returns.
+let audioUnlocked = false;
 
 function setConnection(text, online = false) {
   connection.textContent = text;
@@ -118,13 +123,17 @@ function makeCard(rx) {
   card.querySelector(".apply-frequency").addEventListener("click", tune);
   input.addEventListener("keydown", event => { if (event.key === "Enter") tune(); });
   card._audio = card.querySelector(".rx-audio");
+  card._muted = false;
   const audioBtn = card.querySelector(".audio-toggle");
   audioBtn.hidden = !capabilities.includes("audio");
-  audioBtn.addEventListener("click", () => toggleAudio(card, rx.id));
+  audioBtn.addEventListener("click", () => toggleMute(card));
   installSpectrumGestures(card, rx.id);
   receivers.append(card);
   cards.set(rx.id, card);
   subscribe(card, rx.id);
+  // Audio auto-starts: there is no "Listen" step. The per-receiver button is a
+  // mute/unmute for the audio already flowing.
+  if (capabilities.includes("audio")) startAudio(card, rx.id);
   return card;
 }
 
@@ -133,7 +142,7 @@ function render(state) {
   const live = new Set(state.receivers.map(rx => rx.id));
   for (const [id, card] of cards) if (!live.has(id)) {
     send({ type: "spectrum_unsubscribe", rx: id });
-    if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
+    if (card._pc) { send({ type: "audio_unsubscribe", rx: id }); try { card._pc.close(); } catch {} card._pc = null; }
     card.remove(); cards.delete(id);
   }
   for (const rx of state.receivers) {
@@ -233,32 +242,52 @@ function updateSpectrumStatus(message) {
   card.querySelector(".spectrum-profile").value = message.profile;
 }
 
-function setAudioLabel(card, text) {
+// The button shows, and flips, the mute state; while the track is still coming
+// up it is disabled and reads "Connecting…".
+function refreshAudioButton(card) {
   const button = card.querySelector(".audio-toggle");
-  if (button) button.textContent = text;
+  if (!button) return;
+  if (!card._connected) { button.disabled = true; button.textContent = "Connecting…"; button.setAttribute("aria-pressed", "false"); return; }
+  button.disabled = false;
+  button.textContent = card._muted ? "Unmute" : "Mute";
+  button.setAttribute("aria-pressed", card._muted ? "true" : "false");
 }
 function updateAudioAvailability() {
   const available = capabilities.includes("audio");
-  for (const card of cards.values()) {
+  for (const [rxId, card] of cards) {
     const button = card.querySelector(".audio-toggle");
     if (button) button.hidden = !available;
+    // A hello arriving after the cards were built (e.g. a reconnect) is where a
+    // newly-available audio capability turns into a running stream.
+    if (available && !card._pc) startAudio(card, rxId);
   }
+}
+// Attempt playback; if the browser blocks it for want of a gesture, raise the
+// one-tap affordance. A muted element always plays, so this only ever prompts
+// for audible sound the viewer has not yet allowed.
+function tryPlay(card) {
+  if (!card._audio) return;
+  card._audio.play().then(() => { audioUnlocked = true; enableSound.hidden = true; })
+                    .catch(() => { if (!card._muted) enableSound.hidden = false; });
 }
 function stopAudio(card, rxId) {
   send({ type: "audio_unsubscribe", rx: rxId });
   if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
   if (card._audio) card._audio.srcObject = null;
-  setAudioLabel(card, "Listen");
+  card._connected = false;
+  refreshAudioButton(card);
 }
 function startAudio(card, rxId) {
   // The server is the offerer; we create the connection, then ask for audio and
   // answer the offer it sends back over the WebSocket.
   const pc = new RTCPeerConnection();
   card._pc = pc;
-  setAudioLabel(card, "Connecting…");
+  card._connected = false;
+  refreshAudioButton(card);
   pc.addEventListener("track", event => {
     card._audio.srcObject = event.streams[0];
-    card._audio.play().catch(() => {});
+    card._audio.muted = card._muted;
+    tryPlay(card);
   });
   pc.addEventListener("icecandidate", event => {
     if (event.candidate)
@@ -266,13 +295,20 @@ function startAudio(card, rxId) {
   });
   pc.addEventListener("connectionstatechange", () => {
     if (!card._pc) return;
-    if (pc.connectionState === "connected") setAudioLabel(card, "Stop");
-    else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) setAudioLabel(card, "Listen");
+    if (pc.connectionState === "connected") { card._connected = true; refreshAudioButton(card); tryPlay(card); }
+    else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) { card._connected = false; refreshAudioButton(card); }
   });
   send({ type: "audio_subscribe", rx: rxId });
 }
-function toggleAudio(card, rxId) {
-  if (card._pc) stopAudio(card, rxId); else startAudio(card, rxId);
+function toggleMute(card) {
+  card._muted = !card._muted;
+  if (card._audio) {
+    card._audio.muted = card._muted;
+    // Unmuting is a user gesture, so a stream parked by a blocked autoplay can
+    // start now.
+    if (!card._muted) tryPlay(card);
+  }
+  refreshAudioButton(card);
 }
 async function handleRtcOffer(rxId, sdp) {
   const card = cards.get(rxId);
@@ -282,7 +318,7 @@ async function handleRtcOffer(rxId, sdp) {
     const answer = await card._pc.createAnswer();
     await card._pc.setLocalDescription(answer);
     send({ type: "rtc_answer", rx: rxId, sdp: card._pc.localDescription.sdp });
-  } catch { setAudioLabel(card, "Audio error"); }
+  } catch { card._connected = false; refreshAudioButton(card); }
 }
 async function handleRtcCandidate(rxId, candidate, mid) {
   const card = cards.get(rxId);
@@ -293,7 +329,8 @@ function closeAllAudio() {
   for (const card of cards.values()) {
     if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
     if (card._audio) card._audio.srcObject = null;
-    setAudioLabel(card, "Listen");
+    card._connected = false;
+    refreshAudioButton(card);
   }
 }
 
@@ -314,7 +351,8 @@ function connect() {
     if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
     if (message.type === "rtc_offer") handleRtcOffer(message.rx, message.sdp);
     if (message.type === "rtc_candidate") handleRtcCandidate(message.rx, message.candidate, message.mid);
-    if (message.type === "rtc_state") { const c = cards.get(message.rx); if (c && c._pc) setAudioLabel(c, message.connected ? "Stop" : "Connecting…"); }
+    // The local RTCPeerConnection's connectionstatechange drives the button; the
+    // server's rtc_state is just a log line here.
     if (message.type === "error") revision.textContent = `Command failed: ${message.message}`;
   });
   socket.addEventListener("close", () => {
@@ -325,5 +363,11 @@ function connect() {
 
 mox.addEventListener("click", () => {
   if (radioState?.can_transmit) command("set_mox", { value: !radioState.mox });
+});
+// One tap unlocks audio for the whole tab, then the prompt never returns.
+enableSound.addEventListener("click", () => {
+  audioUnlocked = true;
+  enableSound.hidden = true;
+  for (const card of cards.values()) if (card._audio && !card._muted) card._audio.play().catch(() => {});
 });
 connect();

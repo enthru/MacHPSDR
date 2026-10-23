@@ -588,7 +588,7 @@ can be replayed separately in the I/Q Player.
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
 
-- **Browser remote (local control and spectrum).** An optional web server built into
+- **Browser remote (local control, spectrum and audio).** An optional web server built into
   MacHPSDR, enabled in **Configure → Network** and bound to localhost by default.
   Open `http://127.0.0.1:8080` to see every visible receiver's frequency, mode
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
@@ -597,10 +597,14 @@ can be replayed separately in the I/Q Player.
   browser. Click/drag/wheel tuning and draggable filter edges are available;
   the page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
-  session. The dependency-free page talks the versioned `machpsdr.v1` JSON
-  protocol over WebSocket and reconnects automatically. This is Phase 2 of the
+  session. Each receiver's demodulated audio plays automatically over a **WebRTC
+  Opus** stream (libdatachannel + libopus; the browser's own jitter buffer makes
+  it lossy-link tolerant), with a per-receiver mute and a one-tap autoplay unlock.
+  The control/signaling page is dependency-free and talks the versioned
+  `machpsdr.v1` JSON protocol over WebSocket and reconnects automatically. This is
+  Phase 3 of the
   [browser-remote plan](doc/web-remote.md) and
-  [implementation record](doc/web-remote-status.md); receive audio, complete
+  [implementation record](doc/web-remote-status.md); complete
   controls and authenticated LAN access are the next
   isolated phases. Until authentication lands the listener deliberately accepts
   loopback only.
