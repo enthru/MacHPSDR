@@ -17,9 +17,10 @@ surface), and the first three Phase 5 slices make the listener reachable on ever
 interface with optional password protection, built-in HTTPS and a fixed
 WebRTC UDP path for port forwarding.  The page's own address is advertised as
 that path, without STUN or another external discovery service.  The binary
-protocol, routing and regression suites pass.  Phase 6 has started with its
-exclusive renewable browser-TX lease, heartbeat/disconnect emergency unkey and
-visible remote-PTT indication; browser microphone audio is the next slice.
+protocol, routing and regression suites pass.  Phase 6 now has its exclusive
+renewable browser-TX lease, heartbeat/disconnect emergency unkey, visible
+remote-PTT indication and browser microphone audio over the bidirectional
+WebRTC Opus track.
 Per-slice live acceptance is
 recorded in the status record; the repository's isolated macOS test session
 cannot create the application's first GTK window, so live runs happen in a
@@ -227,7 +228,17 @@ the holder may set MOX true; any client may request MOX false as an emergency
 unkey.  Disconnect, expiry or withdrawal of the session-only desktop PTT arm
 revokes the lease and dispatches an unkey through the GTK main loop.  State
 reports `tx_lease_active` to all viewers and `remote_ptt` while browser MOX is
-active.  Lease ownership is never recoverable across a WebSocket reconnect.
+active.  `tx_media_active` reports that fresh browser microphone media is
+arriving.  Lease ownership is never recoverable across a WebSocket reconnect.
+After acquiring the lease the page requests microphone permission, adds its
+mono audio track to the existing WebRTC session and shows a local input meter.
+The server decodes incoming Opus on the libdatachannel worker, copies 48 kHz
+samples into a bounded 250 ms ring and lets the transmitter audio thread pop
+them at its existing microphone substitution point.  MOX-on is rejected until
+fresh microphone media has arrived.  A 500 ms media gap while remote PTT is
+active revokes the lease and emergency-unkeys; permission failure releases the
+lease and leaves the page receive-only.  Codec and socket work never runs on
+the GTK or transmitter audio threads.
 
 Besides `set_frequency`, `set_mode`, `set_mox` and `set_filter`, protocol v1
 carries an allow-listed family of scalar per-receiver controls, each a `command`
@@ -430,8 +441,11 @@ Implemented so far (2026-10-23): after the desktop session-only PTT arm, one
 browser may take an exclusive TX lease.  It renews every two seconds and expires
 after five; disconnect, expiry, explicit release or withdrawing the arm revokes
 it and emergency-unkeys.  Every viewer receives the lease/remote-PTT state and
-shows a visible `REMOTE PTT` indicator.  Microphone permission, TX media and the
-remaining transmit controls are not yet implemented.
+shows a visible `REMOTE PTT` indicator.  Once it owns the lease, the browser
+requests microphone permission, displays a local level meter and sends mono
+Opus on the bidirectional WebRTC audio track.  MOX requires fresh media; a
+500 ms media gap during remote PTT revokes the lease and emergency-unkeys.
+Tune/drive/TX-processing controls and the PWA/accessibility pass remain.
 
 ## Non-functional targets
 

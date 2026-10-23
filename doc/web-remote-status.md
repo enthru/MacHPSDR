@@ -153,10 +153,19 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   emergency-unkeys through `ext_set_mox` on the GTK thread.  MOX-on requires the
   live holder (MOX-off stays available as an emergency action); every viewer sees
   the active-lease state and a `REMOTE PTT` indicator while browser MOX is on.
-  The lease is tied to the WebSocket and cannot survive reconnect.  Browser
-  microphone/TX media is not implemented yet.
+  The lease is tied to the WebSocket and cannot survive reconnect.
+- Phase 6 slice 2 is implemented in the current work: the browser asks for its
+  microphone only after it owns the TX lease, shows a local level meter, and
+  renegotiates the existing audio session as bidirectional Opus.  libdatachannel
+  decodes incoming RTP on its worker and performs only a bounded copy into a
+  250 ms 48 kHz mono ring; the transmitter audio thread pops that ring at its
+  existing microphone substitution point.  MOX-on requires fresh media.  A
+  500 ms media gap while browser PTT is active revokes the lease and unkeys;
+  permission failure releases the lease and leaves receive audio running.  The
+  pushed `tx_media_active` field makes the page wait for an actual incoming
+  media packet, rather than only ICE connection state, before enabling MOX.
 - Not implemented yet: failed-auth throttling, token/QR pairing, general
-  viewer/controller roles, browser TX audio and the remaining Phase 6 controls.
+  viewer/controller roles and the remaining Phase 6 controls/PWA polish.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -233,6 +242,31 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 6 slice 2: browser microphone TX audio
+
+Extended the single WebRTC audio m-line to sendrecv.  The page requests a mono
+microphone only after acquiring the connection-bound TX lease, exposes a local
+input meter, restarts the peer with that track, and keeps MOX disabled until the
+media connection is ready.  The server decodes browser Opus on the
+libdatachannel callback thread into a bounded 48 kHz mono ring; the transmitter
+uses those samples at its existing microphone choke point.  MOX-on is rejected
+without fresh media, and a 500 ms media timeout during remote PTT revokes the
+lease and schedules emergency unkey.
+
+Verified in this work session on macOS: `make -j4` compiles and links the full
+WebRTC build and `make check-build` builds every configured harness;
+`webrtc_offline --selftest` passes offer/answer/ICE/DTLS and both
+media directions, receiving all 75 server-to-browser Opus RTP packets with no
+sequence/timestamp errors and decoding 72,000 browser-to-server samples at RMS
+0.141; `web_offline --selftest` passes all 71 cases, `web_tls_offline --selftest`
+and `i18n_offline --selftest` pass; and `git diff --check` passes.  The JavaScript syntax check could not use
+the system `node` command because it is not installed; the repository's bundled
+runtime accepts `assets/web/app.js` with `--check`.  A local static-page visual
+check confirms the lower TX/status bar layout and caught/fixed the MIC meter's
+hidden-state CSS.  NOT verified live: browser
+permission UX, the MIC meter, restart/lease-loss behaviour against a running
+desktop, or any on-air modulation/unkey effect.
 
 ### 2026-10-23 — Phase 6 slice 1: TX lease and emergency unkey
 
@@ -785,16 +819,14 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: Phase 6 — browser microphone into WebRTC
+## Exact next slice: Phase 6 — remaining transmit controls
 
-Extend the existing libdatachannel session with a browser-to-server Opus audio
-track, request microphone permission only after the browser holds the TX lease,
-show a local input-level meter, and feed decoded 48 kHz mono samples into the
-existing transmitter audio choke point without doing codec or socket work on
-the GTK/DSP threads.  A missing media heartbeat must revoke the lease and unkey;
-microphone denial/failure must remain RX-only.  Headless loopback must prove the
-incoming RTP/decode path before any live or on-air claim.  The remaining Phase 5
-pairing/roles/throttling work is intentionally deferred by operator request.
+Add the browser's Tune, drive and essential TX-processing controls through the
+same desktop choke points, keeping Tune and MOX state authoritative and the
+emergency-unkey path independent of ordinary command acknowledgements.  Extend
+state, allow-list tests and all four manuals together.  Keep on-air verification
+separate from headless/UI proof.  The remaining Phase 5 pairing/roles/throttling
+work is intentionally deferred by operator request.
 
 ### 2026-10-22 — WAN/jitter design decision
 

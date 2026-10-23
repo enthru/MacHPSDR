@@ -39,10 +39,14 @@ typedef void (*web_rtc_signal_cb)(void *user, const char *kind,
 
 /* Connection-state change, from a libdatachannel worker thread. */
 typedef void (*web_rtc_state_cb)(void *user, gboolean connected, gboolean failed);
+/* Decoded browser microphone audio: 48 kHz mono float samples, delivered on a
+   libdatachannel worker thread.  The owner must only perform a bounded copy. */
+typedef void (*web_rtc_tx_audio_cb)(void *user, const float *mono, int frames);
 
 /* Create a session (does not negotiate yet).  Returns NULL on failure. */
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
-                                     web_rtc_state_cb state, void *user,
+                                     web_rtc_state_cb state,
+                                     web_rtc_tx_audio_cb tx_audio, void *user,
                                      const char *advertised_address,
                                      guint16 udp_port);
 

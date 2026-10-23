@@ -6,6 +6,8 @@ let socket, reconnectTimer, stateWatchdog, leaseRenewTimer, radioState;
 let nextId = 1, socketGeneration = 0;
 let capabilities = [];
 let leaseHeld = false;
+let micStream = null, micContext = null, micAnalyser = null, micMeterTimer = null;
+let micReady = false, micGeneration = 0;
 const connection = document.querySelector("#connection");
 const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
@@ -13,6 +15,8 @@ const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
 const txControl = document.querySelector("#tx-control");
 const remotePtt = document.querySelector("#remote-ptt");
+const micLevelWrap = document.querySelector("#mic-level-wrap");
+const micLevel = document.querySelector("#mic-level");
 const revision = document.querySelector("#revision");
 const decoderTitle = document.querySelector("#decoder-title");
 const decoderText = document.querySelector("#decoder-text");
@@ -43,11 +47,20 @@ function send(message) {
   return true;
 }
 function setLeaseHeld(held) {
+  const changed = leaseHeld !== held;
   leaseHeld = held;
   clearTimeout(leaseRenewTimer);
   if (held && socket?.readyState === WebSocket.OPEN)
     leaseRenewTimer = setTimeout(() => send({ type: "lease_renew" }), 2000);
+  if (changed) {
+    if (held) startMicrophone();
+    else stopMicrophone();
+  }
   if (radioState) renderTx(radioState);
+}
+function txMediaReady(radio) {
+  return micReady && !!radio.tx_media_active &&
+         [...cards.values()].some(card => card._pc && card._connected);
 }
 function renderTx(radio) {
   const leaseAvailable = capabilities.includes("tx_lease");
@@ -55,12 +68,13 @@ function renderTx(radio) {
   txControl.hidden = !leaseAvailable;
   txControl.disabled = !radio.can_transmit || busy;
   txControl.classList.toggle("held", leaseHeld);
-  txControl.textContent = leaseHeld ? "Release TX control" :
+  txControl.textContent = leaseHeld ? (micReady ? "Release TX control" : "Starting microphone…") :
                           (busy ? "TX control in use" : "Take TX control");
-  mox.disabled = !radio.can_transmit || !leaseHeld;
+  mox.disabled = !radio.can_transmit || !leaseHeld || !txMediaReady(radio);
   mox.classList.toggle("on", radio.mox);
   mox.textContent = radio.mox ? "MOX ON" : "MOX";
   remotePtt.hidden = !radio.remote_ptt;
+  micLevelWrap.hidden = !leaseHeld;
 }
 function command(action, fields) { send({ type: "command", action, ...fields }); }
 function subscribe(card, rx) {
@@ -465,6 +479,59 @@ function stopAudio(card, rxId) {
   card._connected = false;
   refreshAudioButton(card);
 }
+function restartAudioSessions() {
+  if (socket?.readyState !== WebSocket.OPEN || !capabilities.includes("audio")) return;
+  for (const [rxId, card] of cards) {
+    stopAudio(card, rxId);
+    startAudio(card, rxId);
+  }
+}
+function stopMicrophone() {
+  micGeneration++;
+  micReady = false;
+  clearInterval(micMeterTimer); micMeterTimer = null;
+  if (micStream) for (const track of micStream.getTracks()) track.stop();
+  micStream = null; micAnalyser = null;
+  if (micContext) micContext.close().catch(() => {});
+  micContext = null; micLevel.value = 0; micLevelWrap.hidden = true;
+  restartAudioSessions();
+}
+async function startMicrophone() {
+  const generation = ++micGeneration;
+  micReady = false;
+  if (radioState) renderTx(radioState);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1, echoCancellation: false, noiseSuppression: false,
+      autoGainControl: false
+    }});
+    if (!leaseHeld || generation !== micGeneration) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    micStream = stream;
+    micContext = new AudioContext();
+    const source = micContext.createMediaStreamSource(stream);
+    micAnalyser = micContext.createAnalyser();
+    micAnalyser.fftSize = 512;
+    source.connect(micAnalyser);
+    const samples = new Float32Array(micAnalyser.fftSize);
+    micMeterTimer = setInterval(() => {
+      if (!micAnalyser) return;
+      micAnalyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const value of samples) sum += value * value;
+      micLevel.value = Math.min(1, Math.sqrt(sum / samples.length) * 4);
+    }, 100);
+    micReady = true;
+    restartAudioSessions();
+    if (radioState) renderTx(radioState);
+  } catch (error) {
+    revision.textContent = `Microphone unavailable: ${error?.message || error}`;
+    send({ type: "lease_release" });
+    setLeaseHeld(false);
+  }
+}
 function startAudio(card, rxId) {
   // The server is the offerer; we create the connection, then ask for audio and
   // answer the offer it sends back over the WebSocket.
@@ -472,6 +539,8 @@ function startAudio(card, rxId) {
   card._pc = pc;
   card._connected = false;
   refreshAudioButton(card);
+  if (leaseHeld && micReady && micStream)
+    for (const track of micStream.getAudioTracks()) pc.addTrack(track, micStream);
   pc.addEventListener("track", event => {
     card._audio.srcObject = event.streams[0];
     card._audio.muted = card._muted;
@@ -485,6 +554,7 @@ function startAudio(card, rxId) {
     if (!card._pc) return;
     if (pc.connectionState === "connected") { card._connected = true; refreshAudioButton(card); tryPlay(card); }
     else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) { card._connected = false; refreshAudioButton(card); }
+    if (radioState) renderTx(radioState);
   });
   send({ type: "audio_subscribe", rx: rxId });
 }

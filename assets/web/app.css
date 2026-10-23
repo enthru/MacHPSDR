@@ -171,6 +171,9 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .tx-control { color: var(--text); background: #162731; border: 1px solid #315064; border-radius: 7px; padding: .5rem .75rem; cursor: pointer; }
 .tx-control:disabled { opacity: .45; cursor: default; }
 .tx-control.held { color: #07140b; background: var(--green); border-color: var(--green); }
+.mic-level { display: flex; align-items: center; gap: .35rem; color: var(--ink-dim); font-size: .65rem; font-weight: 800; letter-spacing: .08em; }
+.mic-level[hidden] { display: none; }
+.mic-level meter { width: 5rem; height: .65rem; accent-color: var(--green); }
 .remote-ptt { color: #190407; background: var(--red); border-radius: 999px; padding: .35rem .65rem; font-size: .72rem; font-weight: 900; letter-spacing: .08em; box-shadow: 0 0 18px rgba(255,95,109,.45); }
 
 /* ---- Narrow screens ---- */

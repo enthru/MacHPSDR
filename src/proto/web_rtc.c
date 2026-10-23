@@ -61,8 +61,10 @@ gboolean web_rtc_selftest(void) {
 struct WEB_RTC_SESSION {
   int pc;
   int track;
+  int rx_track;
   web_rtc_signal_cb signal;
   web_rtc_state_cb state;
+  web_rtc_tx_audio_cb tx_audio;
   void *user;
   char advertised_address[64];
   guint16 udp_port;
@@ -71,6 +73,7 @@ struct WEB_RTC_SESSION {
      one encoder worker thread.  af_w/af_r are free-running sample counters; the
      live span af_w-af_r never exceeds WEB_RTC_RING. */
   OpusEncoder *enc;
+  OpusDecoder *dec;
   float *ring;
   guint64 af_w, af_r;
   guint64 dropped;
@@ -81,6 +84,58 @@ struct WEB_RTC_SESSION {
   volatile gint connected;
   uint32_t rtp_ts;
 };
+
+/* Locate an Opus payload in one RTP packet.  The browser may include CSRCs,
+   header extensions or padding; none are part of the Opus packet handed to the
+   decoder.  RTCP is multiplexed on the same callback and is rejected here. */
+static gboolean web_rtc_rtp_payload(const guint8 *p, int size,
+                                    const guint8 **payload, int *payload_len) {
+  if(p==NULL || size<12 || (p[0]>>6)!=2) return FALSE;
+  if(p[1]>=192 && p[1]<=223) return FALSE;
+  if((p[1]&0x7f)!=WEB_RTC_OPUS_PT) return FALSE;
+  int off=12+4*(p[0]&0x0f);
+  if(off>size) return FALSE;
+  if(p[0]&0x10) {
+    if(off+4>size) return FALSE;
+    int words=((int)p[off+2]<<8)|p[off+3];
+    off+=4+4*words;
+    if(off>size) return FALSE;
+  }
+  int end=size;
+  if(p[0]&0x20) {
+    int padding=p[size-1];
+    if(padding<=0 || padding>end-off) return FALSE;
+    end-=padding;
+  }
+  if(end<=off) return FALSE;
+  *payload=p+off; *payload_len=end-off;
+  return TRUE;
+}
+
+static void web_rtc_on_track_message(int id, const char *message, int size, void *ptr) {
+  (void)id;
+  WEB_RTC_SESSION *s=(WEB_RTC_SESSION *)ptr;
+  if(s==NULL || s->dec==NULL || s->tx_audio==NULL) return;
+  const guint8 *payload=NULL; int payload_len=0;
+  if(!web_rtc_rtp_payload((const guint8 *)message,size,&payload,&payload_len)) return;
+  float pcm[5760]; /* Opus maximum: 120 ms at 48 kHz. */
+  int frames=opus_decode_float(s->dec,payload,payload_len,pcm,G_N_ELEMENTS(pcm),0);
+  if(frames<0) {
+    log_debug("webrtc: opus_decode_float failed (%d)\n",frames);
+    return;
+  }
+  if(frames>0) s->tx_audio(s->user,pcm,frames);
+}
+
+static void web_rtc_on_track(int pc, int tr, void *ptr) {
+  (void)pc;
+  WEB_RTC_SESSION *s=(WEB_RTC_SESSION *)ptr;
+  if(s==NULL) return;
+  s->rx_track=tr;
+  rtcSetUserPointer(tr,s);
+  rtcChainRtcpReceivingSession(tr);
+  rtcSetMessageCallback(tr,web_rtc_on_track_message);
+}
 
 /* --- Opus encoder worker (one per session) -------------------------------- */
 
@@ -176,14 +231,17 @@ static void on_state_change(int pc, rtcState state, void *ptr) {
 /* --- session ------------------------------------------------------------- */
 
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
-                                     web_rtc_state_cb state, void *user,
+                                     web_rtc_state_cb state,
+                                     web_rtc_tx_audio_cb tx_audio, void *user,
                                      const char *advertised_address,
                                      guint16 udp_port) {
   web_rtc_init();
   WEB_RTC_SESSION *s = g_new0(WEB_RTC_SESSION, 1);
   s->track = -1;
+  s->rx_track = -1;
   s->signal = signal;
   s->state = state;
+  s->tx_audio = tx_audio;
   s->user = user;
   if(advertised_address!=NULL)
     g_strlcpy(s->advertised_address,advertised_address,sizeof(s->advertised_address));
@@ -211,6 +269,7 @@ WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
   rtcSetLocalDescriptionCallback(s->pc, on_local_description);
   rtcSetLocalCandidateCallback(s->pc, on_local_candidate);
   rtcSetStateChangeCallback(s->pc, on_state_change);
+  rtcSetTrackCallback(s->pc, web_rtc_on_track);
   return s;
 }
 
@@ -219,7 +278,7 @@ gboolean web_rtc_session_offer(WEB_RTC_SESSION *s) {
 
   rtcTrackInit init;
   memset(&init, 0, sizeof(init));
-  init.direction = RTC_DIRECTION_SENDONLY; /* server sends, browser receives */
+  init.direction = RTC_DIRECTION_SENDRECV; /* RX audio out, browser mic in */
   init.codec = RTC_CODEC_OPUS;
   init.payloadType = WEB_RTC_OPUS_PT;
   init.ssrc = WEB_RTC_OPUS_SSRC;
@@ -231,6 +290,12 @@ gboolean web_rtc_session_offer(WEB_RTC_SESSION *s) {
     return FALSE;
   }
   s->track = tr;
+  /* A sendrecv answer normally reuses this negotiated m-line rather than
+     creating a second remote track, so receive callbacks belong here too.
+     web_rtc_on_track remains registered for peers that expose one separately. */
+  rtcSetUserPointer(s->track,s);
+  rtcChainRtcpReceivingSession(s->track);
+  rtcSetMessageCallback(s->track,web_rtc_on_track_message);
 
   /* Attach the RTP packetizer so rtcSendMessage() on the track produces proper
      Opus/RTP (PT 111, 48 kHz clock, our fixed SSRC).  The SR reporter keeps the
@@ -261,6 +326,11 @@ gboolean web_rtc_session_offer(WEB_RTC_SESSION *s) {
      reconstruct a lost packet from the next one. */
   opus_encoder_ctl(s->enc, OPUS_SET_INBAND_FEC(1));
   opus_encoder_ctl(s->enc, OPUS_SET_PACKET_LOSS_PERC(10));
+  s->dec = opus_decoder_create(WEB_RTC_SAMPLE_RATE,1,&oerr);
+  if(s->dec==NULL || oerr!=OPUS_OK) {
+    log_error("webrtc: opus_decoder_create failed (%d)\n",oerr);
+    return FALSE;
+  }
   s->ring = g_new0(float, WEB_RTC_RING);
   g_atomic_int_set(&s->worker_run, 1);
   s->worker = g_thread_new("web-opus", web_rtc_worker, s);
@@ -320,10 +390,19 @@ void web_rtc_session_free(WEB_RTC_SESSION *s) {
     log_info("webrtc: dropped %llu audio samples to a slow connection\n",
              (unsigned long long)s->dropped);
   if(s->pc >= 0) {
+    if(s->track>=0) {
+      rtcSetMessageCallback(s->track,NULL);
+      rtcSetUserPointer(s->track,NULL);
+    }
+    if(s->rx_track>=0) {
+      rtcSetMessageCallback(s->rx_track,NULL);
+      rtcSetUserPointer(s->rx_track,NULL);
+    }
     rtcSetUserPointer(s->pc, NULL);
     rtcDeletePeerConnection(s->pc); /* closes and releases the track */
   }
   if(s->enc != NULL) opus_encoder_destroy(s->enc);
+  if(s->dec != NULL) opus_decoder_destroy(s->dec);
   g_free(s->ring);
   g_cond_clear(&s->af_cond);
   g_mutex_clear(&s->af_mutex);

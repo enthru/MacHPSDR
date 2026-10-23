@@ -41,6 +41,8 @@
 #define WEB_STATE_TICK_MS 50
 #define WEB_METER_PUSH_US 200000
 #define WEB_TX_LEASE_TIMEOUT_US (5 * G_USEC_PER_SEC)
+#define WEB_TX_MEDIA_TIMEOUT_US 500000
+#define WEB_TX_AUDIO_RING 12000 /* 250 ms at 48 kHz, bounded */
 
 typedef struct {
   guint8 receiver;
@@ -113,7 +115,16 @@ static WEB_CLIENT *web_tx_lease_owner;
 static gint64 web_tx_lease_deadline_us;
 static volatile gint web_remote_ptt;
 static volatile gint web_remote_mox_seen;
+static GMutex web_tx_audio_mutex;
+static float web_tx_audio_ring[WEB_TX_AUDIO_RING];
+static volatile gint web_tx_audio_head;
+static volatile gint web_tx_audio_tail;
+static gint64 web_tx_audio_last_us; /* guarded by web_tx_audio_mutex */
+static volatile gint web_tx_audio_active;
+static volatile gint web_tx_audio_dropped;
+static volatile gint web_tx_audio_underruns;
 static gboolean web_state_tick(gpointer data);  /* defined below, armed in start */
+static gboolean ws_send_lease_state(WEB_CLIENT *client, gint64 id, gboolean held);
 
 static const char *http_reason(int code) {
   switch(code) {
@@ -294,6 +305,24 @@ static gboolean ws_send_error(WEB_CLIENT *client, gint64 id, const char *code, c
   return ws_send_text(client,line);
 }
 
+static void web_tx_audio_reset(void) {
+  g_mutex_lock(&web_tx_audio_mutex);
+  g_atomic_int_set(&web_tx_audio_head,0);
+  g_atomic_int_set(&web_tx_audio_tail,0);
+  web_tx_audio_last_us=0;
+  g_atomic_int_set(&web_tx_audio_active,FALSE);
+  g_mutex_unlock(&web_tx_audio_mutex);
+}
+
+static gboolean web_tx_audio_fresh(void) {
+  gboolean fresh;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_tx_audio_mutex);
+  fresh=web_tx_audio_last_us>0 && now-web_tx_audio_last_us<WEB_TX_MEDIA_TIMEOUT_US;
+  g_mutex_unlock(&web_tx_audio_mutex);
+  return fresh;
+}
+
 static void web_remote_unkey(void) {
   g_atomic_int_set(&web_remote_mox_seen,FALSE);
   if(!g_atomic_int_compare_and_exchange(&web_remote_ptt,TRUE,FALSE)) return;
@@ -306,7 +335,7 @@ static void web_remote_unkey(void) {
 /* Drop a client's lease and fail safe to RX.  This is safe from a socket
    worker or the GTK timer: ownership is protected separately and the actual
    radio mutation is always dispatched through the main loop. */
-static gboolean web_lease_release_client(WEB_CLIENT *client) {
+static gboolean web_lease_release_client(WEB_CLIENT *client, gboolean notify) {
   gboolean owned=FALSE;
   g_mutex_lock(&web_lease_mutex);
   if(web_tx_lease_owner==client) {
@@ -315,7 +344,13 @@ static gboolean web_lease_release_client(WEB_CLIENT *client) {
     owned=TRUE;
   }
   g_mutex_unlock(&web_lease_mutex);
-  if(owned) web_remote_unkey();
+  if(owned) {
+    web_tx_audio_reset();
+    web_remote_unkey();
+    /* Tell a still-connected holder immediately so it stops and releases its
+       microphone when the desktop arm, heartbeat or media watchdog revokes it. */
+    if(notify) ws_send_lease_state(client,0,FALSE);
+  }
   return owned;
 }
 
@@ -332,7 +367,10 @@ static gboolean web_lease_is_owner(WEB_CLIENT *client, gboolean renew) {
     if(renew) web_tx_lease_deadline_us=now+WEB_TX_LEASE_TIMEOUT_US;
   }
   g_mutex_unlock(&web_lease_mutex);
-  if(expired) web_remote_unkey();
+  if(expired) {
+    web_tx_audio_reset();
+    web_remote_unkey();
+  }
   return owned;
 }
 
@@ -363,12 +401,13 @@ static void append_state_body(GString *s, gboolean include_meter) {
   gchar *decoder_text=web_json_escape(web_radio->decoder_status_text);
   g_string_append_printf(s,
       "\"radio\":{\"mox\":%s,\"remote_ptt\":%s,\"tx_lease_active\":%s,"
-      "\"can_transmit\":%s,\"active_rx\":%d,"
+      "\"tx_media_active\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
       "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
       "\"bookmarks\":[",
       web_radio->mox?"true":"false",
       g_atomic_int_get(&web_remote_ptt)?"true":"false",
       web_lease_active()?"true":"false",
+      g_atomic_int_get(&web_tx_audio_active)?"true":"false",
       (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active,
       web_radio->decode_mode,decoder_title,decoder_text);
   g_free(decoder_title); g_free(decoder_text);
@@ -529,6 +568,34 @@ static void web_rtc_on_state(void *user, gboolean connected, gboolean failed) {
   client_send(client,1,msg,strlen(msg));
 }
 
+static void web_rtc_on_tx_audio(void *user, const float *mono, int frames) {
+  WEB_CLIENT *client=(WEB_CLIENT *)user;
+  if(client==NULL || mono==NULL || frames<=0 ||
+     !web_lease_is_owner(client,FALSE) || web_radio==NULL ||
+     !web_radio->web_tx_enable) return;
+  g_mutex_lock(&web_tx_audio_mutex);
+  if(!web_radio->mox) {
+    /* In RX retain only this newest decoded packet, not old speech captured
+       before the operator presses MOX. */
+    g_atomic_int_set(&web_tx_audio_head,0);
+    g_atomic_int_set(&web_tx_audio_tail,0);
+  }
+  int head=g_atomic_int_get(&web_tx_audio_head);
+  for(int i=0;i<frames;i++) {
+    int next=(head+1)%WEB_TX_AUDIO_RING;
+    if(next==g_atomic_int_get(&web_tx_audio_tail)) {
+      g_atomic_int_add(&web_tx_audio_dropped,frames-i);
+      break;
+    }
+    web_tx_audio_ring[head]=mono[i];
+    g_atomic_int_set(&web_tx_audio_head,next);
+    head=next;
+  }
+  web_tx_audio_last_us=g_get_monotonic_time();
+  g_atomic_int_set(&web_tx_audio_active,TRUE);
+  g_mutex_unlock(&web_tx_audio_mutex);
+}
+
 /* Free the audio session.  The pointer is cleared under queue_mutex (the lock
    the RX-audio tap holds while feeding the session), so the tap never touches a
    session being freed; the actual free -- which joins libdatachannel and the
@@ -561,6 +628,9 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
     g_mutex_unlock(&web_lease_mutex);
     if(!acquired)
       return ws_send_error(client,request->id,"lease_busy","another browser holds TX control");
+    web_tx_audio_reset();
+    g_atomic_int_set(&web_tx_audio_dropped,0);
+    g_atomic_int_set(&web_tx_audio_underruns,0);
     return ws_send_lease_state(client,request->id,TRUE);
   }
   if(request->type==WEB_REQUEST_LEASE_RENEW) {
@@ -569,7 +639,7 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
     return ws_send_lease_state(client,request->id,TRUE);
   }
   if(request->type==WEB_REQUEST_LEASE_RELEASE) {
-    web_lease_release_client(client);
+    web_lease_release_client(client,FALSE);
     return ws_send_lease_state(client,request->id,FALSE);
   }
 
@@ -625,7 +695,8 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         g_mutex_lock(&client->queue_mutex);
         client->rtc_rx=request->rx;
         g_mutex_unlock(&client->queue_mutex);
-        WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client,
+        WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,
+                                               web_rtc_on_tx_audio,client,
                                                client->rtc_address,
                                                (guint16)web_radio->web_rtc_port);
         if(s==NULL || !web_rtc_session_offer(s)) {
@@ -691,6 +762,8 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
          the button from expiring an otherwise active controller. */
       if(request->flag && !web_lease_is_owner(client,TRUE))
         return ws_send_error(client,request->id,"lease_required","take TX control before keying");
+      if(request->flag && !web_tx_audio_fresh())
+        return ws_send_error(client,request->id,"audio_required","microphone audio is not available");
       g_atomic_int_set(&web_remote_ptt,request->flag);
       g_atomic_int_set(&web_remote_mox_seen,FALSE);
       MOX_STATE *m=g_new(MOX_STATE,1);
@@ -901,7 +974,7 @@ static void web_client_release(WEB_CLIENT *client) {
     client->sender=NULL;
   }
   /* A dead controlling socket must unkey before any lengthy WebRTC teardown. */
-  web_lease_release_client(client);
+  web_lease_release_client(client,FALSE);
 #ifdef WEBRTC
   /* closing is set above, so any in-flight signal callback early-returns from
      client_send(); this joins the libdatachannel threads with no lock held. */
@@ -1090,6 +1163,7 @@ void web_server_init(RADIO *radio) {
   web_radio=radio;
   if(!web_sync_initialized) {
     g_mutex_init(&web_lease_mutex);
+    g_mutex_init(&web_tx_audio_mutex);
     for(int i=0;i<WEB_MAX_CLIENTS;i++) {
       web_clients[i].fd=-1;
       g_mutex_init(&web_clients[i].queue_mutex);
@@ -1126,6 +1200,7 @@ void web_server_start(void) {
   g_mutex_unlock(&web_lease_mutex);
   g_atomic_int_set(&web_remote_ptt,FALSE);
   g_atomic_int_set(&web_remote_mox_seen,FALSE);
+  web_tx_audio_reset();
   g_snprintf(web_status_line,sizeof(web_status_line),"starting HTTPS on port %d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
   /* Pushed-state detector on the GTK main loop (start is always called on the
@@ -1217,7 +1292,17 @@ static gboolean web_state_tick(gpointer data) {
       g_mutex_lock(&web_lease_mutex);
       lease_owner=web_tx_lease_owner;
       g_mutex_unlock(&web_lease_mutex);
-      if(lease_owner!=NULL) web_lease_release_client(lease_owner);
+      if(lease_owner!=NULL) web_lease_release_client(lease_owner,TRUE);
+    }
+  }
+  if(g_atomic_int_get(&web_tx_audio_active) && !web_tx_audio_fresh()) {
+    g_atomic_int_set(&web_tx_audio_active,FALSE);
+    if(g_atomic_int_get(&web_remote_ptt)) {
+      g_mutex_lock(&web_lease_mutex);
+      lease_owner=web_tx_lease_owner;
+      g_mutex_unlock(&web_lease_mutex);
+      if(lease_owner!=NULL) web_lease_release_client(lease_owner,TRUE);
+      else web_remote_unkey();
     }
   }
   if(g_atomic_int_get(&web_remote_ptt)) {
@@ -1322,6 +1407,23 @@ void web_server_audio_tap(int receiver, const double *stereo, int frames) {
 #else
   (void)receiver; (void)stereo; (void)frames;
 #endif
+}
+
+gboolean web_server_tx_audio_active(void) {
+  return g_atomic_int_get(&web_tx_audio_active) &&
+         g_atomic_int_get(&web_remote_ptt) && web_radio!=NULL && web_radio->mox;
+}
+
+float web_server_tx_audio_next_sample(void) {
+  float sample=0.0f;
+  int tail=g_atomic_int_get(&web_tx_audio_tail);
+  if(tail!=g_atomic_int_get(&web_tx_audio_head)) {
+    sample=web_tx_audio_ring[tail];
+    g_atomic_int_set(&web_tx_audio_tail,(tail+1)%WEB_TX_AUDIO_RING);
+  } else if(g_atomic_int_get(&web_tx_audio_active)) {
+    g_atomic_int_inc(&web_tx_audio_underruns);
+  }
+  return sample;
 }
 
 const char *web_server_status(void) {

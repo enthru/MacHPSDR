@@ -22,4 +22,9 @@ void web_server_publish_spectrum(int receiver, const float *bins, unsigned count
    without WebRTC or subscribers. */
 void web_server_audio_tap(int receiver, const double *stereo, int frames);
 
+/* TX-audio-thread seam: browser microphone substitution, already decoded to
+   48 kHz mono.  The active check is atomic and the pop is lock-free. */
+gboolean web_server_tx_audio_active(void);
+float web_server_tx_audio_next_sample(void);
+
 #endif

@@ -4,17 +4,18 @@
  *   make WEBRTC_INCLUDE=WEBRTC webrtc-offline && ./webrtc_offline --selftest
  *
  * It drives the server side through the real web_rtc.c session API (offer + Opus
- * send-only track + the audio feed) and stands in for the browser with a second
+ * send/receive track + the audio feeds) and stands in for the browser with a second
  * libdatachannel peer connection (the answerer) built from the raw C API.  The
  * two peers' signaling is wired together in-process.  Two checks:
  *   1. BOTH peers reach the connected state over loopback (offer/answer, ICE
  *      trickle, DTLS) — everything the browser path needs except the browser.
- *   2. Synthetic 48 kHz audio fed into the server session at real time arrives
+ *   2. Synthetic 48 kHz audio fed in each direction at real time arrives
  *      on the answerer's track as RTP packets at ~50/s (one 20 ms Opus frame
  *      each) carrying the negotiated payload type 111.
  */
 #include <glib.h>
 #include <rtc/rtc.h>
+#include <opus/opus.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -29,6 +30,7 @@
  * other.  Connection flags are atomic: written from those threads, read here. */
 static WEB_RTC_SESSION *g_offerer;
 static int g_answerer = -1;
+static int g_answerer_send_track = -1;
 static volatile gint g_offerer_connected;
 static volatile gint g_offerer_failed;
 static volatile gint g_answerer_connected;
@@ -47,6 +49,9 @@ static uint16_t g_last_seq;
 static uint32_t g_last_ts;
 static gboolean g_have_prev;
 static volatile gint g_rtp_step_bad; /* seq or timestamp did not advance as expected */
+static GMutex g_tx_audio_mutex;
+static gint g_tx_audio_frames;
+static double g_tx_audio_energy;
 
 /* Server -> browser: the session hands us its offer and ICE candidates. */
 static void offerer_signal(void *user, const char *kind, const char *data, const char *mid) {
@@ -67,6 +72,17 @@ static void offerer_state(void *user, gboolean connected, gboolean failed) {
   (void)user;
   if(connected) g_atomic_int_set(&g_offerer_connected, 1);
   if(failed) g_atomic_int_set(&g_offerer_failed, 1);
+}
+
+/* Decoded fake-browser microphone audio delivered by the real server session. */
+static void offerer_tx_audio(void *user, const float *mono, int frames) {
+  (void)user;
+  double energy=0.0;
+  for(int i=0;i<frames;i++) energy+=(double)mono[i]*mono[i];
+  g_mutex_lock(&g_tx_audio_mutex);
+  g_tx_audio_frames+=frames;
+  g_tx_audio_energy+=energy;
+  g_mutex_unlock(&g_tx_audio_mutex);
 }
 
 /* Browser -> server: the raw peer hands us its answer and ICE candidates. */
@@ -109,8 +125,8 @@ static void answerer_track_message(int id, const char *message, int size, void *
   g_have_prev = TRUE;
 }
 
-/* The offer is send-only, so negotiation creates a recv-only track on the
- * answerer; capture it and listen for its RTP. */
+/* Capture a separately exposed remote track when the implementation creates
+ * one; sendrecv peers commonly reuse the local negotiated m-line instead. */
 static void answerer_track(int pc, int tr, void *ptr) {
   (void)pc; (void)ptr;
   rtcSetMessageCallback(tr, answerer_track_message);
@@ -118,6 +134,7 @@ static void answerer_track(int pc, int tr, void *ptr) {
 
 static int run_selftest(void) {
   web_rtc_init();
+  g_mutex_init(&g_tx_audio_mutex);
 
   rtcConfiguration cfg;
   memset(&cfg, 0, sizeof(cfg));
@@ -129,7 +146,30 @@ static int run_selftest(void) {
   rtcSetStateChangeCallback(g_answerer, answerer_state);
   rtcSetTrackCallback(g_answerer, answerer_track);
 
-  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, NULL,
+  /* Match the browser's addTrack(microphone) before it answers the server's
+     sendrecv offer, and packetize outgoing Opus on the same audio m-line. */
+  rtcTrackInit track_init;
+  memset(&track_init,0,sizeof(track_init));
+  track_init.direction=RTC_DIRECTION_SENDRECV;
+  track_init.codec=RTC_CODEC_OPUS;
+  track_init.payloadType=RTC_OPUS_PT;
+  track_init.ssrc=43;
+  track_init.mid="audio";
+  track_init.name="fake-browser";
+  g_answerer_send_track=rtcAddTrackEx(g_answerer,&track_init);
+  if(g_answerer_send_track<0) { fprintf(stderr,"answerer track create failed (%d)\n",g_answerer_send_track); return 1; }
+  rtcPacketizerInit packetizer;
+  memset(&packetizer,0,sizeof(packetizer));
+  packetizer.ssrc=43; packetizer.cname="fake-browser";
+  packetizer.payloadType=RTC_OPUS_PT; packetizer.clockRate=48000;
+  if(rtcSetOpusPacketizer(g_answerer_send_track,&packetizer)<0) {
+    fprintf(stderr,"answerer packetizer create failed\n"); return 1;
+  }
+  rtcChainRtcpSrReporter(g_answerer_send_track);
+  rtcChainRtcpReceivingSession(g_answerer_send_track);
+  rtcSetMessageCallback(g_answerer_send_track,answerer_track_message);
+
+  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, offerer_tx_audio, NULL,
                                   "127.0.0.1", 49001);
   if(g_offerer == NULL) { fprintf(stderr, "offerer session create failed\n"); return 1; }
 
@@ -159,7 +199,11 @@ static int run_selftest(void) {
   const int blocks = 75;                /* ~1.5 s */
   double pcm[2 * 960];
   double phase = 0.0;
+  double tx_phase = 0.0;
   const double dphi = 2.0 * M_PI * 440.0 / 48000.0;
+  const double tx_dphi = 2.0 * M_PI * 660.0 / 48000.0;
+  int opus_error=0;
+  OpusEncoder *browser_encoder=opus_encoder_create(48000,1,OPUS_APPLICATION_AUDIO,&opus_error);
   gint64 t0 = 0, t1 = 0;
   if(connect_ok) {
     t0 = g_get_monotonic_time();
@@ -171,6 +215,17 @@ static int run_selftest(void) {
         pcm[2*i+1] = v;
       }
       web_rtc_session_feed(g_offerer, pcm, 960);
+      float tx_pcm[960]; unsigned char tx_opus[4000];
+      for(int i=0;i<960;i++) {
+        tx_pcm[i]=(float)(0.2*sin(tx_phase));
+        tx_phase+=tx_dphi;
+      }
+      int encoded=browser_encoder==NULL ? -1 :
+                  opus_encode_float(browser_encoder,tx_pcm,960,tx_opus,sizeof(tx_opus));
+      if(encoded>0) {
+        rtcSetTrackRtpTimestamp(g_answerer_send_track,(uint32_t)b*960);
+        rtcSendMessage(g_answerer_send_track,(const char *)tx_opus,encoded);
+      }
       /* Pace against an absolute 20 ms grid: g_usleep() oversleeps enough on a
          loaded machine to skew a per-iteration delay, which would understate
          the stream's true rate. */
@@ -186,11 +241,17 @@ static int run_selftest(void) {
   int stepbad = g_atomic_int_get(&g_rtp_step_bad);
   double secs = (t1 > t0) ? (double)(t1 - t0) / 1e6 : 0.0;
   double rate = (secs > 0.0) ? pt111 / secs : 0.0;
+  if(browser_encoder!=NULL) opus_encoder_destroy(browser_encoder);
+  g_mutex_lock(&g_tx_audio_mutex);
+  int tx_frames=g_tx_audio_frames;
+  double tx_rms=tx_frames>0 ? sqrt(g_tx_audio_energy/tx_frames) : 0.0;
+  g_mutex_unlock(&g_tx_audio_mutex);
 
   web_rtc_session_free(g_offerer);
   g_offerer = NULL;
   if(g_answerer >= 0) { rtcDeletePeerConnection(g_answerer); g_answerer = -1; }
   web_rtc_cleanup();
+  g_mutex_clear(&g_tx_audio_mutex);
 
   int failures = 0;
 
@@ -220,6 +281,15 @@ static int run_selftest(void) {
     printf("    %d packets PT %d, %d other, %d bad seq/ts steps, %.1f/s over %.2f s\n",
            pt111, RTC_OPUS_PT, ptother, stepbad, rate, secs);
     if(!audio_ok) failures++;
+  }
+
+  gboolean tx_audio_ok=connect_ok && opus_error==OPUS_OK &&
+                       tx_frames>=960*(blocks-10) && tx_rms>0.05 && tx_rms<0.3;
+  printf("browser Opus decodes to 48 kHz TX audio             %s\n",
+         tx_audio_ok ? "PASS" : (connect_ok ? "FAIL" : "SKIP"));
+  if(connect_ok) {
+    printf("    %d decoded samples, RMS %.3f\n",tx_frames,tx_rms);
+    if(!tx_audio_ok) failures++;
   }
 
   printf("\n%d failures\n", failures);

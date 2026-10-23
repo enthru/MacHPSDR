@@ -837,8 +837,11 @@ start. Then press **Take TX control** in the browser before MOX; only one browse
 can hold this renewable TX lease. While that browser is keyed every connected
 page shows **REMOTE PTT**. Closing or losing the controlling connection, missing
 its heartbeat for five seconds, releasing control, or clearing the desktop PTT
-permission immediately unkeys the radio. Browser microphone/TX audio is not yet
-implemented. Enter a username and at least eight characters in **New password**, then
+permission immediately unkeys the radio. After control is granted, the page asks for microphone permission,
+shows a local **MIC** level meter and sends mono Opus over WebRTC. **MOX** stays
+disabled until the media connection is ready. Denying permission returns the
+page to receive-only; losing microphone media for 500 ms while keyed revokes the
+lease and immediately unkeys. Enter a username and at least eight characters in **New password**, then
 press **Set password**; the browser prompts for those credentials.
 **Require password on browser remote** can turn the challenge off
 without deleting the saved password, while **Clear password** removes it. When

@@ -51,6 +51,7 @@
 #include "property.h"
 #include "ext.h"
 #include "tx_info.h"
+#include "web_server.h"
 #ifdef SOAPYSDR
 #include "soapy_protocol.h"
 #endif
@@ -1580,6 +1581,11 @@ void add_mic_sample(TRANSMITTER *tx,float mic_sample) {
       // SSB, FMN = FM).  The panel only keys TX in one of those modes.
       mic_sample_double=(double)sstv_tx_next_sample();
 #endif
+    } else if(web_server_tx_audio_active()) {
+      // Browser-remote TX audio has an exclusive, connection-bound lease and
+      // a separate media watchdog.  Substitute it at the same 48 kHz seam as
+      // the other remote microphone source.
+      mic_sample_double=(double)web_server_tx_audio_next_sample();
     } else if(tci_tx_active()) {
       // TCI (Phase C) TX audio: a TCI client is streaming modulator audio and
       // has keyed TX, so substitute its samples for the mic in this phone/digi
