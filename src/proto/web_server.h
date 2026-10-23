@@ -10,6 +10,8 @@ void web_server_init(RADIO *radio);
 void web_server_start(void);
 void web_server_stop(void);
 const char *web_server_status(void);
+const char *web_server_tls_fingerprint(void);
+const char *web_server_tls_bundle(void);
 
 /* GTK display-timer seam: bounded copy only, never a socket operation. */
 void web_server_publish_spectrum(int receiver, const float *bins, unsigned count,

@@ -25,11 +25,21 @@
 #define TCI_WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // Read exactly n bytes (blocking) unless the peer closes / errors.
-static gboolean recv_all(int fd, void *buf, size_t n) {
+static gssize socket_read(void *context, void *buf, size_t len) {
+  return recv(GPOINTER_TO_INT(context),buf,len,0);
+}
+static gssize socket_write(void *context, const void *buf, size_t len) {
+  return send(GPOINTER_TO_INT(context),buf,len,TCI_SEND_FLAGS);
+}
+static TCI_WS_IO socket_io(int fd) {
+  TCI_WS_IO io={GINT_TO_POINTER(fd),socket_read,socket_write}; return io;
+}
+
+static gboolean recv_all(TCI_WS_IO *io, void *buf, size_t n) {
   guint8 *p = (guint8 *)buf;
   size_t got = 0;
   while (got < n) {
-    ssize_t r = recv(fd, p + got, n - got, 0);
+    gssize r=io->read(io->context,p+got,n-got);
     if (r <= 0) return FALSE;
     got += (size_t)r;
   }
@@ -37,10 +47,15 @@ static gboolean recv_all(int fd, void *buf, size_t n) {
 }
 
 gboolean tci_ws_send_all(int fd, const void *buf, size_t n) {
+  TCI_WS_IO io=socket_io(fd);
+  return tci_ws_io_send_all(&io,buf,n);
+}
+
+gboolean tci_ws_io_send_all(TCI_WS_IO *io, const void *buf, size_t n) {
   const guint8 *p = (const guint8 *)buf;
   size_t sent = 0;
   while (sent < n) {
-    ssize_t w = send(fd, p + sent, n - sent, TCI_SEND_FLAGS);
+    gssize w=io->write(io->context,p+sent,n-sent);
     if (w <= 0) {
       if (w < 0 && errno == EINTR) continue;
       return FALSE;
@@ -63,10 +78,15 @@ size_t tci_ws_write_header(guint8 *hdr, int opcode, size_t len) {
 }
 
 gboolean tci_ws_send_blocking(int fd, int opcode, const void *payload, size_t len) {
+  TCI_WS_IO io=socket_io(fd);
+  return tci_ws_io_send_blocking(&io,opcode,payload,len);
+}
+
+gboolean tci_ws_io_send_blocking(TCI_WS_IO *io, int opcode, const void *payload, size_t len) {
   guint8 hdr[10];
   size_t hlen = tci_ws_write_header(hdr, opcode, len);
-  if (!tci_ws_send_all(fd, hdr, hlen)) return FALSE;
-  if (len && !tci_ws_send_all(fd, payload, len)) return FALSE;
+  if (!tci_ws_io_send_all(io,hdr,hlen)) return FALSE;
+  if (len && !tci_ws_io_send_all(io,payload,len)) return FALSE;
   return TRUE;
 }
 
@@ -79,6 +99,11 @@ gboolean tci_ws_send_blocking(int fd, int opcode, const void *payload, size_t le
 // for). The message is capped at TCI_WS_MAX_MSG in TOTAL, not per frame, so
 // fragmentation cannot be used to grow the buffer without limit.
 int tci_ws_recv(int fd, char **out, size_t *out_len) {
+  TCI_WS_IO io=socket_io(fd);
+  return tci_ws_io_recv(&io,out,out_len);
+}
+
+int tci_ws_io_recv(TCI_WS_IO *io, char **out, size_t *out_len) {
   char   *acc = NULL;                       // reassembled payload so far
   size_t  acc_len = 0;
   int     acc_op = -1;                      // opcode of the message being assembled
@@ -86,26 +111,26 @@ int tci_ws_recv(int fd, char **out, size_t *out_len) {
 
   for (;;) {
     guint8 h[2];
-    if (!recv_all(fd, h, 2)) { g_free(acc); return -1; }
+    if (!recv_all(io,h,2)) { g_free(acc); return -1; }
     int fin    = (h[0] & 0x80) != 0;
     int opcode = h[0] & 0x0f;
     int masked = (h[1] & 0x80) != 0;
     guint64 len = h[1] & 0x7f;
     if (len == 126) {
       guint8 e[2];
-      if (!recv_all(fd, e, 2)) { g_free(acc); return -1; }
+      if (!recv_all(io,e,2)) { g_free(acc); return -1; }
       len = ((guint64)e[0] << 8) | e[1];
     } else if (len == 127) {
       guint8 e[8];
-      if (!recv_all(fd, e, 8)) { g_free(acc); return -1; }
+      if (!recv_all(io,e,8)) { g_free(acc); return -1; }
       len = 0;
       for (int i = 0; i < 8; i++) len = (len << 8) | e[i];
     }
     if (len > TCI_WS_MAX_MSG || acc_len + len > TCI_WS_MAX_MSG) { g_free(acc); return -1; }
     guint8 mask[4] = {0,0,0,0};
-    if (masked && !recv_all(fd, mask, 4)) { g_free(acc); return -1; }
+    if (masked && !recv_all(io,mask,4)) { g_free(acc); return -1; }
     char *buf = g_malloc(len + 1);
-    if (len && !recv_all(fd, buf, len)) { g_free(buf); g_free(acc); return -1; }
+    if (len && !recv_all(io,buf,len)) { g_free(buf); g_free(acc); return -1; }
     if (masked) for (guint64 i = 0; i < len; i++) buf[i] ^= mask[i & 3];
     buf[len] = '\0';
 
@@ -140,6 +165,11 @@ int tci_ws_recv(int fd, char **out, size_t *out_len) {
 }
 
 gboolean tci_ws_accept(int fd, const char *key, const char *protocol) {
+  TCI_WS_IO io=socket_io(fd);
+  return tci_ws_io_accept(&io,key,protocol);
+}
+
+gboolean tci_ws_io_accept(TCI_WS_IO *io, const char *key, const char *protocol) {
   if(key==NULL || *key=='\0') return FALSE;
   char concat[256];
   g_snprintf(concat, sizeof(concat), "%s%s", key, TCI_WS_GUID);
@@ -163,7 +193,7 @@ gboolean tci_ws_accept(int fd, const char *key, const char *protocol) {
       protocol!=NULL ? protocol : "",
       protocol!=NULL ? "\r\n" : "");
   g_free(accept);
-  return tci_ws_send_all(fd, resp, (size_t)rl);
+  return tci_ws_io_send_all(io,resp,(size_t)rl);
 }
 
 // HTTP Upgrade handshake: read the request, compute Sec-WebSocket-Accept via

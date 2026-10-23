@@ -66,6 +66,8 @@ tci_offline
 tci_offline.dSYM/
 web_offline
 web_offline.dSYM/
+web_tls_offline
+web_tls_offline.dSYM/
 props_offline
 props_offline.dSYM/
 agc_offline

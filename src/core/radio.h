@@ -222,8 +222,10 @@ typedef struct _radio {
   gboolean web_tx_enable;      // session-only browser PTT arm; never persisted
   gint     web_port;
   gboolean web_auth_enable;
+  char     web_auth_user[65];
   char     web_auth_salt[37];
   char     web_auth_hash[65];
+  char     web_tls_bundle[512];
   // I/Q + audio recorder (see recorder.c). Persisted in radio_save_state.
   char rec_dir[512];       // output directory ("" = default ~/.local/share/machpsdr)
   gboolean rec_iq;         // write the off-air I/Q WAV

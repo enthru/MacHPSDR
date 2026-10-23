@@ -12,6 +12,8 @@ LINK=gcc
 # The stock upstream builds against gtk+-3.0; here we link gtk4.
 GTKINCLUDES=`pkg-config --cflags gtk4`
 GTKLIBS=`pkg-config --libs gtk4`
+TLS_INCLUDES=$(shell pkg-config --cflags openssl)
+TLS_LIBS=$(shell pkg-config --libs openssl)
 
 #OPENGL_OPTIONS=-D OPENGL
 #OPENGL_INCLUDES=`pkg-config --cflags epoxy`
@@ -452,7 +454,7 @@ ifeq ($(UNAME_S), Linux)
 # (adds a WFM demodulator and other tweaks); a stock system libwdsp would build
 # but break those features. So we do NOT `-lwdsp` from /usr/local and we do NOT
 # require `sudo make install` of an upstream WDSP.
-LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lrt -lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(CWDAEMON_LIBS) $(OPENGL_LIBS) $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(TLS_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # $ORIGIN lets the binary find ./wdsp/libwdsp.so relative to itself at run time,
 # so `./machpsdr` runs straight from the repo with no WDSP install. ($$ -> $ for
@@ -461,7 +463,7 @@ RPATH_FLAGS=-Wl,-rpath,'$$ORIGIN/$(WDSP_DIR)' $(FREEDV_RPATH) $(WEBRTC_RPATH)
 endif
 ifeq ($(UNAME_S), Darwin)
 # Link against ./wdsp/libwdsp.dylib (not /usr/local/lib) and use the in-tree header.
-LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(FREEDV_LIBS) $(WEBRTC_LIBS) $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
+LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(FREEDV_LIBS) $(WEBRTC_LIBS) $(TLS_LIBS) $(BREW_LIBS) $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) $(MIDI_LIBS) $(HFDL_LIBS) $(SGP4_LIB)
 WDSP_INCLUDE=-I$(WDSP_DIR)
 # rpaths so the dylib (id @rpath/libwdsp.dylib) resolves both when running
 # ./machpsdr from the repo (@loader_path/wdsp) and inside the .app (Frameworks).
@@ -472,7 +474,7 @@ ifneq ($(ISMINGW),)
 # -lwinmm is timeBeginPeriod (the default 15.6 ms timer tick is far too coarse
 # for the protocol-1 output pacing).
 LIBS=-lm -lpthread -L$(WDSP_DIR) -lwdsp $(GTKLIBS) $(AUDIO_LIBS) $(SOAPYSDR_LIBS) \
-     $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
+     $(MIDI_LIBS) $(FREEDV_LIBS) $(WEBRTC_LIBS) $(TLS_LIBS) $(HFDL_LIBS) $(SGP4_LIB) -lws2_32 -liphlpapi -lwinmm
 # The same two for a harness that links net_compat.o without the whole app.
 # Empty off Windows, where net_compat.o needs nothing beyond libc.
 WIN_NET_LIBS=-lws2_32 -liphlpapi
@@ -530,7 +532,7 @@ SRCDIRS= src/core src/proto src/dsp src/audio src/midi src/ui src/decode
 VPATH= $(SRCDIRS)
 SRC_INCLUDES= $(addprefix -I,$(SRCDIRS))
 
-INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(FREEDV_INCLUDES) $(WEBRTC_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
+INCLUDES=$(SRC_INCLUDES) $(GTKINCLUDES) $(PULSEINCLUDES) $(OPGL_INCLUDES) $(WDSP_INCLUDE) $(FT8_INCLUDES) $(FREEDV_INCLUDES) $(WEBRTC_INCLUDES) $(TLS_INCLUDES) $(HFDL_INCLUDES) $(SGP4_INCLUDES) $(BREW_INCLUDES)
 
 COMPILE=$(CC) $(CFLAGS) $(OPTIONS) $(INCLUDES)
 
@@ -818,6 +820,7 @@ tci_cw.o \
 tci_ws.o \
 tci_dialog.o \
 web_protocol.o \
+web_tls.o \
 web_server.o \
 web_dialog.o
 
@@ -1072,6 +1075,15 @@ web_offline$(EXE): tools/web_offline.c web_protocol.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/web_offline.c web_protocol.o \
 	  $(shell pkg-config --libs glib-2.0)
+
+# TLS certificate generation and encrypted transport round-trip. This harness
+# uses a Unix socketpair and is therefore a macOS/Linux developer check.
+.PHONY: web-tls-offline
+web-tls-offline: web_tls_offline
+web_tls_offline: tools/web_tls_offline.c web_tls.o tci_ws.o
+	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(TLS_INCLUDES) $(BREW_INCLUDES) \
+	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/web_tls_offline.c web_tls.o tci_ws.o \
+	  $(shell pkg-config --libs glib-2.0) $(TLS_LIBS)
 
 # Headless WebRTC harness.  Two libdatachannel peers connect over loopback,
 # proving offer/answer/ICE/DTLS without a browser.  Opt-in: it needs the WEBRTC

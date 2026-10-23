@@ -89,17 +89,23 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   The browser card gained step/AGC selects and AF-gain/squelch/AGC-gain sliders.
 - Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
   listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
-  clear password protection; authentication uses HTTP Basic with fixed username
-  `machpsdr`, and only a UUID salt plus a 100,000-round PBKDF2-HMAC-SHA256 hash
+  clear password protection; authentication uses HTTP Basic with configurable
+  username (default `machpsdr`), and only a UUID salt plus a 100,000-round PBKDF2-HMAC-SHA256 hash
   are persisted.  Protection covers every bundled asset and the WebSocket
   Upgrade.  WebSocket Origin must equal the request Host (HTTP or HTTPS).  When
   protection is disabled the service sends no challenge and is intentionally
   open to every host that can reach the port.
+- Phase 5 slice 2 adds a built-in OpenSSL TLS 1.2+ transport for every asset and
+  WebSocket frame.  First use creates a persistent 2048-bit RSA self-signed PEM
+  bundle with a ten-year certificate and mode 0600; Configure -> Network may
+  instead select one PEM bundle containing a certificate chain and matching
+  private key.  The login username is configurable and persisted.  The TLS
+  layer is inside MacHPSDR, so forwarding its TCP port requires no reverse proxy.
 - Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
   gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
   decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
   decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
-  control leases, Internet traversal and browser TX audio.
+  control leases, WebRTC STUN/TURN or fixed-port NAT traversal and browser TX audio.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -130,11 +136,11 @@ click/drag/wheel tuning and draggable filter edges.
 1. Browser control is a separate versioned protocol, not a browser pretending
    to be a TCI client.  Only the tested WebSocket framing/handshake primitive is
    shared with TCI.
-2. The enabled listener is LAN-wide.  Password protection is optional by
+2. The enabled TLS listener is LAN/Internet capable.  Password protection is optional by
    operator request; when off, the UI/status and manuals must say that every host
    reaching the port can control the radio.  Origin checks prevent browser CSRF
-   but are not authentication.  Plain HTTP Basic is trusted-LAN/VPN-only and the
-   port must never be forwarded directly to the Internet.
+   but are not authentication.  HTTP Basic credentials travel only inside the
+   built-in TLS connection; a forwarded Internet port must keep authentication on.
 3. Network threads never mutate GTK or radio state directly.  Commands use the
    existing heap-owned `g_idle_add(ext_*)` pattern.
 4. The server is a fixed asset host, not a filesystem server.  Routes remain an
@@ -193,9 +199,26 @@ hard-coded localhost origin.  CSP permits the page's `ws:`/`wss:` connection.
 The clear-text password is never put in `RADIO` or the property file.  Setting a
 password creates a UUID salt and persists only that salt plus a
 PBKDF2-HMAC-SHA256 result (100,000 rounds); comparison of the fixed-length hash is
-constant-time.  HTTP Basic itself is not encryption, so the UI and every manual
-say trusted LAN/VPN or HTTPS reverse proxy only and explicitly prohibit direct
-Internet port forwarding.  PTT remains separately session-armed.
+constant-time.  At that point Basic authentication still ran over plain HTTP;
+the following TLS slice replaces that limitation.  PTT remains separately
+session-armed.
+
+### 2026-10-23 — Phase 5 slice 2: built-in HTTPS/WSS
+
+The embedded server now performs TLS 1.2+ itself using OpenSSL; every HTTP asset,
+401 exchange and WebSocket frame uses the encrypted transport.  With no custom
+path, first start generates a persistent 2048-bit RSA self-signed certificate
+and private key in one mode-0600 PEM bundle under the application data directory.
+Configure -> Network accepts an alternative PEM bundle containing the certificate
+chain and matching private key, validates it before switching, exposes the
+SHA-256 fingerprint, and allows a configurable login username.
+
+Verified on macOS: `make -j4` completes; `web_tls_offline` creates/loads the
+self-signed bundle, completes a real TLS client/server handshake over a socket
+pair, and round-trips encrypted data.  NOT yet verified in this isolated session:
+the GTK certificate controls, a real browser warning/login/WSS session, public
+TCP port forwarding, or audio through NAT.  Spectrum/control use the one forwarded
+TCP port; WebRTC audio still has no STUN/TURN or fixed forwarded UDP port.
 
 Verified on macOS:
 

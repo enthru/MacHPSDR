@@ -22,6 +22,7 @@
 #include "tci_ws.h"
 #include "web_protocol.h"
 #include "web_server.h"
+#include "web_tls.h"
 #ifdef WEBRTC
 #include "web_rtc.h"
 #endif
@@ -50,6 +51,8 @@ typedef struct {
 
 typedef struct {
   int fd;
+  TCI_WS_IO io;
+  WEB_TLS_SESSION *tls;
   gint upgraded;
   gint closing;
   GMutex queue_mutex;
@@ -81,6 +84,7 @@ static volatile gint web_running;
 static GThread *web_thread;
 static int web_listen=-1;
 static int web_port=WEB_DEFAULT_PORT;
+static WEB_TLS_CONTEXT *web_tls;
 static GMutex web_clients_mutex;
 static GCond web_clients_cond;
 static WEB_CLIENT web_clients[WEB_MAX_CLIENTS];
@@ -111,7 +115,7 @@ static const char *http_reason(int code) {
   }
 }
 
-static gboolean http_send(int fd, int code, const char *type,
+static gboolean http_send(TCI_WS_IO *io, int code, const char *type,
                           const void *body, size_t len, gboolean head) {
   char header[1024];
   int n=g_snprintf(header,sizeof(header),
@@ -124,15 +128,15 @@ static gboolean http_send(int fd, int code, const char *type,
       "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:\r\n"
       "Connection: close\r\n\r\n",
       code,http_reason(code),type?type:"text/plain; charset=utf-8",len);
-  if(n<=0 || (size_t)n>=sizeof(header) || !tci_ws_send_all(fd,header,(size_t)n)) return FALSE;
-  return head || len==0 || tci_ws_send_all(fd,body,len);
+  if(n<=0 || (size_t)n>=sizeof(header) || !tci_ws_io_send_all(io,header,(size_t)n)) return FALSE;
+  return head || len==0 || tci_ws_io_send_all(io,body,len);
 }
 
-static void http_error(int fd, int code, const char *message) {
-  http_send(fd,code,"text/plain; charset=utf-8",message,strlen(message),FALSE);
+static void http_error(TCI_WS_IO *io, int code, const char *message) {
+  http_send(io,code,"text/plain; charset=utf-8",message,strlen(message),FALSE);
 }
 
-static void http_unauthorized(int fd) {
+static void http_unauthorized(TCI_WS_IO *io) {
   static const char body[]="Authentication required\n";
   char header[512];
   int n=g_snprintf(header,sizeof(header),
@@ -143,8 +147,8 @@ static void http_unauthorized(int fd) {
       "WWW-Authenticate: Basic realm=\"MacHPSDR\", charset=\"UTF-8\"\r\n"
       "Connection: close\r\n\r\n",sizeof(body)-1);
   if(n>0 && (size_t)n<sizeof(header) &&
-     tci_ws_send_all(fd,header,(size_t)n))
-    tci_ws_send_all(fd,body,sizeof(body)-1);
+     tci_ws_io_send_all(io,header,(size_t)n))
+    tci_ws_io_send_all(io,body,sizeof(body)-1);
 }
 
 static gchar *read_asset(const char *name, gsize *len) {
@@ -204,7 +208,7 @@ static gboolean request_authenticated(const char *request) {
   char authorization[768];
   if(header_value(request,"Authorization",authorization,sizeof(authorization))==NULL)
     return FALSE;
-  return web_auth_check_basic(authorization,"machpsdr",web_radio->web_auth_salt,
+  return web_auth_check_basic(authorization,web_radio->web_auth_user,web_radio->web_auth_salt,
                               web_radio->web_auth_hash,
                               WEB_AUTH_PBKDF2_ITERATIONS);
 }
@@ -235,7 +239,7 @@ static gboolean client_send(WEB_CLIENT *client, int opcode, const void *payload,
   gboolean ok=FALSE;
   g_mutex_lock(&client->send_mutex);
   if(!g_atomic_int_get(&client->closing) && client->fd>=0)
-    ok=tci_ws_send_blocking(client->fd,opcode,payload,len);
+    ok=tci_ws_io_send_blocking(&client->io,opcode,payload,len);
   g_mutex_unlock(&client->send_mutex);
   return ok;
 }
@@ -644,7 +648,6 @@ static gpointer web_sender_thread(gpointer data) {
 }
 
 static gboolean websocket_session(WEB_CLIENT *client) {
-  int fd=client->fd;
   const char *hello=
       "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
 #ifdef WEBRTC
@@ -658,7 +661,7 @@ static gboolean websocket_session(WEB_CLIENT *client) {
   for(;;) {
     char *payload=NULL;
     size_t len=0;
-    int op=tci_ws_recv(fd,&payload,&len);
+    int op=tci_ws_io_recv(&client->io,&payload,&len);
     if(op<0) { g_free(payload); return TRUE; }
     if(op==8) { g_free(payload); return TRUE; }
     if(op==9) {
@@ -710,45 +713,55 @@ static void web_client_release(WEB_CLIENT *client) {
   if(web_client_workers>0) web_client_workers--;
   g_cond_broadcast(&web_clients_cond);
   g_mutex_unlock(&web_clients_mutex);
+  web_tls_session_free(client->tls);
+  client->tls=NULL;
   if(fd>=0) closesocket(fd);
 }
 
 static gpointer web_client_thread(gpointer data) {
   WEB_CLIENT *client=(WEB_CLIENT *)data;
   int fd=client->fd;
+  net_set_nonblocking(fd,1);
+  char *tls_error=NULL;
+  client->tls=web_tls_accept(web_tls,fd,&client->io,&tls_error);
+  if(client->tls==NULL) {
+    log_debug("web: %s\n",tls_error!=NULL?tls_error:"TLS handshake failed");
+    g_free(tls_error);
+    web_client_release(client); return NULL;
+  }
   char request[WEB_HTTP_MAX+1];
   size_t total=0;
   net_set_rcvtimeo(fd,5000);
   while(total<WEB_HTTP_MAX) {
-    ssize_t n=recv(fd,request+total,WEB_HTTP_MAX-total,0);
+    gssize n=client->io.read(client->io.context,request+total,WEB_HTTP_MAX-total);
     if(n<=0) { web_client_release(client); return NULL; }
     total+=(size_t)n; request[total]='\0';
     if(strstr(request,"\r\n\r\n")!=NULL) break;
   }
   if(total==WEB_HTTP_MAX || strstr(request,"\r\n\r\n")==NULL) {
-    http_error(fd,400,"request header is too large\n");
+    http_error(&client->io,400,"request header is too large\n");
     web_client_release(client); return NULL;
   }
 
   char method[8], target[256], version[16];
   if(sscanf(request,"%7s %255s %15s",method,target,version)!=3 ||
      strcmp(version,"HTTP/1.1")!=0) {
-    http_error(fd,400,"invalid request line\n");
+    http_error(&client->io,400,"invalid request line\n");
     web_client_release(client); return NULL;
   }
   gboolean head=strcmp(method,"HEAD")==0;
   if(strcmp(method,"GET")!=0 && !head) {
-    http_error(fd,405,"only GET and HEAD are supported\n");
+    http_error(&client->io,405,"only GET and HEAD are supported\n");
     web_client_release(client); return NULL;
   }
   const char *asset=NULL, *type=NULL;
   gboolean websocket=FALSE;
   if(!web_protocol_route(target,&asset,&type,&websocket)) {
-    http_error(fd,404,"not found\n");
+    http_error(&client->io,404,"not found\n");
     web_client_release(client); return NULL;
   }
   if(!request_authenticated(request)) {
-    http_unauthorized(fd);
+    http_unauthorized(&client->io);
     web_client_release(client); return NULL;
   }
   if(websocket) {
@@ -758,10 +771,10 @@ static gpointer web_client_thread(gpointer data) {
        g_ascii_strcasecmp(upgrade,"websocket")!=0 ||
        header_value(request,"Sec-WebSocket-Protocol",protocol,sizeof(protocol))==NULL ||
        !header_has_token(protocol,"machpsdr.v1")) {
-      http_error(fd,426,"WebSocket protocol machpsdr.v1 is required\n");
+      http_error(&client->io,426,"WebSocket protocol machpsdr.v1 is required\n");
     } else if(!origin_allowed(request)) {
-      http_error(fd,403,"WebSocket origin is not allowed\n");
-    } else if(tci_ws_accept(fd,key,"machpsdr.v1")) {
+      http_error(&client->io,403,"WebSocket origin is not allowed\n");
+    } else if(tci_ws_io_accept(&client->io,key,"machpsdr.v1")) {
       net_set_rcvtimeo(fd,0);
       net_set_sndtimeo(fd,250);
       websocket_session(client);
@@ -771,9 +784,9 @@ static gpointer web_client_thread(gpointer data) {
 
   gsize len=0;
   gchar *contents=read_asset(asset,&len);
-  if(contents==NULL) http_error(fd,500,"web asset is missing\n");
+  if(contents==NULL) http_error(&client->io,500,"web asset is missing\n");
   else {
-    http_send(fd,200,type,contents,len,head);
+    http_send(&client->io,200,type,contents,len,head);
     g_free(contents);
   }
   web_client_release(client);
@@ -798,7 +811,7 @@ static gpointer web_server_thread(gpointer data) {
     closesocket(fd); goto failed;
   }
   web_listen=fd;
-  g_snprintf(web_status_line,sizeof(web_status_line),"LAN port %d%s",web_port,
+  g_snprintf(web_status_line,sizeof(web_status_line),"HTTPS LAN/WAN port %d%s",web_port,
              web_radio!=NULL && web_radio->web_auth_enable?" (password protected)":" (open)");
   log_info("web: listening on %s\n",web_status_line);
 
@@ -884,8 +897,16 @@ void web_server_start(void) {
   if(g_atomic_int_get(&web_running) || web_radio==NULL) return;
   web_port=(web_radio->web_port>0 && web_radio->web_port<=65535)
              ? web_radio->web_port : WEB_DEFAULT_PORT;
+  char *tls_error=NULL;
+  web_tls=web_tls_context_new(web_radio->web_tls_bundle,&tls_error);
+  if(web_tls==NULL) {
+    g_snprintf(web_status_line,sizeof(web_status_line),"TLS unavailable: %s",
+               tls_error!=NULL?tls_error:"certificate error");
+    log_error("web: %s\n",web_status_line);
+    g_free(tls_error); return;
+  }
   g_atomic_int_set(&web_running,1);
-  g_snprintf(web_status_line,sizeof(web_status_line),"starting on LAN port %d",web_port);
+  g_snprintf(web_status_line,sizeof(web_status_line),"starting HTTPS on port %d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
   /* Pushed-state detector on the GTK main loop (start is always called on the
      GTK thread: web_server_init in create_radio, or the Configure dialog). */
@@ -922,6 +943,8 @@ void web_server_stop(void) {
     web_latest_spectrum[i]=NULL;
   }
   g_mutex_unlock(&web_spectrum_mutex);
+  web_tls_context_free(web_tls);
+  web_tls=NULL;
   g_strlcpy(web_status_line,"stopped",sizeof(web_status_line));
 }
 
@@ -1065,4 +1088,12 @@ const char *web_server_status(void) {
   g_mutex_unlock(&web_clients_mutex);
   g_snprintf(status,sizeof(status),"%s (clients: %d)",web_status_line,clients);
   return status;
+}
+
+const char *web_server_tls_fingerprint(void) {
+  return web_tls_context_fingerprint(web_tls);
+}
+
+const char *web_server_tls_bundle(void) {
+  return web_tls_context_bundle(web_tls);
 }

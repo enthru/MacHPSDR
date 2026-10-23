@@ -67,10 +67,10 @@ assets.
    is operator-selectable and recommended; disabling it deliberately gives every
    host that can reach the port the same browser-control access.  The GTK status
    must make protected versus open operation visible.
-3. Directly exposing the embedded HTTP listener to the Internet is unsupported.
-   Internet use goes through a VPN or an authenticated HTTPS/WSS entry point;
-   WebRTC media is encrypted with DTLS-SRTP and does not replace control-plane
-   authentication.
+3. The embedded listener uses HTTPS/WSS and may be forwarded directly to the
+   Internet.  Password protection must remain enabled for a forwarded port.
+   WebRTC media is separately encrypted with DTLS-SRTP and does not replace
+   control-plane authentication.
 4. Browser commands never touch GTK or radio state from a socket thread.  They
    use the existing `ext_*` main-loop dispatch pattern.
 5. PTT is separately armed in the desktop application.  A disconnect, expired
@@ -99,14 +99,15 @@ not an additional HTTP library.  This keeps the macOS bundle and the Windows
 cross-build self-contained.  The server accepts only GET/HEAD for known assets
 and an Upgrade request for `/ws`.
 
-The LAN slice uses HTTP Basic authentication over both asset requests and the
-WebSocket Upgrade.  The username is fixed as `machpsdr`; the operator chooses a
-password of at least eight characters.  Only a random salt and a
+The remote uses HTTP Basic authentication over both asset requests and the
+WebSocket Upgrade.  The username defaults to `machpsdr` and is configurable; the
+operator chooses a password of at least eight characters.  Only a random salt and a
 PBKDF2-HMAC-SHA256 result (100,000 rounds) are persisted.  Authentication can be
-disabled, in which case the server sends no challenge.  Basic authentication is
-not transport encryption: use it only on a trusted LAN or through a VPN/HTTPS
-reverse proxy, and never forward the plain HTTP port to the Internet.  WebSocket
-Origin must match the request Host (HTTP or HTTPS), so another web site cannot
+disabled, in which case the server sends no challenge.  The listener itself is
+TLS 1.2+; it creates a persistent self-signed certificate and private key on
+first use, or loads a user-selected PEM bundle containing the certificate chain
+and matching private key.  The UI exposes its SHA-256 fingerprint.  WebSocket
+Origin must match the request Host (HTTPS), so another web site cannot
 reuse cached browser credentials to open the control socket.
 
 ### Threads and ownership
@@ -246,7 +247,7 @@ waterfall history.  `payload byte count` is therefore `4 + count`, and
 profile (`0` Low, `1` Balanced, `2` High); the remaining flag bits are zero in
 protocol v1.
 
-The localhost WebSocket implementation treats three consecutive replacement,
+The WebSocket implementation treats three consecutive replacement,
 expiry or over-100-ms send-pressure observations as congestion.  It first
 reduces FPS to the next profile's rate, then reduces width; a quiet ten-second
 interval advances recovery toward the requested profile.  Socket sends have a
@@ -353,11 +354,12 @@ bookmarks and decoder status/output.
 - HTTPS/WSS termination or documented VPN deployment, plus WebRTC ICE/STUN and
   optional TURN for networks where direct media cannot connect.
 
-Implemented so far (2026-10-23): the listener binds all IPv4 interfaces; optional
-HTTP Basic authentication covers assets and WebSocket Upgrade, persists only a
-salted PBKDF2 hash, and enforces same-origin WebSocket connections.  With
-protection disabled the LAN service is intentionally open.  Pairing, throttling,
-viewer roles, a control lease and Internet traversal remain future work.
+Implemented so far (2026-10-23): the TLS 1.2+ listener binds all IPv4 interfaces;
+optional HTTP Basic authentication covers assets and WebSocket Upgrade, persists
+only a salted PBKDF2 hash, and enforces same-origin WebSocket connections.  It
+generates a self-signed certificate or loads a custom PEM bundle.  With
+protection disabled the service is intentionally open.  Failed-auth throttling,
+viewer roles, a control lease and WebRTC NAT traversal remain future work.
 
 Acceptance: with protection enabled, unauthenticated LAN requests receive no
 state; a stolen stale lease cannot transmit; open mode is unambiguously reported

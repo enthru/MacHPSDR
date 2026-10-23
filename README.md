@@ -590,7 +590,7 @@ can be replayed separately in the I/Q Player.
 
 - **Browser remote (LAN control, spectrum and audio).** An optional web server built into
   MacHPSDR and enabled in **Configure → Network**. When enabled it listens on all
-  IPv4 interfaces; open `http://<this-computer-IP>:8080` to see every visible receiver's frequency, mode
+  IPv4 interfaces; open `https://<this-computer-IP>:8080` to see every visible receiver's frequency, mode
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
   (1024/15) profiles stay latest-only and automatically back off for a slow
@@ -607,11 +607,15 @@ can be replayed separately in the I/Q Player.
   `machpsdr.v1` JSON protocol over WebSocket and reconnects automatically. This is
   Phase 4 (receive controls, in progress) of the
   [browser-remote plan](doc/web-remote.md) and
-  [implementation record](doc/web-remote-status.md). Optional password protection
-  covers both the page and WebSocket (username `machpsdr`); the password is stored
-  only as a salted PBKDF2 hash. With protection disabled, anyone who can reach the
-  port can control the radio. The HTTP port must stay on a trusted LAN or behind a
-  VPN/HTTPS proxy and must not be forwarded directly to the Internet.
+  [implementation record](doc/web-remote-status.md). The server uses built-in
+  HTTPS/WSS and creates a persistent self-signed certificate automatically; an
+  advanced user may select a PEM bundle containing a certificate chain and
+  private key instead. Optional password protection covers both the page and
+  WebSocket with a configurable username; the password is stored only as a
+  salted PBKDF2 hash. With protection disabled, anyone who can reach the port can
+  control the radio. Direct Internet use requires forwarding the selected TCP
+  port and should always keep password protection enabled. WebRTC receive audio
+  may still require additional ICE/UDP work across NAT.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
@@ -1011,7 +1015,7 @@ Development and testing has been run on macOS Sierra 10.12.6 and High Sierra
 10.13.6. Prerequisites are installed with [Homebrew](https://brew.sh/).
 
 ```bash
-brew install pkgconf fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+brew install pkgconf fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liquid-dsp openssl dylibbundler
 ```
 
 > **`pkgconf` is not optional, and Homebrew will not pull it in for you.** It
@@ -1109,7 +1113,7 @@ requires **GTK 4** (`libgtk-4-dev` / `gtk4`); GTK 3 is no longer supported.
 ```bash
 sudo apt-get install build-essential pkg-config \
                      libfftw3-dev libpulse-dev libsoundio-dev \
-                     libasound2-dev libgtk-4-dev libsoapysdr-dev libliquid-dev
+                     libasound2-dev libgtk-4-dev libsoapysdr-dev libliquid-dev libssl-dev
 ```
 
 > `libliquid-dev` (liquid-dsp) is needed by the **HFDL** decoder, which is built
@@ -1182,7 +1186,7 @@ pacman -S --needed git make autoconf automake-wrapper libtool \
     mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf \
     mingw-w64-x86_64-gtk4 mingw-w64-x86_64-fftw \
     mingw-w64-x86_64-libsoundio mingw-w64-x86_64-soapysdr \
-    mingw-w64-x86_64-zlib
+    mingw-w64-x86_64-zlib mingw-w64-x86_64-openssl
 ```
 
 > MSYS2 does **not** package liquid-dsp, which the default-on **HFDL** decoder
@@ -1396,7 +1400,7 @@ in four languages, are in the [user manual](#user-manual) (§15).
 | `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up. |
 | `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR; the Network device row in the selection window is the permanent way. |
 | `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
-| `MACHPSDR_WEB[=port]` | Start the LAN browser remote even if it is off in Configure, optionally on another port; the saved password setting still applies. |
+| `MACHPSDR_WEB[=port]` | Start the HTTPS LAN/Internet browser remote even if it is off in Configure, optionally on another TCP port; the saved login and certificate settings still apply. |
 
 **Streaming and DSP (SoapySDR devices)**
 

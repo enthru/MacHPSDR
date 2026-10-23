@@ -31,8 +31,13 @@
  * tiny and TX-audio blocks are small; anything larger is not a TCI client. */
 #define TCI_WS_MAX_MSG 262144
 
+typedef gssize (*TCI_WS_READ)(void *context, void *buf, size_t len);
+typedef gssize (*TCI_WS_WRITE)(void *context, const void *buf, size_t len);
+typedef struct { void *context; TCI_WS_READ read; TCI_WS_WRITE write; } TCI_WS_IO;
+
 /* Send a full buffer (blocking).  TRUE on success. */
 gboolean tci_ws_send_all(int fd, const void *buf, size_t n);
+gboolean tci_ws_io_send_all(TCI_WS_IO *io, const void *buf, size_t n);
 
 /* Write a server->client (unmasked) frame header for `len` payload bytes into
  * `hdr` (which must be >= 10 bytes).  Returns the header length: 2, 4 or 10.
@@ -42,6 +47,7 @@ size_t tci_ws_write_header(guint8 *hdr, int opcode, size_t len);
 /* Blocking send of one framed message on `fd` (the caller holds the per-client
  * send lock).  TRUE on success. */
 gboolean tci_ws_send_blocking(int fd, int opcode, const void *payload, size_t len);
+gboolean tci_ws_io_send_blocking(TCI_WS_IO *io, int opcode, const void *payload, size_t len);
 
 /* Receive one COMPLETE message.  Returns its opcode (>= 0) and a g_malloc'd,
  * NUL-terminated payload in *out (caller frees), or -1 on error/close.
@@ -52,6 +58,7 @@ gboolean tci_ws_send_blocking(int fd, int opcode, const void *payload, size_t le
  * gets carried out.  A control frame interleaved into a fragmented message is
  * returned at once and the partial message dropped. */
 int tci_ws_recv(int fd, char **out, size_t *out_len);
+int tci_ws_io_recv(TCI_WS_IO *io, char **out, size_t *out_len);
 
 /* HTTP Upgrade handshake: read the request, answer 101 with the computed
  * Sec-WebSocket-Accept.  TRUE on success. */
@@ -60,5 +67,6 @@ gboolean tci_ws_handshake(int fd);
 /* Finish an Upgrade after the caller has already parsed the HTTP request.
  * `protocol` may be NULL; the browser remote uses it to select machpsdr.v1. */
 gboolean tci_ws_accept(int fd, const char *key, const char *protocol);
+gboolean tci_ws_io_accept(TCI_WS_IO *io, const char *key, const char *protocol);
 
 #endif /* TCI_WS_H */
