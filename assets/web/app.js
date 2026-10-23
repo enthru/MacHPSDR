@@ -2,14 +2,17 @@
 
 const modes = ["LSB", "USB", "DSB", "CWL", "CWU", "FMN", "AM", "DIGU", "SPEC", "DIGL", "SAM", "DRM", "WFM"];
 const cards = new Map();
-let socket, reconnectTimer, stateWatchdog, radioState;
+let socket, reconnectTimer, stateWatchdog, leaseRenewTimer, radioState;
 let nextId = 1, socketGeneration = 0;
 let capabilities = [];
+let leaseHeld = false;
 const connection = document.querySelector("#connection");
 const receivers = document.querySelector("#receivers");
 const empty = document.querySelector("#empty");
 const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
+const txControl = document.querySelector("#tx-control");
+const remotePtt = document.querySelector("#remote-ptt");
 const revision = document.querySelector("#revision");
 const decoderTitle = document.querySelector("#decoder-title");
 const decoderText = document.querySelector("#decoder-text");
@@ -38,6 +41,26 @@ function send(message) {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify({ id: nextId++, ...message }));
   return true;
+}
+function setLeaseHeld(held) {
+  leaseHeld = held;
+  clearTimeout(leaseRenewTimer);
+  if (held && socket?.readyState === WebSocket.OPEN)
+    leaseRenewTimer = setTimeout(() => send({ type: "lease_renew" }), 2000);
+  if (radioState) renderTx(radioState);
+}
+function renderTx(radio) {
+  const leaseAvailable = capabilities.includes("tx_lease");
+  const busy = !!radio.tx_lease_active && !leaseHeld;
+  txControl.hidden = !leaseAvailable;
+  txControl.disabled = !radio.can_transmit || busy;
+  txControl.classList.toggle("held", leaseHeld);
+  txControl.textContent = leaseHeld ? "Release TX control" :
+                          (busy ? "TX control in use" : "Take TX control");
+  mox.disabled = !radio.can_transmit || !leaseHeld;
+  mox.classList.toggle("on", radio.mox);
+  mox.textContent = radio.mox ? "MOX ON" : "MOX";
+  remotePtt.hidden = !radio.remote_ptt;
 }
 function command(action, fields) { send({ type: "command", action, ...fields }); }
 function subscribe(card, rx) {
@@ -320,9 +343,7 @@ function render(state) {
     }
   }
   empty.hidden = state.receivers.length !== 0;
-  mox.disabled = !state.radio.can_transmit;
-  mox.classList.toggle("on", state.radio.mox);
-  mox.textContent = state.radio.mox ? "MOX ON" : "MOX";
+  renderTx(state.radio);
   decoderTitle.textContent = state.radio.decoder_title || "";
   decoderText.textContent = state.radio.decoder_text || "";
   decoderTitle.hidden = !state.radio.decoder_text;
@@ -526,23 +547,31 @@ function connect() {
     if (message.type === "hello") {
       capabilities = message.capabilities || [];
       updateAudioAvailability();
+      if (radioState) renderTx(radioState);
     }
+    if (message.type === "lease_state") setLeaseHeld(!!message.held);
     if (message.type === "state") { render(message); armStateWatchdog(); }
     if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
     if (message.type === "rtc_offer") handleRtcOffer(message.rx, message.sdp);
     if (message.type === "rtc_candidate") handleRtcCandidate(message.rx, message.candidate, message.mid);
     // The local RTCPeerConnection's connectionstatechange drives the button; the
     // server's rtc_state is just a log line here.
-    if (message.type === "error") revision.textContent = `Command failed: ${message.message}`;
+    if (message.type === "error") {
+      if (["lease_lost", "lease_required", "not_armed"].includes(message.code)) setLeaseHeld(false);
+      revision.textContent = `Command failed: ${message.message}`;
+    }
   });
   socket.addEventListener("close", () => {
-    clearTimeout(stateWatchdog); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
+    clearTimeout(stateWatchdog); setLeaseHeld(false); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }
 
 mox.addEventListener("click", () => {
-  if (radioState?.can_transmit) command("set_mox", { value: !radioState.mox });
+  if (radioState?.can_transmit && leaseHeld) command("set_mox", { value: !radioState.mox });
+});
+txControl.addEventListener("click", () => {
+  send({ type: leaseHeld ? "lease_release" : "lease_acquire" });
 });
 // One tap unlocks audio for the whole tab, then the prompt never returns.
 enableSound.addEventListener("click", () => {

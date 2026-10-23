@@ -36,6 +36,13 @@ int main(int argc, char **argv) {
   check("MOX requires and keeps a boolean",
         parse("{\"type\":\"command\",\"id\":4,\"action\":\"set_mox\",\"value\":true}",&r) &&
         r.type==WEB_REQUEST_SET_MOX && r.flag);
+  check("TX control lease lifecycle messages parse",
+        parse("{\"type\":\"lease_acquire\",\"id\":41}",&r) &&
+        r.type==WEB_REQUEST_LEASE_ACQUIRE &&
+        parse("{\"type\":\"lease_renew\",\"id\":42}",&r) &&
+        r.type==WEB_REQUEST_LEASE_RENEW &&
+        parse("{\"type\":\"lease_release\",\"id\":43}",&r) &&
+        r.type==WEB_REQUEST_LEASE_RELEASE);
   check("Balanced spectrum subscription parses",
         parse("{\"type\":\"spectrum_subscribe\",\"id\":5,\"rx\":1,\"profile\":\"Balanced\"}",&r) &&
         r.type==WEB_REQUEST_SPECTRUM_SUBSCRIBE && r.rx==1 && r.profile==WEB_SPECTRUM_BALANCED);

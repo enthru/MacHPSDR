@@ -604,7 +604,11 @@ can be replayed separately in the I/Q Player.
   saved-bookmark recall, and the active decoder's status/text readout are also
   available. The page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
-  session. The server pushes state as it changes rather than the page polling, so
+  session and one browser has pressed **Take TX control**. The renewable TX
+  lease is exclusive; disconnect, a five-second heartbeat timeout, release, or
+  withdrawing the desktop arm emergency-unkeys the radio, and every page shows
+  a **REMOTE PTT** indicator while browser MOX is active. Browser microphone/TX
+  audio is not implemented yet. The server pushes state as it changes rather than the page polling, so
   a control moved on the desktop or in one browser echoes to every browser live.
   Each receiver's demodulated audio plays automatically over a **WebRTC
   Opus** stream (libdatachannel + libopus; the browser's own jitter buffer makes

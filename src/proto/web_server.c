@@ -40,6 +40,7 @@
    moved. */
 #define WEB_STATE_TICK_MS 50
 #define WEB_METER_PUSH_US 200000
+#define WEB_TX_LEASE_TIMEOUT_US (5 * G_USEC_PER_SEC)
 
 typedef struct {
   guint8 receiver;
@@ -104,6 +105,14 @@ static gint web_revision;
 static guint web_state_source;
 static GString *web_last_discrete;
 static gint64 web_last_state_push_us;
+/* Phase 6 remote-TX safety.  The lease is deliberately tied to one upgraded
+   WebSocket, not to a reusable client-supplied token: once that connection is
+   gone, no stale browser state can key the radio. */
+static GMutex web_lease_mutex;
+static WEB_CLIENT *web_tx_lease_owner;
+static gint64 web_tx_lease_deadline_us;
+static volatile gint web_remote_ptt;
+static volatile gint web_remote_mox_seen;
 static gboolean web_state_tick(gpointer data);  /* defined below, armed in start */
 
 static const char *http_reason(int code) {
@@ -285,6 +294,65 @@ static gboolean ws_send_error(WEB_CLIENT *client, gint64 id, const char *code, c
   return ws_send_text(client,line);
 }
 
+static void web_remote_unkey(void) {
+  g_atomic_int_set(&web_remote_mox_seen,FALSE);
+  if(!g_atomic_int_compare_and_exchange(&web_remote_ptt,TRUE,FALSE)) return;
+  if(web_radio==NULL) return;
+  MOX_STATE *m=g_new(MOX_STATE,1);
+  m->radio=web_radio; m->state=FALSE;
+  g_idle_add(ext_set_mox,m);
+}
+
+/* Drop a client's lease and fail safe to RX.  This is safe from a socket
+   worker or the GTK timer: ownership is protected separately and the actual
+   radio mutation is always dispatched through the main loop. */
+static gboolean web_lease_release_client(WEB_CLIENT *client) {
+  gboolean owned=FALSE;
+  g_mutex_lock(&web_lease_mutex);
+  if(web_tx_lease_owner==client) {
+    web_tx_lease_owner=NULL;
+    web_tx_lease_deadline_us=0;
+    owned=TRUE;
+  }
+  g_mutex_unlock(&web_lease_mutex);
+  if(owned) web_remote_unkey();
+  return owned;
+}
+
+static gboolean web_lease_is_owner(WEB_CLIENT *client, gboolean renew) {
+  gboolean owned=FALSE,expired=FALSE;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_lease_mutex);
+  if(web_tx_lease_owner!=NULL && now>=web_tx_lease_deadline_us) {
+    web_tx_lease_owner=NULL;
+    web_tx_lease_deadline_us=0;
+    expired=TRUE;
+  } else if(web_tx_lease_owner==client) {
+    owned=TRUE;
+    if(renew) web_tx_lease_deadline_us=now+WEB_TX_LEASE_TIMEOUT_US;
+  }
+  g_mutex_unlock(&web_lease_mutex);
+  if(expired) web_remote_unkey();
+  return owned;
+}
+
+static gboolean web_lease_active(void) {
+  gboolean active;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_lease_mutex);
+  active=web_tx_lease_owner!=NULL && now<web_tx_lease_deadline_us;
+  g_mutex_unlock(&web_lease_mutex);
+  return active;
+}
+
+static gboolean ws_send_lease_state(WEB_CLIENT *client, gint64 id, gboolean held) {
+  char line[160];
+  g_snprintf(line,sizeof(line),
+      "{\"type\":\"lease_state\",\"id\":%lld,\"held\":%s,\"timeout_ms\":%d}",
+      (long long)id,held?"true":"false",(int)(WEB_TX_LEASE_TIMEOUT_US/1000));
+  return ws_send_text(client,line);
+}
+
 /* Append the radio + per-receiver body shared by the get_state reply, the pushed
    state frame and the change-detector signature.  With include_meter FALSE it is
    the discrete signature (the fields a control can move); the live S-meter is
@@ -294,10 +362,13 @@ static void append_state_body(GString *s, gboolean include_meter) {
   gchar *decoder_title=web_json_escape(web_radio->decoder_status_title);
   gchar *decoder_text=web_json_escape(web_radio->decoder_status_text);
   g_string_append_printf(s,
-      "\"radio\":{\"mox\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
+      "\"radio\":{\"mox\":%s,\"remote_ptt\":%s,\"tx_lease_active\":%s,"
+      "\"can_transmit\":%s,\"active_rx\":%d,"
       "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
       "\"bookmarks\":[",
       web_radio->mox?"true":"false",
+      g_atomic_int_get(&web_remote_ptt)?"true":"false",
+      web_lease_active()?"true":"false",
       (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active,
       web_radio->decode_mode,decoder_title,decoder_text);
   g_free(decoder_title); g_free(decoder_text);
@@ -475,6 +546,33 @@ static void web_rtc_teardown(WEB_CLIENT *client) {
 static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request) {
   if(request->type==WEB_REQUEST_GET_STATE) return ws_send_state(client,request->id);
 
+  if(request->type==WEB_REQUEST_LEASE_ACQUIRE) {
+    if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable)
+      return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
+    /* Expire a silent holder before deciding whether this client may take it. */
+    web_lease_is_owner(client,FALSE);
+    gboolean acquired=FALSE;
+    g_mutex_lock(&web_lease_mutex);
+    if(web_tx_lease_owner==NULL || web_tx_lease_owner==client) {
+      web_tx_lease_owner=client;
+      web_tx_lease_deadline_us=g_get_monotonic_time()+WEB_TX_LEASE_TIMEOUT_US;
+      acquired=TRUE;
+    }
+    g_mutex_unlock(&web_lease_mutex);
+    if(!acquired)
+      return ws_send_error(client,request->id,"lease_busy","another browser holds TX control");
+    return ws_send_lease_state(client,request->id,TRUE);
+  }
+  if(request->type==WEB_REQUEST_LEASE_RENEW) {
+    if(!web_lease_is_owner(client,TRUE))
+      return ws_send_error(client,request->id,"lease_lost","TX control lease is no longer held");
+    return ws_send_lease_state(client,request->id,TRUE);
+  }
+  if(request->type==WEB_REQUEST_LEASE_RELEASE) {
+    web_lease_release_client(client);
+    return ws_send_lease_state(client,request->id,FALSE);
+  }
+
   if(request->type==WEB_REQUEST_SPECTRUM_SUBSCRIBE ||
      request->type==WEB_REQUEST_SPECTRUM_UNSUBSCRIBE) {
     RECEIVER *sub_rx=visible_rx(request->rx);
@@ -588,6 +686,13 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
     case WEB_REQUEST_SET_MOX: {
       if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable)
         return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
+      /* Anyone may request an emergency unkey, but only the live lease holder
+         can key.  Renewing on a valid TX command prevents a heartbeat racing
+         the button from expiring an otherwise active controller. */
+      if(request->flag && !web_lease_is_owner(client,TRUE))
+        return ws_send_error(client,request->id,"lease_required","take TX control before keying");
+      g_atomic_int_set(&web_remote_ptt,request->flag);
+      g_atomic_int_set(&web_remote_mox_seen,FALSE);
       MOX_STATE *m=g_new(MOX_STATE,1);
       m->radio=web_radio; m->state=request->flag;
       g_idle_add(ext_set_mox,m);
@@ -748,9 +853,9 @@ static gboolean websocket_session(WEB_CLIENT *client) {
   gchar *hello=g_strdup_printf(
       "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
 #ifdef WEBRTC
-      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"],\"audio_udp_port\":%d}",
+      "\"capabilities\":[\"control\",\"spectrum\",\"audio\",\"tx_lease\"],\"audio_udp_port\":%d}",
 #else
-      "\"capabilities\":[\"control\",\"spectrum\"],\"audio_udp_port\":%d}",
+      "\"capabilities\":[\"control\",\"spectrum\",\"tx_lease\"],\"audio_udp_port\":%d}",
 #endif
       web_radio->web_rtc_port);
   g_atomic_int_set(&client->upgraded,TRUE);
@@ -795,6 +900,8 @@ static void web_client_release(WEB_CLIENT *client) {
     g_thread_join(client->sender);
     client->sender=NULL;
   }
+  /* A dead controlling socket must unkey before any lengthy WebRTC teardown. */
+  web_lease_release_client(client);
 #ifdef WEBRTC
   /* closing is set above, so any in-flight signal callback early-returns from
      client_send(); this joins the libdatachannel threads with no lock held. */
@@ -982,6 +1089,7 @@ void web_server_init(RADIO *radio) {
   web_server_stop();
   web_radio=radio;
   if(!web_sync_initialized) {
+    g_mutex_init(&web_lease_mutex);
     for(int i=0;i<WEB_MAX_CLIENTS;i++) {
       web_clients[i].fd=-1;
       g_mutex_init(&web_clients[i].queue_mutex);
@@ -1012,6 +1120,12 @@ void web_server_start(void) {
     g_free(tls_error); return;
   }
   g_atomic_int_set(&web_running,1);
+  g_mutex_lock(&web_lease_mutex);
+  web_tx_lease_owner=NULL;
+  web_tx_lease_deadline_us=0;
+  g_mutex_unlock(&web_lease_mutex);
+  g_atomic_int_set(&web_remote_ptt,FALSE);
+  g_atomic_int_set(&web_remote_mox_seen,FALSE);
   g_snprintf(web_status_line,sizeof(web_status_line),"starting HTTPS on port %d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
   /* Pushed-state detector on the GTK main loop (start is always called on the
@@ -1043,6 +1157,11 @@ void web_server_stop(void) {
   g_mutex_lock(&web_clients_mutex);
   while(web_client_workers>0) g_cond_wait(&web_clients_cond,&web_clients_mutex);
   g_mutex_unlock(&web_clients_mutex);
+  g_mutex_lock(&web_lease_mutex);
+  web_tx_lease_owner=NULL;
+  web_tx_lease_deadline_us=0;
+  g_mutex_unlock(&web_lease_mutex);
+  web_remote_unkey();
   g_mutex_lock(&web_spectrum_mutex);
   for(int i=0;i<MAX_RECEIVERS;i++) {
     if(web_latest_spectrum[i]!=NULL) g_bytes_unref(web_latest_spectrum[i]);
@@ -1085,6 +1204,26 @@ static gboolean web_state_tick(gpointer data) {
   (void)data;
   if(!g_atomic_int_get(&web_running)) { web_state_source=0; return G_SOURCE_REMOVE; }
   if(web_radio==NULL || web_radio->discovered==NULL) return G_SOURCE_CONTINUE;
+
+  /* A heartbeat timeout, or the operator withdrawing the session-only desktop
+     arm, revokes TX control and schedules an emergency unkey. */
+  WEB_CLIENT *lease_owner;
+  g_mutex_lock(&web_lease_mutex);
+  lease_owner=web_tx_lease_owner;
+  g_mutex_unlock(&web_lease_mutex);
+  if(lease_owner!=NULL) {
+    web_lease_is_owner(lease_owner,FALSE);
+    if(!web_radio->web_tx_enable || !web_radio->can_transmit) {
+      g_mutex_lock(&web_lease_mutex);
+      lease_owner=web_tx_lease_owner;
+      g_mutex_unlock(&web_lease_mutex);
+      if(lease_owner!=NULL) web_lease_release_client(lease_owner);
+    }
+  }
+  if(g_atomic_int_get(&web_remote_ptt)) {
+    if(web_radio->mox) g_atomic_int_set(&web_remote_mox_seen,TRUE);
+    else if(g_atomic_int_get(&web_remote_mox_seen)) web_remote_unkey();
+  }
 
   gboolean have=FALSE;
   g_mutex_lock(&web_clients_mutex);

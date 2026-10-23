@@ -68,7 +68,7 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   `client->rtc` under `queue_mutex` (the lock the tap holds) and frees — joining
   the worker — with no lock held, so the audio thread never touches a freed
   session and the join never stalls the RX thread.
-- Phase 4 implementation is COMPLETE and awaits operator live acceptance.  Its
+- Phase 4 implementation is COMPLETE and operator live-confirmed.  Its
   first slice is done on `origin/master`:
   server-pushed state replaces the browser's 500 ms `get_state` poll.  A GTK
   main-loop detector (`web_state_tick`, 50 ms) broadcasts a full `state` frame
@@ -146,8 +146,17 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   effect is not a separate requirement of the web adapter.  Bookmarks are
   loaded once on the GTK thread and recall honours VFO lock.  The decoder cache
   is populated on the GTK timer, so socket workers never inspect GTK widgets.
-- Not implemented yet (Phase 5/6): failed-auth throttling, token/QR pairing,
-  viewer roles, control leases and browser TX audio.
+- Phase 6 slice 1 is implemented in the current work: after the existing
+  session-only desktop PTT arm, one browser may take an exclusive renewable TX
+  lease.  It renews every two seconds and expires after five.  Disconnect,
+  expiry, explicit release or withdrawing the desktop arm revokes ownership and
+  emergency-unkeys through `ext_set_mox` on the GTK thread.  MOX-on requires the
+  live holder (MOX-off stays available as an emergency action); every viewer sees
+  the active-lease state and a `REMOTE PTT` indicator while browser MOX is on.
+  The lease is tied to the WebSocket and cannot survive reconnect.  Browser
+  microphone/TX media is not implemented yet.
+- Not implemented yet: failed-auth throttling, token/QR pairing, general
+  viewer/controller roles, browser TX audio and the remaining Phase 6 controls.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -187,8 +196,9 @@ click/drag/wheel tuning and draggable filter edges.
    existing heap-owned `g_idle_add(ext_*)` pattern.
 4. The server is a fixed asset host, not a filesystem server.  Routes remain an
    allow-list; queries, percent paths and traversal are rejected.
-5. PTT requires the non-persistent desktop arm even on loopback.  Future remote
-   TX also requires a lease, heartbeat/watchdog and emergency unkey.
+5. PTT requires the non-persistent desktop arm even on loopback.  Browser MOX
+   additionally requires the connection-bound TX lease; disconnect, its
+   five-second heartbeat timeout or withdrawal of the arm emergency-unkeys.
 6. Spectrum and audio producers must never write sockets or wait for clients.
    They publish into bounded latest-value/bounded-duration buffers; slow clients
    lose old data instead of adding latency to DSP, audio or GTK threads.
@@ -223,6 +233,29 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 6 slice 1: TX lease and emergency unkey
+
+Implemented an exclusive browser-TX lease ahead of the deferred general Phase 5
+role model.  The protocol adds `lease_acquire`, `lease_renew` and
+`lease_release`; ownership is the upgraded WebSocket itself, with a two-second
+browser renewal and five-second server deadline.  Only the live holder can set
+MOX true, while MOX false remains an emergency action.  Disconnect, expiry,
+explicit release and clearing the session-only desktop PTT arm all revoke the
+lease and schedule `ext_set_mox(FALSE)` on the GTK main loop.  State broadcasts
+`tx_lease_active` and `remote_ptt`; the page adds Take/Release TX control and a
+visible REMOTE PTT indicator.
+
+Verified in this work session on macOS: `make check-build` builds every configured
+harness; normal and ASan/UBSan `web_offline --selftest` runs pass all 71 cases,
+including the three lease lifecycle messages; `make -j4` compiles and links the
+full WebRTC build (the forced all-object rebuild repeats the pre-existing unused
+FT8 helper warning); `web_tls_offline --selftest` passes; and, with permission to
+bind its fixed UDP test port, `webrtc_offline --selftest` passes its ICE/DTLS,
+advertised-address and 75-packet Opus RTP checks.  The bundled Node.js accepts
+`assets/web/app.js` with `--check`, and `git diff --check` passes.  NOT verified live: two-browser lease exclusion, disconnect or
+five-second-timeout unkey against a running desktop, the remote-PTT indicator,
+or any on-air effect.  Browser microphone/TX audio is not part of this slice.
 
 ### 2026-10-23 — operator live-confirmed Phases 4 and 5
 
@@ -752,13 +785,16 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: Phase 5 — authentication abuse and control ownership
+## Exact next slice: Phase 6 — browser microphone into WebRTC
 
-After operator live acceptance of Phase 4, implement failed-auth throttling,
-then pairing and viewer/controller roles with one renewable control lease.  The
-lease is also the prerequisite for Phase 6 browser transmit audio and its
-disconnect/heartbeat emergency-unkey rules.  Optional trusted-interface mDNS
-remains a separate Phase 5 convenience slice.
+Extend the existing libdatachannel session with a browser-to-server Opus audio
+track, request microphone permission only after the browser holds the TX lease,
+show a local input-level meter, and feed decoded 48 kHz mono samples into the
+existing transmitter audio choke point without doing codec or socket work on
+the GTK/DSP threads.  A missing media heartbeat must revoke the lease and unkey;
+microphone denial/failure must remain RX-only.  Headless loopback must prove the
+incoming RTP/decode path before any live or on-air claim.  The remaining Phase 5
+pairing/roles/throttling work is intentionally deferred by operator request.
 
 ### 2026-10-22 — WAN/jitter design decision
 

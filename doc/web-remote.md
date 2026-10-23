@@ -11,14 +11,16 @@ The implementation is deliberately incremental.  Every phase must leave a
 usable, testable application and must not make the GTK or RX audio threads wait
 for a network client.
 
-Current status (2026-10-23): Phases 0-3 are complete and live-confirmed on macOS
-(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is fully
-implemented and awaits operator live acceptance,
-and the first three Phase 5 slices make the listener reachable on every IPv4
+Current status (2026-10-23): Phases 0-4 are complete and live-confirmed on macOS
+(control, panadapter/waterfall, WebRTC receive audio and the receive-control
+surface), and the first three Phase 5 slices make the listener reachable on every IPv4
 interface with optional password protection, built-in HTTPS and a fixed
 WebRTC UDP path for port forwarding.  The page's own address is advertised as
 that path, without STUN or another external discovery service.  The binary
-protocol, routing and regression suites pass.  Per-slice live acceptance is
+protocol, routing and regression suites pass.  Phase 6 has started with its
+exclusive renewable browser-TX lease, heartbeat/disconnect emergency unkey and
+visible remote-PTT indication; browser microphone audio is the next slice.
+Per-slice live acceptance is
 recorded in the status record; the repository's isolated macOS test session
 cannot create the application's first GTK window, so live runs happen in a
 normal desktop session.
@@ -189,7 +191,7 @@ The WebSocket subprotocol is `machpsdr.v1`.  Text frames are UTF-8 JSON; bulk
 streams use binary frames.  Every connection starts with:
 
 ```json
-{"type":"hello","protocol":1,"server":"MacHPSDR","capabilities":["control","spectrum","audio"],"audio_udp_port":8081}
+{"type":"hello","protocol":1,"server":"MacHPSDR","capabilities":["control","spectrum","audio","tx_lease"],"audio_udp_port":8081}
 ```
 
 `audio_udp_port` is the server's fixed WebRTC UDP-mux port.  The address is the
@@ -216,6 +218,16 @@ Commands have an id and receive either an acknowledgement or an error:
 State changes are authoritative only when echoed by a later `state` or `event`
 message.  The browser may render an optimistic value, but must replace it with
 the server value.
+
+Remote TX has a connection-bound renewable lease.  A browser sends
+`{"type":"lease_acquire","id":3}`, renews it at least every five seconds with
+`lease_renew`, and may relinquish it with `lease_release`.  The server answers
+with `{"type":"lease_state","id":3,"held":true,"timeout_ms":5000}`.  Only
+the holder may set MOX true; any client may request MOX false as an emergency
+unkey.  Disconnect, expiry or withdrawal of the session-only desktop PTT arm
+revokes the lease and dispatches an unkey through the GTK main loop.  State
+reports `tx_lease_active` to all viewers and `remote_ptt` while browser MOX is
+active.  Lease ownership is never recoverable across a WebSocket reconnect.
 
 Besides `set_frequency`, `set_mode`, `set_mox` and `set_filter`, protocol v1
 carries an allow-listed family of scalar per-receiver controls, each a `command`
@@ -394,8 +406,9 @@ protection disabled the service is intentionally open.  Receive-audio ICE uses
 one configurable UDP-mux port for every client and advertises the address from
 which that client opened the page.  A direct Internet setup forwards both the
 HTTPS TCP port and that WebRTC UDP port to the server; no STUN/TURN service is
-used.  Failed-auth throttling, viewer roles and a control lease remain future
-work.
+used.  Failed-auth throttling, pairing and viewer/controller roles remain future
+work.  The Phase 6 safety slice implements the narrower connection-bound TX
+lease ahead of the general Phase 5 control-ownership model.
 
 Acceptance: with protection enabled, unauthenticated LAN requests receive no
 state; a stolen stale lease cannot transmit; open mode is unambiguously reported
@@ -412,6 +425,13 @@ to the operator.
 Acceptance: closing/crashing the controlling tab always unkeys; microphone
 failure falls back to RX-only; on-air validation is recorded separately because
 there is no TX hardware on the development machine.
+
+Implemented so far (2026-10-23): after the desktop session-only PTT arm, one
+browser may take an exclusive TX lease.  It renews every two seconds and expires
+after five; disconnect, expiry, explicit release or withdrawing the arm revokes
+it and emergency-unkeys.  Every viewer receives the lease/remote-PTT state and
+shows a visible `REMOTE PTT` indicator.  Microphone permission, TX media and the
+remaining transmit controls are not yet implemented.
 
 ## Non-functional targets
 

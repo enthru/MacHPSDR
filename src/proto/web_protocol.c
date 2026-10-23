@@ -270,6 +270,18 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
     out->type=WEB_REQUEST_GET_STATE;
     return TRUE;
   }
+  if(strcmp(type,"lease_acquire")==0) {
+    out->type=WEB_REQUEST_LEASE_ACQUIRE;
+    return TRUE;
+  }
+  if(strcmp(type,"lease_renew")==0) {
+    out->type=WEB_REQUEST_LEASE_RENEW;
+    return TRUE;
+  }
+  if(strcmp(type,"lease_release")==0) {
+    out->type=WEB_REQUEST_LEASE_RELEASE;
+    return TRUE;
+  }
   if(strcmp(type,"spectrum_subscribe")==0) {
     if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
     if(!have_profile || !web_spectrum_profile_parse(profile,&out->profile)) {

@@ -833,7 +833,12 @@ first time you may see a green **Tap to enable sound** button; one tap starts th
 audio and it does not appear again. Browser
 PTT is disabled separately: tick **Allow browser PTT (this session only)** when
 it is deliberately needed. That permission resets to off at every MacHPSDR
-start. Enter a username and at least eight characters in **New password**, then
+start. Then press **Take TX control** in the browser before MOX; only one browser
+can hold this renewable TX lease. While that browser is keyed every connected
+page shows **REMOTE PTT**. Closing or losing the controlling connection, missing
+its heartbeat for five seconds, releasing control, or clearing the desktop PTT
+permission immediately unkeys the radio. Browser microphone/TX audio is not yet
+implemented. Enter a username and at least eight characters in **New password**, then
 press **Set password**; the browser prompts for those credentials.
 **Require password on browser remote** can turn the challenge off
 without deleting the saved password, while **Clear password** removes it. When
