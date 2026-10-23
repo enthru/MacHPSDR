@@ -216,10 +216,14 @@ typedef struct _radio {
   // = control only (VFO/mode/PTT). Persisted in radio_save_state.
   gboolean tci_enable;          // run the TCI server
   gint     tci_port;            // listen port (default TCI_DEFAULT_PORT 40001)
-  // Embedded browser remote (localhost-only until authenticated LAN mode).
+  // Embedded browser remote.  The listener is LAN-wide when enabled; optional
+  // HTTP Basic authentication stores only a salted password hash.
   gboolean web_enable;
   gboolean web_tx_enable;      // session-only browser PTT arm; never persisted
   gint     web_port;
+  gboolean web_auth_enable;
+  char     web_auth_salt[37];
+  char     web_auth_hash[65];
   // I/Q + audio recorder (see recorder.c). Persisted in radio_save_state.
   char rec_dir[512];       // output directory ("" = default ~/.local/share/machpsdr)
   gboolean rec_iq;         // write the off-air I/Q WAV

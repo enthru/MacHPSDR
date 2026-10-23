@@ -9,6 +9,8 @@
 #define WEB_MAX_TEXT_MESSAGE 4096
 #define WEB_BINARY_HEADER_SIZE 32
 #define WEB_SPECTRUM_MAX_BINS 1024
+#define WEB_AUTH_HASH_HEX_SIZE 65
+#define WEB_AUTH_PBKDF2_ITERATIONS 100000
 
 typedef enum {
   WEB_SPECTRUM_LOW = 0,
@@ -101,6 +103,19 @@ gchar *web_json_escape(const char *s);
 /* Fixed HTTP route allow-list.  asset_name is NULL for /ws. */
 gboolean web_protocol_route(const char *target, const char **asset_name,
                             const char **content_type, gboolean *websocket);
+
+/* True only when a browser Origin is the HTTP(S) origin for this request Host. */
+gboolean web_origin_matches_host(const char *origin, const char *host);
+
+/* Browser-remote HTTP Basic authentication.  Only the salted PBKDF2 result is
+   persisted; the clear-text password exists only while the operator enters it
+   and while one Authorization header is being verified. */
+gboolean web_auth_password_hash(const char *password, const char *salt,
+                                guint iterations,
+                                char out[WEB_AUTH_HASH_HEX_SIZE]);
+gboolean web_auth_check_basic(const char *authorization, const char *username,
+                              const char *salt, const char *expected_hash,
+                              guint iterations);
 
 gboolean web_binary_header_encode(guint8 out[WEB_BINARY_HEADER_SIZE],
                                   const WEB_BINARY_HEADER *header);

@@ -12,12 +12,12 @@ usable, testable application and must not make the GTK or RX audio threads wait
 for a network client.
 
 Current status (2026-10-23): Phases 0-3 are complete and live-confirmed on macOS
-(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is in progress:
-its first slice replaces the browser's state polling with server-pushed state on
-change.  The binary protocol, routing and regression suites pass.  Per-slice live
-acceptance is recorded in the status record; the repository's isolated macOS test
-session cannot create the application's first GTK window, so live runs happen in a
-normal desktop session.
+(control, panadapter/waterfall and WebRTC receive audio).  Phase 4 is in progress,
+and the first Phase 5 slice now makes the listener reachable on every IPv4
+interface with optional password protection.  The binary protocol, routing and
+regression suites pass.  Per-slice live acceptance is recorded in the status
+record; the repository's isolated macOS test session cannot create the
+application's first GTK window, so live runs happen in a normal desktop session.
 
 The continuously updated engineering handoff, verification record and exact
 next task are in [web-remote-status.md](web-remote-status.md).
@@ -63,8 +63,10 @@ assets.
 ## Safety and security invariants
 
 1. The server is disabled by default.
-2. Phase 1 binds only to `127.0.0.1`.  LAN binding is not enabled until token
-   authentication exists.
+2. When enabled, the server listens on every IPv4 interface.  Password protection
+   is operator-selectable and recommended; disabling it deliberately gives every
+   host that can reach the port the same browser-control access.  The GTK status
+   must make protected versus open operation visible.
 3. Directly exposing the embedded HTTP listener to the Internet is unsupported.
    Internet use goes through a VPN or an authenticated HTTPS/WSS entry point;
    WebRTC media is encrypted with DTLS-SRTP and does not replace control-plane
@@ -96,6 +98,16 @@ The first implementation uses the project's existing socket and GLib support,
 not an additional HTTP library.  This keeps the macOS bundle and the Windows
 cross-build self-contained.  The server accepts only GET/HEAD for known assets
 and an Upgrade request for `/ws`.
+
+The LAN slice uses HTTP Basic authentication over both asset requests and the
+WebSocket Upgrade.  The username is fixed as `machpsdr`; the operator chooses a
+password of at least eight characters.  Only a random salt and a
+PBKDF2-HMAC-SHA256 result (100,000 rounds) are persisted.  Authentication can be
+disabled, in which case the server sends no challenge.  Basic authentication is
+not transport encryption: use it only on a trusted LAN or through a VPN/HTTPS
+reverse proxy, and never forward the plain HTTP port to the Internet.  WebSocket
+Origin must match the request Host (HTTP or HTTPS), so another web site cannot
+reuse cached browser credentials to open the control socket.
 
 ### Threads and ownership
 
@@ -334,15 +346,22 @@ bookmarks and decoder status/output.
 
 ### Phase 5 - authenticated LAN/Internet operation
 
-- Loopback/LAN selector and generated high-entropy bearer token.
-- Pairing flow (QR/manual code), Origin validation and failed-auth throttling.
+- LAN listener with optional persisted password authentication.
+- Pairing flow (QR/manual code) and failed-auth throttling.
 - Read-only viewers plus a renewable single control lease.
 - Optional mDNS advertisement on trusted interfaces.
 - HTTPS/WSS termination or documented VPN deployment, plus WebRTC ICE/STUN and
   optional TURN for networks where direct media cannot connect.
 
-Acceptance: unauthenticated LAN requests receive no state, a stolen stale lease
-cannot transmit, and loopback-only remains the default after upgrade.
+Implemented so far (2026-10-23): the listener binds all IPv4 interfaces; optional
+HTTP Basic authentication covers assets and WebSocket Upgrade, persists only a
+salted PBKDF2 hash, and enforces same-origin WebSocket connections.  With
+protection disabled the LAN service is intentionally open.  Pairing, throttling,
+viewer roles, a control lease and Internet traversal remain future work.
+
+Acceptance: with protection enabled, unauthenticated LAN requests receive no
+state; a stolen stale lease cannot transmit; open mode is unambiguously reported
+to the operator.
 
 ### Phase 6 - transmit audio and operational polish
 

@@ -121,7 +121,7 @@ static gboolean http_send(int fd, int code, const char *type,
       "Cache-Control: no-store\r\n"
       "X-Content-Type-Options: nosniff\r\n"
       "Referrer-Policy: no-referrer\r\n"
-      "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*\r\n"
+      "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:\r\n"
       "Connection: close\r\n\r\n",
       code,http_reason(code),type?type:"text/plain; charset=utf-8",len);
   if(n<=0 || (size_t)n>=sizeof(header) || !tci_ws_send_all(fd,header,(size_t)n)) return FALSE;
@@ -130,6 +130,21 @@ static gboolean http_send(int fd, int code, const char *type,
 
 static void http_error(int fd, int code, const char *message) {
   http_send(fd,code,"text/plain; charset=utf-8",message,strlen(message),FALSE);
+}
+
+static void http_unauthorized(int fd) {
+  static const char body[]="Authentication required\n";
+  char header[512];
+  int n=g_snprintf(header,sizeof(header),
+      "HTTP/1.1 401 Unauthorized\r\n"
+      "Content-Type: text/plain; charset=utf-8\r\n"
+      "Content-Length: %zu\r\n"
+      "Cache-Control: no-store\r\n"
+      "WWW-Authenticate: Basic realm=\"MacHPSDR\", charset=\"UTF-8\"\r\n"
+      "Connection: close\r\n\r\n",sizeof(body)-1);
+  if(n>0 && (size_t)n<sizeof(header) &&
+     tci_ws_send_all(fd,header,(size_t)n))
+    tci_ws_send_all(fd,body,sizeof(body)-1);
 }
 
 static gchar *read_asset(const char *name, gsize *len) {
@@ -179,10 +194,19 @@ static const char *header_value(const char *request, const char *name,
 static gboolean origin_allowed(const char *request) {
   char origin[256];
   if(header_value(request,"Origin",origin,sizeof(origin))==NULL) return TRUE;
-  char a[128], b[128];
-  g_snprintf(a,sizeof(a),"http://127.0.0.1:%d",web_port);
-  g_snprintf(b,sizeof(b),"http://localhost:%d",web_port);
-  return strcmp(origin,a)==0 || strcmp(origin,b)==0;
+  char host[256];
+  return header_value(request,"Host",host,sizeof(host))!=NULL &&
+         web_origin_matches_host(origin,host);
+}
+
+static gboolean request_authenticated(const char *request) {
+  if(web_radio==NULL || !web_radio->web_auth_enable) return TRUE;
+  char authorization[768];
+  if(header_value(request,"Authorization",authorization,sizeof(authorization))==NULL)
+    return FALSE;
+  return web_auth_check_basic(authorization,"machpsdr",web_radio->web_auth_salt,
+                              web_radio->web_auth_hash,
+                              WEB_AUTH_PBKDF2_ITERATIONS);
 }
 
 static gboolean header_has_token(const char *value, const char *wanted) {
@@ -723,6 +747,10 @@ static gpointer web_client_thread(gpointer data) {
     http_error(fd,404,"not found\n");
     web_client_release(client); return NULL;
   }
+  if(!request_authenticated(request)) {
+    http_unauthorized(fd);
+    web_client_release(client); return NULL;
+  }
   if(websocket) {
     char key[128], upgrade[64], protocol[128];
     if(head || header_value(request,"Sec-WebSocket-Key",key,sizeof(key))==NULL ||
@@ -764,13 +792,14 @@ static gpointer web_server_thread(gpointer data) {
   struct sockaddr_in addr;
   memset(&addr,0,sizeof(addr));
   addr.sin_family=AF_INET;
-  addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+  addr.sin_addr.s_addr=htonl(INADDR_ANY);
   addr.sin_port=htons((guint16)web_port);
   if(bind(fd,(struct sockaddr *)&addr,sizeof(addr))<0 || listen(fd,8)<0) {
     closesocket(fd); goto failed;
   }
   web_listen=fd;
-  g_snprintf(web_status_line,sizeof(web_status_line),"http://127.0.0.1:%d",web_port);
+  g_snprintf(web_status_line,sizeof(web_status_line),"LAN port %d%s",web_port,
+             web_radio!=NULL && web_radio->web_auth_enable?" (password protected)":" (open)");
   log_info("web: listening on %s\n",web_status_line);
 
   while(g_atomic_int_get(&web_running)) {
@@ -824,7 +853,7 @@ static gpointer web_server_thread(gpointer data) {
   return NULL;
 
 failed:
-  g_snprintf(web_status_line,sizeof(web_status_line),"failed to listen on localhost:%d",web_port);
+  g_snprintf(web_status_line,sizeof(web_status_line),"failed to listen on LAN port %d",web_port);
   log_error("web: %s\n",web_status_line);
   g_atomic_int_set(&web_running,0);
   return NULL;
@@ -856,7 +885,7 @@ void web_server_start(void) {
   web_port=(web_radio->web_port>0 && web_radio->web_port<=65535)
              ? web_radio->web_port : WEB_DEFAULT_PORT;
   g_atomic_int_set(&web_running,1);
-  g_snprintf(web_status_line,sizeof(web_status_line),"starting on localhost:%d",web_port);
+  g_snprintf(web_status_line,sizeof(web_status_line),"starting on LAN port %d",web_port);
   web_thread=g_thread_new("web-server",web_server_thread,NULL);
   /* Pushed-state detector on the GTK main loop (start is always called on the
      GTK thread: web_server_init in create_radio, or the Configure dialog). */

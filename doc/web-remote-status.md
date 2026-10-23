@@ -87,14 +87,22 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   fields (`step`, `agc`, `af_gain`, `squelch`, `agc_gain`) are in `state` and in
   the detector signature, so a change from any surface echoes to every browser.
   The browser card gained step/AGC selects and AF-gain/squelch/AGC-gain sliders.
+- Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
+  listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
+  clear password protection; authentication uses HTTP Basic with fixed username
+  `machpsdr`, and only a UUID salt plus a 100,000-round PBKDF2-HMAC-SHA256 hash
+  are persisted.  Protection covers every bundled asset and the WebSocket
+  Upgrade.  WebSocket Origin must equal the request Host (HTTP or HTTPS).  When
+  protection is disabled the service sends no challenge and is intentionally
+  open to every host that can reach the port.
 - Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
   gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
   decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
-  decoder status/output; authenticated LAN access, control leases and browser TX
-  audio.
+  decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
+  control leases, Internet traversal and browser TX audio.
 
-The local remote provides a disabled-by-default listener bound to
-`127.0.0.1`, bundled static assets, the `machpsdr.v1` WebSocket subprotocol,
+The browser remote provides a disabled-by-default LAN listener, bundled static
+assets, the `machpsdr.v1` WebSocket subprotocol,
 state polling, VFO-A frequency and mode commands, meters, and MOX.  Browser PTT
 is additionally gated by `web_tx_enable`, a desktop checkbox that is deliberately
 session-only and resets to false on every application start.  Phase 2 adds one
@@ -109,7 +117,7 @@ click/drag/wheel tuning and draggable filter edges.
 | Normative design | `doc/web-remote.md` | Requirements, invariants, protocol, phases |
 | Implementation handoff | `doc/web-remote-status.md` | Current state, decisions, proof, next step |
 | HTTP/JSON protocol | `src/proto/web_protocol.c/.h` | Strict flat request parser and fixed route allow-list |
-| Server | `src/proto/web_server.c/.h` | Loopback listener, assets, WebSocket clients, state and command dispatch |
+| Server | `src/proto/web_server.c/.h` | LAN listener, asset/WebSocket authentication, clients, state and command dispatch |
 | Shared WebSocket primitive | `src/proto/tci_ws.c/.h` | RFC 6455 framing plus reusable Upgrade response |
 | Desktop configuration | `src/ui/web_dialog.c/.h`, `src/ui/configure_dialog.c` | Enable, port, status and session PTT arm |
 | Persistent radio settings | `src/core/radio.c/.h`, `src/core/radio_state.c` | Persist enable/port; never persist PTT arm |
@@ -122,8 +130,11 @@ click/drag/wheel tuning and draggable filter edges.
 1. Browser control is a separate versioned protocol, not a browser pretending
    to be a TCI client.  Only the tested WebSocket framing/handshake primitive is
    shared with TCI.
-2. Until token authentication exists, the listener stays on loopback.  Do not
-   add a `0.0.0.0` convenience switch or treat Origin checks as authentication.
+2. The enabled listener is LAN-wide.  Password protection is optional by
+   operator request; when off, the UI/status and manuals must say that every host
+   reaching the port can control the radio.  Origin checks prevent browser CSRF
+   but are not authentication.  Plain HTTP Basic is trusted-LAN/VPN-only and the
+   port must never be forwarded directly to the Internet.
 3. Network threads never mutate GTK or radio state directly.  Commands use the
    existing heap-owned `g_idle_add(ext_*)` pattern.
 4. The server is a fixed asset host, not a filesystem server.  Routes remain an
@@ -166,6 +177,47 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 5 slice 1: LAN listener and optional password
+
+The browser remote now listens on every IPv4 interface when enabled.  Configure
+-> Network can set a password (minimum eight characters), turn the password
+challenge off without deleting it, or clear it.  The username is fixed as
+`machpsdr`.  HTTP Basic protects all three bundled assets and the WebSocket
+Upgrade; disabled authentication sends no challenge and intentionally leaves the
+service open to every reachable LAN host.  The status distinguishes `password
+protected` from `open`.  WebSocket Origin validation now accepts only an HTTP or
+HTTPS origin whose authority exactly matches the request Host, rather than a
+hard-coded localhost origin.  CSP permits the page's `ws:`/`wss:` connection.
+
+The clear-text password is never put in `RADIO` or the property file.  Setting a
+password creates a UUID salt and persists only that salt plus a
+PBKDF2-HMAC-SHA256 result (100,000 rounds); comparison of the fixed-length hash is
+constant-time.  HTTP Basic itself is not encryption, so the UI and every manual
+say trusted LAN/VPN or HTTPS reverse proxy only and explicitly prohibit direct
+Internet port forwarding.  PTT remains separately session-armed.
+
+Verified on macOS:
+
+- `make -j4` completed and linked the WebRTC-enabled application;
+- `make check-build` built every configured offline harness;
+- `web_offline --selftest` passes all 52 cases, including exact LAN/HTTPS Origin
+  matches, cross-site and host-suffix rejection, a standard PBKDF2 vector,
+  correct credentials, wrong password and wrong username;
+- `make SANITIZE=1 web-offline && ./web_offline --selftest` passes under
+  AddressSanitizer/UndefinedBehaviorSanitizer;
+- every configured `make check` harness except `qo100_offline` was then run
+  directly and passed;
+- `git diff --check` passes.
+
+The complete `make check` and `make SANITIZE=1 check` recipes were attempted but
+did not complete: in both configurations the pre-existing `qo100_offline` binary
+stopped making progress after its `beacon lock stopped` diagnostic (normal run
+was interrupted after 30 seconds there; sanitized run after about 90 seconds).
+No web test had failed.  NOT yet verified in this isolated session: opening the
+GTK settings page, receiving a 401 challenge in a real browser, the authenticated
+WebSocket Upgrade, or connecting over a second physical LAN device.  Those are
+operator desktop tests; no live/on-air claim is made.
 
 ### 2026-10-23 — Browser page re-laid-out to mirror the desktop window
 
@@ -512,9 +564,9 @@ read-back field in `append_state_body` — to the remaining receive controls:
   VFO-lock rule still refuses a locked dial.
 
 Then sub-receiver and bookmarks, and finally decoder status/textual output.  Each
-operator-visible slice updates the four manuals and README.  Authenticated LAN
-access and control leases remain gated behind their own phase and the loopback-only
-rule (decision #2/#5).
+operator-visible slice updates the four manuals and README.  The remaining LAN/WAN
+security work — failed-auth throttling, pairing, viewer roles and control leases —
+stays in Phase 5 (decision #2/#5).
 
 ### 2026-10-22 — WAN/jitter design decision
 

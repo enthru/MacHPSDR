@@ -798,8 +798,9 @@ the CW settings, or set with `cw_macros_speed`). *The TX paths (audio and CW)
 have not been tested on the air (no transmit hardware).*
 
 **Browser remote (Configure → Network).** Tick **Enable browser remote**, keep
-or change the port (default 8080), then open `http://127.0.0.1:8080` in a browser
-on the same computer. The page shows every visible receiver's frequency, mode,
+or change the port (default 8080), then open
+`http://<this-computer-IP>:8080` in a browser on this computer or another device
+on the LAN. The page shows every visible receiver's frequency, mode,
 S-meter, live panadapter and rolling waterfall; it can retune, change mode and
 follows the MOX state. Each receiver card also carries **tuning step**, **AGC
 mode**, **AF gain**, **squelch** and **AGC gain** controls. Changing any of them —
@@ -820,9 +821,14 @@ first time you may see a green **Tap to enable sound** button; one tap starts th
 audio and it does not appear again. Browser
 PTT is disabled separately: tick **Allow browser PTT (this session only)** when
 it is deliberately needed. That permission resets to off at every MacHPSDR
-start. This first version listens on this computer only, so another computer,
-phone or the Internet cannot connect yet. The status line shows the local URL
-and connected-client count.
+start. For LAN protection, enter at least eight characters in **New password**
+and press **Set password**; the browser then prompts for username `machpsdr` and
+that password. **Require password on browser remote** can turn the challenge off
+without deleting the saved password, while **Clear password** removes it. When
+protection is off, anyone who can reach the port can operate the radio. Basic
+authentication does not encrypt HTTP traffic: use a trusted LAN or VPN/HTTPS
+proxy and never forward this port directly to the Internet. The status line
+shows the LAN port, protection state and connected-client count.
 
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
 immediately to the shared device stream, before individual receivers are tuned
@@ -995,7 +1001,7 @@ of them.
 | `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up (§14). |
 | `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR. The Network device row in the selection window is the permanent way to do this. |
 | `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
-| `MACHPSDR_WEB[=port]` | Start the localhost browser remote even if it is off in Configure, optionally on another port. |
+| `MACHPSDR_WEB[=port]` | Start the LAN browser remote even if it is off in Configure, optionally on another port; the saved password setting still applies. |
 
 **Streaming and DSP (SoapySDR devices)**
 

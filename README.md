@@ -588,9 +588,9 @@ can be replayed separately in the I/Q Player.
   chain, is unverified on air. Not yet exercised against a commercial logger or
   skimmer.)*
 
-- **Browser remote (local control, spectrum and audio).** An optional web server built into
-  MacHPSDR, enabled in **Configure → Network** and bound to localhost by default.
-  Open `http://127.0.0.1:8080` to see every visible receiver's frequency, mode
+- **Browser remote (LAN control, spectrum and audio).** An optional web server built into
+  MacHPSDR and enabled in **Configure → Network**. When enabled it listens on all
+  IPv4 interfaces; open `http://<this-computer-IP>:8080` to see every visible receiver's frequency, mode
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
   (1024/15) profiles stay latest-only and automatically back off for a slow
@@ -607,10 +607,11 @@ can be replayed separately in the I/Q Player.
   `machpsdr.v1` JSON protocol over WebSocket and reconnects automatically. This is
   Phase 4 (receive controls, in progress) of the
   [browser-remote plan](doc/web-remote.md) and
-  [implementation record](doc/web-remote-status.md); the remaining receive
-  controls and authenticated LAN access are the next
-  isolated steps. Until authentication lands the listener deliberately accepts
-  loopback only.
+  [implementation record](doc/web-remote-status.md). Optional password protection
+  covers both the page and WebSocket (username `machpsdr`); the password is stored
+  only as a salted PBKDF2 hash. With protection disabled, anyone who can reach the
+  port can control the radio. The HTTP port must stay on a trusted LAN or behind a
+  VPN/HTTPS proxy and must not be forwarded directly to the Internet.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use
 DIGU/DIGL for digital modes; adjust the receiver AGC if the client reports a
@@ -1395,7 +1396,7 @@ in four languages, are in the [user manual](#user-manual) (§15).
 | `MACHPSDR_FAKE_OFFSET=<Hz>` | Frequency offset applied to that recording at start-up. |
 | `MACHPSDR_PLUTO_URI=<uri>`, `MACHPSDR_PLUTO_HOST=<host>` | One-off address for a networked PlutoSDR; the Network device row in the selection window is the permanent way. |
 | `MACHPSDR_TCI[=port]` | Start the TCI server even if it is off in Configure, optionally on another port. |
-| `MACHPSDR_WEB[=port]` | Start the localhost browser remote even if it is off in Configure, optionally on another port. |
+| `MACHPSDR_WEB[=port]` | Start the LAN browser remote even if it is off in Configure, optionally on another port; the saved password setting still applies. |
 
 **Streaming and DSP (SoapySDR devices)**
 

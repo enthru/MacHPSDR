@@ -2092,6 +2092,17 @@ void add_receivers(RADIO *r) {
     int port=atoi(value);
     if(port>0 && port<=65535) r->web_port=port;
   }
+  value=getProperty("radio.web_auth_salt");
+  if(value!=NULL && strlen(value)<sizeof(r->web_auth_salt))
+    g_strlcpy(r->web_auth_salt,value,sizeof(r->web_auth_salt));
+  value=getProperty("radio.web_auth_hash");
+  if(value!=NULL && strlen(value)==sizeof(r->web_auth_hash)-1 &&
+     strspn(value,"0123456789abcdef")==sizeof(r->web_auth_hash)-1)
+    g_strlcpy(r->web_auth_hash,value,sizeof(r->web_auth_hash));
+  value=getProperty("radio.web_auth_enable");
+  if(value!=NULL && atoi(value)!=0 && r->web_auth_salt[0]!='\0' &&
+     strlen(r->web_auth_hash)==sizeof(r->web_auth_hash)-1)
+    r->web_auth_enable=TRUE;
   value=getProperty("radio.rec_dir");
   if(value!=NULL) { strncpy(r->rec_dir,value,sizeof(r->rec_dir)-1); r->rec_dir[sizeof(r->rec_dir)-1]='\0'; }
   value=getProperty("radio.rec_iq");
@@ -3986,6 +3997,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->web_enable = FALSE;
   r->web_tx_enable = FALSE;
   r->web_port = WEB_DEFAULT_PORT;
+  r->web_auth_enable = FALSE;
+  r->web_auth_salt[0] = '\0';
+  r->web_auth_hash[0] = '\0';
 
   r->rec_dir[0] = '\0';        // recorder: empty => default ~/.local/share/machpsdr
   r->rec_iq = TRUE;            // record both streams by default

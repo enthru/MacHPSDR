@@ -4,6 +4,8 @@
 #include <math.h>
 #include <string.h>
 
+#define WEB_AUTH_DIGEST_SIZE 32
+
 typedef enum { JV_NONE, JV_STRING, JV_INTEGER, JV_BOOL } JSON_VALUE_TYPE;
 
 typedef struct {
@@ -473,4 +475,92 @@ gboolean web_protocol_route(const char *target, const char **asset_name,
     return TRUE;
   }
   return FALSE;
+}
+
+gboolean web_origin_matches_host(const char *origin, const char *host) {
+  if(origin==NULL || host==NULL || *host=='\0' || strchr(host,'/')!=NULL ||
+     strchr(host,'\\')!=NULL || strchr(host,' ')!=NULL || strchr(host,'\t')!=NULL)
+    return FALSE;
+  char http_origin[320], https_origin[320];
+  if(strlen(host)+9>=sizeof(https_origin)) return FALSE;
+  g_snprintf(http_origin,sizeof(http_origin),"http://%s",host);
+  g_snprintf(https_origin,sizeof(https_origin),"https://%s",host);
+  return strcmp(origin,http_origin)==0 || strcmp(origin,https_origin)==0;
+}
+
+/* PBKDF2-HMAC-SHA256, one 32-byte block.  GLib supplies the HMAC primitive on
+   every platform already supported by the application, so authentication does
+   not add a crypto or packaging dependency. */
+gboolean web_auth_password_hash(const char *password, const char *salt,
+                                guint iterations,
+                                char out[WEB_AUTH_HASH_HEX_SIZE]) {
+  if(password==NULL || *password=='\0' || salt==NULL || *salt=='\0' ||
+     iterations==0 || out==NULL) return FALSE;
+  const guchar *key=(const guchar *)password;
+  gsize key_len=strlen(password), salt_len=strlen(salt);
+  guint8 u[WEB_AUTH_DIGEST_SIZE], result[WEB_AUTH_DIGEST_SIZE];
+  guint8 block[]={0,0,0,1};
+  GHmac *hmac=g_hmac_new(G_CHECKSUM_SHA256,key,key_len);
+  if(hmac==NULL) return FALSE;
+  g_hmac_update(hmac,(const guchar *)salt,salt_len);
+  g_hmac_update(hmac,block,sizeof(block));
+  gsize digest_len=sizeof(u);
+  g_hmac_get_digest(hmac,u,&digest_len);
+  g_hmac_unref(hmac);
+  if(digest_len!=sizeof(u)) return FALSE;
+  memcpy(result,u,sizeof(result));
+  for(guint round=1;round<iterations;round++) {
+    hmac=g_hmac_new(G_CHECKSUM_SHA256,key,key_len);
+    if(hmac==NULL) return FALSE;
+    g_hmac_update(hmac,u,sizeof(u));
+    digest_len=sizeof(u);
+    g_hmac_get_digest(hmac,u,&digest_len);
+    g_hmac_unref(hmac);
+    if(digest_len!=sizeof(u)) return FALSE;
+    for(guint i=0;i<sizeof(result);i++) result[i]^=u[i];
+  }
+  for(guint i=0;i<sizeof(result);i++)
+    g_snprintf(out+i*2,3,"%02x",result[i]);
+  out[WEB_AUTH_HASH_HEX_SIZE-1]='\0';
+  return TRUE;
+}
+
+static gboolean constant_time_equal(const char *a, const char *b) {
+  if(a==NULL || b==NULL) return FALSE;
+  size_t alen=strlen(a), blen=strlen(b), count=MAX(alen,blen);
+  size_t diff=alen^blen;
+  for(size_t i=0;i<count;i++) {
+    unsigned char ac=i<alen?(unsigned char)a[i]:0;
+    unsigned char bc=i<blen?(unsigned char)b[i]:0;
+    diff|=(size_t)(ac^bc);
+  }
+  return diff==0;
+}
+
+gboolean web_auth_check_basic(const char *authorization, const char *username,
+                              const char *salt, const char *expected_hash,
+                              guint iterations) {
+  if(authorization==NULL || username==NULL || salt==NULL || expected_hash==NULL ||
+     g_ascii_strncasecmp(authorization,"Basic ",6)!=0) return FALSE;
+  const char *encoded=authorization+6;
+  while(*encoded==' ' || *encoded=='\t') encoded++;
+  if(*encoded=='\0' || strlen(encoded)>512) return FALSE;
+  gsize decoded_len=0;
+  guchar *decoded=g_base64_decode(encoded,&decoded_len);
+  if(decoded==NULL || decoded_len==0 || memchr(decoded,'\0',decoded_len)!=NULL) {
+    g_free(decoded); return FALSE;
+  }
+  gchar *credentials=g_strndup((const gchar *)decoded,decoded_len);
+  g_free(decoded);
+  gchar *colon=strchr(credentials,':');
+  if(colon==NULL) { g_free(credentials); return FALSE; }
+  *colon='\0';
+  char actual_hash[WEB_AUTH_HASH_HEX_SIZE];
+  gboolean ok=constant_time_equal(credentials,username) &&
+              web_auth_password_hash(colon+1,salt,iterations,actual_hash) &&
+              constant_time_equal(actual_hash,expected_hash);
+  memset(actual_hash,0,sizeof(actual_hash));
+  memset(credentials,0,decoded_len);
+  g_free(credentials);
+  return ok;
 }

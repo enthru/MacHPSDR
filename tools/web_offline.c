@@ -97,6 +97,25 @@ int main(int argc, char **argv) {
         !web_protocol_route("/%2e%2e/radio.props",&asset,&type,&ws));
   check("queries are not a second routing language",
         !web_protocol_route("/app.js?anything",&asset,&type,&ws));
+  check("LAN WebSocket origin matches its request Host",
+        web_origin_matches_host("http://192.168.1.25:8080","192.168.1.25:8080"));
+  check("HTTPS reverse-proxy origin matches its request Host",
+        web_origin_matches_host("https://radio.example","radio.example"));
+  check("a cross-site WebSocket origin is rejected",
+        !web_origin_matches_host("https://evil.example","192.168.1.25:8080"));
+  check("an origin with a matching-host suffix is rejected",
+        !web_origin_matches_host("http://192.168.1.25:8080.evil.example","192.168.1.25:8080"));
+
+  char auth_hash[WEB_AUTH_HASH_HEX_SIZE];
+  check("PBKDF2-HMAC-SHA256 matches the one-round test vector",
+        web_auth_password_hash("password","salt",1,auth_hash) &&
+        strcmp(auth_hash,"120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")==0);
+  check("HTTP Basic accepts the configured user and password",
+        web_auth_check_basic("Basic bWFjaHBzZHI6cGFzc3dvcmQ=","machpsdr","salt",auth_hash,1));
+  check("HTTP Basic rejects a wrong password",
+        !web_auth_check_basic("Basic bWFjaHBzZHI6d3Jvbmc=","machpsdr","salt",auth_hash,1));
+  check("HTTP Basic rejects a different username",
+        !web_auth_check_basic("Basic b3RoZXI6cGFzc3dvcmQ=","machpsdr","salt",auth_hash,1));
 
   guint8 header[WEB_BINARY_HEADER_SIZE];
   WEB_BINARY_HEADER bh={WEB_PROTOCOL_VERSION,1,2,3,0x78563412u,
