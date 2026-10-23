@@ -217,6 +217,11 @@ WEBRTC_RPATH=-Wl,-rpath,'$$ORIGIN/$(WEBRTC_PREFIX)/lib'
 endif
 ifeq ($(UNAME_S),Darwin)
 WEBRTC_RPATH=-Wl,-rpath,@loader_path/$(WEBRTC_PREFIX)/lib
+# libdatachannel's install id is @rpath/libdatachannel.0.dylib, so `make app`'s
+# dylibbundler needs the prefix on its search path to resolve and bundle it
+# (exactly like ./wdsp for libwdsp).  Empty unless WEBRTC is on, so a default
+# bundle is unchanged.
+WEBRTC_BUNDLE_SEARCH=-s $(WEBRTC_PREFIX)/lib
 endif
 WEBRTC_SOURCES=web_rtc.c
 WEBRTC_HEADERS=web_rtc.h
@@ -1378,7 +1383,7 @@ app: $(PROGRAM)
 	@dylibbundler -of -b \
 		-x $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)-bin \
 		-d $(APP_BUNDLE)/Contents/Frameworks/ \
-		-s $(WDSP_DIR) \
+		-s $(WDSP_DIR) $(WEBRTC_BUNDLE_SEARCH) \
 		-p @executable_path/../Frameworks/ 2>&1 | grep -v "^Warning" || true
 
 	@# LC_RPATH is NOT de-duplicated here.  The binary is linked with two rpaths
@@ -1484,9 +1489,15 @@ app: $(PROGRAM)
 			cp $$moddir/*.so "$$dest"/ 2>/dev/null || true; \
 			for lib in "$$dest"/*.so; do \
 				[ -f "$$lib" ] || continue; \
-				dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
+				if ! printf 'quit\n' | dylibbundler -of -b -x "$$lib" -d $(APP_BUNDLE)/Contents/Frameworks/ \
 					-s $(BREW_PREFIX)/lib -s $(SOAPY_EXTRA_PREFIX)/lib \
-					-p @executable_path/../Frameworks/ </dev/null 2>/dev/null || true; \
+					-p @executable_path/../Frameworks/ 2>/dev/null; then \
+					echo "  WARNING: cannot bundle `basename $$lib` -- a dependency is missing or stale"; \
+					echo "           (often a locally built driver left behind by a SoapySDR upgrade);"; \
+					echo "           dropping it from the bundle. Rebuild it, e.g."; \
+					echo "             tools/build-soapy-plutosdr.sh"; \
+					rm -f "$$lib"; \
+				fi; \
 			done; \
 		fi; \
 	done
