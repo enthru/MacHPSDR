@@ -432,7 +432,9 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         g_mutex_lock(&client->queue_mutex);
         client->rtc_rx=request->rx;
         g_mutex_unlock(&client->queue_mutex);
-        WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client);
+        WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,client,
+                                               web_radio->web_stun_server,
+                                               (guint16)web_radio->web_rtc_port);
         if(s==NULL || !web_rtc_session_offer(s)) {
           if(s!=NULL) web_rtc_session_free(s);
           return ws_send_error(client,request->id,"rtc_failed","could not start audio");
@@ -648,16 +650,21 @@ static gpointer web_sender_thread(gpointer data) {
 }
 
 static gboolean websocket_session(WEB_CLIENT *client) {
-  const char *hello=
+  gchar *ice_server=web_json_escape(web_radio->web_stun_server);
+  gchar *hello=g_strdup_printf(
       "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
 #ifdef WEBRTC
-      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"]}";
+      "\"capabilities\":[\"control\",\"spectrum\",\"audio\"],\"ice_server\":\"%s\"}",
 #else
-      "\"capabilities\":[\"control\",\"spectrum\"]}";
+      "\"capabilities\":[\"control\",\"spectrum\"],\"ice_server\":\"%s\"}",
 #endif
+      ice_server);
+  g_free(ice_server);
   g_atomic_int_set(&client->upgraded,TRUE);
   client->sender=g_thread_new("web-spectrum",web_sender_thread,client);
-  if(!ws_send_text(client,hello)) return FALSE;
+  gboolean hello_ok=ws_send_text(client,hello);
+  g_free(hello);
+  if(!hello_ok) return FALSE;
   for(;;) {
     char *payload=NULL;
     size_t len=0;
@@ -811,7 +818,8 @@ static gpointer web_server_thread(gpointer data) {
     closesocket(fd); goto failed;
   }
   web_listen=fd;
-  g_snprintf(web_status_line,sizeof(web_status_line),"HTTPS LAN/WAN port %d%s",web_port,
+  g_snprintf(web_status_line,sizeof(web_status_line),"HTTPS TCP %d, WebRTC UDP %d%s",
+             web_port,web_radio!=NULL?web_radio->web_rtc_port:0,
              web_radio!=NULL && web_radio->web_auth_enable?" (password protected)":" (open)");
   log_info("web: listening on %s\n",web_status_line);
 

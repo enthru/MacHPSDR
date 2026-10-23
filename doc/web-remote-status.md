@@ -101,11 +101,20 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   instead select one PEM bundle containing a certificate chain and matching
   private key.  The login username is configurable and persisted.  The TLS
   layer is inside MacHPSDR, so forwarding its TCP port requires no reverse proxy.
+- Phase 5 slice 3 adds the Internet receive-audio path.  Every server-side
+  libdatachannel peer uses one persisted UDP-mux port (8081 by default), so the
+  router needs one stable UDP forwarding rule rather than a dynamic range.  A
+  persisted ICE/STUN URL defaults to `stun:stun.cloudflare.com:3478`; it is used
+  by the server and sent as additive `hello.ice_server` data so the browser uses
+  the same service.  Clearing the field disables STUN for LAN-only use.  The
+  status and Configure -> Network show both ports and tell the operator to
+  forward HTTPS/TCP plus WebRTC/UDP.
 - Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
   gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
   decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
   decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
-  control leases, WebRTC STUN/TURN or fixed-port NAT traversal and browser TX audio.
+  control leases, TURN relay support for networks where direct ICE cannot
+  connect, and browser TX audio.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -218,7 +227,7 @@ self-signed bundle, completes a real TLS client/server handshake over a socket
 pair, and round-trips encrypted data.  NOT yet verified in this isolated session:
 the GTK certificate controls, a real browser warning/login/WSS session, public
 TCP port forwarding, or audio through NAT.  Spectrum/control use the one forwarded
-TCP port; WebRTC audio still has no STUN/TURN or fixed forwarded UDP port.
+TCP port.  This was the exact limitation addressed by Phase 5 slice 3 below.
 
 Verified on macOS:
 
@@ -241,6 +250,33 @@ No web test had failed.  NOT yet verified in this isolated session: opening the
 GTK settings page, receiving a 401 challenge in a real browser, the authenticated
 WebSocket Upgrade, or connecting over a second physical LAN device.  Those are
 operator desktop tests; no live/on-air claim is made.
+
+### 2026-10-23 — Phase 5 slice 3: fixed WebRTC UDP port and STUN
+
+Receive audio can now follow the browser remote through an ordinary router port
+forward.  Configure -> Network persists a **WebRTC audio UDP port** (default
+8081) and **STUN server** (default `stun:stun.cloudflare.com:3478`).  The native
+offerer enables libdatachannel/libjuice UDP multiplexing and constrains candidate
+gathering to that one port for every client.  The server's ICE URL is included
+in the additive `hello.ice_server` field, and `app.js` supplies it to the browser
+`RTCPeerConnection`.  Editing the UDP port restarts the listener immediately;
+editing the STUN URL applies on Enter and restarts it.  An empty URL deliberately
+leaves host candidates only for LAN operation.
+
+Verified on macOS: `make -j4` links the WebRTC-enabled application and `make
+check-build` builds every configured harness.  The native `webrtc_offline
+--selftest`, run with permission to bind UDP 49001, reports a host candidate on
+exactly that port, a successful offer/answer/ICE/DTLS loopback connection, and
+75/75 Opus RTP packets at 49.8/s with PT 111, no other payloads and no bad
+sequence/timestamp steps.  A second run with
+`MACHPSDR_TEST_STUN=stun:stun.cloudflare.com:3478` also receives a public
+server-reflexive candidate and passes the media checks (49.7/s).  `web_offline
+--selftest` passes all 52 protocol/routing/authentication cases;
+`web_tls_offline` completes its certificate/handshake round trip; JavaScriptCore
+parses `assets/web/app.js`; and `git diff --check` passes.  NOT verified in this
+isolated session: real router TCP/UDP forwarding, browser audio from outside the
+LAN, or restrictive-NAT behaviour.  TURN relay is not implemented; it remains
+necessary where a direct ICE route cannot be formed.
 
 ### 2026-10-23 — Browser page re-laid-out to mirror the desktop window
 

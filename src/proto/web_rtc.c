@@ -148,7 +148,8 @@ static void on_state_change(int pc, rtcState state, void *ptr) {
 /* --- session ------------------------------------------------------------- */
 
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
-                                     web_rtc_state_cb state, void *user) {
+                                     web_rtc_state_cb state, void *user,
+                                     const char *ice_server, guint16 udp_port) {
   web_rtc_init();
   WEB_RTC_SESSION *s = g_new0(WEB_RTC_SESSION, 1);
   s->track = -1;
@@ -160,6 +161,17 @@ WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
 
   rtcConfiguration cfg;
   memset(&cfg, 0, sizeof(cfg));
+  const char *ice_servers[1];
+  if(ice_server!=NULL && *ice_server!='\0') {
+    ice_servers[0]=ice_server;
+    cfg.iceServers=ice_servers;
+    cfg.iceServersCount=1;
+  }
+  if(udp_port>0) {
+    cfg.enableIceUdpMux=true;
+    cfg.portRangeBegin=udp_port;
+    cfg.portRangeEnd=udp_port;
+  }
   /* Drive negotiation explicitly (offer on demand) rather than letting the
      stack renegotiate behind us. */
   cfg.disableAutoNegotiation = true;

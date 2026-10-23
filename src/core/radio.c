@@ -2105,6 +2105,11 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.web_tls_bundle");
   if(value!=NULL && strlen(value)<sizeof(r->web_tls_bundle))
     g_strlcpy(r->web_tls_bundle,value,sizeof(r->web_tls_bundle));
+  value=getProperty("radio.web_rtc_port");
+  if(value!=NULL) { int port=atoi(value); if(port>0 && port<=65535) r->web_rtc_port=port; }
+  value=getProperty("radio.web_stun_server");
+  if(value!=NULL && strlen(value)<sizeof(r->web_stun_server))
+    g_strlcpy(r->web_stun_server,value,sizeof(r->web_stun_server));
   value=getProperty("radio.web_auth_enable");
   if(value!=NULL && atoi(value)!=0 && r->web_auth_salt[0]!='\0' &&
      strlen(r->web_auth_hash)==sizeof(r->web_auth_hash)-1)
@@ -4008,6 +4013,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->web_auth_salt[0] = '\0';
   r->web_auth_hash[0] = '\0';
   r->web_tls_bundle[0] = '\0';
+  r->web_rtc_port = 8081;
+  g_strlcpy(r->web_stun_server,"stun:stun.cloudflare.com:3478",sizeof(r->web_stun_server));
 
   r->rec_dir[0] = '\0';        // recorder: empty => default ~/.local/share/machpsdr
   r->rec_iq = TRUE;            // record both streams by default

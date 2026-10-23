@@ -829,10 +829,12 @@ protection is off, anyone who can reach the port can operate the radio. The
 server encrypts the page and WebSocket itself. It generates a persistent
 self-signed certificate (accept the browser warning after checking its SHA-256
 fingerprint), or **TLS PEM bundle** can name a PEM file containing a certificate
-chain and matching private key. For Internet access, forward the selected TCP
-port to this computer and keep password protection enabled. The status line
-shows the HTTPS port, protection state and connected-client count. WebRTC audio
-can still fail across NAT even while controls and spectrum work.
+chain and matching private key. For Internet access, forward both the selected
+HTTPS **TCP** port and the **WebRTC audio UDP port** (8081 by default) to this
+computer, and keep password protection enabled. The default **STUN server**
+(`stun:stun.cloudflare.com:3478`) lets the app and browser discover their public
+media addresses; press Enter after editing it, or clear it for LAN-only use. The
+status line shows both ports, the protection state and connected-client count.
 
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
 immediately to the shared device stream, before individual receivers are tuned

@@ -226,6 +226,8 @@ typedef struct _radio {
   char     web_auth_salt[37];
   char     web_auth_hash[65];
   char     web_tls_bundle[512];
+  gint     web_rtc_port;
+  char     web_stun_server[256];
   // I/Q + audio recorder (see recorder.c). Persisted in radio_save_state.
   char rec_dir[512];       // output directory ("" = default ~/.local/share/machpsdr)
   gboolean rec_iq;         // write the off-air I/Q WAV
