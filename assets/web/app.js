@@ -284,7 +284,7 @@ function handleBinary(buffer) {
   if (view.getUint8(0) !== 77 || view.getUint8(1) !== 80 || view.getUint8(2) !== 83 || view.getUint8(3) !== 68 ||
       view.getUint8(4) !== 1 || view.getUint8(5) !== 1) return;
   const rx = view.getUint8(6), count = view.getUint32(20, true), payload = view.getUint32(28, true);
-  if (count === 0 || count > 1024 || payload !== count + 4 || buffer.byteLength !== 32 + payload) return;
+  if (count === 0 || count > 2048 || payload !== count + 4 || buffer.byteLength !== 32 + payload) return;
   const card = cards.get(rx);
   if (!card) return;
   const timestamp = Number(view.getBigUint64(12, true));

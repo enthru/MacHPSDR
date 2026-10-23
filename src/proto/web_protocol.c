@@ -273,7 +273,7 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   if(strcmp(type,"spectrum_subscribe")==0) {
     if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
     if(!have_profile || !web_spectrum_profile_parse(profile,&out->profile)) {
-      set_error(error,error_len,"profile must be Low, Balanced or High"); return FALSE;
+      set_error(error,error_len,"profile must be Low, Balanced, High or Ultra"); return FALSE;
     }
     out->type=WEB_REQUEST_SPECTRUM_SUBSCRIBE;
     return TRUE;
@@ -397,19 +397,20 @@ gboolean web_spectrum_profile_parse(const char *name, WEB_SPECTRUM_PROFILE *prof
   if(g_ascii_strcasecmp(name,"Low")==0) *profile=WEB_SPECTRUM_LOW;
   else if(g_ascii_strcasecmp(name,"Balanced")==0) *profile=WEB_SPECTRUM_BALANCED;
   else if(g_ascii_strcasecmp(name,"High")==0) *profile=WEB_SPECTRUM_HIGH;
+  else if(g_ascii_strcasecmp(name,"Ultra")==0) *profile=WEB_SPECTRUM_ULTRA;
   else return FALSE;
   return TRUE;
 }
 
 const char *web_spectrum_profile_name(WEB_SPECTRUM_PROFILE profile) {
-  static const char *names[]={"Low","Balanced","High"};
-  return profile>=WEB_SPECTRUM_LOW && profile<=WEB_SPECTRUM_HIGH ? names[profile] : "Low";
+  static const char *names[]={"Low","Balanced","High","Ultra"};
+  return profile>=WEB_SPECTRUM_LOW && profile<=WEB_SPECTRUM_ULTRA ? names[profile] : "Low";
 }
 
 WEB_SPECTRUM_LIMITS web_spectrum_profile_limits(int profile) {
-  static const WEB_SPECTRUM_LIMITS limits[]={{256,5},{512,10},{1024,15}};
+  static const WEB_SPECTRUM_LIMITS limits[]={{256,5},{512,10},{1024,15},{2048,30}};
   if(profile<WEB_SPECTRUM_LOW) profile=WEB_SPECTRUM_LOW;
-  if(profile>WEB_SPECTRUM_HIGH) profile=WEB_SPECTRUM_HIGH;
+  if(profile>WEB_SPECTRUM_ULTRA) profile=WEB_SPECTRUM_ULTRA;
   return limits[(unsigned)profile];
 }
 

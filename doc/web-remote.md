@@ -166,6 +166,15 @@ Initial per-receiver profiles are budgets, not promises to fill the link:
 | Low | 256 bins × 5 fps | about 10 kbit/s | 16 kbit/s mono | at most 40 kbit/s |
 | Balanced | 512 bins × 10 fps | about 41 kbit/s | 24 kbit/s mono | at most 80 kbit/s |
 | High | 1024 bins × 15 fps | about 123 kbit/s | 48 kbit/s mono | at most 200 kbit/s |
+| Ultra | 2048 bins × 30 fps | about 492 kbit/s | 64 kbit/s mono | at most 700 kbit/s |
+
+Ultra is the smooth/high-resolution tier for a LAN or an unconstrained
+connection; it is never selected automatically by backpressure recovery (a
+client reaches it only by subscribing to it) and degrades through High on
+congestion like any other profile.  The source bins are the desktop
+panadapter's own display pixels, so above the panadapter's width Ultra carries
+no more real resolution than High — it is bandwidth spent on update rate and on
+filling a wide browser window one-to-one.
 
 Payload estimates are the uncompressed eight-bit rows and deliberately do not
 depend on noise being compressible.  Protocol overhead fits inside the total
@@ -254,8 +263,8 @@ bin reconstructs as `floor + value / 255 * span`.  Rows older than 500 ms may be
 dropped by the sender or client and are never retransmitted merely to complete a
 waterfall history.  `payload byte count` is therefore `4 + count`, and
 `rate_or_width` equals `count`.  For spectrum, flag bits 0-1 carry the effective
-profile (`0` Low, `1` Balanced, `2` High); the remaining flag bits are zero in
-protocol v1.
+profile (`0` Low, `1` Balanced, `2` High, `3` Ultra); the remaining flag bits
+are zero in protocol v1.  `count` is at most 2048 (the Ultra bin cap).
 
 The WebSocket implementation treats three consecutive replacement,
 expiry or over-100-ms send-pressure observations as congestion.  It first
@@ -298,7 +307,7 @@ and `make check` passes.
 ### Phase 2 - panadapter and waterfall
 
 - Publish the already-fetched WDSP bins from the display timer.
-- Per-client Low/Balanced/High subscription; default 512 bins / 10 fps.
+- Per-client Low/Balanced/High/Ultra subscription; default 512 bins / 10 fps.
 - Peak-preserving downsampling and eight-bit dB quantization; do not send I/Q,
   float32 bins or a separate waterfall image.
 - WebGL2/canvas panadapter and rolling waterfall.

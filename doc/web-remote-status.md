@@ -121,7 +121,7 @@ state polling, VFO-A frequency and mode commands, meters, and MOX.  Browser PTT
 is additionally gated by `web_tx_enable`, a desktop checkbox that is deliberately
 session-only and resets to false on every application start.  Phase 2 adds one
 quantized latest-only spectrum row per subscribed receiver, a Canvas panadapter
-and browser-derived waterfall, Low/Balanced/High profiles, adaptive fallback,
+and browser-derived waterfall, Low/Balanced/High/Ultra profiles, adaptive fallback,
 click/drag/wheel tuning and draggable filter edges.
 
 ## File map

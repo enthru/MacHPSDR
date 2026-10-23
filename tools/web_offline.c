@@ -39,6 +39,9 @@ int main(int argc, char **argv) {
   check("Balanced spectrum subscription parses",
         parse("{\"type\":\"spectrum_subscribe\",\"id\":5,\"rx\":1,\"profile\":\"Balanced\"}",&r) &&
         r.type==WEB_REQUEST_SPECTRUM_SUBSCRIBE && r.rx==1 && r.profile==WEB_SPECTRUM_BALANCED);
+  check("Ultra spectrum subscription parses (case-insensitive)",
+        parse("{\"type\":\"spectrum_subscribe\",\"id\":5,\"rx\":0,\"profile\":\"ultra\"}",&r) &&
+        r.type==WEB_REQUEST_SPECTRUM_SUBSCRIBE && r.profile==WEB_SPECTRUM_ULTRA);
   check("spectrum unsubscribe parses",
         parse("{\"type\":\"spectrum_unsubscribe\",\"id\":6,\"rx\":0}",&r) &&
         r.type==WEB_REQUEST_SPECTRUM_UNSUBSCRIBE);
@@ -133,8 +136,11 @@ int main(int argc, char **argv) {
 
   WEB_SPECTRUM_LIMITS low=web_spectrum_profile_limits((WEB_SPECTRUM_PROFILE)-9);
   WEB_SPECTRUM_LIMITS high=web_spectrum_profile_limits((WEB_SPECTRUM_PROFILE)99);
-  check("spectrum profiles clamp to 256/5 and 1024/15",
-        low.bins==256 && low.fps==5 && high.bins==1024 && high.fps==15);
+  check("spectrum profiles clamp to 256/5 and 2048/30",
+        low.bins==256 && low.fps==5 && high.bins==2048 && high.fps==30);
+  check("Ultra profile is 2048 bins at 30 fps",
+        web_spectrum_profile_limits(WEB_SPECTRUM_ULTRA).bins==2048 &&
+        web_spectrum_profile_limits(WEB_SPECTRUM_ULTRA).fps==30);
   float bins[]={-120.0f,-80.0f,-110.0f,-70.0f,-130.0f,-90.0f,-100.0f,-60.0f};
   guint8 quantized[4];
   check("downsampling preserves each bucket peak",
