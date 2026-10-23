@@ -163,6 +163,19 @@ function makeCard(rx) {
   agc.addEventListener("change", () => command("set_agc", { rx: rx.id, value: Number(agc.value) }));
   const step = card.querySelector(".step");
   step.addEventListener("change", () => command("set_step", { rx: rx.id, value: Number(step.value) }));
+  // Noise chips cycle through the same states as the desktop VFO menu (NB
+  // off/NB/NB2, NR off/NR/NR2/NR3/NR4, SNB/ANF on/off). They stay clickable even
+  // when suppressed (DIGU/DIGL or a decoder): the selection is recorded exactly
+  // as on the desktop, only muted while bypassed.
+  const cycleChip = (sel, action, modulo) =>
+    card.querySelector(sel).addEventListener("click", () => {
+      const cur = Number(card._rx?.[action.slice(4)] || 0);
+      command(action, { rx: rx.id, value: (cur + 1) % modulo });
+    });
+  cycleChip(".nb-chip", "set_nb", 3);
+  cycleChip(".nr-chip", "set_nr", 5);
+  cycleChip(".snb-chip", "set_snb", 2);
+  cycleChip(".anf-chip", "set_anf", 2);
   card._audio = card.querySelector(".rx-audio");
   card._muted = false;
   const audioBtn = card.querySelector(".audio-toggle");
@@ -222,6 +235,19 @@ function render(state) {
     setSlider(".agc-gain", ".agc-gain-val", rx.agc_gain);
     setSelect(".agc", rx.agc);
     setSelect(".step", rx.step);
+    // Noise chips: label + highlight from state, dimmed when the radio is
+    // suppressing them (shown, not pretended-applied — see noise_bypassed).
+    const nbLabel = ["NB", "NB", "NB2"], nrLabel = ["NR", "NR", "NR2", "NR3", "NR4"];
+    const nbChip = card.querySelector(".nb-chip");
+    nbChip.textContent = nbLabel[rx.nb || 0];
+    nbChip.classList.toggle("chip-on", (rx.nb || 0) > 0);
+    const nrChip = card.querySelector(".nr-chip");
+    nrChip.textContent = nrLabel[rx.nr || 0];
+    nrChip.classList.toggle("chip-on", (rx.nr || 0) > 0);
+    card.querySelector(".snb-chip").classList.toggle("chip-on", !!rx.snb);
+    card.querySelector(".anf-chip").classList.toggle("chip-on", !!rx.anf);
+    for (const sel of [".nb-chip", ".nr-chip", ".snb-chip", ".anf-chip"])
+      card.querySelector(sel).classList.toggle("chip-suppressed", !!rx.noise_bypassed);
   }
   empty.hidden = state.receivers.length !== 0;
   mox.disabled = !state.radio.can_transmit;

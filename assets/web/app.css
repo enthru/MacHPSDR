@@ -58,6 +58,9 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .chip.dead { opacity: .4; cursor: default; }
 .chip-static { cursor: default; }
 .chip.chip-on { background: var(--cyan-deep); border-color: var(--cyan); color: #eafbff; }
+/* A noise chip whose WDSP block the radio is suppressing (DIGU/DIGL or a decoder):
+   the selection is still shown and still settable, only visibly muted. */
+.chip.chip-suppressed { opacity: .45; }
 .chip .chip-select-prefix { color: var(--ink-dim); font-weight: 800; font-size: .72rem; }
 .chip-select-prefix b { margin-left: .35em; color: var(--ink); }
 .chip-on .chip-select-prefix { color: #cdeefb; }

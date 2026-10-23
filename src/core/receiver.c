@@ -744,6 +744,11 @@ static inline gboolean bypass_stream_dsp(RECEIVER *rx) {
 #endif
 }
 
+// Public read-only view of the bypass rule, for surfaces that must SHOW the
+// NB/NR/ANF/SNB selection as suppressed rather than acting (the browser remote):
+// TRUE whenever update_noise is forcing those WDSP run flags off.
+gboolean receiver_dsp_bypassed(RECEIVER *rx) { return bypass_stream_dsp(rx); }
+
 void update_noise(RECEIVER *rx) {
   gboolean bypass = bypass_stream_dsp(rx);
   SetEXTANBRun(rx->channel, bypass ? 0 : rx->nb);

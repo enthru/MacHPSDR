@@ -87,6 +87,19 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   fields (`step`, `agc`, `af_gain`, `squelch`, `agc_gain`) are in `state` and in
   the detector signature, so a change from any surface echoes to every browser.
   The browser card gained step/AGC selects and AF-gain/squelch/AGC-gain sliders.
+- Phase 4 slice 3 is done on `origin/master`: the noise controls (NB, NR, ANF,
+  SNB).  Four more allow-listed actions — `set_nb` (0/1/2), `set_nr` (0..4 via
+  `receiver_set_nr_mode`), `set_anf`, `set_snb` — go through the same
+  `WEB_CONTROL` -> `ext_set_rx_control` path and are applied through
+  `update_noise`/`receiver_set_nr_mode`, the exact VFO-menu choke points, so the
+  bypass rule applies to a remote change too: in DIGU/DIGL or under a decoder the
+  run flags are forced off while the selection is kept.  The state gains `nb`,
+  `nr`, `anf`, `snb` and `noise_bypassed` (a new public `receiver_dsp_bypassed()`
+  reads the one `bypass_stream_dsp` predicate); the browser shows NB/NR as
+  click-cycling chips and SNB/ANF as toggles, dimmed (`chip-suppressed`) and
+  titled when `noise_bypassed` so a suppressed selection is shown, not pretended
+  applied.  `web_offline` covers parse of each action plus the rx-required and
+  boolean-rejected guards (58 cases total).
 - Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
   listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
   clear password protection; authentication uses HTTP Basic with configurable
@@ -110,8 +123,7 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   -> Network show both ports and tell the operator to forward HTTPS/TCP plus
   WebRTC/UDP.
 - Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
-  gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
-  decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
+  gain/attenuation, band up/down, RIT/split, sub-receiver, bookmarks and
   decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
   control leases and browser TX audio.
 
@@ -304,6 +316,43 @@ waterfall draw at the 20/80 split with the filter passband and centre line in
 place.  The four manuals and README are intentionally unchanged (no control,
 default, limitation or gesture changed — only the visual arrangement).  NOT yet
 done: live acceptance on the faker (operator step, as in earlier phases).
+
+### 2026-10-23 — Phase 4 slice 3: noise controls (NB/NR/ANF/SNB)
+
+NB, NR, ANF and SNB are now controllable from the browser, under the same
+DIGU/DIGL-and-decoder bypass rule the desktop obeys.
+
+- Protocol (`web_protocol.c/.h`): four new `WEB_CONTROL` values and allow-list
+  entries (`set_nb`/`set_nr`/`set_anf`/`set_snb`).  They reuse the generic
+  SET_CONTROL path, so the integer-value and `rx`-required guards already apply and
+  a boolean is still rejected.
+- GTK apply (`ext.c`): `ext_set_rx_control` gains the four cases, each guarded on
+  `rx->channel>=0` and applied through the VFO menu's own choke point —
+  `rx->nb/nb2`+`update_noise` for NB (0/1/2), `receiver_set_nr_mode` for NR (0..4),
+  `rx->anf`/`rx->snb`+`update_noise` for the toggles.  Because the apply runs
+  through `update_noise`, the bypass rule forces the WDSP run flags off in DIGU/DIGL
+  or under a decoder exactly as a desktop toggle would, while the selection is kept.
+- State (`web_server.c`): `append_state_body` emits `nb`, `nr`, `anf`, `snb` and
+  `noise_bypassed`.  The last reads a new public `receiver_dsp_bypassed()`
+  (receiver.c/h) that returns the single `bypass_stream_dsp` predicate, so there is
+  one spelling of the rule.  All five join the discrete signature, so a change from
+  the desktop or another browser pushes to every client.
+- Browser (`assets/web/`): the four previously-greyed chips are live — NB and NR
+  click-cycle (off/NB/NB2 and off/NR/NR2/NR3/NR4, labelled from state), SNB and ANF
+  toggle; all four highlight (`chip-on`) when active and dim (`chip-suppressed`)
+  when `noise_bypassed`, staying settable like the desktop menu.
+
+Verified on macOS: `make` links clean (WebRTC auto-enabled); `web_offline
+--selftest` passes with the new noise cases (NB/NR/ANF/SNB parse, rx-required and
+boolean-rejected), and again under ASan/UBSan; the application relinks;
+JavaScriptCore parses `assets/web/app.js`; `tci`/`props`/`keybind`/`nr`/`agc`/
+`dcblock`/`reconnect`/`rec` offline harnesses pass.  `make check` was NOT run to
+completion: it reaches the pre-existing `qo100_offline` hang (the "beacon lock
+stopped" stall recorded above) before `web_offline`, which runs after it; the web
+and representative harnesses were therefore run directly.  NOT yet verified live: a
+desktop run exercising the chips against GTK and a second browser, and the
+suppressed-in-DIGU/DIGL behaviour on the air (operator step, as in prior phases).
+The four manuals and README were updated in the same commit.
 
 ### 2026-10-23 — Phase 4 slice 2: first receive controls
 
@@ -607,15 +656,12 @@ audio are confirmed only as "audio works", the rest harness/implementation-only.
 
 ## Exact next slice: Phase 4 — more receive controls
 
-Slices 1 (pushed state) and 2 (step/AGC/AF gain/squelch/AGC gain) are shipped and
-live-pending above.  The next slice extends the same mechanism — allow-listed
-`command` action → `WEB_CONTROL` → `ext_set_rx_control` → UI choke point, with a
-read-back field in `append_state_body` — to the remaining receive controls:
+Slices 1 (pushed state), 2 (step/AGC/AF gain/squelch/AGC gain) and 3 (the noise
+controls NB/NR/ANF/SNB under the bypass rule) are shipped and live-pending above.
+The next slice extends the same mechanism — allow-listed `command` action →
+`WEB_CONTROL` → `ext_set_rx_control` → UI choke point, with a read-back field in
+`append_state_body` — to the remaining receive controls:
 
-- the noise controls (NB, NR, ANF, SNB).  These MUST honour `bypass_stream_dsp()`
-  — in DIGU/DIGL or under a decoder the run flags are forced off, so the browser
-  has to show them disabled/suppressed rather than pretend they took effect
-  (reuse `update_noise`/`receiver_notch_sync`; see the bypass rule in CLAUDE.md).
 - RF gain / attenuation (hardware-dependent; gate on what the device exposes),
   and filter presets alongside the existing draggable edges.
 - band up/down and RIT/split, routed through `set_band`/the RIT appliers so the

@@ -651,6 +651,9 @@ extern void set_squelch(RECEIVER *rx);
 extern void set_apf(RECEIVER *rx);
 
 extern void update_noise(RECEIVER *rx);
+// TRUE when update_noise is suppressing the NB/NR/ANF/SNB run flags (DIGU/DIGL or
+// an active decoder), so a UI can show the selection as suppressed not applied.
+extern gboolean receiver_dsp_bypassed(RECEIVER *rx);
 
 // NR mode helpers: 0=off,1=NR,2=NR2,3=NR3,4=NR4 (mutually exclusive nr/nr2/nr3/nr4 bools).
 extern int  receiver_nr_mode(RECEIVER *rx);

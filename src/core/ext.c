@@ -273,6 +273,27 @@ int ext_set_rx_control(void *data) {
     case WEB_CTRL_STEP:
       if(c->value>0 && c->value<=1000000000LL) rx->step=c->value;
       break;
+    // The noise controls go through update_noise()/receiver_set_nr_mode() exactly
+    // like the VFO menu, so the bypass rule (NB/NR/ANF/SNB forced off in DIGU/DIGL
+    // or under a decoder) applies to a remote change too. The operator's selection
+    // is still recorded and echoed in state; only the WDSP run flag is suppressed.
+    case WEB_CTRL_NB:
+      if(rx->channel>=0) {
+        int v=(int)CLAMP(c->value,(gint64)0,(gint64)2);
+        rx->nb=(v==1); rx->nb2=(v==2);
+        update_noise(rx);
+      }
+      break;
+    case WEB_CTRL_NR:
+      if(rx->channel>=0)
+        receiver_set_nr_mode(rx,(int)CLAMP(c->value,(gint64)0,(gint64)4));
+      break;
+    case WEB_CTRL_ANF:
+      if(rx->channel>=0) { rx->anf=(c->value!=0); update_noise(rx); }
+      break;
+    case WEB_CTRL_SNB:
+      if(rx->channel>=0) { rx->snb=(c->value!=0); update_noise(rx); }
+      break;
     default: break;
   }
   update_vfo(rx);

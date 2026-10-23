@@ -803,7 +803,11 @@ or change the port (default 8080), then open
 on the LAN. The page shows every visible receiver's frequency, mode,
 S-meter, live panadapter and rolling waterfall; it can retune, change mode and
 follows the MOX state. Each receiver card also carries **tuning step**, **AGC
-mode**, **AF gain**, **squelch** and **AGC gain** controls. Changing any of them —
+mode**, **AF gain**, **squelch**, **AGC gain** and the **noise** chips (**NB**
+click-cycles off/NB/NB2, **NR** off/NR/NR2/NR3/NR4, **SNB** and **ANF** toggle).
+As on the desktop, the noise chips are dimmed in DIGU/DIGL or while a decoder is
+running — the radio keeps your selection but suppresses those blocks there, so
+the chip shows the choice without pretending it is taking effect. Changing any of them —
 or any of these settings on the desktop — updates every connected browser live:
 the server pushes state as it changes rather than the page polling for it, so two
 browsers and MacHPSDR itself stay in step. Choose **Low** (256 bins/5 fps),

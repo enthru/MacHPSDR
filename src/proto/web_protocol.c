@@ -328,6 +328,10 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
       {"set_agc_gain", WEB_CTRL_AGC_GAIN},
       {"set_squelch",  WEB_CTRL_SQUELCH},
       {"set_step",     WEB_CTRL_STEP},
+      {"set_nb",       WEB_CTRL_NB},
+      {"set_nr",       WEB_CTRL_NR},
+      {"set_anf",      WEB_CTRL_ANF},
+      {"set_snb",      WEB_CTRL_SNB},
     };
     for(size_t i=0;i<G_N_ELEMENTS(controls);i++)
       if(strcmp(action,controls[i].action)==0) { out->control=controls[i].control; break; }

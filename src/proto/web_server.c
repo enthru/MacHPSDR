@@ -315,14 +315,22 @@ static void append_state_body(GString *s, gboolean include_meter) {
       g_ascii_formatd(meter_text,sizeof(meter_text),"%.1f",meter);
       g_string_append_printf(s,"\"meter_db\":%s,",meter_text);
     }
+    // Noise controls: nb (0/1/2), nr (0..4 via receiver_nr_mode) and the two
+    // toggles. noise_bypassed is TRUE in DIGU/DIGL or under a decoder, where the
+    // desktop keeps the selection but suppresses the WDSP run flags; the browser
+    // shows them suppressed rather than pretending they took effect.
+    int nb = rx->nb2 ? 2 : (rx->nb ? 1 : 0);
     g_string_append_printf(s,
         "\"locked\":%s,\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
         "\"af_gain\":%d,\"agc\":%d,\"agc_gain\":%d,\"squelch\":%d,"
+        "\"nb\":%d,\"nr\":%d,\"anf\":%s,\"snb\":%s,\"noise_bypassed\":%s,"
         "\"display_low\":%lld,\"display_high\":%lld}",
         rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
         (int)lrint(rx->volume*100.0),rx->agc,(int)lrint(rx->agc_gain),
         (int)lrint(rx->squelch*100.0),
+        nb,receiver_nr_mode(rx),rx->anf?"true":"false",rx->snb?"true":"false",
+        receiver_dsp_bypassed(rx)?"true":"false",
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));

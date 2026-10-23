@@ -66,7 +66,11 @@ typedef enum {
   WEB_CTRL_AGC,        /* AGC_OFF..AGC_FAST (0..4) */
   WEB_CTRL_AGC_GAIN,   /* dB, clamped to [-20, 120] */
   WEB_CTRL_SQUELCH,    /* 0..100 -> rx->squelch 0..1 */
-  WEB_CTRL_STEP        /* tuning step, Hz */
+  WEB_CTRL_STEP,       /* tuning step, Hz */
+  WEB_CTRL_NB,         /* 0=off, 1=NB, 2=NB2 */
+  WEB_CTRL_NR,         /* 0=off, 1=NR, 2=NR2, 3=NR3, 4=NR4 */
+  WEB_CTRL_ANF,        /* 0/1 automatic notch filter */
+  WEB_CTRL_SNB         /* 0/1 spectral noise blanker */
 } WEB_CONTROL;
 
 typedef struct {

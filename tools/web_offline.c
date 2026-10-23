@@ -63,6 +63,22 @@ int main(int argc, char **argv) {
   check("step control parses",
         parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_step\",\"rx\":0,\"value\":1000}",&r) &&
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_STEP && r.value==1000);
+  check("NB control parses to WEB_CTRL_NB",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_nb\",\"rx\":0,\"value\":2}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_NB && r.value==2);
+  check("NR control parses to WEB_CTRL_NR",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_nr\",\"rx\":0,\"value\":4}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_NR && r.value==4);
+  check("ANF control parses to WEB_CTRL_ANF",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_anf\",\"rx\":0,\"value\":1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_ANF && r.value==1);
+  check("SNB control parses to WEB_CTRL_SNB",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_snb\",\"rx\":0,\"value\":0}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_SNB && r.value==0);
+  check("a noise control rejects a boolean value",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_nb\",\"rx\":0,\"value\":true}",&r));
+  check("a noise control still requires a receiver index",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_snb\",\"value\":1}",&r));
   check("a control still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_af_gain\",\"value\":40}",&r));
   check("a control rejects a boolean value",
