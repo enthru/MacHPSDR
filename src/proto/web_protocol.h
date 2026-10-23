@@ -70,7 +70,14 @@ typedef enum {
   WEB_CTRL_NB,         /* 0=off, 1=NB, 2=NB2 */
   WEB_CTRL_NR,         /* 0=off, 1=NR, 2=NR2, 3=NR3, 4=NR4 */
   WEB_CTRL_ANF,        /* 0/1 automatic notch filter */
-  WEB_CTRL_SNB         /* 0/1 spectral noise blanker */
+  WEB_CTRL_SNB,        /* 0/1 spectral noise blanker */
+  WEB_CTRL_FILTER_PRESET, /* filter index F0..FVar2 into filters[mode] */
+  WEB_CTRL_RIT,        /* RIT offset, Hz (clamped to +/-10000) */
+  WEB_CTRL_RIT_ENABLE, /* 0/1 RIT on */
+  WEB_CTRL_XIT,        /* XIT offset, Hz (clamped to +/-10000) */
+  WEB_CTRL_XIT_ENABLE, /* 0/1 XIT on */
+  WEB_CTRL_SPLIT,      /* 0/1 split (A/B) */
+  WEB_CTRL_BAND        /* +1 up / -1 down through the band table */
 } WEB_CONTROL;
 
 typedef struct {

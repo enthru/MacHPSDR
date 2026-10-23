@@ -803,17 +803,20 @@ or change the port (default 8080), then open
 on the LAN. The page shows every visible receiver's frequency, mode,
 S-meter, live panadapter and rolling waterfall; it can retune, change mode and
 follows the MOX state. Each receiver card also carries **tuning step**, **AGC
-mode**, **AF gain**, **squelch**, **AGC gain** and the **noise** chips (**NB**
-click-cycles off/NB/NB2, **NR** off/NR/NR2/NR3/NR4, **SNB** and **ANF** toggle).
-As on the desktop, the noise chips are dimmed in DIGU/DIGL or while a decoder is
-running — the radio keeps your selection but suppresses those blocks there, so
-the chip shows the choice without pretending it is taking effect. Changing any of them —
+mode**, **AF gain**, **squelch**, **AGC gain** and the **noise** controls (**NB**
+and **NR** dropdowns — off/NB/NB2 and off/NR/NR2/NR3/NR4 — plus **SNB** and **ANF**
+toggle chips). As on the desktop, the noise controls are dimmed in DIGU/DIGL or
+while a decoder is running — the radio keeps your selection but suppresses those
+blocks there, so the control shows the choice without pretending it is taking effect. There are also
+**band down/up** chips (which show the current band and refuse a locked VFO), a
+**filter-width** dropdown of the mode's presets, a **SPLIT** toggle, and **RIT**/
+**XIT** chips you click to arm and scroll to nudge by 10 Hz. Changing any of them —
 or any of these settings on the desktop — updates every connected browser live:
 the server pushes state as it changes rather than the page polling for it, so two
 browsers and MacHPSDR itself stay in step. Choose **Low** (256 bins/5 fps),
 **Balanced** (the default, 512/10) or **High** (1024/15) for each receiver. Click the spectrum to tune,
-drag it to move the tuning frequency, use the wheel for one tuning step, or drag
-either highlighted filter edge. The status beside the profile reports the
+drag it to move the tuning frequency, use the wheel for one tuning step, pick a
+filter preset, or drag either highlighted filter edge. The status beside the profile reports the
 effective profile, received FPS, row age and rows dropped for a slow browser;
 MacHPSDR automatically reduces FPS before width and recovers after congestion.
 Each receiver's demodulated audio plays automatically — there is no "listen"

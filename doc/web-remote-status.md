@@ -95,11 +95,12 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   bypass rule applies to a remote change too: in DIGU/DIGL or under a decoder the
   run flags are forced off while the selection is kept.  The state gains `nb`,
   `nr`, `anf`, `snb` and `noise_bypassed` (a new public `receiver_dsp_bypassed()`
-  reads the one `bypass_stream_dsp` predicate); the browser shows NB/NR as
-  click-cycling chips and SNB/ANF as toggles, dimmed (`chip-suppressed`) and
-  titled when `noise_bypassed` so a suppressed selection is shown, not pretended
-  applied.  `web_offline` covers parse of each action plus the rx-required and
-  boolean-rejected guards (58 cases total).
+  reads the one `bypass_stream_dsp` predicate); the browser shows NB and NR as
+  dropdowns (like mode/AGC/step/filter — operator asked for a list over a
+  click-cycle for a multi-state control) and SNB/ANF as toggle chips, dimmed
+  (`chip-suppressed`) when `noise_bypassed` so a suppressed selection is shown, not
+  pretended applied.  `web_offline` covers parse of each action plus the rx-required
+  and boolean-rejected guards.
 - Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
   listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
   clear password protection; authentication uses HTTP Basic with configurable
@@ -122,10 +123,24 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   STUN/TURN or third-party discovery service is used.  The status and Configure
   -> Network show both ports and tell the operator to forward HTTPS/TCP plus
   WebRTC/UDP.
-- Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
-  gain/attenuation, band up/down, RIT/split, sub-receiver, bookmarks and
-  decoder status/output; failed-auth throttling, token/QR pairing, viewer roles,
-  control leases and browser TX audio.
+- Phase 4 slice 4 is done on `origin/master`: filter-width presets, band up/down,
+  split and RIT/XIT.  Seven more SET_CONTROL actions — `set_filter_preset` (index
+  into the mode's `filters[]`, applied via `receiver_filter_changed`), `band_step`
+  (+1/-1 through `next_band`/`previous_band` + `set_band`, which refuses a locked
+  VFO), `set_split`, `set_rit`/`set_rit_enable` and `set_xit`/`set_xit_enable` (RIT
+  on the receiver, XIT on the transmitter; both reach the hardware through
+  `frequency_changed`+`update_frequency` like the VFO row).  State gains `band`,
+  `split`, `rit`/`rit_on`, `xit`/`xit_on`, `filter` (current preset) and a
+  `filters` array (each preset's name + edges) so the browser offers a reliable
+  width dropdown rather than only the edge drag — the fix for "the bandwidth does
+  not change" (a thin edge on a 20%-tall panadapter is impractical to grab, so
+  drags read as tune).  The previously-greyed SPLIT/RIT/XIT chips and new band
+  down/up + filter dropdown are live; `web_offline` gains seven cases.
+- Not implemented yet (rest of Phase 4 and beyond): RF gain/attenuation
+  (device-dependent — needs each device's gain range plumbed into state and live
+  hardware to verify), sub-receiver, bookmarks and decoder status/output;
+  failed-auth throttling, token/QR pairing, viewer roles, control leases and
+  browser TX audio.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -316,6 +331,51 @@ waterfall draw at the 20/80 split with the filter passband and centre line in
 place.  The four manuals and README are intentionally unchanged (no control,
 default, limitation or gesture changed — only the visual arrangement).  NOT yet
 done: live acceptance on the faker (operator step, as in earlier phases).
+
+### 2026-10-23 — Phase 4 slice 4: filter presets, band, split, RIT/XIT
+
+The operator reported that the bandwidth "does not change" from the browser.  The
+`set_filter` edge-drag path is correct in code, but grabbing a ~thin filter edge
+within 10 px on a 20%-tall panadapter registers as a tune, so the width rarely
+moves.  The fix is an explicit width control; this slice adds it plus band/split/
+RIT/XIT.
+
+- Protocol (`web_protocol.c/.h`): seven new `WEB_CONTROL` values and allow-list
+  actions — `set_filter_preset`, `band_step`, `set_split`, `set_rit`,
+  `set_rit_enable`, `set_xit`, `set_xit_enable` — all on the generic SET_CONTROL
+  path (integer value, rx required, boolean rejected).
+- GTK apply (`ext.c`): `set_filter_preset` → `receiver_filter_changed(idx)` (the
+  VFO filter menu's own choke point: sets `filter_a`, remembers it per mode,
+  applies the `filters[]` edges, FMN deviation included); `band_step` → `set_band`
+  via `next_band`/`previous_band`, which already refuses a locked VFO; `set_split`
+  toggles `rx->split` keeping `split_last`; RIT writes `rx->rit`/`rit_enabled` and
+  XIT writes the transmitter's `xit`/`xit_enabled`, both followed by
+  `frequency_changed`+`update_frequency` so the offset actually reaches the
+  hardware and the dial repaints.  All clamped (RIT/XIT ±10 kHz, preset to
+  `FILTERS`).
+- State (`web_server.c`): `append_state_body` emits `band` (`band_display_name`),
+  `split`, `rit`/`rit_on`, `xit`/`xit_on`, `filter` and the mode's `filters` array
+  (name + edges).  All join the discrete signature, so a change from any surface
+  pushes to every client; the preset list rebuilds in the browser only when the
+  mode changes.
+- Browser (`assets/web/`): the static filter chip becomes a preset `<select>`;
+  band down/up chips (with a band-name chip) and a live SPLIT toggle; RIT/XIT chips
+  click-to-arm and wheel-to-nudge by 10 Hz, showing the offset when on (XIT dimmed
+  without a TX-capable radio).  Same commit, on operator feedback: the slice-3
+  NB/NR click-cycle chips became dropdowns too, for consistency with every other
+  multi-state control (mode/AGC/step/filter); SNB/ANF stay toggle chips.
+
+Verified on macOS: `make` links clean (WebRTC auto-enabled); `web_offline
+--selftest` passes with seven new cases (each action parses to its control, and
+`band_step` without `rx` is rejected), and again under ASan/UBSan; the application
+relinks; JavaScriptCore parses `assets/web/app.js`; `props`/`keybind`/`nr`/`agc`/
+`tci` offline harnesses pass.  As before, `make check` was not run to completion
+(the pre-existing `qo100_offline` stall precedes `web_offline`), so web and
+representative harnesses were run directly.  NOT verified live: a desktop run
+exercising the dropdown, band chips, split and RIT/XIT against GTK and a second
+browser, and — the motivating report — that the width dropdown actually changes
+the passband on the air (operator step).  The four manuals and README were updated
+in the same commit.
 
 ### 2026-10-23 — Phase 4 slice 3: noise controls (NB/NR/ANF/SNB)
 
@@ -654,18 +714,21 @@ not separately reported by the operator — sustained-duration continuity, the
 autoplay-unlock affordance, mute/unmute, tab sleep/resume and multi-receiver
 audio are confirmed only as "audio works", the rest harness/implementation-only.
 
-## Exact next slice: Phase 4 — more receive controls
+## Exact next slice: Phase 4 — RF gain, then sub-RX/bookmarks
 
-Slices 1 (pushed state), 2 (step/AGC/AF gain/squelch/AGC gain) and 3 (the noise
-controls NB/NR/ANF/SNB under the bypass rule) are shipped and live-pending above.
-The next slice extends the same mechanism — allow-listed `command` action →
-`WEB_CONTROL` → `ext_set_rx_control` → UI choke point, with a read-back field in
-`append_state_body` — to the remaining receive controls:
+Slices 1 (pushed state), 2 (step/AGC/AF gain/squelch/AGC gain), 3 (NB/NR/ANF/SNB
+under the bypass rule) and 4 (filter presets, band up/down, split, RIT/XIT) are
+shipped and live-pending above.  The next slice is the one remaining receive
+control, **RF gain / attenuation**, which is device-dependent: unlike the scalars
+so far it needs each device's real gain range carried in `state` (so the browser
+can bound a slider) and gated on what the device exposes (HPSDR attenuator vs. a
+Soapy analog-gain range), applied through `soapy_protocol_set_gain`/
+`soapy_protocol_set_attenuation` or the HPSDR path.  It is also the only one that
+cannot be meaningfully proven without live hardware, so it is kept separate.
 
-- RF gain / attenuation (hardware-dependent; gate on what the device exposes),
-  and filter presets alongside the existing draggable edges.
-- band up/down and RIT/split, routed through `set_band`/the RIT appliers so the
-  VFO-lock rule still refuses a locked dial.
+After that: sub-receiver and bookmarks, then decoder status/textual output.  The
+remaining LAN/WAN security work — failed-auth throttling, pairing, viewer roles
+and control leases — stays in Phase 5 (decision #2/#5).
 
 Then sub-receiver and bookmarks, and finally decoder status/textual output.  Each
 operator-visible slice updates the four manuals and README.  The remaining LAN/WAN

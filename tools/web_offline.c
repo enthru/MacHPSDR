@@ -79,6 +79,26 @@ int main(int argc, char **argv) {
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_nb\",\"rx\":0,\"value\":true}",&r));
   check("a noise control still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_snb\",\"value\":1}",&r));
+  check("filter preset parses to WEB_CTRL_FILTER_PRESET",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_filter_preset\",\"rx\":0,\"value\":3}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_FILTER_PRESET && r.value==3);
+  check("RIT offset parses (negative)",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_rit\",\"rx\":0,\"value\":-250}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_RIT && r.value==-250);
+  check("RIT enable parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_rit_enable\",\"rx\":0,\"value\":1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_RIT_ENABLE);
+  check("XIT offset parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_xit\",\"rx\":0,\"value\":500}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_XIT && r.value==500);
+  check("split parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_split\",\"rx\":0,\"value\":1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_SPLIT);
+  check("band step parses (down)",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"band_step\",\"rx\":0,\"value\":-1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_BAND && r.value==-1);
+  check("band step still requires a receiver index",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"band_step\",\"value\":1}",&r));
   check("a control still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_af_gain\",\"value\":40}",&r));
   check("a control rejects a boolean value",

@@ -36,6 +36,7 @@
 #include "agc.h"
 #include "web_protocol.h"
 #include "receiver.h"
+#include "filter.h"
 #include "transmitter.h"
 #include "wideband.h"
 #include "radio.h"
@@ -293,6 +294,48 @@ int ext_set_rx_control(void *data) {
       break;
     case WEB_CTRL_SNB:
       if(rx->channel>=0) { rx->snb=(c->value!=0); update_noise(rx); }
+      break;
+    // Filter preset: the VFO filter menu's own choke point, which sets filter_a,
+    // remembers it per mode and applies the mode's filters[] edges (handling the
+    // FMN deviation special-case) — so a remote pick is identical to the menu.
+    case WEB_CTRL_FILTER_PRESET:
+      if(rx->channel>=0 && c->value>=0 && c->value<FILTERS)
+        receiver_filter_changed(rx,(int)c->value);
+      break;
+    // RIT/XIT: value is the offset in Hz. Both reach the hardware the same way the
+    // VFO row does — frequency_changed() recomputes the commanded tune, so the
+    // offset actually leaves the app; update_frequency() repaints the dial. RIT is
+    // per-receiver; XIT lives on the transmitter and only moves on a TX-capable radio.
+    case WEB_CTRL_RIT:
+      rx->rit=CLAMP(c->value,(gint64)-10000,(gint64)10000);
+      frequency_changed(rx); update_frequency(rx);
+      break;
+    case WEB_CTRL_RIT_ENABLE:
+      rx->rit_enabled=(c->value!=0);
+      frequency_changed(rx); update_frequency(rx);
+      break;
+    case WEB_CTRL_XIT:
+      if(radio->transmitter!=NULL) {
+        radio->transmitter->xit=CLAMP(c->value,(gint64)-10000,(gint64)10000);
+        if(radio->transmitter->rx!=NULL) frequency_changed(radio->transmitter->rx);
+      }
+      break;
+    case WEB_CTRL_XIT_ENABLE:
+      if(radio->transmitter!=NULL) {
+        radio->transmitter->xit_enabled=(c->value!=0);
+        if(radio->transmitter->rx!=NULL) frequency_changed(radio->transmitter->rx);
+      }
+      break;
+    // Split toggle: SPLIT_ON <-> SPLIT_OFF, keeping split_last like the VFO button.
+    case WEB_CTRL_SPLIT:
+      if(c->value!=0) { rx->split=SPLIT_ON; rx->split_last=SPLIT_ON; }
+      else rx->split=SPLIT_OFF;
+      break;
+    // Band up (+1) / down (-1). set_band is the one choke point that refuses a
+    // locked VFO (CLAUDE.md), so the lock rule needs no repeat here.
+    case WEB_CTRL_BAND:
+      if(c->value>0) set_band(rx,next_band(rx->band_a),-1);
+      else if(c->value<0) set_band(rx,previous_band(rx->band_a),-1);
       break;
     default: break;
   }

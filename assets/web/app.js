@@ -163,19 +163,41 @@ function makeCard(rx) {
   agc.addEventListener("change", () => command("set_agc", { rx: rx.id, value: Number(agc.value) }));
   const step = card.querySelector(".step");
   step.addEventListener("change", () => command("set_step", { rx: rx.id, value: Number(step.value) }));
-  // Noise chips cycle through the same states as the desktop VFO menu (NB
-  // off/NB/NB2, NR off/NR/NR2/NR3/NR4, SNB/ANF on/off). They stay clickable even
-  // when suppressed (DIGU/DIGL or a decoder): the selection is recorded exactly
-  // as on the desktop, only muted while bypassed.
-  const cycleChip = (sel, action, modulo) =>
-    card.querySelector(sel).addEventListener("click", () => {
-      const cur = Number(card._rx?.[action.slice(4)] || 0);
-      command(action, { rx: rx.id, value: (cur + 1) % modulo });
-    });
-  cycleChip(".nb-chip", "set_nb", 3);
-  cycleChip(".nr-chip", "set_nr", 5);
-  cycleChip(".snb-chip", "set_snb", 2);
-  cycleChip(".anf-chip", "set_anf", 2);
+  // NB/NR have several states, so they are dropdowns like mode/AGC/step/filter
+  // (off/NB/NB2 and off/NR/NR2/NR3/NR4). SNB/ANF are binary, so they stay toggle
+  // chips. All honour the bypass rule: the selection is recorded exactly as on the
+  // desktop, only muted (dimmed) while suppressed in DIGU/DIGL or under a decoder.
+  const nbSel = card.querySelector(".nb-sel");
+  nbSel.addEventListener("change", () => command("set_nb", { rx: rx.id, value: Number(nbSel.value) }));
+  const nrSel = card.querySelector(".nr-sel");
+  nrSel.addEventListener("change", () => command("set_nr", { rx: rx.id, value: Number(nrSel.value) }));
+  const toggleChip = (sel, action, field) =>
+    card.querySelector(sel).addEventListener("click", () =>
+      command(action, { rx: rx.id, value: card._rx?.[field] ? 0 : 1 }));
+  toggleChip(".snb-chip", "set_snb", "snb");
+  toggleChip(".anf-chip", "set_anf", "anf");
+  // Filter width: a preset dropdown (the mode's filters[] list) applied through
+  // the desktop's receiver_filter_changed choke point. The panadapter edge drag
+  // still works; this is the reliable width control.
+  const filterSel = card.querySelector(".filter-sel");
+  filterSel.addEventListener("change", () => command("set_filter_preset", { rx: rx.id, value: Number(filterSel.value) }));
+  // Band up/down (set_band, which refuses a locked VFO) and split toggle.
+  card.querySelector(".band-down").addEventListener("click", () => command("band_step", { rx: rx.id, value: -1 }));
+  card.querySelector(".band-up").addEventListener("click", () => command("band_step", { rx: rx.id, value: 1 }));
+  card.querySelector(".split-chip").addEventListener("click", () => command("set_split", { rx: rx.id, value: card._rx?.split ? 0 : 1 }));
+  // RIT/XIT: click toggles on/off, wheel nudges the offset by 10 Hz (the desktop's
+  // rit_step), clamped server-side to +/-10 kHz.
+  const offsetChip = (sel, enableAction, valueAction, field, onField) => {
+    const el = card.querySelector(sel);
+    el.addEventListener("click", () => command(enableAction, { rx: rx.id, value: card._rx?.[onField] ? 0 : 1 }));
+    el.addEventListener("wheel", event => {
+      event.preventDefault();
+      const next = (Number(card._rx?.[field]) || 0) + (event.deltaY < 0 ? 10 : -10);
+      command(valueAction, { rx: rx.id, value: Math.max(-10000, Math.min(10000, next)) });
+    }, { passive: false });
+  };
+  offsetChip(".rit-chip", "set_rit_enable", "set_rit", "rit", "rit_on");
+  offsetChip(".xit-chip", "set_xit_enable", "set_xit", "xit", "xit_on");
   card._audio = card.querySelector(".rx-audio");
   card._muted = false;
   const audioBtn = card.querySelector(".audio-toggle");
@@ -207,9 +229,18 @@ function render(state) {
     const editor = card.querySelector(".freq-edit");
     if (editor.hidden) card.querySelector(".freq-a").textContent = formatFreq(rx.frequency);
     card.querySelector(".mode").value = String(rx.mode);
-    // Filter width from the passband edges (same numbers the drag gesture sets).
-    if (rx.filter_low !== undefined && rx.filter_high !== undefined)
-      card.querySelector(".filter-chip").textContent = formatWidth(rx.filter_high - rx.filter_low);
+    // Filter presets: rebuild the dropdown when the mode's list changes, then
+    // reflect the current preset (unless the viewer is holding the select open).
+    const filterSel = card.querySelector(".filter-sel");
+    if (Array.isArray(rx.filters)) {
+      const key = rx.mode + ":" + rx.filters.length;
+      if (filterSel._key !== key) {
+        filterSel._key = key;
+        filterSel.textContent = "";
+        rx.filters.forEach((f, i) => filterSel.add(new Option(`${f.n} (${formatWidth(f.h - f.l)})`, i)));
+      }
+      if (rx.filter !== undefined && document.activeElement !== filterSel) filterSel.value = String(rx.filter);
+    }
     // S-meter: map dBm onto the S1..S9+60 scale (S9 = -73 dBm, 6 dB per S-unit).
     const pos = Math.max(0, Math.min(1, (rx.meter_db + 121) / 108));
     card.querySelector(".smeter-bar span").style.width = `${pos * 100}%`;
@@ -235,19 +266,29 @@ function render(state) {
     setSlider(".agc-gain", ".agc-gain-val", rx.agc_gain);
     setSelect(".agc", rx.agc);
     setSelect(".step", rx.step);
-    // Noise chips: label + highlight from state, dimmed when the radio is
-    // suppressing them (shown, not pretended-applied — see noise_bypassed).
-    const nbLabel = ["NB", "NB", "NB2"], nrLabel = ["NR", "NR", "NR2", "NR3", "NR4"];
-    const nbChip = card.querySelector(".nb-chip");
-    nbChip.textContent = nbLabel[rx.nb || 0];
-    nbChip.classList.toggle("chip-on", (rx.nb || 0) > 0);
-    const nrChip = card.querySelector(".nr-chip");
-    nrChip.textContent = nrLabel[rx.nr || 0];
-    nrChip.classList.toggle("chip-on", (rx.nr || 0) > 0);
+    // Noise controls: NB/NR dropdowns reflect the state (highlight the wrapper when
+    // active); SNB/ANF chips highlight; all dim when the radio is suppressing them
+    // (shown, not pretended-applied — see noise_bypassed).
+    setSelect(".nb-sel", rx.nb);
+    setSelect(".nr-sel", rx.nr);
+    card.querySelector(".nb-wrap").classList.toggle("chip-on", (rx.nb || 0) > 0);
+    card.querySelector(".nr-wrap").classList.toggle("chip-on", (rx.nr || 0) > 0);
     card.querySelector(".snb-chip").classList.toggle("chip-on", !!rx.snb);
     card.querySelector(".anf-chip").classList.toggle("chip-on", !!rx.anf);
-    for (const sel of [".nb-chip", ".nr-chip", ".snb-chip", ".anf-chip"])
+    for (const sel of [".nb-wrap", ".nr-wrap", ".snb-chip", ".anf-chip"])
       card.querySelector(sel).classList.toggle("chip-suppressed", !!rx.noise_bypassed);
+    // Band name, split and RIT/XIT. The offset chips show the value when on; XIT
+    // is only meaningful on a transmit-capable radio.
+    if (rx.band !== undefined) card.querySelector(".band-name").textContent = rx.band;
+    card.querySelector(".split-chip").classList.toggle("chip-on", !!rx.split);
+    const fmtOffset = v => (v >= 0 ? "+" : "") + v;
+    const ritChip = card.querySelector(".rit-chip");
+    ritChip.textContent = rx.rit_on ? `RIT ${fmtOffset(rx.rit || 0)}` : "RIT";
+    ritChip.classList.toggle("chip-on", !!rx.rit_on);
+    const xitChip = card.querySelector(".xit-chip");
+    xitChip.textContent = rx.xit_on ? `XIT ${fmtOffset(rx.xit || 0)}` : "XIT";
+    xitChip.classList.toggle("chip-on", !!rx.xit_on);
+    xitChip.classList.toggle("chip-suppressed", !state.radio.can_transmit);
   }
   empty.hidden = state.receivers.length !== 0;
   mox.disabled = !state.radio.can_transmit;

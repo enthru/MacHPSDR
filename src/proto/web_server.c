@@ -13,6 +13,8 @@
 #include "resource_path.h"
 #include "receiver.h"
 #include "transmitter.h"
+#include "filter.h"
+#include "band.h"
 #include "wideband.h"
 #include "discovered.h"
 #include "adc.h"
@@ -324,7 +326,7 @@ static void append_state_body(GString *s, gboolean include_meter) {
         "\"locked\":%s,\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
         "\"af_gain\":%d,\"agc\":%d,\"agc_gain\":%d,\"squelch\":%d,"
         "\"nb\":%d,\"nr\":%d,\"anf\":%s,\"snb\":%s,\"noise_bypassed\":%s,"
-        "\"display_low\":%lld,\"display_high\":%lld}",
+        "\"display_low\":%lld,\"display_high\":%lld,",
         rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
         (int)lrint(rx->volume*100.0),rx->agc,(int)lrint(rx->agc_gain),
@@ -334,6 +336,24 @@ static void append_state_body(GString *s, gboolean include_meter) {
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));
+    // Band, split, RIT/XIT (XIT from the transmitter, 0/off without one) and the
+    // current filter preset plus the mode's whole preset list (name + edges), so
+    // the browser can offer a reliable width dropdown instead of only edge drags.
+    gboolean xit_on = web_radio->transmitter ? web_radio->transmitter->xit_enabled : FALSE;
+    long long xit = web_radio->transmitter ? (long long)web_radio->transmitter->xit : 0;
+    g_string_append_printf(s,
+        "\"band\":\"%s\",\"split\":%s,\"rit\":%lld,\"rit_on\":%s,"
+        "\"xit\":%lld,\"xit_on\":%s,\"filter\":%d,\"filters\":[",
+        band_display_name(rx->band_a),rx->split!=SPLIT_OFF?"true":"false",
+        (long long)rx->rit,rx->rit_enabled?"true":"false",
+        xit,xit_on?"true":"false",rx->filter_a);
+    FILTER *mode_filters=filters[mode];
+    for(int fi=0;fi<FILTERS;fi++) {
+      // Preset titles are compiled ASCII constants (no quote/backslash).
+      g_string_append_printf(s,"%s{\"n\":\"%s\",\"l\":%d,\"h\":%d}",
+          fi?",":"",mode_filters[fi].title,mode_filters[fi].low,mode_filters[fi].high);
+    }
+    g_string_append(s,"]}");
   }
   g_string_append_c(s,']');
 }

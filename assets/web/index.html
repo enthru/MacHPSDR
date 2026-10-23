@@ -24,10 +24,13 @@
       <div class="vfo-bar">
         <div class="vfo-nav">
           <span class="rx-name chip chip-static">RX</span>
+          <button class="chip band-down" type="button" title="Band down">◂ BND</button>
+          <span class="chip band-name chip-static" title="Current band">—</span>
+          <button class="chip band-up" type="button" title="Band up">BND ▸</button>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&gt;B</button>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;B</button>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;&gt;B</button>
-          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">SPLIT</button>
+          <button class="chip split-chip" type="button" title="Split (VFO A/B)">SPLIT</button>
           <span class="chip chip-zoom chip-static" title="Zoom follows the desktop radio">ZOOM&nbsp;x1</span>
           <label class="chip chip-select-wrap" title="Tuning step">
             <span class="chip-select-prefix">STEP</span>
@@ -84,9 +87,27 @@
         <label class="chip chip-select-wrap chip-on" title="Demodulation mode">
           <select class="mode chip-select"></select>
         </label>
-        <span class="chip filter-chip chip-on chip-static" title="Filter width (drag the edges on the panadapter)">—</span>
-        <button class="chip nb-chip" type="button" title="Noise blanker — click to cycle off / NB / NB2">NB</button>
-        <button class="chip nr-chip" type="button" title="Noise reduction — click to cycle off / NR / NR2 / NR3 / NR4">NR</button>
+        <label class="chip chip-select-wrap chip-on filter-wrap" title="Filter width preset (or drag the panadapter edges)">
+          <select class="filter-sel chip-select"></select>
+        </label>
+        <label class="chip chip-select-wrap nb-wrap" title="Noise blanker">
+          <span class="chip-select-prefix">NB</span>
+          <select class="nb-sel chip-select">
+            <option value="0">OFF</option>
+            <option value="1">NB</option>
+            <option value="2">NB2</option>
+          </select>
+        </label>
+        <label class="chip chip-select-wrap nr-wrap" title="Noise reduction">
+          <span class="chip-select-prefix">NR</span>
+          <select class="nr-sel chip-select">
+            <option value="0">OFF</option>
+            <option value="1">NR</option>
+            <option value="2">NR2</option>
+            <option value="3">NR3</option>
+            <option value="4">NR4</option>
+          </select>
+        </label>
         <button class="chip snb-chip" type="button" title="Spectral noise blanker">SNB</button>
         <button class="chip anf-chip" type="button" title="Automatic notch filter">ANF</button>
         <label class="chip chip-select-wrap chip-on" title="AGC time constant">
@@ -99,8 +120,8 @@
             <option value="4">FAST</option>
           </select>
         </label>
-        <button class="chip dead" type="button" disabled title="RIT — not yet available in the browser remote">RIT</button>
-        <button class="chip dead" type="button" disabled title="XIT — not yet available in the browser remote">XIT</button>
+        <button class="chip rit-chip" type="button" title="RIT — click to toggle, wheel to adjust">RIT</button>
+        <button class="chip xit-chip" type="button" title="XIT — click to toggle, wheel to adjust">XIT</button>
         <button class="chip dead" type="button" disabled title="Click-tune — not yet available in the browser remote">CTUN</button>
         <button class="chip dead" type="button" disabled title="Duplex — not yet available in the browser remote">DUP</button>
         <button class="chip dead" type="button" disabled title="Bookmark — not yet available in the browser remote">BMK</button>

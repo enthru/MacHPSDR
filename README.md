@@ -595,9 +595,11 @@ can be replayed separately in the I/Q Player.
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
   (1024/15) profiles stay latest-only and automatically back off for a slow
   browser. Click/drag/wheel tuning and draggable filter edges are available, plus
-  per-receiver tuning step, AGC mode, AF gain, squelch, AGC gain and the noise
-  chips (NB off/NB/NB2, NR off/NR/NR2/NR3/NR4, SNB, ANF — dimmed and suppressed in
-  DIGU/DIGL or under a decoder, exactly as on the desktop); the
+  per-receiver tuning step, AGC mode, AF gain, squelch, AGC gain, the noise
+  controls (NB/NR dropdowns off/NB/NB2 and off/NR/NR2/NR3/NR4, SNB/ANF toggles —
+  dimmed and suppressed in DIGU/DIGL or under a decoder, exactly as on the desktop),
+  band down/up (lock-aware),
+  a filter-width preset dropdown, SPLIT, and click-to-arm/scroll-to-nudge RIT/XIT; the
   page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
   session. The server pushes state as it changes rather than the page polling, so
