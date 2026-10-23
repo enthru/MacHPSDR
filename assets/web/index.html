@@ -7,11 +7,8 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">MAC HPSDR</p>
-      <h1>Browser Remote</h1>
-    </div>
+  <header class="titlebar">
+    <span class="app-name">MacHPSDR <span class="app-sub">Browser Remote</span></span>
     <div id="connection" class="connection offline" role="status">Connecting…</div>
   </header>
 
@@ -22,83 +19,125 @@
   </main>
 
   <template id="receiver-template">
-    <article class="receiver-card">
-      <div class="receiver-heading">
-        <span class="rx-name">RX</span>
-        <span class="meter-text">−200.0 dB</span>
+    <article class="rx">
+      <!-- VFO bar: navigation chips, big frequency readouts, gain sliders, S-meter -->
+      <div class="vfo-bar">
+        <div class="vfo-nav">
+          <span class="rx-name chip chip-static">RX</span>
+          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&gt;B</button>
+          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;B</button>
+          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;&gt;B</button>
+          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">SPLIT</button>
+          <span class="chip chip-zoom chip-static" title="Zoom follows the desktop radio">ZOOM&nbsp;x1</span>
+          <label class="chip chip-select-wrap" title="Tuning step">
+            <span class="chip-select-prefix">STEP</span>
+            <select class="step chip-select">
+              <option value="1">1 Hz</option>
+              <option value="10">10 Hz</option>
+              <option value="100">100 Hz</option>
+              <option value="1000">1 kHz</option>
+              <option value="5000">5 kHz</option>
+              <option value="9000">9 kHz</option>
+              <option value="10000">10 kHz</option>
+              <option value="100000">100 kHz</option>
+              <option value="1000000">1 MHz</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="vfo-freqs">
+          <div class="vfo-a">
+            <span class="vfo-tag">VFO A</span>
+            <span class="freq freq-a" tabindex="0" title="Click to enter a frequency">00000.000.000</span>
+            <input class="freq-edit" inputmode="numeric" autocomplete="off" hidden>
+          </div>
+          <div class="vfo-b">
+            <span class="vfo-tag">VFO B</span>
+            <span class="freq freq-b" title="VFO B is not yet exposed by the remote protocol">—</span>
+          </div>
+        </div>
+
+        <div class="vfo-right">
+          <div class="vfo-aux">
+            <label class="gain gain-af" title="AF gain">
+              <span class="gain-tag">AF<b class="af-gain-val"></b></span>
+              <input class="af-gain" type="range" min="0" max="100" step="1">
+            </label>
+            <button class="chip mute audio-toggle" type="button" hidden aria-pressed="false" title="Mute received audio">🔈</button>
+            <label class="gain gain-agc" title="AGC gain">
+              <span class="gain-tag">AGC<b class="agc-gain-val"></b></span>
+              <input class="agc-gain" type="range" min="-20" max="120" step="1">
+            </label>
+          </div>
+
+          <div class="smeter" title="Signal meter">
+            <div class="smeter-scale"><i>S1</i><i>3</i><i>5</i><i>7</i><i>9</i><i>+20</i><i>+40</i><i>+60</i></div>
+            <div class="smeter-bar"><span></span></div>
+            <div class="smeter-read">—</div>
+          </div>
+        </div>
       </div>
-      <div class="meter" aria-label="Signal level"><span></span></div>
-      <div class="spectrum-toolbar">
-        <label>
-          Spectrum
+
+      <!-- Mode/status strip -->
+      <div class="mode-bar">
+        <button class="chip lock-chip dead" type="button" disabled title="VFO lock is set on the desktop radio">LOCK</button>
+        <label class="chip chip-select-wrap chip-on" title="Demodulation mode">
+          <select class="mode chip-select"></select>
+        </label>
+        <span class="chip filter-chip chip-on chip-static" title="Filter width (drag the edges on the panadapter)">—</span>
+        <button class="chip dead" type="button" disabled title="Noise blanker — not yet available in the browser remote">NB</button>
+        <button class="chip dead" type="button" disabled title="Noise reduction — not yet available in the browser remote">NR</button>
+        <button class="chip dead" type="button" disabled title="Spectral noise blanker — not yet available in the browser remote">SNB</button>
+        <button class="chip dead" type="button" disabled title="Automatic notch filter — not yet available in the browser remote">ANF</button>
+        <label class="chip chip-select-wrap chip-on" title="AGC time constant">
+          <span class="chip-select-prefix">AGC</span>
+          <select class="agc chip-select">
+            <option value="0">OFF</option>
+            <option value="1">LONG</option>
+            <option value="2">SLOW</option>
+            <option value="3">MED</option>
+            <option value="4">FAST</option>
+          </select>
+        </label>
+        <button class="chip dead" type="button" disabled title="RIT — not yet available in the browser remote">RIT</button>
+        <button class="chip dead" type="button" disabled title="XIT — not yet available in the browser remote">XIT</button>
+        <button class="chip dead" type="button" disabled title="Click-tune — not yet available in the browser remote">CTUN</button>
+        <button class="chip dead" type="button" disabled title="Duplex — not yet available in the browser remote">DUP</button>
+        <button class="chip dead" type="button" disabled title="Bookmark — not yet available in the browser remote">BMK</button>
+        <label class="chip chip-sql" title="Squelch threshold">
+          <span class="chip-select-prefix">SQL<b class="squelch-val"></b></span>
+          <input class="squelch" type="range" min="0" max="100" step="1">
+        </label>
+      </div>
+
+      <!-- Panadapter + waterfall -->
+      <canvas class="spectrum" tabindex="0"
+              aria-label="Live panadapter and waterfall. Click or drag to tune, use the wheel to step, or drag a filter edge."></canvas>
+
+      <div class="rx-status">
+        <span class="spectrum-status">Waiting for spectrum</span>
+        <label class="prof-select">
+          <span>Spectrum</span>
           <select class="spectrum-profile">
             <option>Low</option>
             <option selected>Balanced</option>
             <option>High</option>
           </select>
         </label>
-        <button class="audio-toggle" type="button" hidden aria-pressed="false">Mute</button>
-        <span class="spectrum-status">Waiting for spectrum</span>
       </div>
       <audio class="rx-audio" hidden></audio>
-      <canvas class="spectrum" height="300" tabindex="0"
-              aria-label="Live panadapter and waterfall. Click or drag to tune, use the wheel to step, or drag a filter edge."></canvas>
-      <label class="frequency-label">
-        Frequency, Hz
-        <input class="frequency" inputmode="numeric" autocomplete="off">
-      </label>
-      <div class="control-row">
-        <button class="apply-frequency" type="button">Tune</button>
-        <label>
-          Mode
-          <select class="mode"></select>
-        </label>
-      </div>
-      <div class="control-grid">
-        <label>
-          Step, Hz
-          <select class="step">
-            <option value="1">1</option>
-            <option value="10">10</option>
-            <option value="100">100</option>
-            <option value="1000">1 k</option>
-            <option value="5000">5 k</option>
-            <option value="9000">9 k</option>
-            <option value="10000">10 k</option>
-            <option value="100000">100 k</option>
-            <option value="1000000">1 M</option>
-          </select>
-        </label>
-        <label>
-          AGC
-          <select class="agc">
-            <option value="0">Off</option>
-            <option value="1">Long</option>
-            <option value="2">Slow</option>
-            <option value="3">Medium</option>
-            <option value="4">Fast</option>
-          </select>
-        </label>
-        <label>
-          AF gain <span class="af-gain-val"></span>
-          <input class="af-gain" type="range" min="0" max="100" step="1">
-        </label>
-        <label>
-          Squelch <span class="squelch-val"></span>
-          <input class="squelch" type="range" min="0" max="100" step="1">
-        </label>
-        <label>
-          AGC gain, dB <span class="agc-gain-val"></span>
-          <input class="agc-gain" type="range" min="-20" max="120" step="1">
-        </label>
-      </div>
-      <p class="lock-state"></p>
     </article>
   </template>
 
-  <footer>
-    <button id="mox" class="mox" type="button" disabled>MOX</button>
-    <span id="revision">Waiting for radio state</span>
+  <footer class="bottom-bar">
+    <div class="panel panel-transmit">
+      <span class="panel-tag">TRANSMIT</span>
+      <button id="mox" class="mox" type="button" disabled>MOX</button>
+    </div>
+    <div class="panel panel-status">
+      <span class="panel-tag">STATUS</span>
+      <span id="revision">Waiting for radio state</span>
+    </div>
   </footer>
   <script src="/app.js" defer></script>
 </body>

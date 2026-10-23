@@ -12,6 +12,17 @@ const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
 const revision = document.querySelector("#revision");
 const enableSound = document.querySelector("#enable-sound");
+
+// 135205200 Hz -> "00135.205.200": three-digit groups from the right, the top
+// group zero-padded so the readout keeps the desktop's fixed width.
+function formatFreq(hz) {
+  const d = String(Math.max(0, Math.round(hz))).padStart(11, "0").slice(-11);
+  return `${d.slice(0, 5)}.${d.slice(5, 8)}.${d.slice(8, 11)}`;
+}
+function formatWidth(hz) {
+  const w = Math.abs(Math.round(hz));
+  return w >= 1000 ? `${(w / 1000).toFixed(w % 1000 ? 1 : 0)}k` : `${w}`;
+}
 // Browsers block autoplay with sound until the page has had a user gesture.
 // Once any play() succeeds (or the viewer taps the affordance), the whole tab is
 // unlocked and the prompt never returns.
@@ -109,19 +120,32 @@ function installSpectrumGestures(card, rxId) {
 function makeCard(rx) {
   const card = template.content.firstElementChild.cloneNode(true);
   card.dataset.rx = rx.id;
-  card.querySelector(".rx-name").textContent = `RX ${rx.id + 1}`;
+  card.querySelector(".rx-name").textContent = `RX${rx.id + 1}`;
   const select = card.querySelector(".mode");
   modes.forEach((name, value) => select.add(new Option(name, value)));
   select.addEventListener("change", () => command("set_mode", { rx: rx.id, value: Number(select.value) }));
   const profile = card.querySelector(".spectrum-profile");
   profile.addEventListener("change", () => send({ type: "spectrum_subscribe", rx: rx.id, profile: profile.value }));
-  const input = card.querySelector(".frequency");
-  const tune = () => {
-    const value = Number(input.value.replace(/[^0-9]/g, ""));
-    if (Number.isSafeInteger(value) && value > 0) command("set_frequency", { rx: rx.id, value });
+  // Big VFO-A readout: click (or focus+Enter) swaps in an inline numeric editor.
+  const display = card.querySelector(".freq-a");
+  const editor = card.querySelector(".freq-edit");
+  const openEditor = () => {
+    editor.value = String(card._rx?.frequency ?? "");
+    display.hidden = true; editor.hidden = false; editor.focus(); editor.select();
   };
-  card.querySelector(".apply-frequency").addEventListener("click", tune);
-  input.addEventListener("keydown", event => { if (event.key === "Enter") tune(); });
+  const closeEditor = () => { editor.hidden = true; display.hidden = false; };
+  const applyEditor = () => {
+    const value = Number(editor.value.replace(/[^0-9]/g, ""));
+    if (Number.isSafeInteger(value) && value > 0) command("set_frequency", { rx: rx.id, value });
+    closeEditor();
+  };
+  display.addEventListener("click", openEditor);
+  display.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } });
+  editor.addEventListener("keydown", event => {
+    if (event.key === "Enter") applyEditor();
+    else if (event.key === "Escape") closeEditor();
+  });
+  editor.addEventListener("blur", applyEditor);
   // Scalar receiver controls. Sliders send live (throttled) while dragging and
   // once more on release; the select controls send on change. render() writes
   // each back from server state, skipping whichever one the user is holding.
@@ -167,12 +191,20 @@ function render(state) {
     card._rx = rx;
     subscribe(card, rx.id);
     card.classList.toggle("active", state.radio.active_rx === rx.id);
-    const input = card.querySelector(".frequency");
-    if (document.activeElement !== input) input.value = String(rx.frequency);
+    const editor = card.querySelector(".freq-edit");
+    if (editor.hidden) card.querySelector(".freq-a").textContent = formatFreq(rx.frequency);
     card.querySelector(".mode").value = String(rx.mode);
-    card.querySelector(".meter-text").textContent = `${rx.meter_db.toFixed(1)} dB`;
-    card.querySelector(".meter span").style.width = `${Math.max(0, Math.min(100, (rx.meter_db + 140) / 1.2))}%`;
-    card.querySelector(".lock-state").textContent = rx.locked ? "VFO locked" : "";
+    // Filter width from the passband edges (same numbers the drag gesture sets).
+    if (rx.filter_low !== undefined && rx.filter_high !== undefined)
+      card.querySelector(".filter-chip").textContent = formatWidth(rx.filter_high - rx.filter_low);
+    // S-meter: map dBm onto the S1..S9+60 scale (S9 = -73 dBm, 6 dB per S-unit).
+    const pos = Math.max(0, Math.min(1, (rx.meter_db + 121) / 108));
+    card.querySelector(".smeter-bar span").style.width = `${pos * 100}%`;
+    const sText = rx.meter_db >= -73
+      ? `S9+${Math.round(rx.meter_db + 73)}`
+      : `S${Math.max(1, Math.min(9, Math.round((rx.meter_db + 121) / 6) + 1))}`;
+    card.querySelector(".smeter-read").textContent = `${sText} · ${Math.round(rx.meter_db)} dBm`;
+    card.querySelector(".lock-chip").classList.toggle("chip-on", !!rx.locked);
     // Reflect server state onto the controls, but never yank one the user is
     // actively dragging/opening (active element) out from under them.
     const setSlider = (inputSel, valSel, value) => {
@@ -209,7 +241,7 @@ function drawSpectrum(card, bins, floor, span) {
   const canvas = card.querySelector(".spectrum"), rect = canvas.getBoundingClientRect();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const width = Math.max(1, Math.round(rect.width * dpr)), height = Math.max(1, Math.round(rect.height * dpr));
-  const panHeight = Math.round(height * .56);
+  const panHeight = Math.round(height * .20);
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width; canvas.height = height;
     card._waterfall = document.createElement("canvas");
@@ -281,9 +313,10 @@ function updateSpectrumStatus(message) {
 function refreshAudioButton(card) {
   const button = card.querySelector(".audio-toggle");
   if (!button) return;
-  if (!card._connected) { button.disabled = true; button.textContent = "Connecting…"; button.setAttribute("aria-pressed", "false"); return; }
+  if (!card._connected) { button.disabled = true; button.textContent = "⏳"; button.setAttribute("aria-pressed", "false"); button.title = "Connecting audio…"; return; }
   button.disabled = false;
-  button.textContent = card._muted ? "Unmute" : "Mute";
+  button.textContent = card._muted ? "🔇" : "🔈";
+  button.title = card._muted ? "Unmute received audio" : "Mute received audio";
   button.setAttribute("aria-pressed", card._muted ? "true" : "false");
 }
 function updateAudioAvailability() {

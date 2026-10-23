@@ -167,6 +167,36 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-23 — Browser page re-laid-out to mirror the desktop window
+
+Front-end only (`assets/web/index.html`, `app.css`, `app.js`); no C, protocol or
+behaviour change, so no rebuild and no `make check` impact.  The page now follows
+the desktop main-window layout instead of the earlier card grid:
+
+- a VFO bar — navigation chips, the big cyan VFO-A readout in the desktop's
+  `00135.205.200` grouping (click to edit inline), an orange VFO-B placeholder,
+  AF/AGC gain sliders with a mute button, and an S1..S9+60 S-meter;
+- the mode/status chip strip (LOCK, mode, filter width, NB/NR/SNB/ANF, AGC,
+  RIT/XIT/CTUN/DUP/BMK, squelch);
+- a full-width panadapter over the waterfall, split **20/80** per operator choice
+  (`drawSpectrum`'s `panHeight`);
+- a bottom TRANSMIT (MOX) / STATUS bar.
+
+Only the controls the protocol already carries are wired (VFO-A frequency, mode,
+step, AGC, AF/AGC gain, squelch, mute, panadapter tuning gestures, MOX); the
+desktop buttons with no protocol action yet (A>B/A<B/A<>B, SPLIT, NB/NR/SNB/ANF,
+RIT/XIT/CTUN/DUP/BMK, VFO B) are shown **greyed** as a deliberate skeleton the
+operator asked to keep.  The deferred polish (per-digit frequency editing, real
+VFO B, wiring each greyed chip) is parked in `.claude/notes/backlog.md`.
+
+Verified: rendered in a local browser against a hand-injected `state` frame and a
+synthetic `MPSD` spectrum stream — the VFO bar holds one line at laptop widths,
+the big readout/S-meter/chip strip render, and the panadapter trace + rolling
+waterfall draw at the 20/80 split with the filter passband and centre line in
+place.  The four manuals and README are intentionally unchanged (no control,
+default, limitation or gesture changed — only the visual arrangement).  NOT yet
+done: live acceptance on the faker (operator step, as in earlier phases).
+
 ### 2026-10-23 — Phase 4 slice 2: first receive controls
 
 Step, AGC mode, AF gain, squelch and AGC gain are now controllable from the
