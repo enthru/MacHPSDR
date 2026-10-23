@@ -25,21 +25,33 @@ Baseline before the current work: `7072382` (`Add localhost browser remote
 foundation`), pushed to `origin/master` on 2026-10-22.
 
 - Phase 0: complete.
-- Phase 1: implemented and headlessly verified.
-- Phase 2: implemented and headlessly verified.
-- Phase 1/2 desktop acceptance: confirmed working live on 2026-10-22 (operator
-  ran the relinked faker on a normal macOS session; the receiver card,
-  panadapter and waterfall render and tune).  The quantitative measurements in
-  "Exact next slice" were waived by the operator rather than recorded.
-- Next implementation slice: Phase 3 receive audio over WebRTC.  The dependency
-  spike is done (see "Phase 3 WebRTC dependency spike" below); the next concrete
-  step is the `libdatachannel` build integration, then the DTLS-SRTP Opus track
-  and browser `RTCPeerConnection`.
-- Decision: there is no local/PCM audio mode.  The product is Internet remote
-  operation; a localhost-only convenience path is throwaway work and is not
-  built.  WebRTC is the single audio transport; the WebSocket stays the
-  signaling/control plane.
-- Not implemented yet: RX audio, full RX controls, pushed
+- Phase 1: implemented, headlessly verified and confirmed live.
+- Phase 2: implemented, headlessly verified and confirmed live (operator ran the
+  faker on macOS 2026-10-22/23; the receiver card, panadapter and waterfall
+  render and tune in the browser).  The quantitative measurements in "Exact next
+  slice" were waived by the operator rather than recorded.
+- Phase 3 (receive audio over WebRTC) is IN PROGRESS.  Done so far, all on
+  `origin/master`: slice 1 (libdatachannel build integration behind an
+  auto-enabling `WEBRTC` make flag), slice 2a (the server `WEB_RTC_SESSION`
+  offer/Opus-track + the `webrtc_offline` loopback-connect harness, PASS), slice
+  2b (signaling over the WebSocket and the browser `RTCPeerConnection`).  The
+  live browser connect was confirmed by the operator on 2026-10-23: the "Listen"
+  button appears and reaches the connected state.  There is NO audio in the track
+  yet — that is the next slice.
+- Next implementation slice: slice 3 — feed Opus RTP into the track from the AF
+  tap, with the audio UX below.  See "Exact next slice" for the full task.
+- Decisions that bind slice 3:
+  - There is no local/PCM audio mode.  WebRTC is the single audio transport; the
+    WebSocket stays the signaling/control plane.
+  - No explicit "Listen" button.  Audio auto-starts when a receiver appears
+    (auto `audio_subscribe`); the per-receiver button becomes mute/unmute.
+    Browsers block autoplay without a user gesture, so when the first `play()` is
+    blocked, show a small one-tap "enable sound" affordance, then never again.
+  - The `WEBRTC` make flag auto-enables when `build/libdatachannel` is present
+    (run `tools/build-libdatachannel.sh` once), so a plain `make` includes it;
+    `make WEBRTC_INCLUDE=off` forces it off.  The operator's `./machpsdr` is a
+    WebRTC build.
+- Not implemented yet: the Opus audio feed itself, full RX controls, pushed
   state events, authenticated LAN access, control leases and browser TX audio.
 
 The local remote provides a disabled-by-default listener bound to
@@ -327,23 +339,40 @@ Headless verification performed in this session is recorded below.  It does not
 prove GTK/browser peak alignment, measured browser bitrate or unchanged RX
 cadence under a throttled real socket.
 
-## Exact next slice: Phase 2 desktop acceptance
+## Exact next slice: Phase 3 slice 3 — Opus audio into the track
 
-On a normal graphical desktop, start `MACHPSDR_WEB=8080 ./machpsdr --faker`, open
-the page in current Safari and one Chromium/Firefox browser, and record:
+The connection is up; it carries no audio yet.  This slice makes the browser
+hear the receiver.
 
-1. matching GTK/browser faker peak X position and dB scale for Low, Balanced and
-   High, plus successful click/drag/wheel/filter-edge gestures;
-2. measured binary payload bitrate, delivered FPS and capture-to-draw age for
-   all three profiles;
-3. RX/display cadence while the browser reads normally, is throttled for at
-   least 20 seconds and is disconnected, confirming drops/adaptation without a
-   cadence change or memory growth;
-4. profile recovery after pressure clears and clean application shutdown with a
-   stalled client.
+Server (`web_rtc.c` + a tap in `receiver.c`):
 
-Only after these observations are recorded should Phase 2 be marked complete
-and the Phase 3 WebRTC/Opus packaging spike begin.
+1. Tap demodulated AF where the AF recorder does — `process_rx_buffer()` around
+   `receiver.c:2881`, 48 kHz mono, before the software listen gain — and hand the
+   block to a bounded single-producer queue.  The RX audio thread only converts
+   and enqueues; it never encodes or writes a socket (decision #6/#14).
+2. A per-session worker (not the RX thread) encodes 20 ms Opus frames with
+   `libopus` (brew `opus` 1.6.1, BSD; add an `opus` dependency alongside
+   `libdatachannel`, auto-detected the same way) and pushes them into the track
+   with `rtcSendMessage` on the Opus track id (`web_rtc_session_track()`), using
+   the PT/SSRC already offered (111 / `0x4d485344`).  libdatachannel packetizes
+   to RTP; set up the RTP packetizer/clock on the track (`rtcSetOpusPacketizer`
+   or the media-handler API — check the installed `rtc/rtc.h`).
+3. The track is sendonly from the server; the session already negotiates it.
+
+Browser (`assets/web/`):
+
+4. Remove the explicit "Listen" button.  Auto-`audio_subscribe` when a receiver
+   card appears and attach the track to the `<audio>` element.
+5. The per-receiver button becomes mute/unmute (local `<audio>.muted` / volume).
+6. Autoplay: if the first `play()` rejects, show a small one-tap "enable sound"
+   affordance, then proceed automatically afterwards.
+
+Verify: native first — extend `webrtc_offline` (or a new harness) to pull RTP
+off the answerer's track and confirm Opus frames arrive at ~50/s with the right
+PT.  Then the operator confirms audible, continuous RX audio in the browser from
+the faker, and that muting/unmuting and a tab sleep/resume behave.  Update the
+four manuals (`manual-{en,ru,uk,be}.md`) in the same commit — they were
+intentionally deferred from slice 2b until audio is operator-usable.
 
 ### 2026-10-22 — WAN/jitter design decision
 
