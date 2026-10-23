@@ -33,6 +33,8 @@
 #include "band.h"
 #include "adc.h"
 #include "dac.h"
+#include "agc.h"
+#include "web_protocol.h"
 #include "receiver.h"
 #include "transmitter.h"
 #include "wideband.h"
@@ -236,5 +238,44 @@ int ext_set_afgain(void *data) {
   }
   update_vfo(s->rx);
   g_free(s);
+  return 0;
+}
+
+// One scalar RX control from the browser remote (dispatched by WEB_CONTROL).
+// Each case applies the value through the SAME choke point the GTK UI uses --
+// set_agc()/set_squelch()/receiver_set_agc_gain() -- and clamps to the UI's own
+// range, so a remote change behaves exactly like turning the knob (CLAUDE.md:
+// "a setter that only writes the field is a lie"). Queued from the web socket
+// thread, so it re-validates the receiver with receiver_is_live() first.
+int ext_set_rx_control(void *data) {
+  RX_CONTROL *c=(RX_CONTROL *)data;
+  RECEIVER *rx=c->rx;
+  if(!receiver_is_live(rx)) { g_free(c); return 0; }
+  switch(c->control) {
+    case WEB_CTRL_AF_GAIN: {
+      double g=(double)c->value/100.0;
+      rx->volume=CLAMP(g,0.0,1.0);
+      receiver_set_volume(rx);
+      break;
+    }
+    case WEB_CTRL_AGC:
+      rx->agc=(int)CLAMP(c->value,(gint64)AGC_OFF,(gint64)AGC_LAST);
+      if(rx->channel>=0) set_agc(rx);
+      break;
+    case WEB_CTRL_AGC_GAIN:
+      rx->agc_gain=CLAMP((double)c->value,-20.0,120.0);
+      receiver_set_agc_gain(rx);
+      break;
+    case WEB_CTRL_SQUELCH:
+      rx->squelch=CLAMP((double)c->value/100.0,0.0,1.0);
+      set_squelch(rx);
+      break;
+    case WEB_CTRL_STEP:
+      if(c->value>0 && c->value<=1000000000LL) rx->step=c->value;
+      break;
+    default: break;
+  }
+  update_vfo(rx);
+  g_free(c);
   return 0;
 }

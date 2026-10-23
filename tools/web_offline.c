@@ -45,6 +45,27 @@ int main(int argc, char **argv) {
   check("filter edges parse",
         parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_filter\",\"rx\":0,\"low\":-3000,\"high\":2700}",&r) &&
         r.type==WEB_REQUEST_SET_FILTER && r.low==-3000 && r.high==2700);
+  check("AF gain control parses to WEB_CTRL_AF_GAIN",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_af_gain\",\"rx\":0,\"value\":40}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_AF_GAIN && r.rx==0 && r.value==40);
+  check("AGC mode control parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_agc\",\"rx\":1,\"value\":3}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_AGC && r.value==3);
+  check("AGC gain accepts a negative value",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_agc_gain\",\"rx\":0,\"value\":-20}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_AGC_GAIN && r.value==-20);
+  check("squelch control parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_squelch\",\"rx\":0,\"value\":55}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_SQUELCH && r.value==55);
+  check("step control parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_step\",\"rx\":0,\"value\":1000}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_STEP && r.value==1000);
+  check("a control still requires a receiver index",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_af_gain\",\"value\":40}",&r));
+  check("a control rejects a boolean value",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_agc\",\"rx\":0,\"value\":true}",&r));
+  check("an unknown control action is rejected",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_everything\",\"rx\":0,\"value\":1}",&r));
 
   check("missing id is rejected",!parse("{\"type\":\"get_state\"}",&r));
   check("unknown command is rejected",

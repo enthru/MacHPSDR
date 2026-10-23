@@ -47,6 +47,11 @@ input, select { width: 100%; color: #f4fbff; background: #07131c; border: 1px so
 input:focus, select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(69,217,255,.14); }
 .frequency { font-size: clamp(1.55rem, 7vw, 2.45rem); font-weight: 720; letter-spacing: .025em; font-variant-numeric: tabular-nums; }
 .control-row { display: grid; grid-template-columns: minmax(7rem,.6fr) 1fr; gap: .8rem; align-items: end; margin-top: .9rem; }
+.control-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .7rem .8rem; margin-top: .9rem; }
+.control-grid label { font-size: .72rem; }
+.control-grid span { color: #f4fbff; font-weight: 800; font-variant-numeric: tabular-nums; }
+.control-grid input[type=range] { width: 100%; padding: 0; height: 1.5rem; accent-color: var(--cyan); background: transparent; border: 0; }
+.control-grid input[type=range]:focus { box-shadow: none; }
 button { color: #051016; background: var(--cyan); border: 0; border-radius: 10px; padding: .76rem 1rem; font-weight: 800; cursor: pointer; }
 button:disabled { opacity: .42; cursor: default; }
 .lock-state { min-height: 1.2em; margin: .8rem 0 0; color: #8ea4b1; font-size: .82rem; }
@@ -61,5 +66,6 @@ footer { position: fixed; left: 0; right: 0; bottom: 0; min-height: 72px; displa
   .topbar { align-items: flex-start; }
   .connection { margin-top: .2rem; }
   .control-row { grid-template-columns: 1fr; }
+  .control-grid { grid-template-columns: 1fr; }
   footer { justify-content: space-between; }
 }

@@ -801,8 +801,12 @@ have not been tested on the air (no transmit hardware).*
 or change the port (default 8080), then open `http://127.0.0.1:8080` in a browser
 on the same computer. The page shows every visible receiver's frequency, mode,
 S-meter, live panadapter and rolling waterfall; it can retune, change mode and
-follows the MOX state. Choose **Low** (256 bins/5 fps), **Balanced** (the default,
-512/10) or **High** (1024/15) for each receiver. Click the spectrum to tune,
+follows the MOX state. Each receiver card also carries **tuning step**, **AGC
+mode**, **AF gain**, **squelch** and **AGC gain** controls. Changing any of them —
+or any of these settings on the desktop — updates every connected browser live:
+the server pushes state as it changes rather than the page polling for it, so two
+browsers and MacHPSDR itself stay in step. Choose **Low** (256 bins/5 fps),
+**Balanced** (the default, 512/10) or **High** (1024/15) for each receiver. Click the spectrum to tune,
 drag it to move the tuning frequency, use the wheel for one tuning step, or drag
 either highlighted filter edge. The status beside the profile reports the
 effective profile, received FPS, row age and rows dropped for a slow browser;

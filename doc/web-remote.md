@@ -184,6 +184,14 @@ State changes are authoritative only when echoed by a later `state` or `event`
 message.  The browser may render an optimistic value, but must replace it with
 the server value.
 
+Besides `set_frequency`, `set_mode`, `set_mox` and `set_filter`, protocol v1
+carries an allow-listed family of scalar per-receiver controls, each a `command`
+with an integer `value` and a receiver `rx`: `set_step` (Hz), `set_agc`
+(0 Off … 4 Fast), `set_af_gain` and `set_squelch` (0-100), and `set_agc_gain`
+(dB).  The server clamps each to the matching desktop control's own range on the
+GTK thread, and reports the result in `state` as `step`, `agc`, `af_gain`,
+`squelch` and `agc_gain`.  Unknown actions are rejected, not ignored.
+
 A spectrum subscription is explicit and per receiver.  Profile names are
 case-insensitive on input; acknowledgements and status use the canonical names.
 Balanced is the browser default:
@@ -312,6 +320,17 @@ as in Phase 2.
 
 Acceptance: two browsers stay consistent with GTK and with each other while
 controls are changed from all three surfaces.
+
+Implemented so far (2026-10-23, see the status record): server-pushed state
+replaces the 500 ms poll (a GTK detector broadcasts a full `state` frame on any
+discrete change and refreshes the S-meter at 5 Hz; the browser keeps `get_state`
+for the connect snapshot and a quiet-link fallback), and the first receive
+controls — tuning step, AGC mode, AF gain, squelch and AGC gain — ship as
+allow-listed `command` actions whose read-back fields are in `state`, so a change
+from any surface echoes to every browser. Still to come in this phase: filter
+presets, RF gain/attenuation, the noise controls (NB/NR/ANF/SNB under the
+DIGU/DIGL and decoder bypass rule), band up/down, RIT/split, sub-receiver,
+bookmarks and decoder status/output.
 
 ### Phase 5 - authenticated LAN/Internet operation
 

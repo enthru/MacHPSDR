@@ -46,6 +46,7 @@ typedef enum {
   WEB_REQUEST_SET_MODE,
   WEB_REQUEST_SET_MOX,
   WEB_REQUEST_SET_FILTER,
+  WEB_REQUEST_SET_CONTROL,
   WEB_REQUEST_SPECTRUM_SUBSCRIBE,
   WEB_REQUEST_SPECTRUM_UNSUBSCRIBE,
   WEB_REQUEST_AUDIO_SUBSCRIBE,
@@ -53,6 +54,17 @@ typedef enum {
   WEB_REQUEST_RTC_ANSWER,
   WEB_REQUEST_RTC_CANDIDATE
 } WEB_REQUEST_TYPE;
+
+/* Scalar per-receiver controls carried by a SET_CONTROL command.  The allow-list
+   lives in the parser; range-clamping is done on the GTK thread by the setter. */
+typedef enum {
+  WEB_CTRL_NONE = 0,
+  WEB_CTRL_AF_GAIN,    /* 0..100 -> rx->volume 0..1 */
+  WEB_CTRL_AGC,        /* AGC_OFF..AGC_FAST (0..4) */
+  WEB_CTRL_AGC_GAIN,   /* dB, clamped to [-20, 120] */
+  WEB_CTRL_SQUELCH,    /* 0..100 -> rx->squelch 0..1 */
+  WEB_CTRL_STEP        /* tuning step, Hz */
+} WEB_CONTROL;
 
 typedef struct {
   WEB_REQUEST_TYPE type;
@@ -63,6 +75,7 @@ typedef struct {
   gboolean value_is_bool;
   gint low;
   gint high;
+  WEB_CONTROL control;
   WEB_SPECTRUM_PROFILE profile;
   /* WebRTC signaling payloads, heap-allocated and unescaped only on a
      successful parse; released by web_request_clear(). */

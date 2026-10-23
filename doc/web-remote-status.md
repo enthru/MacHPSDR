@@ -77,10 +77,21 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   noise never reads as a change, and `web_revision` now counts real changes, not
   ticks.  The browser sends one `get_state` on connect for the snapshot and keeps
   it as a 2 s quiet-link watchdog fallback; the periodic poll is gone.
-- Not implemented yet (rest of Phase 4 and beyond): the fuller RX control surface
-  (AGC, AF/RF gain, attenuation, squelch, noise controls, step, band, RIT/split,
-  sub-receiver, bookmarks) and decoder status/output; authenticated LAN access,
-  control leases and browser TX audio.
+- Phase 4 slice 2 is done on `origin/master`: the first receive controls.  Five
+  allow-listed scalar `command` actions — `set_step`, `set_agc`, `set_af_gain`,
+  `set_squelch`, `set_agc_gain` — parse to one `WEB_REQUEST_SET_CONTROL`/
+  `WEB_CONTROL` in `web_protocol.c`, dispatch through a single
+  `ext_set_rx_control` on the GTK thread, and are applied through the SAME choke
+  points the desktop UI uses (`set_agc`/`set_squelch`/`receiver_set_agc_gain`/
+  `receiver_set_volume`), clamped to each control's UI range.  Their read-back
+  fields (`step`, `agc`, `af_gain`, `squelch`, `agc_gain`) are in `state` and in
+  the detector signature, so a change from any surface echoes to every browser.
+  The browser card gained step/AGC selects and AF-gain/squelch/AGC-gain sliders.
+- Not implemented yet (rest of Phase 4 and beyond): filter presets, RF
+  gain/attenuation, the noise controls (NB/NR/ANF/SNB under the DIGU/DIGL and
+  decoder bypass rule), band up/down, RIT/split, sub-receiver, bookmarks and
+  decoder status/output; authenticated LAN access, control leases and browser TX
+  audio.
 
 The local remote provides a disabled-by-default listener bound to
 `127.0.0.1`, bundled static assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -155,6 +166,37 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-23 — Phase 4 slice 2: first receive controls
+
+Step, AGC mode, AF gain, squelch and AGC gain are now controllable from the
+browser, on top of the pushed-state foundation.
+
+- Protocol (`web_protocol.c/.h`): a `WEB_CONTROL` enum and
+  `WEB_REQUEST_SET_CONTROL`.  The parser keeps its allow-list discipline — a small
+  table maps `set_step`/`set_agc`/`set_af_gain`/`set_squelch`/`set_agc_gain` to the
+  enum and every other `command` action is still rejected — and the existing
+  generic checks require an integer `value` and an `rx`, rejecting a boolean.
+- GTK apply (`ext.c`): one `ext_set_rx_control` re-validates the receiver with
+  `receiver_is_live()`, then applies each control through the UI's own choke point
+  (`set_agc`, `set_squelch`, `receiver_set_agc_gain`, `receiver_set_volume`) and
+  clamps to that control's range (AF/squelch 0-100→0-1, AGC 0-4, AGC gain
+  [-20,120] dB, step >0), ending in `update_vfo` — so a remote change behaves
+  exactly like moving the desktop knob, not just writing a field.
+- State: `append_state_body` now emits `step`, `agc`, `af_gain`, `squelch` and
+  `agc_gain`; these are part of the discrete signature, so a desktop or other-browser
+  change pushes to all clients.
+- Browser (`assets/web/`): the receiver card gained a step select, an AGC-mode
+  select and AF-gain/squelch/AGC-gain range sliders (throttled live sends plus a
+  send on release); `render()` writes each back from state, skipping whichever
+  control the viewer is actively holding.
+
+Verified on macOS: `make` links clean (WebRTC auto-enabled); `make check` passes
+(exit 0); `web_offline --selftest` passes with eight new control cases (parse of
+each action, the `rx`-required and boolean-rejected guards, and rejection of an
+unknown control action).  NOT yet verified live: a desktop faker run exercising
+the sliders and selects against GTK and a second browser (operator test, as in
+prior phases).  Range/limit behaviour is harness/implementation-only until then.
 
 ### 2026-10-23 — Phase 4 slice 1: server-pushed state replaces polling
 
@@ -423,21 +465,26 @@ not separately reported by the operator — sustained-duration continuity, the
 autoplay-unlock affordance, mute/unmute, tab sleep/resume and multi-receiver
 audio are confirmed only as "audio works", the rest harness/implementation-only.
 
-## Exact next slice: Phase 4 — the RX control surface
+## Exact next slice: Phase 4 — more receive controls
 
-Phase 4 slice 1 (server-pushed state) is shipped and live-pending above.  The
-pushed `state` frame is now the authoritative echo for every control, so the next
-slice adds the fuller receive controls on top of it: AGC mode, AF/RF gain,
-attenuation, squelch, the noise controls (NB/NR/ANF/SNB, honouring the DIGU/DIGL
-and decoder bypass rule), tuning step, band up/down, and RIT/split.  Each follows
-the Phase 1 command pattern — a validated `command` with an `ext_*`/`g_idle_add`
-setter on the GTK thread — and the matching read-back fields are added to
-`append_state_body` so a change made from any surface echoes to every browser.
-Decoder status/textual output and sub-receiver/bookmark controls are the later
-steps.  This slice is the first that is operator-visible (new controls), so it
-must update the four manuals and README.  Authenticated LAN access and control
-leases remain gated behind their own phase and the loopback-only rule (decision
-#2/#5).
+Slices 1 (pushed state) and 2 (step/AGC/AF gain/squelch/AGC gain) are shipped and
+live-pending above.  The next slice extends the same mechanism — allow-listed
+`command` action → `WEB_CONTROL` → `ext_set_rx_control` → UI choke point, with a
+read-back field in `append_state_body` — to the remaining receive controls:
+
+- the noise controls (NB, NR, ANF, SNB).  These MUST honour `bypass_stream_dsp()`
+  — in DIGU/DIGL or under a decoder the run flags are forced off, so the browser
+  has to show them disabled/suppressed rather than pretend they took effect
+  (reuse `update_noise`/`receiver_notch_sync`; see the bypass rule in CLAUDE.md).
+- RF gain / attenuation (hardware-dependent; gate on what the device exposes),
+  and filter presets alongside the existing draggable edges.
+- band up/down and RIT/split, routed through `set_band`/the RIT appliers so the
+  VFO-lock rule still refuses a locked dial.
+
+Then sub-receiver and bookmarks, and finally decoder status/textual output.  Each
+operator-visible slice updates the four manuals and README.  Authenticated LAN
+access and control leases remain gated behind their own phase and the loopback-only
+rule (decision #2/#5).
 
 ### 2026-10-22 — WAN/jitter design decision
 

@@ -122,6 +122,23 @@ function makeCard(rx) {
   };
   card.querySelector(".apply-frequency").addEventListener("click", tune);
   input.addEventListener("keydown", event => { if (event.key === "Enter") tune(); });
+  // Scalar receiver controls. Sliders send live (throttled) while dragging and
+  // once more on release; the select controls send on change. render() writes
+  // each back from server state, skipping whichever one the user is holding.
+  const throttle = fn => { let t = 0; return v => { const n = performance.now(); if (n - t < 60) return; t = n; fn(v); }; };
+  const bindSlider = (inputSel, valSel, action) => {
+    const el = card.querySelector(inputSel), out = card.querySelector(valSel);
+    const push = throttle(v => command(action, { rx: rx.id, value: v }));
+    el.addEventListener("input", () => { out.textContent = el.value; push(Number(el.value)); });
+    el.addEventListener("change", () => command(action, { rx: rx.id, value: Number(el.value) }));
+  };
+  bindSlider(".af-gain", ".af-gain-val", "set_af_gain");
+  bindSlider(".squelch", ".squelch-val", "set_squelch");
+  bindSlider(".agc-gain", ".agc-gain-val", "set_agc_gain");
+  const agc = card.querySelector(".agc");
+  agc.addEventListener("change", () => command("set_agc", { rx: rx.id, value: Number(agc.value) }));
+  const step = card.querySelector(".step");
+  step.addEventListener("change", () => command("set_step", { rx: rx.id, value: Number(step.value) }));
   card._audio = card.querySelector(".rx-audio");
   card._muted = false;
   const audioBtn = card.querySelector(".audio-toggle");
@@ -156,6 +173,23 @@ function render(state) {
     card.querySelector(".meter-text").textContent = `${rx.meter_db.toFixed(1)} dB`;
     card.querySelector(".meter span").style.width = `${Math.max(0, Math.min(100, (rx.meter_db + 140) / 1.2))}%`;
     card.querySelector(".lock-state").textContent = rx.locked ? "VFO locked" : "";
+    // Reflect server state onto the controls, but never yank one the user is
+    // actively dragging/opening (active element) out from under them.
+    const setSlider = (inputSel, valSel, value) => {
+      const el = card.querySelector(inputSel);
+      if (value === undefined) return;
+      if (document.activeElement !== el) el.value = String(value);
+      card.querySelector(valSel).textContent = el.value;
+    };
+    const setSelect = (sel, value) => {
+      const el = card.querySelector(sel);
+      if (value !== undefined && document.activeElement !== el) el.value = String(value);
+    };
+    setSlider(".af-gain", ".af-gain-val", rx.af_gain);
+    setSlider(".squelch", ".squelch-val", rx.squelch);
+    setSlider(".agc-gain", ".agc-gain-val", rx.agc_gain);
+    setSelect(".agc", rx.agc);
+    setSelect(".step", rx.step);
   }
   empty.hidden = state.receivers.length !== 0;
   mox.disabled = !state.radio.can_transmit;

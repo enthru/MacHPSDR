@@ -594,19 +594,22 @@ can be replayed separately in the I/Q Player.
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
   (1024/15) profiles stay latest-only and automatically back off for a slow
-  browser. Click/drag/wheel tuning and draggable filter edges are available;
-  the page also follows/toggles MOX on a transmit-capable
+  browser. Click/drag/wheel tuning and draggable filter edges are available, plus
+  per-receiver tuning step, AGC mode, AF gain, squelch and AGC gain controls; the
+  page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
-  session. Each receiver's demodulated audio plays automatically over a **WebRTC
+  session. The server pushes state as it changes rather than the page polling, so
+  a control moved on the desktop or in one browser echoes to every browser live.
+  Each receiver's demodulated audio plays automatically over a **WebRTC
   Opus** stream (libdatachannel + libopus; the browser's own jitter buffer makes
   it lossy-link tolerant), with a per-receiver mute and a one-tap autoplay unlock.
   The control/signaling page is dependency-free and talks the versioned
   `machpsdr.v1` JSON protocol over WebSocket and reconnects automatically. This is
-  Phase 3 of the
+  Phase 4 (receive controls, in progress) of the
   [browser-remote plan](doc/web-remote.md) and
-  [implementation record](doc/web-remote-status.md); complete
+  [implementation record](doc/web-remote-status.md); the remaining receive
   controls and authenticated LAN access are the next
-  isolated phases. Until authentication lands the listener deliberately accepts
+  isolated steps. Until authentication lands the listener deliberately accepts
   loopback only.
 
 **TCI receive level.** By default RX audio uses the receiver's AGC and automatic stream-level limiting, unaffected by speaker volume or mute. Use

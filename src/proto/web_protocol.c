@@ -317,7 +317,21 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   else if(strcmp(action,"set_mode")==0) out->type=WEB_REQUEST_SET_MODE;
   else if(strcmp(action,"set_mox")==0) out->type=WEB_REQUEST_SET_MOX;
   else if(strcmp(action,"set_filter")==0) out->type=WEB_REQUEST_SET_FILTER;
-  else { set_error(error,error_len,"unknown action"); return FALSE; }
+  else {
+    /* Scalar receiver controls: allow-listed here (unknown names are rejected,
+       exactly like a bad frequency action), dispatched by WEB_CONTROL. */
+    static const struct { const char *action; WEB_CONTROL control; } controls[]={
+      {"set_af_gain",  WEB_CTRL_AF_GAIN},
+      {"set_agc",      WEB_CTRL_AGC},
+      {"set_agc_gain", WEB_CTRL_AGC_GAIN},
+      {"set_squelch",  WEB_CTRL_SQUELCH},
+      {"set_step",     WEB_CTRL_STEP},
+    };
+    for(size_t i=0;i<G_N_ELEMENTS(controls);i++)
+      if(strcmp(action,controls[i].action)==0) { out->control=controls[i].control; break; }
+    if(out->control==WEB_CTRL_NONE) { set_error(error,error_len,"unknown action"); return FALSE; }
+    out->type=WEB_REQUEST_SET_CONTROL;
+  }
 
   if(out->type==WEB_REQUEST_SET_FILTER) {
     if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }

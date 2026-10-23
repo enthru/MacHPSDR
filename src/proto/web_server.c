@@ -264,9 +264,12 @@ static void append_state_body(GString *s, gboolean include_meter) {
     }
     g_string_append_printf(s,
         "\"locked\":%s,\"step\":%lld,\"filter_low\":%d,\"filter_high\":%d,"
+        "\"af_gain\":%d,\"agc\":%d,\"agc_gain\":%d,\"squelch\":%d,"
         "\"display_low\":%lld,\"display_high\":%lld}",
         rx->locked?"true":"false",(long long)rx->step,
         rx->filter_low_a,rx->filter_high_a,
+        (int)lrint(rx->volume*100.0),rx->agc,(int)lrint(rx->agc_gain),
+        (int)lrint(rx->squelch*100.0),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));
@@ -471,6 +474,14 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
       RX_FILTER_EDGES *f=g_new(RX_FILTER_EDGES,1);
       f->rx=rx; f->low=request->low; f->high=request->high;
       g_idle_add(ext_set_filter_edges,f);
+      break;
+    }
+    case WEB_REQUEST_SET_CONTROL: {
+      /* The value range is checked on the GTK thread by ext_set_rx_control,
+         which clamps to the matching UI control's own limits. */
+      RX_CONTROL *c=g_new(RX_CONTROL,1);
+      c->rx=rx; c->control=(int)request->control; c->value=request->value;
+      g_idle_add(ext_set_rx_control,c);
       break;
     }
     default:

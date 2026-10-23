@@ -49,6 +49,14 @@ typedef struct _MODE {
   gboolean state;
 } MODE;
 
+/* A scalar receiver control set from the browser remote (WEB_CONTROL in
+   control); applied and range-clamped on the GTK thread by ext_set_rx_control. */
+typedef struct _RX_CONTROL {
+  RECEIVER *rx;
+  int control;
+  gint64 value;
+} RX_CONTROL;
+
 
 extern int ext_num_pad(void *data);
 extern int ext_band_select(void *data);
@@ -64,3 +72,4 @@ extern int ext_tx_set_ps(void *data);
 extern int ext_vfo_update(void *data);
 extern int ext_vfo_step(void *data);
 extern int ext_set_afgain(void *data);
+extern int ext_set_rx_control(void *data);

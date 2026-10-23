@@ -54,6 +54,44 @@
           <select class="mode"></select>
         </label>
       </div>
+      <div class="control-grid">
+        <label>
+          Step, Hz
+          <select class="step">
+            <option value="1">1</option>
+            <option value="10">10</option>
+            <option value="100">100</option>
+            <option value="1000">1 k</option>
+            <option value="5000">5 k</option>
+            <option value="9000">9 k</option>
+            <option value="10000">10 k</option>
+            <option value="100000">100 k</option>
+            <option value="1000000">1 M</option>
+          </select>
+        </label>
+        <label>
+          AGC
+          <select class="agc">
+            <option value="0">Off</option>
+            <option value="1">Long</option>
+            <option value="2">Slow</option>
+            <option value="3">Medium</option>
+            <option value="4">Fast</option>
+          </select>
+        </label>
+        <label>
+          AF gain <span class="af-gain-val"></span>
+          <input class="af-gain" type="range" min="0" max="100" step="1">
+        </label>
+        <label>
+          Squelch <span class="squelch-val"></span>
+          <input class="squelch" type="range" min="0" max="100" step="1">
+        </label>
+        <label>
+          AGC gain, dB <span class="agc-gain-val"></span>
+          <input class="agc-gain" type="range" min="-20" max="120" step="1">
+        </label>
+      </div>
       <p class="lock-state"></p>
     </article>
   </template>
