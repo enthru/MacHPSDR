@@ -298,8 +298,9 @@ drained by a per-session encoder worker; auto-start per receiver with a local
 mute and a one-tap autoplay unlock in the browser; the browser's own jitter
 buffer and Opus PLC serve the 150-600 ms target.  Deliberately NOT built: the
 Opus-over-WebSocket PCM/local fallback — WebRTC is the single audio transport
-(see "Decisions" in the status record).  The 30-minute on-air acceptance is the
-operator's pending step.
+(see "Decisions" in the status record).  The operator confirmed the browser
+audio live on 2026-10-23 (faker, macOS); the finer acceptance checks were waived
+as in Phase 2.
 
 ### Phase 4 - complete receive controls
 

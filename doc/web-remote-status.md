@@ -30,18 +30,19 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   faker on macOS 2026-10-22/23; the receiver card, panadapter and waterfall
   render and tune in the browser).  The quantitative measurements in "Exact next
   slice" were waived by the operator rather than recorded.
-- Phase 3 (receive audio over WebRTC) is IMPLEMENTED end to end, pending the
-  operator's on-air listen.  Done, all on `origin/master`: slice 1
+- Phase 3 (receive audio over WebRTC) is COMPLETE and confirmed live.  Done, all
+  on `origin/master`: slice 1
   (libdatachannel build integration behind an auto-enabling `WEBRTC` make flag),
   slice 2a (the server `WEB_RTC_SESSION` offer/Opus-track + the `webrtc_offline`
   loopback-connect harness), slice 2b (signaling over the WebSocket and the
   browser `RTCPeerConnection`; live connect confirmed by the operator
   2026-10-23), and slice 3 (the Opus audio feed itself + the auto-start/mute
-  browser UX).  Slice 3 is proven natively: `webrtc_offline --selftest` now also
+  browser UX).  Slice 3 is proven natively: `webrtc_offline --selftest` also
   feeds real-time audio into the server session and pulls RTP off the answerer's
-  track — 75 packets, PT 111, 0 stray, 50.0/s over 1.50 s, zero loss.  What
-  remains for Phase 3 is the operator confirming audible, continuous audio in the
-  browser from the faker, and that mute/unmute and tab sleep/resume behave.
+  track — 75 packets, PT 111, 0 stray, 50.0/s over 1.50 s, zero loss.  The
+  operator confirmed on 2026-10-23 that the browser audio works live (faker on
+  macOS); the finer checks (sustained duration, mute/unmute, tab sleep/resume)
+  were not separately reported, as in Phase 2.
 - Decisions realised in slice 3 (were "binding", now shipped):
   - There is no local/PCM audio mode.  WebRTC is the single audio transport; the
     WebSocket stays the signaling/control plane.
@@ -367,22 +368,19 @@ into the live `web_rtc.c` session, RTP arriving on the answerer's track at
 **75 packets, PT 111, 0 stray, 50.0/s over 1.50 s, zero loss** (two runs).  The
 RTP/RTCP demux in the harness correctly discards the SR reporter's sender
 reports.  `make check` passes; `make` (WebRTC auto-enabled) links the app with
-libopus.  Not yet done: the operator's on-air listen (audible/continuous audio
-from the faker, mute/unmute, tab sleep/resume).  The four manuals, README and
-this record were updated in the same commit.
+libopus.  The four manuals, README and this record were updated in the same
+commit.  **Live acceptance: the operator confirmed on 2026-10-23 that the
+browser audio works (faker on macOS).**
 
-Remaining caveats, pending the operator: nobody has HEARD the browser audio;
-decoder-under-load behaviour, the autoplay-unlock affordance and multi-receiver
-audio are harness/implementation-only.
+Remaining caveats, waived like Phase 2's measurements: the finer behaviours were
+not separately reported by the operator — sustained-duration continuity, the
+autoplay-unlock affordance, mute/unmute, tab sleep/resume and multi-receiver
+audio are confirmed only as "audio works", the rest harness/implementation-only.
 
-## Exact next slice: Phase 3 close-out, then Phase 4 — pushed state + controls
+## Exact next slice: Phase 4 — pushed state + controls
 
-Phase 3 has no code left; it closes when the operator confirms the browser audio
-on the faker (audible, continuous, correct receiver), that the per-receiver
-mute/unmute works, and that a tab sleep/resume recovers the stream.  Record the
-result here (waive the measurement or capture it, operator's call).
-
-The next implementation slice is Phase 4's first step: replace the browser's
+Phase 3 is complete (code shipped, live-confirmed above).  The next
+implementation slice is Phase 4's first step: replace the browser's
 500 ms `get_state` poll with server-pushed state events on change (frequency,
 mode, MOX, active RX, receiver add/remove), keeping `get_state` as the initial
 snapshot and a fallback.  This removes the fixed latency floor on every control
