@@ -23,12 +23,12 @@ remote-PTT indication and browser microphone audio over the bidirectional
 WebRTC Opus track, plus lease-gated Tune, drive, tune power, mic gain,
 compressor, leveler and CESSB controls.  Phase 5 is complete in code
 (2026-10-24): a single control lease with takeover, an optional view-only
-login, and failed-login throttling; these are harness-proven, not yet run
-against a live server.
-Per-slice live acceptance is
-recorded in the status record; the repository's isolated macOS test session
-cannot create the application's first GTK window, so live runs happen in a
-normal desktop session.
+login, and failed-login throttling; their protocol has been run against a live
+faker server over HTTPS/WSS (2026-10-25), the browser-side button states not
+yet.  The Windows build compiles them (UCRT64) without WebRTC audio.
+Per-slice live acceptance is recorded in the status record.  A headless
+`--faker` run serves the protocol for scripted checks; browser and RF checks
+happen in the operator's desktop session.
 
 The continuously updated engineering handoff, verification record and exact
 next task are in [web-remote-status.md](web-remote-status.md).

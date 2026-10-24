@@ -289,6 +289,34 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-25 — Phase 5 slice 4 run against a live server; Windows build
+
+The roles/control-lease/throttling check ran against a live server: the faker
+(`./machpsdr --faker iq.wav`) in a temporary HOME whose props carried a control
+login and a viewer login, driven over HTTPS/WSS by a stdlib Python client
+(raw TLS socket + hand-framed WebSocket, scratch, not in the tree).  24/24:
+no credentials 401; viewer hello `role:"view"`, `get_state` served,
+`set_frequency`/`control_acquire`/`lease_acquire` all `view_only`; control
+hello `role:"control"`, a command before acquiring `control_required`, acquire
+held, command acked; a second control browser `control_busy`, then
+`"force":true` takes over and the first is told (`control_state held:false`,
+id 0) and is refused afterwards; the viewer's pushed `state.radio.control_active`
+goes true, then false when the silent holder expires; the silent holder expires
+4-7 s after its last renew (5 s nominal); a disconnect frees control (the next
+acquire needs no force); release answers held:false; five wrong logins are
+401 and the right credentials then get 429 with `Retry-After: 30`.  The app
+log showed the takeover and the lockout and no GTK-CRITICAL.
+
+Not run: the page's title-bar button states and greyed controls in two real
+browsers, and open mode (protection off, every connection control).
+
+The Windows build had not compiled since Phase 1 (the web code arrived after
+the last green Windows CI on 2026-09-26).  With the toolchain moved to UCRT64
+it cross-compiles and links, `web_protocol.c`/`web_tls.c`/`web_server.c`/
+`web_dialog.c` with no warnings, and `web_offline.exe` builds; nothing ran it.
+WebRTC is off on Windows (no libdatachannel package), so the Windows remote
+has control, spectrum and TLS but no audio.
+
 ### 2026-10-24 — Phase 5 slice 4: roles, control lease, login throttling
 
 Implemented the remaining Phase 5 surface except pairing, which the operator
@@ -928,16 +956,11 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: live verification of Phases 5 (roles) and 6
+## Exact next slice: live verification of Phase 6
 
-Phase 5 slice 4 (roles, control lease, throttling) has not run against a live
-server.  A ready one-command check exists in the session that built it: start
-the faker in a temporary HOME whose props carry a control and a viewer login,
-then drive it over HTTPS/WSS — viewer refused every command, second control
-browser busy then takeover (the first told), silent holder expiring after
-~5 s, disconnect freeing control, and five wrong logins giving 429 even for the
-right password.  Then two real browsers: the title-bar button states and the
-greyed controls.
+Phase 5 slice 4's protocol side is live-verified (above); what remains of it is
+a look at two real browsers — the title-bar button states and the greyed
+controls of the browser without control.
 
 Phase 6 is implemented end to end; none of its four slices has been run live.
 The next step is an operator session on HackRF or Pluto into a dummy load: take
