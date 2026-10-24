@@ -1207,16 +1207,16 @@ with `pacman` (the package manager it borrowed from Arch Linux). It is what
 GTK-on-Windows is normally built with, and everything below is typed **on the
 Windows machine**.
 
-Install it, then open **MSYS2 MINGW64** from the Start menu — not the plain
-"MSYS2" or "UCRT64" shell, since the package names below are the MINGW64 ones —
-and run:
+Install it, then open **MSYS2 UCRT64** from the Start menu — not the plain
+"MSYS2" or "MINGW64" shell, since the package names below are the UCRT64 ones
+(MSYS2 no longer ships GTK4 for MINGW64) — and run:
 
 ```bash
 pacman -S --needed git make autoconf automake-wrapper libtool \
-    mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf \
-    mingw-w64-x86_64-gtk4 mingw-w64-x86_64-fftw \
-    mingw-w64-x86_64-libsoundio mingw-w64-x86_64-soapysdr \
-    mingw-w64-x86_64-zlib mingw-w64-x86_64-openssl
+    mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf \
+    mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-fftw \
+    mingw-w64-ucrt-x86_64-libsoundio mingw-w64-ucrt-x86_64-soapysdr \
+    mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-openssl
 ```
 
 > MSYS2 does **not** package liquid-dsp, which the default-on **HFDL** decoder
@@ -1225,7 +1225,7 @@ pacman -S --needed git make autoconf automake-wrapper libtool \
 
 ```bash
 git clone --depth 1 --branch v1.7.0 https://github.com/jgaeddert/liquid-dsp.git
-cd liquid-dsp && ./bootstrap.sh && ./configure --prefix=/mingw64 && make && make install
+cd liquid-dsp && ./bootstrap.sh && ./configure --prefix=/ucrt64 && make && make install
 cd ..
 ```
 
@@ -1259,7 +1259,7 @@ crash inside GTK — nothing has attached yet and neither helps; build
 instruction.
 
 **Drivers for SoapySDR are separate packages** — add
-`mingw-w64-x86_64-soapyrtlsdr` or `-soapyhackrf` before packaging and they are
+`mingw-w64-ucrt-x86_64-soapyrtlsdr` or `-soapyhackrf` before packaging and they are
 picked up automatically. Without any of them the app links SoapySDR and finds no
 device, which reads as a broken build rather than a missing part.
 

@@ -25,6 +25,9 @@ on:
     # the release only on a tag build, so a missing tag trigger means it is
     # never attached at all.
     tags: ['[0-9]*']
+  # A manual run on any branch builds, tests and packages; only a tag build
+  # attaches the package to a release.
+  workflow_dispatch:
 
 # Same reasoning as ci.yml: a run whose ref has moved on is reporting on a
 # commit that is no longer what the ref means.
@@ -33,7 +36,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  mingw64:
+  ucrt64:
     runs-on: windows-latest
     # Only so the tag build can create the release and attach the package to
     # it; nothing else in this job writes back to the repository.
@@ -52,23 +55,27 @@ jobs:
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           # autoconf/automake/libtool are MSYS packages (they run the build),
-          # everything else is a MINGW64 package (it is linked into the binary).
+          # everything else is a UCRT64 package (it is linked into the binary).
+          # UCRT64, not MINGW64: MSYS2 has been pruning the msvcrt-based repo
+          # (SoapySDR first, then gtk4 and libsoundio by 2026-10).
           install: >-
             git
             make
             autoconf
             automake-wrapper
             libtool
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-fftw
-            mingw-w64-x86_64-libsoundio
-            mingw-w64-x86_64-zlib
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-fftw
+            mingw-w64-ucrt-x86_64-libsoundio
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-soapysdr
 
       # Pinned to a tag, not a moving master: an unannounced upstream change
       # would otherwise turn into a mystery build failure of THIS tree.
@@ -77,7 +84,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: liquid-install
-          key: liquid-dsp-v1.7.0-mingw64-1
+          key: liquid-dsp-v1.7.0-ucrt64-1
 
       # Same script the cross-build harness uses, so the workarounds it carries
       # (MinGW has no -lc and no <sys/resource.h>; liquid's .so rule does not
@@ -89,30 +96,8 @@ jobs:
       - name: Install liquid-dsp into the prefix
         run: |
           set -e
-          cp -r liquid-install/include/* /mingw64/include/
-          cp -r liquid-install/lib/*      /mingw64/lib/
-
-      # MSYS2 dropped the mingw64 build of SoapySDR (the package survives only
-      # for ucrt64/clang64), so the core library is rebuilt from source here the
-      # same way liquid-dsp is, and installed into /mingw64 so nothing else in
-      # this job or in win-package.sh has to know it did not come from pacman.
-      - name: Cache SoapySDR
-        id: soapy-cache
-        uses: actions/cache@v6
-        with:
-          path: soapy-install
-          key: soapysdr-0.8.1-mingw64-1
-
-      - name: Build SoapySDR
-        if: steps.soapy-cache.outputs.cache-hit != 'true'
-        run: tools/build-soapysdr.sh "$(pwd)/soapy-install"
-
-      - name: Install SoapySDR into the prefix
-        run: |
-          set -e
-          cp -r soapy-install/include/* /mingw64/include/
-          cp -r soapy-install/lib/*      /mingw64/lib/
-          cp -r soapy-install/bin/*      /mingw64/bin/
+          cp -r liquid-install/include/* /ucrt64/include/
+          cp -r liquid-install/lib/*      /ucrt64/lib/
 
       - name: Build
         run: make -j"$(nproc)"

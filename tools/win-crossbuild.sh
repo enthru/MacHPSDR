@@ -30,8 +30,14 @@ set -euo pipefail
 
 WORK="${1:-/tmp/machpsdr-win}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-MIRROR="https://repo.msys2.org/mingw/mingw64"
+MIRROR="https://repo.msys2.org/mingw/ucrt64"
 HOST=x86_64-w64-mingw32
+# The sysroot is UCRT64: MSYS2 has been pruning the msvcrt-based mingw64 repo
+# (SoapySDR went first, then gtk4 and libsoundio).  Homebrew's mingw-w64
+# defaults to msvcrt, so the CRT is chosen per invocation: -mcrtdll links
+# ucrtbase instead of msvcrt.dll, and __MSVCRT_VERSION__/_UCRT give the headers
+# the declarations the UCRT64 packages were compiled against.
+UCRT="-mcrtdll=ucrt -D_UCRT -D__MSVCRT_VERSION__=0xE00"
 
 command -v "$HOST-gcc" >/dev/null || { echo "error: $HOST-gcc not found (install mingw-w64)"; exit 1; }
 command -v zstd        >/dev/null || { echo "error: zstd not found"; exit 1; }
@@ -39,13 +45,13 @@ command -v zstd        >/dev/null || { echo "error: zstd not found"; exit 1; }
 mkdir -p "$WORK"/{pkgs,sysroot,build}
 
 # ---------------------------------------------------------------- sysroot ---
-# Resolved transitively from mingw64.db rather than hardcoded: the package set
+# Resolved transitively from ucrt64.db rather than hardcoded: the package set
 # drifts, and a stale list fails as a missing header three layers down.
-if [ ! -f "$WORK/sysroot/mingw64/include/gtk-4.0/gtk/gtk.h" ]; then
+if [ ! -f "$WORK/sysroot/ucrt64/include/gtk-4.0/gtk/gtk.h" ]; then
   echo "==> fetching package database"
-  curl -fsSL -o "$WORK/mingw64.db" "$MIRROR/mingw64.db"
+  curl -fsSL -o "$WORK/ucrt64.db" "$MIRROR/ucrt64.db"
   rm -rf "$WORK/dbx"; mkdir -p "$WORK/dbx"
-  tar -xf "$WORK/mingw64.db" -C "$WORK/dbx"
+  tar -xf "$WORK/ucrt64.db" -C "$WORK/dbx"
 
   echo "==> resolving dependencies"
   python3 - "$WORK" <<'PY'
@@ -75,8 +81,8 @@ for n, v in info.items():
     for p in v['provides']:
         prov.setdefault(p, n)
 
-want = ['mingw-w64-x86_64-' + p for p in
-        ('gtk4', 'fftw', 'libsoundio', 'soapysdr', 'zlib')]
+want = ['mingw-w64-ucrt-x86_64-' + p for p in
+        ('gtk4', 'fftw', 'libsoundio', 'soapysdr', 'zlib', 'openssl')]
 seen, order, stack = set(), [], list(want)
 while stack:
     real = prov.get(stack.pop())
@@ -106,8 +112,8 @@ fi
 # Not an MSYS2 package; built from source by the shared script (which the CI
 # workflow also uses).  Skipped without autotools — HFDL then goes off below.
 LIQUID_VER=v1.7.0
-if [ ! -f "$WORK/sysroot/mingw64/lib/libliquid.a" ] && command -v autoconf >/dev/null; then
-  "$REPO/tools/build-liquid-dsp.sh" "$WORK/sysroot/mingw64" "$HOST" "$LIQUID_VER"
+if [ ! -f "$WORK/sysroot/ucrt64/lib/libliquid.a" ] && command -v autoconf >/dev/null; then
+  "$REPO/tools/build-liquid-dsp.sh" "$WORK/sysroot/ucrt64" "$HOST" "$LIQUID_VER"
 fi
 
 # ------------------------------------------------------------------ build ---
@@ -120,7 +126,7 @@ tar -c -C "$REPO" --exclude='*.o' --exclude='*.d' --exclude='.git' \
        --exclude='machpsdr' --exclude='*.dylib' --exclude='*.so' . \
   | tar -x -C "$WORK/build"
 
-if [ -f "$WORK/sysroot/mingw64/lib/libliquid.a" ]; then
+if [ -f "$WORK/sysroot/ucrt64/lib/libliquid.a" ]; then
   # Point HFDL at the sysroot instead of the Makefile's `brew --prefix` lookup.
   sed -i.bak "s|^HFDL_INCLUDES=-I\$(shell brew --prefix liquid-dsp)/include \$(HFDL_VENDOR_INCLUDES)|HFDL_INCLUDES=\$(HFDL_VENDOR_INCLUDES)|" \
       "$WORK/build/Makefile"
@@ -130,7 +136,10 @@ else
 fi
 
 echo "==> building"
-export PKG_CONFIG_LIBDIR="$WORK/sysroot/mingw64/lib/pkgconfig"
+# WEBRTC_INCLUDE=off: the export copies the host's build/libdatachannel, which
+# would auto-enable the flag against a macOS/Linux library.  libdatachannel has
+# no MSYS2 package, so the Windows build is the browser remote without audio.
+export PKG_CONFIG_LIBDIR="$WORK/sysroot/ucrt64/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="$WORK/sysroot"
 
 # UNAME_S is forced because the Makefile reads the HOST's uname; AR must be set
@@ -139,8 +148,8 @@ export PKG_CONFIG_SYSROOT_DIR="$WORK/sysroot"
 # .exe icon + VERSIONINFO) would be derived from CC anyway, but it is named here
 # so a toolchain whose gcc is not spelled `<host>-gcc` still finds it.
 make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
-     UNAME_S=MINGW64_NT-10.0 \
-     CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar" WINDRES="$HOST-windres"
+     UNAME_S=MINGW64_NT-10.0 WEBRTC_INCLUDE=off \
+     CC="$HOST-gcc $UCRT" LINK="$HOST-gcc $UCRT" AR="$HOST-ar" WINDRES="$HOST-windres"
 
 # The offline harnesses, built but NOT run — nothing here can execute a PE.  They
 # are worth cross-building for two reasons.  They link a different set of objects
@@ -152,8 +161,8 @@ make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
 # (which is what happens here when liquid-dsp could not be built) asks for
 # exactly the harnesses it can link.
 make -C "$WORK/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
-     UNAME_S=MINGW64_NT-10.0 \
-     CC="$HOST-gcc" LINK="$HOST-gcc" AR="$HOST-ar" WINDRES="$HOST-windres" \
+     UNAME_S=MINGW64_NT-10.0 WEBRTC_INCLUDE=off \
+     CC="$HOST-gcc $UCRT" LINK="$HOST-gcc $UCRT" AR="$HOST-ar" WINDRES="$HOST-windres" \
      check-build
 
 echo

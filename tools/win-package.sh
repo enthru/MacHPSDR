@@ -7,7 +7,7 @@
 # MINGW_PREFIX at the cross sysroot and OBJDUMP at the cross objdump — which is
 # the only way any of this gets exercised without a Windows machine.
 #
-#   MINGW_PREFIX   where the GTK runtime lives   (default: /mingw64)
+#   MINGW_PREFIX   where the GTK runtime lives   (default: /ucrt64)
 #   OBJDUMP        PE reader                     (default: objdump)
 #   BUILD_DIR      where machpsdr.exe was built  (default: the repo root)
 #
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 DEST="${1:-machpsdr-win64}"
-PREFIX="${MINGW_PREFIX:-/mingw64}"
+PREFIX="${MINGW_PREFIX:-/ucrt64}"
 OBJDUMP="${OBJDUMP:-objdump}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # The cross-build harness builds in a copy of the tree, not in the repo.
@@ -150,7 +150,7 @@ done
 # Also dlopen()ed: without the modules the SoapySDR support links fine and finds
 # no device at all, which reads as a broken build rather than a missing part.
 # The drivers are SEPARATE MSYS2 packages from SoapySDR itself
-# (mingw-w64-x86_64-soapyrtlsdr, -soapyhackrf); with none of them installed there
+# (mingw-w64-ucrt-x86_64-soapyrtlsdr, -soapyhackrf); with none of them installed there
 # is simply no module directory and this section is skipped.
 SOAPY_MODDIR="$(find "$PREFIX/lib" -maxdepth 1 -type d -name 'SoapySDR' -print -quit || true)"
 if [ -n "$SOAPY_MODDIR" ]; then
