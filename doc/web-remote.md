@@ -21,7 +21,10 @@ protocol, routing and regression suites pass.  Phase 6 now has its exclusive
 renewable browser-TX lease, heartbeat/disconnect emergency unkey, visible
 remote-PTT indication and browser microphone audio over the bidirectional
 WebRTC Opus track, plus lease-gated Tune, drive, tune power, mic gain,
-compressor, leveler and CESSB controls.
+compressor, leveler and CESSB controls.  Phase 5 is complete in code
+(2026-10-24): a single control lease with takeover, an optional view-only
+login, and failed-login throttling; these are harness-proven, not yet run
+against a live server.
 Per-slice live acceptance is
 recorded in the status record; the repository's isolated macOS test session
 cannot create the application's first GTK window, so live runs happen in a
@@ -87,6 +90,9 @@ assets.
    GTK, protocol, DSP or audio threads.
 7. HTTP paths are fixed and cannot contain `..`, percent-decoded paths or user
    selected filenames.
+8. At most one browser controls the radio (the control lease); the viewer
+   login can never change radio state, not even to unkey.  Repeated wrong
+   logins from one address are refused without computing the password hash.
 
 ## Architecture
 
@@ -231,12 +237,24 @@ State changes are authoritative only when echoed by a later `state` or `event`
 message.  The browser may render an optimistic value, but must replace it with
 the server value.
 
+`hello` carries `"role":"control"` or `"role":"view"` and the `control_lease`
+capability.  A control connection sends `{"type":"control_acquire","id":4}`
+(optionally `"force":true` to take control from its holder), renews with
+`control_renew` at least every five seconds and relinquishes with
+`control_release`; the server answers `{"type":"control_state","id":4,
+"held":true,"timeout_ms":5000}` and sends an unsolicited `held:false` (id 0)
+to a holder that loses control by takeover or expiry.  Without the lease a
+radio-changing command fails with `control_required`, an acquire while held
+with `control_busy`, and any non-receive request from a viewer with
+`view_only`.  State reports `control_active` while someone holds control.
+
 Remote TX has a connection-bound renewable lease.  A browser sends
 `{"type":"lease_acquire","id":3}`, renews it at least every five seconds with
 `lease_renew`, and may relinquish it with `lease_release`.  The server answers
-with `{"type":"lease_state","id":3,"held":true,"timeout_ms":5000}`.  Only
-the holder may set MOX true; any client may request MOX false as an emergency
-unkey.  Disconnect, expiry or withdrawal of the session-only desktop PTT arm
+with `{"type":"lease_state","id":3,"held":true,"timeout_ms":5000}`.  Only the
+control holder may acquire it, and losing control drops it.  Only the TX holder
+may set MOX true; any control-role connection may request MOX false as an
+emergency unkey (a viewer may not).  Disconnect, expiry or withdrawal of the session-only desktop PTT arm
 revokes the lease and dispatches an unkey through the GTK main loop.  State
 reports `tx_lease_active` to all viewers and `remote_ptt` while browser MOX is
 active.  `tx_media_active` reports that fresh browser microphone media is
@@ -414,7 +432,7 @@ decoder's textual readout are included.
 ### Phase 5 - authenticated LAN/Internet operation
 
 - LAN listener with optional persisted password authentication.
-- Pairing flow (QR/manual code) and failed-auth throttling.
+- Failed-login throttling.
 - Read-only viewers plus a renewable single control lease.
 - Optional mDNS advertisement on trusted interfaces.
 - HTTPS/WSS termination plus a fixed-port WebRTC ICE path that uses the page's
@@ -428,9 +446,30 @@ protection disabled the service is intentionally open.  Receive-audio ICE uses
 one configurable UDP-mux port for every client and advertises the address from
 which that client opened the page.  A direct Internet setup forwards both the
 HTTPS TCP port and that WebRTC UDP port to the server; no STUN/TURN service is
-used.  Failed-auth throttling, pairing and viewer/controller roles remain future
-work.  The Phase 6 safety slice implements the narrower connection-bound TX
-lease ahead of the general Phase 5 control-ownership model.
+used.
+
+Implemented (2026-10-24): roles and throttling.  A connection's role comes from
+the login it used: the main login is `control`, an optional second **viewer
+login** (`web_view_user`/salt/hash, same PBKDF2 storage, username distinct from
+the main one, in force only while protection is on) is `view`; with protection
+off every connection is `control`.  Among control connections one holds the
+**control lease** (`control_acquire`/`control_renew`/`control_release`, the same
+connection-bound 5 s heartbeat as the TX lease); the page takes it on connect
+when it is free, and `control_acquire` with `"force":true` takes it over.  Every
+radio-changing request needs the lease; the TX lease can only be acquired by
+the control holder, and losing control (release, takeover, expiry, disconnect)
+drops the TX lease and so unkeys.  A viewer may only read state, subscribe to
+spectrum and take receive audio.  The one access policy is
+`web_request_access()`, checked once at the top of dispatch; a request type it
+does not name needs the lease.  Failed logins are throttled per IPv4 source:
+five wrong Authorization headers lock the address for 30 s, each further one
+doubles the lock up to 15 min, a correct login or 15 quiet minutes clears it.
+A locked address gets `429 Too Many Requests` with `Retry-After` before any hash
+is computed.  A missing header is the browser's first try and is not a failure.
+The table holds 64 addresses; when all are locked, the lockout ending soonest is
+reused, so a flood of sources can shorten a lockout but never lock a fresh
+address out.  Token/QR pairing was dropped by operator decision and is not
+planned.
 
 Acceptance: with protection enabled, unauthenticated LAN requests receive no
 state; a stolen stale lease cannot transmit; open mode is unambiguously reported

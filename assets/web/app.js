@@ -6,6 +6,9 @@ let socket, reconnectTimer, stateWatchdog, leaseRenewTimer, radioState;
 let nextId = 1, socketGeneration = 0;
 let capabilities = [];
 let leaseHeld = false;
+// Phase 5 roles.  role comes from the login (hello); a "view" login can never
+// control.  controlHeld is the one-controller lease among "control" logins.
+let role = "control", controlHeld = false, controlRenewTimer;
 let micStream = null, micContext = null, micAnalyser = null, micMeterTimer = null;
 let micReady = false, micGeneration = 0;
 const connection = document.querySelector("#connection");
@@ -15,6 +18,7 @@ const template = document.querySelector("#receiver-template");
 const mox = document.querySelector("#mox");
 const tune = document.querySelector("#tune");
 const txControl = document.querySelector("#tx-control");
+const controlBtn = document.querySelector("#control");
 const txSettings = document.querySelector("#tx-settings");
 const drive = document.querySelector("#drive"), tuneDrive = document.querySelector("#tune-drive");
 const micGain = document.querySelector("#mic-gain"), compLevel = document.querySelector("#comp-level");
@@ -64,6 +68,45 @@ function setLeaseHeld(held) {
   }
   if (radioState) renderTx(radioState);
 }
+function controlLeased() { return capabilities.includes("control_lease"); }
+// Without the lease (or on a server that predates it) nothing here may send a
+// radio-changing command; MOX/Tune OFF stays open to every control login as the
+// emergency unkey, exactly as the server's access table has it.
+function canControl() { return !controlLeased() || controlHeld; }
+function setControlHeld(held) {
+  controlHeld = held;
+  clearTimeout(controlRenewTimer);
+  if (held && socket?.readyState === WebSocket.OPEN)
+    controlRenewTimer = setTimeout(() => send({ type: "control_renew" }), 2000);
+  // The server drops the TX lease with control and need not say so separately.
+  if (!held && leaseHeld) setLeaseHeld(false);
+  renderControl();
+}
+function renderControl() {
+  const leased = controlLeased();
+  controlBtn.hidden = !leased;
+  const busy = !controlHeld && !!radioState?.control_active;
+  controlBtn.classList.toggle("held", controlHeld);
+  controlBtn.classList.toggle("busy", busy && role === "control");
+  controlBtn.disabled = role !== "control";
+  controlBtn.textContent = role !== "control" ? "View only" :
+                           controlHeld ? "In control" : busy ? "Take over" : "Take control";
+  controlBtn.title = role !== "control" ? "This login can watch and listen, never control" :
+                     controlHeld ? "This browser controls the radio — click to hand control back" :
+                     busy ? "Another browser has control — click to take it over (it stops transmitting)" :
+                            "Take control of the radio";
+  const locked = !canControl();
+  for (const card of cards.values()) {
+    card.classList.toggle("no-control", locked);
+    for (const el of card.querySelectorAll("button, select, input")) {
+      // Mute and the spectrum profile are this browser's own; dead chips stay dead.
+      if (el.classList.contains("audio-toggle") || el.classList.contains("spectrum-profile") ||
+          el.classList.contains("dead")) continue;
+      el.disabled = locked;
+    }
+  }
+  if (radioState) renderTx(radioState);
+}
 function txMediaReady(radio) {
   return micReady && !!radio.tx_media_active &&
          [...cards.values()].some(card => card._pc && card._connected);
@@ -72,14 +115,15 @@ function renderTx(radio) {
   const leaseAvailable = capabilities.includes("tx_lease");
   const busy = !!radio.tx_lease_active && !leaseHeld;
   txControl.hidden = !leaseAvailable;
-  txControl.disabled = !radio.can_transmit || busy;
+  const viewer = role !== "control";
+  txControl.disabled = !radio.can_transmit || busy || !canControl();
   txControl.classList.toggle("held", leaseHeld);
   txControl.textContent = leaseHeld ? (micReady ? "Release TX control" : "Starting microphone…") :
                           (busy ? "TX control in use" : "Take TX control");
-  mox.disabled = !radio.can_transmit || (!radio.mox && (!leaseHeld || !txMediaReady(radio)));
+  mox.disabled = viewer || !radio.can_transmit || (!radio.mox && (!leaseHeld || !txMediaReady(radio)));
   mox.classList.toggle("on", radio.mox);
   mox.textContent = radio.mox ? "MOX ON" : "MOX";
-  tune.disabled = !radio.can_transmit || (!leaseHeld && !radio.tune);
+  tune.disabled = viewer || !radio.can_transmit || (!leaseHeld && !radio.tune);
   tune.classList.toggle("on", !!radio.tune);
   tune.textContent = radio.tune ? "TUNE ON" : "TUNE";
   for (const input of txSettings.querySelectorAll("input")) input.disabled = !radio.can_transmit || !leaseHeld;
@@ -97,7 +141,11 @@ function renderTx(radio) {
   remotePtt.hidden = !radio.remote_ptt;
   micLevelWrap.hidden = !leaseHeld;
 }
-function command(action, fields) { send({ type: "command", action, ...fields }); }
+function command(action, fields) {
+  const unkey = (action === "set_mox" || action === "set_tune") && fields?.value === false;
+  if (!canControl() && !(unkey && role === "control")) return;
+  send({ type: "command", action, ...fields });
+}
 function subscribe(card, rx) {
   if (card.dataset.subscription === String(socketGeneration)) return;
   card.dataset.subscription = String(socketGeneration);
@@ -168,6 +216,7 @@ function installSpectrumGestures(card, rxId) {
   });
   canvas.addEventListener("pointercancel", () => { canvas._drag = null; });
   const stepBy = steps => {
+    if (!canControl()) return;          // no optimistic retune without control
     const value = Math.max(1, card._rx.frequency + steps * Math.max(1, card._rx.step));
     card._rx.frequency = value;
     command("set_frequency", { rx: rxId, value });
@@ -390,7 +439,7 @@ function render(state) {
     }
   }
   empty.hidden = state.receivers.length !== 0;
-  renderTx(state.radio);
+  renderControl();                       /* also renders the TX bar */
   decoderTitle.textContent = state.radio.decoder_title || "";
   decoderText.textContent = state.radio.decoder_text || "";
   decoderTitle.hidden = !state.radio.decoder_text;
@@ -650,10 +699,15 @@ function connect() {
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === "hello") {
       capabilities = message.capabilities || [];
+      role = message.role === "view" ? "view" : "control";
       updateAudioAvailability();
-      if (radioState) renderTx(radioState);
+      // A control login takes control on connect if nobody has it; if someone
+      // does, the reply is control_busy and the button offers a takeover.
+      if (controlLeased() && role === "control") send({ type: "control_acquire" });
+      renderControl();
     }
     if (message.type === "lease_state") setLeaseHeld(!!message.held);
+    if (message.type === "control_state") setControlHeld(!!message.held);
     if (message.type === "state") { render(message); armStateWatchdog(); }
     if (message.type === "spectrum_status" || message.type === "spectrum_subscription") updateSpectrumStatus(message);
     if (message.type === "rtc_offer") handleRtcOffer(message.rx, message.sdp);
@@ -662,11 +716,14 @@ function connect() {
     // server's rtc_state is just a log line here.
     if (message.type === "error") {
       if (["lease_lost", "lease_required", "not_armed"].includes(message.code)) setLeaseHeld(false);
-      revision.textContent = `Command failed: ${message.message}`;
+      if (["control_busy", "control_lost", "control_required"].includes(message.code)) setControlHeld(false);
+      // A busy controller at connect is the normal case for a second browser,
+      // shown by the button; it is not a failed command.
+      if (message.code !== "control_busy") revision.textContent = `Command failed: ${message.message}`;
     }
   });
   socket.addEventListener("close", () => {
-    clearTimeout(stateWatchdog); setLeaseHeld(false); setConnection(navigator.onLine ? "Disconnected" : "Offline"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
+    clearTimeout(stateWatchdog); setLeaseHeld(false); setControlHeld(false); setConnection(navigator.onLine ? "Disconnected" : "Offline"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }
@@ -687,7 +744,13 @@ for (const [input, valueId, action] of [
 for (const [input, action] of [[compressor,"set_compressor"],[leveler,"set_leveler"],[cessb,"set_cessb"]])
   input.addEventListener("change", () => { if (leaseHeld) command(action,{ value: input.checked ? 1 : 0 }); });
 txControl.addEventListener("click", () => {
+  if (!canControl()) return;
   send({ type: leaseHeld ? "lease_release" : "lease_acquire" });
+});
+controlBtn.addEventListener("click", () => {
+  if (role !== "control") return;
+  if (controlHeld) send({ type: "control_release" });
+  else send({ type: "control_acquire", force: !!radioState?.control_active });
 });
 // One tap unlocks audio for the whole tab, then the prompt never returns.
 enableSound.addEventListener("click", () => {

@@ -230,6 +230,11 @@ typedef struct _radio {
   char     web_auth_user[65];
   char     web_auth_salt[37];
   char     web_auth_hash[65];
+  // Optional second, view-only login (same salted-hash storage).  It is in
+  // force only while password protection is on and both fields are set.
+  char     web_view_user[65];
+  char     web_view_salt[37];
+  char     web_view_hash[65];
   char     web_tls_bundle[512];
   gint     web_rtc_port;
   // I/Q + audio recorder (see recorder.c). Persisted in radio_save_state.

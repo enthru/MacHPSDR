@@ -2103,6 +2103,16 @@ void add_receivers(RADIO *r) {
   value=getProperty("radio.web_auth_user");
   if(value!=NULL && *value!='\0' && strlen(value)<sizeof(r->web_auth_user))
     g_strlcpy(r->web_auth_user,value,sizeof(r->web_auth_user));
+  value=getProperty("radio.web_view_salt");
+  if(value!=NULL && strlen(value)<sizeof(r->web_view_salt))
+    g_strlcpy(r->web_view_salt,value,sizeof(r->web_view_salt));
+  value=getProperty("radio.web_view_hash");
+  if(value!=NULL && strlen(value)==sizeof(r->web_view_hash)-1 &&
+     strspn(value,"0123456789abcdef")==sizeof(r->web_view_hash)-1)
+    g_strlcpy(r->web_view_hash,value,sizeof(r->web_view_hash));
+  value=getProperty("radio.web_view_user");
+  if(value!=NULL && *value!='\0' && strlen(value)<sizeof(r->web_view_user))
+    g_strlcpy(r->web_view_user,value,sizeof(r->web_view_user));
   value=getProperty("radio.web_tls_bundle");
   if(value!=NULL && strlen(value)<sizeof(r->web_tls_bundle))
     g_strlcpy(r->web_tls_bundle,value,sizeof(r->web_tls_bundle));
@@ -4027,6 +4037,9 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   g_strlcpy(r->web_auth_user,"machpsdr",sizeof(r->web_auth_user));
   r->web_auth_salt[0] = '\0';
   r->web_auth_hash[0] = '\0';
+  g_strlcpy(r->web_view_user,"guest",sizeof(r->web_view_user));
+  r->web_view_salt[0] = '\0';
+  r->web_view_hash[0] = '\0';
   r->web_tls_bundle[0] = '\0';
   r->web_rtc_port = 8081;
 

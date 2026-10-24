@@ -633,7 +633,14 @@ can be replayed separately in the I/Q Player.
   private key instead. Optional password protection covers both the page and
   WebSocket with a configurable username; the password is stored only as a
   salted PBKDF2 hash. With protection disabled, anyone who can reach the port can
-  control the radio. Direct Internet use requires forwarding the selected HTTPS
+  control the radio. One browser at a time is **in control** (the first to
+  connect takes it; the others watch and listen with greyed controls until they
+  press **Take over**, which unkeys anything the previous one was transmitting),
+  and only that browser can take the TX lease. An optional second **viewer
+  login** gets the page, spectrum and audio but never control. Five wrong
+  passwords from one address lock it out for 30 s, doubling to 15 minutes, with
+  the hash not even computed while locked *(the roles, takeover and lockout are
+  harness-proven; not yet exercised against a running server)*. Direct Internet use requires forwarding the selected HTTPS
   TCP port and the WebRTC audio UDP port (8081 by default) to the MacHPSDR
   computer, and should always keep password protection enabled. No STUN, TURN or
   other third-party service is involved: the server advertises the same address

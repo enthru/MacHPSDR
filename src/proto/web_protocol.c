@@ -168,6 +168,97 @@ void web_request_clear(WEB_REQUEST *req) {
   g_clear_pointer(&req->mid,g_free);
 }
 
+WEB_ACCESS web_request_access(const WEB_REQUEST *req) {
+  if(req==NULL) return WEB_ACCESS_CONTROL_LEASE;
+  switch(req->type) {
+    case WEB_REQUEST_GET_STATE:
+    case WEB_REQUEST_SPECTRUM_SUBSCRIBE:
+    case WEB_REQUEST_SPECTRUM_UNSUBSCRIBE:
+    case WEB_REQUEST_AUDIO_SUBSCRIBE:
+    case WEB_REQUEST_AUDIO_UNSUBSCRIBE:
+    case WEB_REQUEST_RTC_ANSWER:
+    case WEB_REQUEST_RTC_CANDIDATE:
+      return WEB_ACCESS_VIEW;
+    case WEB_REQUEST_CONTROL_ACQUIRE:
+    case WEB_REQUEST_CONTROL_RENEW:
+    case WEB_REQUEST_CONTROL_RELEASE:
+    case WEB_REQUEST_LEASE_RELEASE:
+      return WEB_ACCESS_CONTROL_ROLE;
+    case WEB_REQUEST_SET_MOX:
+    case WEB_REQUEST_SET_TUNE:
+      /* Unkeying is an emergency action for every controller, held or not. */
+      return req->flag ? WEB_ACCESS_CONTROL_LEASE : WEB_ACCESS_CONTROL_ROLE;
+    default:
+      return WEB_ACCESS_CONTROL_LEASE;
+  }
+}
+
+const char *web_role_name(WEB_ROLE role) {
+  return role==WEB_ROLE_CONTROL ? "control" : "view";
+}
+
+void web_auth_throttle_init(WEB_AUTH_THROTTLE *t) {
+  if(t!=NULL) memset(t,0,sizeof(*t));
+}
+
+/* An entry is forgotten once it is unlocked and quiet for WEB_AUTH_FORGET_US. */
+static void throttle_age(WEB_AUTH_THROTTLE_ENTRY *e, gint64 now_us) {
+  if(!e->used || e->locked_until_us>now_us) return;
+  gint64 quiet_from=MAX(e->last_failure_us,e->locked_until_us);
+  if(now_us-quiet_from>=WEB_AUTH_FORGET_US) e->used=FALSE;
+}
+
+static WEB_AUTH_THROTTLE_ENTRY *throttle_find(WEB_AUTH_THROTTLE *t, guint32 address,
+                                              gint64 now_us) {
+  for(int i=0;i<WEB_AUTH_THROTTLE_SLOTS;i++) {
+    WEB_AUTH_THROTTLE_ENTRY *e=&t->entry[i];
+    throttle_age(e,now_us);
+    if(e->used && e->address==address) return e;
+  }
+  return NULL;
+}
+
+gint64 web_auth_throttle_wait(WEB_AUTH_THROTTLE *t, guint32 address, gint64 now_us) {
+  if(t==NULL) return 0;
+  WEB_AUTH_THROTTLE_ENTRY *e=throttle_find(t,address,now_us);
+  return (e!=NULL && e->locked_until_us>now_us) ? e->locked_until_us-now_us : 0;
+}
+
+gint64 web_auth_throttle_failure(WEB_AUTH_THROTTLE *t, guint32 address, gint64 now_us) {
+  if(t==NULL) return 0;
+  WEB_AUTH_THROTTLE_ENTRY *e=throttle_find(t,address,now_us);
+  if(e==NULL) {
+    /* A free slot, else the stalest unlocked one, else (every slot locked) the
+       lockout that ends soonest -- never refuse an address for want of room. */
+    WEB_AUTH_THROTTLE_ENTRY *stale=NULL, *soonest=NULL;
+    for(int i=0;i<WEB_AUTH_THROTTLE_SLOTS && e==NULL;i++) {
+      WEB_AUTH_THROTTLE_ENTRY *c=&t->entry[i];
+      if(!c->used) e=c;
+      else if(c->locked_until_us<=now_us) {
+        if(stale==NULL || c->last_failure_us<stale->last_failure_us) stale=c;
+      } else if(soonest==NULL || c->locked_until_us<soonest->locked_until_us) soonest=c;
+    }
+    if(e==NULL) e=stale!=NULL ? stale : soonest;
+    memset(e,0,sizeof(*e));
+    e->used=TRUE;
+    e->address=address;
+    e->lock_us=WEB_AUTH_FIRST_LOCK_US;
+  }
+  e->failures++;
+  e->last_failure_us=now_us;
+  if(e->failures<WEB_AUTH_FREE_FAILURES || e->locked_until_us>now_us) return 0;
+  gint64 lock=e->lock_us;
+  e->locked_until_us=now_us+lock;
+  e->lock_us=MIN(lock*2,(gint64)WEB_AUTH_MAX_LOCK_US);
+  return lock;
+}
+
+void web_auth_throttle_success(WEB_AUTH_THROTTLE *t, guint32 address) {
+  if(t==NULL) return;
+  for(int i=0;i<WEB_AUTH_THROTTLE_SLOTS;i++)
+    if(t->entry[i].used && t->entry[i].address==address) t->entry[i].used=FALSE;
+}
+
 gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
                             char *error, size_t error_len) {
   if(out==NULL) return FALSE;
@@ -184,7 +275,7 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   char profile[32]="";
   gboolean have_type=FALSE, have_action=FALSE;
   gboolean have_id=FALSE, have_rx=FALSE, have_value=FALSE;
-  gboolean have_low=FALSE, have_high=FALSE, have_profile=FALSE;
+  gboolean have_low=FALSE, have_high=FALSE, have_profile=FALSE, have_force=FALSE;
   gboolean have_sdp=FALSE, have_candidate=FALSE, have_mid=FALSE;
   const char *sdp_tok=NULL, *cand_tok=NULL, *mid_tok=NULL;
   size_t sdp_len=0, cand_len=0, mid_len=0;
@@ -249,6 +340,9 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
     } else if(strcmp(key,"high")==0 && v.type==JV_INTEGER && v.integer>=G_MININT && v.integer<=G_MAXINT) {
       if(have_high) { set_error(error,error_len,"duplicate high filter edge"); return FALSE; }
       out->high=(gint)v.integer; have_high=TRUE;
+    } else if(strcmp(key,"force")==0) {
+      if(have_force || v.type!=JV_BOOL) { set_error(error,error_len,"invalid or duplicate force"); return FALSE; }
+      out->force=v.boolean; have_force=TRUE;
     } else if(strcmp(key,"rx")==0 || strcmp(key,"value")==0 ||
               strcmp(key,"profile")==0 || strcmp(key,"low")==0 || strcmp(key,"high")==0) {
       set_error(error,error_len,"invalid field type"); return FALSE;
@@ -265,6 +359,9 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   if(p!=end) { set_error(error,error_len,"trailing data"); return FALSE; }
   if(!have_type) { set_error(error,error_len,"missing request type"); return FALSE; }
   if(!have_id || out->id<0) { set_error(error,error_len,"missing request id"); return FALSE; }
+  if(have_force && strcmp(type,"control_acquire")!=0) {
+    set_error(error,error_len,"force is only valid on control_acquire"); return FALSE;
+  }
 
   if(strcmp(type,"get_state")==0) {
     out->type=WEB_REQUEST_GET_STATE;
@@ -280,6 +377,18 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
   }
   if(strcmp(type,"lease_release")==0) {
     out->type=WEB_REQUEST_LEASE_RELEASE;
+    return TRUE;
+  }
+  if(strcmp(type,"control_acquire")==0) {
+    out->type=WEB_REQUEST_CONTROL_ACQUIRE;
+    return TRUE;
+  }
+  if(strcmp(type,"control_renew")==0) {
+    out->type=WEB_REQUEST_CONTROL_RENEW;
+    return TRUE;
+  }
+  if(strcmp(type,"control_release")==0) {
+    out->type=WEB_REQUEST_CONTROL_RELEASE;
     return TRUE;
   }
   if(strcmp(type,"spectrum_subscribe")==0) {

@@ -45,6 +45,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
 .app-sub { color: var(--ink-faint); font-weight: 600; letter-spacing: .02em; }
 .connection { padding: .26rem .7rem; border-radius: 999px; background: #143127; color: var(--green); font-size: .78rem; font-weight: 700; }
 .connection.offline { background: #311a1e; color: #ff9da6; }
+.titlebar-right { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+/* Control lease: green while this browser controls, amber while another one
+   does (the button then takes over), flat grey for a view-only login. */
+.control-btn { color: var(--ink); background: #162731; border: 1px solid #315064; border-radius: 999px; padding: .26rem .7rem; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.control-btn.held { color: #07140b; background: var(--green); border-color: var(--green); }
+.control-btn.busy { color: #1c1404; background: #e8b54a; border-color: #e8b54a; }
+.control-btn:disabled { opacity: .6; cursor: default; }
+/* Without control the receiver controls are disabled by app.js; the frequency
+   readout and spectrum are not form controls, so they stop looking clickable. */
+.rx.no-control .freq-a, .rx.no-control .spectrum { cursor: default; }
+.rx.no-control .freq-a { pointer-events: none; }
 
 /* ---- Main / receiver stack ---- */
 main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: .55rem; gap: .55rem; overflow: auto; }
@@ -202,6 +213,7 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 @media (pointer: coarse) {
   .chip { min-height: 2.5rem; padding: .4rem .75rem; }
   .mox, .tune, .tx-control { min-height: 2.75rem; }
+  .control-btn { min-height: 2.5rem; padding: .4rem .85rem; }
   .gain input[type=range], .chip-sql input[type=range], .tx-settings input[type=range] { height: 1.75rem; }
   .tx-check input { width: 1.25rem; height: 1.25rem; }
 }

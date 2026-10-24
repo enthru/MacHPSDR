@@ -189,8 +189,19 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   re-rendered it five times a second), `prefers-reduced-motion`, `pointer:
   coarse` target sizes, safe-area insets, and a wrapping bottom bar on narrow
   screens.  Fixed on the way: `.tx-control` used an undefined `--text` colour.
-- Not implemented yet: failed-auth throttling, token/QR pairing and general
-  viewer/controller roles (deferred by operator request).
+- Phase 5 slice 4 is implemented in the current work: roles and failed-login
+  throttling, which completes Phase 5.  The main login is the `control` role;
+  an optional second viewer login (Configure -> Network, `web_view_*` props,
+  same PBKDF2 storage, username must differ) is `view`; with protection off
+  every connection is `control`.  One control connection holds the control
+  lease (`control_acquire`/`renew`/`release`, 5 s heartbeat, takeover with
+  `"force":true`); every radio-changing request needs it, the TX lease needs
+  it, and losing it drops the TX lease.  The page takes control on connect when
+  free and otherwise offers Take over; without control its receiver controls
+  are disabled.  Five wrong logins from one IPv4 address lock it out (429 +
+  Retry-After, no hash computed) for 30 s, doubling to 15 min.
+- Token/QR pairing is dropped by operator decision (2026-10-24) and is not
+  planned.
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -210,7 +221,7 @@ click/drag/wheel tuning and draggable filter edges.
 | HTTP/JSON protocol | `src/proto/web_protocol.c/.h` | Strict flat request parser and fixed route allow-list |
 | Server | `src/proto/web_server.c/.h` | LAN listener, asset/WebSocket authentication, clients, state and command dispatch |
 | Shared WebSocket primitive | `src/proto/tci_ws.c/.h` | RFC 6455 framing plus reusable Upgrade response |
-| Desktop configuration | `src/ui/web_dialog.c/.h`, `src/ui/configure_dialog.c` | Enable, port, status and session PTT arm |
+| Desktop configuration | `src/ui/web_dialog.c/.h`, `src/ui/configure_dialog.c` | Enable, port, logins (main + viewer), status and session PTT arm |
 | Persistent radio settings | `src/core/radio.c/.h`, `src/core/radio_state.c` | Persist enable/port; never persist PTT arm |
 | Browser application | `assets/web/` | Dependency-free responsive HTML/CSS/JavaScript client |
 | Headless tests | `tools/web_offline.c`, `Makefile` | Parser and route rejection tests in `make check` |
@@ -265,8 +276,47 @@ click/drag/wheel tuning and draggable filter edges.
     drop count; three pressure observations first lower FPS, then bins, and ten
     healthy seconds recover toward the selected profile.  A binary send may
     block only its web sender and has a 250 ms socket timeout.
+16. Who may send what is ONE table, `web_request_access()`, checked once in
+    dispatch — never a check per handler.  Unnamed request types need the
+    control lease.  The role comes from the login, the lease from the
+    connection; a viewer cannot even unkey (it is a third party), while every
+    control-role connection can, lease or not.  Losing control drops the TX
+    lease.
+17. Throttling refuses a locked address BEFORE the PBKDF2 hash runs (the hash
+    is the expensive part), counts only a wrong Authorization header (a missing
+    one is the browser's first try), and never lets a full table lock out a
+    fresh address.
 
 ## Verification record
+
+### 2026-10-24 — Phase 5 slice 4: roles, control lease, login throttling
+
+Implemented the remaining Phase 5 surface except pairing, which the operator
+dropped.  The access policy is one pure table, `web_request_access()`, checked
+once at the top of `dispatch_request()`: receive-side requests (state,
+spectrum, receive audio and its signaling) are open to a viewer; the
+control-lease messages, `lease_release` and MOX/Tune OFF need only the
+control role; everything else needs the live control lease, including any
+request type the table does not name.  The control lease mirrors the TX lease
+(same mutex, connection-bound, 5 s deadline renewed by every accepted command);
+`web_control_lost()` releases the TX lease with it, so takeover, expiry,
+release and disconnect all unkey.  Throttling is a pure 64-slot table on an
+explicit clock in `web_protocol.c` (`web_auth_throttle_*`), guarded in the
+server by its own mutex and keyed by the accepted peer address.
+
+Verified in this work session on macOS: a clean rebuild (struct `RADIO` grew),
+the web files compile without warnings, `make check` passes, and
+`web_offline --selftest` passes all cases normally and under ASan + UBSan —
+including the control-lease messages and `force` validation, the access table
+over EVERY request type (viewer set exact, nothing radio-changing below the
+lease, an unnamed type defaulting to the lease), and the throttle on a mock
+clock (four free failures, 30 s first lock, per-address, on-time expiry,
+doubling, the 15 min cap, success clearing, forgetting, and a full table of
+locked sources never shutting a fresh address out).  `app.js` passes
+`node --check`.  NOT verified: anything against a running server (the
+operator deferred the live run), the Configure page's new rows (no headless
+check of `web_dialog.c` beyond compiling it), the browser button states, the
+Windows cross-build.
 
 ### 2026-10-24 — Phase 6 slice 4: PWA shell and accessibility
 
@@ -878,16 +928,23 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: live verification of Phase 6, then the deferred Phase 5 work
+## Exact next slice: live verification of Phases 5 (roles) and 6
+
+Phase 5 slice 4 (roles, control lease, throttling) has not run against a live
+server.  A ready one-command check exists in the session that built it: start
+the faker in a temporary HOME whose props carry a control and a viewer login,
+then drive it over HTTPS/WSS — viewer refused every command, second control
+browser busy then takeover (the first told), silent holder expiring after
+~5 s, disconnect freeing control, and five wrong logins giving 429 even for the
+right password.  Then two real browsers: the title-bar button states and the
+greyed controls.
 
 Phase 6 is implemented end to end; none of its four slices has been run live.
 The next step is an operator session on HackRF or Pluto into a dummy load: take
 the lease, key MOX with the microphone, close the tab while keyed (must unkey),
 Tune off by closing the tab and by withdrawing the desktop arm, a drive change
 read back on the desktop; then install the page from a trusted-certificate or
-localhost origin.  After that, the deferred Phase 5 items (failed-auth
-throttling, token/QR pairing, viewer/controller roles) remain, only when the
-operator asks for them.
+localhost origin.
 
 ### 2026-10-22 — WAN/jitter design decision
 

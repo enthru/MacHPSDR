@@ -60,8 +60,26 @@ typedef enum {
   WEB_REQUEST_RTC_CANDIDATE,
   WEB_REQUEST_LEASE_ACQUIRE,
   WEB_REQUEST_LEASE_RENEW,
-  WEB_REQUEST_LEASE_RELEASE
+  WEB_REQUEST_LEASE_RELEASE,
+  WEB_REQUEST_CONTROL_ACQUIRE,
+  WEB_REQUEST_CONTROL_RENEW,
+  WEB_REQUEST_CONTROL_RELEASE
 } WEB_REQUEST_TYPE;
+
+/* Who is allowed to send a request.  A connection's ROLE comes from the login
+   it used (the viewer login can never control); the CONTROL LEASE picks the one
+   controller among the control-role connections. */
+typedef enum {
+  WEB_ROLE_VIEW = 0,
+  WEB_ROLE_CONTROL
+} WEB_ROLE;
+
+typedef enum {
+  WEB_ACCESS_VIEW = 0,      /* any connection: snapshots, spectrum, receive audio */
+  WEB_ACCESS_CONTROL_ROLE,  /* control role, no lease needed: the control-lease
+                               messages and the MOX/Tune-off emergency unkey */
+  WEB_ACCESS_CONTROL_LEASE  /* control role AND the live control lease */
+} WEB_ACCESS;
 
 /* Scalar per-receiver controls carried by a SET_CONTROL command.  The allow-list
    lives in the parser; range-clamping is done on the GTK thread by the setter. */
@@ -114,6 +132,7 @@ typedef struct {
   WEB_CONTROL control;
   WEB_TX_CONTROL tx_control;
   WEB_SPECTRUM_PROFILE profile;
+  gboolean force;          /* control_acquire: take the lease over from its holder */
   /* WebRTC signaling payloads, heap-allocated and unescaped only on a
      successful parse; released by web_request_clear(). */
   gchar *sdp;
@@ -126,6 +145,12 @@ typedef struct {
    (sdp/candidate/mid); on failure nothing is allocated. */
 gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
                             char *error, size_t error_len);
+
+/* What a parsed request needs before the server may act on it.  A request type
+   the policy does not name needs the lease, so a type added later is
+   controller-only until someone decides otherwise. */
+WEB_ACCESS web_request_access(const WEB_REQUEST *req);
+const char *web_role_name(WEB_ROLE role);
 
 /* Free the heap fields of a parsed request (safe on a zeroed struct). */
 void web_request_clear(WEB_REQUEST *req);
@@ -151,6 +176,42 @@ gboolean web_auth_password_hash(const char *password, const char *salt,
 gboolean web_auth_check_basic(const char *authorization, const char *username,
                               const char *salt, const char *expected_hash,
                               guint iterations);
+
+/* Failed-login throttling per IPv4 source address, on an explicit clock so the
+   harness can drive it.  A request with no Authorization header is the
+   browser's first try and is not a failure; a wrong one is.  After
+   WEB_AUTH_FREE_FAILURES wrong tries the address is refused without the hash
+   being computed for WEB_AUTH_FIRST_LOCK_US, doubling with every further
+   lockout up to WEB_AUTH_MAX_LOCK_US.  WEB_AUTH_FORGET_US after its last
+   failure an address starts clean; a correct login clears it at once.  The
+   table is bounded: when full, the stalest unlocked entry is reused, and with
+   every slot locked the lockout that ends soonest -- a flood of sources can
+   shorten a lockout but never shut a fresh address (the operator) out. */
+#define WEB_AUTH_THROTTLE_SLOTS 64
+#define WEB_AUTH_FREE_FAILURES 5
+#define WEB_AUTH_FIRST_LOCK_US (30 * G_USEC_PER_SEC)
+#define WEB_AUTH_MAX_LOCK_US (15 * 60 * G_USEC_PER_SEC)
+#define WEB_AUTH_FORGET_US (15 * 60 * G_USEC_PER_SEC)
+
+typedef struct {
+  gboolean used;
+  guint32 address;          /* network byte order */
+  guint failures;
+  gint64 last_failure_us;
+  gint64 locked_until_us;
+  gint64 lock_us;           /* length of the next lockout */
+} WEB_AUTH_THROTTLE_ENTRY;
+
+typedef struct {
+  WEB_AUTH_THROTTLE_ENTRY entry[WEB_AUTH_THROTTLE_SLOTS];
+} WEB_AUTH_THROTTLE;
+
+void web_auth_throttle_init(WEB_AUTH_THROTTLE *t);
+/* Microseconds this address must still wait (0 = it may try). */
+gint64 web_auth_throttle_wait(WEB_AUTH_THROTTLE *t, guint32 address, gint64 now_us);
+/* Record a wrong login.  Returns the lockout it started, or 0 if none. */
+gint64 web_auth_throttle_failure(WEB_AUTH_THROTTLE *t, guint32 address, gint64 now_us);
+void web_auth_throttle_success(WEB_AUTH_THROTTLE *t, guint32 address);
 
 gboolean web_binary_header_encode(guint8 out[WEB_BINARY_HEADER_SIZE],
                                   const WEB_BINARY_HEADER *header);

@@ -851,7 +851,26 @@ at least eight characters in **New password**, then
 press **Set password**; the browser prompts for those credentials.
 **Require password on browser remote** can turn the challenge off
 without deleting the saved password, while **Clear password** removes it. When
-protection is off, anyone who can reach the port can operate the radio. The
+protection is off, anyone who can reach the port can operate the radio.
+**Who is in control:** only one browser at a time controls the radio. The first
+to connect takes control by itself and its title bar shows a green **In
+control**; every other browser shows an amber **Take over** and can watch,
+listen, mute and pick its own spectrum profile, but its controls are greyed out.
+**Take over** moves control to that browser at once — whatever the previous one
+was transmitting is unkeyed — and clicking **In control** hands it back. A
+browser that vanishes loses control after five seconds. Browser TX needs
+control too: only the browser in control can press **Take TX control**, while
+MOX-off and Tune-off stay available to every browser on the main login as
+emergency actions. **Viewer login:** set a **Viewer username** (default
+`guest`; it must differ from the main one) and a **Viewer password** of at
+least eight characters, then press **Set viewer password**. Whoever logs in with
+it sees **View only**: the page, spectrum and audio, never control — not even
+MOX-off. **Clear viewer password** removes it; the viewer login only applies
+while password protection is on. **Failed logins:** after five wrong passwords
+from one address, that address is refused for 30 s without the password even
+being checked, then each further wrong try doubles the wait up to 15 minutes;
+the browser shows *Too many failed logins*. A correct login, or 15 quiet
+minutes, clears the address. The
 server encrypts the page and WebSocket itself. It generates a persistent
 self-signed certificate (accept the browser warning after checking its SHA-256
 fingerprint), or **TLS PEM bundle** can name a PEM file containing a certificate

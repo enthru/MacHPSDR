@@ -285,6 +285,102 @@ int main(int argc, char **argv) {
   web_request_clear(&r);
   g_free(escaped); g_free(frame);
 
+  /* Phase 5 roles: the control-lease messages and their one optional field. */
+  check("control lease lifecycle messages parse",
+        parse("{\"type\":\"control_acquire\",\"id\":60}",&r) &&
+        r.type==WEB_REQUEST_CONTROL_ACQUIRE && !r.force &&
+        parse("{\"type\":\"control_renew\",\"id\":61}",&r) &&
+        r.type==WEB_REQUEST_CONTROL_RENEW &&
+        parse("{\"type\":\"control_release\",\"id\":62}",&r) &&
+        r.type==WEB_REQUEST_CONTROL_RELEASE);
+  check("control takeover carries force",
+        parse("{\"type\":\"control_acquire\",\"id\":63,\"force\":true}",&r) && r.force);
+  check("force must be a boolean",
+        !parse("{\"type\":\"control_acquire\",\"id\":64,\"force\":1}",&r));
+  check("force is refused on anything but control_acquire",
+        !parse("{\"type\":\"lease_acquire\",\"id\":65,\"force\":true}",&r) &&
+        !parse("{\"type\":\"get_state\",\"id\":66,\"force\":false}",&r));
+
+  /* The access table, over EVERY request type: a viewer may do exactly the
+     receive-side set, and nothing that changes the radio slips past the lease. */
+  {
+    gboolean viewer_set_ok=TRUE, lease_ok=TRUE;
+    for(int t=WEB_REQUEST_GET_STATE;t<=WEB_REQUEST_CONTROL_RELEASE;t++) {
+      WEB_REQUEST q; memset(&q,0,sizeof(q)); q.type=(WEB_REQUEST_TYPE)t; q.flag=TRUE;
+      gboolean receive_side=t==WEB_REQUEST_GET_STATE ||
+          t==WEB_REQUEST_SPECTRUM_SUBSCRIBE || t==WEB_REQUEST_SPECTRUM_UNSUBSCRIBE ||
+          t==WEB_REQUEST_AUDIO_SUBSCRIBE || t==WEB_REQUEST_AUDIO_UNSUBSCRIBE ||
+          t==WEB_REQUEST_RTC_ANSWER || t==WEB_REQUEST_RTC_CANDIDATE;
+      gboolean role_only=t==WEB_REQUEST_CONTROL_ACQUIRE || t==WEB_REQUEST_CONTROL_RENEW ||
+          t==WEB_REQUEST_CONTROL_RELEASE || t==WEB_REQUEST_LEASE_RELEASE;
+      WEB_ACCESS a=web_request_access(&q);
+      if((a==WEB_ACCESS_VIEW)!=receive_side) viewer_set_ok=FALSE;
+      if(!receive_side && !role_only && a!=WEB_ACCESS_CONTROL_LEASE) lease_ok=FALSE;
+      if(role_only && a!=WEB_ACCESS_CONTROL_ROLE) lease_ok=FALSE;
+    }
+    check("viewer may do exactly the receive-side requests",viewer_set_ok);
+    check("every radio-changing request needs the control lease",lease_ok);
+    WEB_REQUEST q; memset(&q,0,sizeof(q));
+    q.type=WEB_REQUEST_SET_MOX; q.flag=FALSE;
+    gboolean off_role=web_request_access(&q)==WEB_ACCESS_CONTROL_ROLE;
+    q.type=WEB_REQUEST_SET_TUNE;
+    off_role=off_role && web_request_access(&q)==WEB_ACCESS_CONTROL_ROLE;
+    check("MOX/Tune off is an emergency for any controller, not a viewer",off_role);
+    q.type=(WEB_REQUEST_TYPE)(WEB_REQUEST_CONTROL_RELEASE+1);
+    check("an unnamed request type defaults to the lease",
+          web_request_access(&q)==WEB_ACCESS_CONTROL_LEASE &&
+          web_request_access(NULL)==WEB_ACCESS_CONTROL_LEASE);
+  }
+
+  /* Failed-login throttling on a mock clock. */
+  {
+    WEB_AUTH_THROTTLE *t=g_new(WEB_AUTH_THROTTLE,1);
+    web_auth_throttle_init(t);
+    const guint32 a=0x0100007f, b=0x0200a8c0;
+    gint64 now=1000000, lock=0;
+    gboolean free_ok=TRUE;
+    for(int i=0;i<WEB_AUTH_FREE_FAILURES-1;i++) {
+      if(web_auth_throttle_failure(t,a,now)!=0 || web_auth_throttle_wait(t,a,now)!=0) free_ok=FALSE;
+      now+=G_USEC_PER_SEC;
+    }
+    check("the first failures are free",free_ok);
+    lock=web_auth_throttle_failure(t,a,now);
+    check("the fifth failure locks for the first lockout",lock==WEB_AUTH_FIRST_LOCK_US &&
+          web_auth_throttle_wait(t,a,now)==WEB_AUTH_FIRST_LOCK_US);
+    check("a lockout is per address",web_auth_throttle_wait(t,b,now)==0);
+    now+=WEB_AUTH_FIRST_LOCK_US;
+    check("the lockout ends on time",web_auth_throttle_wait(t,a,now)==0);
+    lock=web_auth_throttle_failure(t,a,now);
+    check("one failure after a lockout locks again, doubled",lock==2*WEB_AUTH_FIRST_LOCK_US);
+    gint64 longest=0;
+    for(int i=0;i<20;i++) {
+      now+=WEB_AUTH_MAX_LOCK_US;
+      gint64 l=web_auth_throttle_failure(t,a,now);
+      if(l>longest) longest=l;
+    }
+    check("lockouts are capped",longest==WEB_AUTH_MAX_LOCK_US);
+    web_auth_throttle_success(t,a);
+    check("a correct login clears the address",web_auth_throttle_wait(t,a,now)==0 &&
+          web_auth_throttle_failure(t,a,now)==0);
+    now+=WEB_AUTH_FORGET_US;
+    gboolean forgot=TRUE;
+    for(int i=0;i<WEB_AUTH_FREE_FAILURES-1;i++) if(web_auth_throttle_failure(t,a,now)!=0) forgot=FALSE;
+    check("a quiet address is forgotten",forgot);
+
+    /* Fill the table with locked sources; a fresh one must still get its tries. */
+    web_auth_throttle_init(t);
+    now=1000000;
+    for(guint32 s=1;s<=WEB_AUTH_THROTTLE_SLOTS;s++)
+      for(int i=0;i<WEB_AUTH_FREE_FAILURES;i++) web_auth_throttle_failure(t,s,now);
+    gboolean all_locked=TRUE;
+    for(guint32 s=1;s<=WEB_AUTH_THROTTLE_SLOTS;s++) if(web_auth_throttle_wait(t,s,now)==0) all_locked=FALSE;
+    check("a full table holds every lockout",all_locked);
+    check("a fresh address is never shut out by a full table",
+          web_auth_throttle_wait(t,0xdeadbeef,now)==0 &&
+          web_auth_throttle_failure(t,0xdeadbeef,now)==0);
+    g_free(t);
+  }
+
   printf("\n%d failure%s\n",failures,failures==1?"":"s");
   return failures?1:0;
 }

@@ -67,6 +67,9 @@ typedef struct {
   WEB_TLS_SESSION *tls;
   gint upgraded;
   gint closing;
+  guint32 peer;                       /* IPv4 source, network order (throttling key) */
+  char peer_name[INET_ADDRSTRLEN];
+  WEB_ROLE role;                      /* from the login this connection used */
   GMutex queue_mutex;
   GMutex send_mutex;
   GCond queue_cond;
@@ -119,6 +122,15 @@ static gint64 web_last_state_push_us;
 static GMutex web_lease_mutex;
 static WEB_CLIENT *web_tx_lease_owner;
 static gint64 web_tx_lease_deadline_us;
+/* The control lease (Phase 5 roles), same shape and same mutex: one
+   control-role connection may change anything; every other connection only
+   watches and listens.  The TX lease can only be taken by the control holder,
+   and losing control drops it. */
+static WEB_CLIENT *web_control_owner;
+static gint64 web_control_deadline_us;
+/* Failed-login throttling, shared by every client thread. */
+static GMutex web_auth_mutex;
+static WEB_AUTH_THROTTLE web_auth_throttle;
 static volatile gint web_remote_ptt;
 static volatile gint web_remote_mox;
 static volatile gint web_remote_mox_seen;
@@ -329,14 +341,63 @@ static gboolean request_ipv4_address(const char *request, char *out, size_t out_
 }
 #endif
 
-static gboolean request_authenticated(const char *request) {
-  if(web_radio==NULL || !web_radio->web_auth_enable) return TRUE;
+static void http_too_many(TCI_WS_IO *io, gint64 wait_us) {
+  static const char body[]="Too many failed logins; try again later\n";
+  char header[320];
+  long long seconds=(wait_us+G_USEC_PER_SEC-1)/G_USEC_PER_SEC;
+  int n=g_snprintf(header,sizeof(header),
+      "HTTP/1.1 429 Too Many Requests\r\n"
+      "Content-Type: text/plain; charset=utf-8\r\n"
+      "Content-Length: %zu\r\n"
+      "Retry-After: %lld\r\n"
+      "Cache-Control: no-store\r\n"
+      "Connection: close\r\n\r\n",
+      sizeof(body)-1,seconds);
+  if(n>0 && (size_t)n<sizeof(header) && tci_ws_io_send_all(io,header,(size_t)n))
+    tci_ws_io_send_all(io,body,sizeof(body)-1);
+}
+
+static gboolean view_login_set(void) {
+  return web_radio->web_view_salt[0]!='\0' &&
+         strlen(web_radio->web_view_hash)==WEB_AUTH_HASH_HEX_SIZE-1;
+}
+
+typedef enum { WEB_LOGIN_OK, WEB_LOGIN_CHALLENGE, WEB_LOGIN_THROTTLED } WEB_LOGIN;
+
+/* Authenticate one request and give its role.  A locked-out address is refused
+   before any hash is computed; only a WRONG Authorization header counts as a
+   failure (a missing one is the browser's first, credential-less try). */
+static WEB_LOGIN request_login(const char *request, WEB_CLIENT *client,
+                               WEB_ROLE *role, gint64 *wait_us) {
+  *role=WEB_ROLE_CONTROL;
+  if(web_radio==NULL || !web_radio->web_auth_enable) return WEB_LOGIN_OK;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_auth_mutex);
+  *wait_us=web_auth_throttle_wait(&web_auth_throttle,client->peer,now);
+  g_mutex_unlock(&web_auth_mutex);
+  if(*wait_us>0) return WEB_LOGIN_THROTTLED;
   char authorization[768];
   if(header_value(request,"Authorization",authorization,sizeof(authorization))==NULL)
-    return FALSE;
-  return web_auth_check_basic(authorization,web_radio->web_auth_user,web_radio->web_auth_salt,
-                              web_radio->web_auth_hash,
-                              WEB_AUTH_PBKDF2_ITERATIONS);
+    return WEB_LOGIN_CHALLENGE;
+  gboolean ok=web_auth_check_basic(authorization,web_radio->web_auth_user,
+                                   web_radio->web_auth_salt,web_radio->web_auth_hash,
+                                   WEB_AUTH_PBKDF2_ITERATIONS);
+  if(!ok && view_login_set() &&
+     web_auth_check_basic(authorization,web_radio->web_view_user,
+                          web_radio->web_view_salt,web_radio->web_view_hash,
+                          WEB_AUTH_PBKDF2_ITERATIONS)) {
+    ok=TRUE;
+    *role=WEB_ROLE_VIEW;
+  }
+  gint64 lock=0;
+  g_mutex_lock(&web_auth_mutex);
+  if(ok) web_auth_throttle_success(&web_auth_throttle,client->peer);
+  else lock=web_auth_throttle_failure(&web_auth_throttle,client->peer,g_get_monotonic_time());
+  g_mutex_unlock(&web_auth_mutex);
+  if(lock>0)
+    log_info("web: %s refused for %llds after %d failed logins\n",client->peer_name,
+             (long long)(lock/G_USEC_PER_SEC),WEB_AUTH_FREE_FAILURES);
+  return ok ? WEB_LOGIN_OK : WEB_LOGIN_CHALLENGE;
 }
 
 static gboolean header_has_token(const char *value, const char *wanted) {
@@ -475,6 +536,64 @@ static gboolean ws_send_lease_state(WEB_CLIENT *client, gint64 id, gboolean held
   return ws_send_text(client,line);
 }
 
+static gboolean ws_send_control_state(WEB_CLIENT *client, gint64 id, gboolean held) {
+  char line[160];
+  g_snprintf(line,sizeof(line),
+      "{\"type\":\"control_state\",\"id\":%lld,\"held\":%s,\"timeout_ms\":%d}",
+      (long long)id,held?"true":"false",(int)(WEB_TX_LEASE_TIMEOUT_US/1000));
+  return ws_send_text(client,line);
+}
+
+/* Losing control takes the TX lease with it (and so unkeys) -- a viewer can
+   never be left holding the transmitter.  notify tells a still-connected
+   former holder at once (takeover, expiry). */
+static void web_control_lost(WEB_CLIENT *client, gboolean notify) {
+  web_lease_release_client(client,notify);
+  if(notify) ws_send_control_state(client,0,FALSE);
+}
+
+static gboolean web_control_release_client(WEB_CLIENT *client, gboolean notify) {
+  gboolean owned=FALSE;
+  g_mutex_lock(&web_lease_mutex);
+  if(web_control_owner==client) {
+    web_control_owner=NULL;
+    web_control_deadline_us=0;
+    owned=TRUE;
+  }
+  g_mutex_unlock(&web_lease_mutex);
+  if(owned) web_control_lost(client,notify);
+  return owned;
+}
+
+/* Expire a silent holder first; then answer whether client holds control,
+   optionally renewing it (every accepted command renews, like the TX lease). */
+static gboolean web_control_is_owner(WEB_CLIENT *client, gboolean renew) {
+  WEB_CLIENT *expired=NULL;
+  gboolean owned=FALSE;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_lease_mutex);
+  if(web_control_owner!=NULL && now>=web_control_deadline_us) {
+    expired=web_control_owner;
+    web_control_owner=NULL;
+    web_control_deadline_us=0;
+  } else if(web_control_owner==client) {
+    owned=TRUE;
+    if(renew) web_control_deadline_us=now+WEB_TX_LEASE_TIMEOUT_US;
+  }
+  g_mutex_unlock(&web_lease_mutex);
+  if(expired!=NULL) web_control_lost(expired,TRUE);
+  return owned;
+}
+
+static gboolean web_control_active(void) {
+  gboolean active;
+  gint64 now=g_get_monotonic_time();
+  g_mutex_lock(&web_lease_mutex);
+  active=web_control_owner!=NULL && now<web_control_deadline_us;
+  g_mutex_unlock(&web_lease_mutex);
+  return active;
+}
+
 /* Append the radio + per-receiver body shared by the get_state reply, the pushed
    state frame and the change-detector signature.  With include_meter FALSE it is
    the discrete signature (the fields a control can move); the live S-meter is
@@ -484,8 +603,8 @@ static void append_state_body(GString *s, gboolean include_meter) {
   gchar *decoder_title=web_json_escape(web_radio->decoder_status_title);
   gchar *decoder_text=web_json_escape(web_radio->decoder_status_text);
   g_string_append_printf(s,
-      "\"radio\":{\"mox\":%s,\"tune\":%s,\"remote_ptt\":%s,\"tx_lease_active\":%s,"
-      "\"tx_media_active\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
+      "\"radio\":{\"mox\":%s,\"tune\":%s,\"remote_ptt\":%s,\"control_active\":%s,"
+      "\"tx_lease_active\":%s,\"tx_media_active\":%s,\"can_transmit\":%s,\"active_rx\":%d,"
       "\"drive\":%d,\"tune_drive\":%d,\"mic_gain\":%d,"
       "\"compressor\":%s,\"comp_level\":%d,\"leveler\":%s,\"cessb\":%s,"
       "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
@@ -493,6 +612,7 @@ static void append_state_body(GString *s, gboolean include_meter) {
       web_radio->mox?"true":"false",
       web_radio->tune?"true":"false",
       g_atomic_int_get(&web_remote_ptt)?"true":"false",
+      web_control_active()?"true":"false",
       web_lease_active()?"true":"false",
       g_atomic_int_get(&web_tx_audio_active)?"true":"false",
       (web_radio->can_transmit && web_radio->web_tx_enable)?"true":"false",active,
@@ -705,7 +825,50 @@ static void web_rtc_teardown(WEB_CLIENT *client) {
 #endif /* WEBRTC */
 
 static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request) {
+  /* Role and control lease are checked once, here, from the one policy table
+     (web_request_access) -- never per handler. */
+  WEB_ACCESS access=web_request_access(request);
+  if(access!=WEB_ACCESS_VIEW && client->role!=WEB_ROLE_CONTROL)
+    return ws_send_error(client,request->id,"view_only","this login can only watch and listen");
+  if(access==WEB_ACCESS_CONTROL_LEASE && !web_control_is_owner(client,TRUE))
+    return ws_send_error(client,request->id,"control_required","take control before changing the radio");
+
   if(request->type==WEB_REQUEST_GET_STATE) return ws_send_state(client,request->id);
+
+  if(request->type==WEB_REQUEST_CONTROL_ACQUIRE) {
+    web_control_is_owner(client,FALSE);        /* expire a silent holder first */
+    WEB_CLIENT *previous=NULL;
+    char previous_name[INET_ADDRSTRLEN]="";
+    gboolean acquired=FALSE;
+    g_mutex_lock(&web_lease_mutex);
+    if(web_control_owner==NULL || web_control_owner==client || request->force) {
+      if(web_control_owner!=client && web_control_owner!=NULL) {
+        previous=web_control_owner;
+        g_strlcpy(previous_name,previous->peer_name,sizeof(previous_name));
+      }
+      web_control_owner=client;
+      web_control_deadline_us=g_get_monotonic_time()+WEB_TX_LEASE_TIMEOUT_US;
+      acquired=TRUE;
+    }
+    g_mutex_unlock(&web_lease_mutex);
+    if(previous!=NULL) {
+      /* A takeover unkeys whatever the previous holder was transmitting. */
+      log_info("web: %s took control over from %s\n",client->peer_name,previous_name);
+      web_control_lost(previous,TRUE);
+    }
+    if(!acquired)
+      return ws_send_error(client,request->id,"control_busy","another browser has control");
+    return ws_send_control_state(client,request->id,TRUE);
+  }
+  if(request->type==WEB_REQUEST_CONTROL_RENEW) {
+    if(!web_control_is_owner(client,TRUE))
+      return ws_send_error(client,request->id,"control_lost","control is no longer held");
+    return ws_send_control_state(client,request->id,TRUE);
+  }
+  if(request->type==WEB_REQUEST_CONTROL_RELEASE) {
+    web_control_release_client(client,FALSE);
+    return ws_send_control_state(client,request->id,FALSE);
+  }
 
   if(request->type==WEB_REQUEST_LEASE_ACQUIRE) {
     if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable)
@@ -852,8 +1015,8 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
     case WEB_REQUEST_SET_MOX: {
       if(web_radio==NULL || !web_radio->can_transmit || !web_radio->web_tx_enable)
         return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
-      /* Anyone may request an emergency unkey, but only the live lease holder
-         can key.  Renewing on a valid TX command prevents a heartbeat racing
+      /* Any control-role connection may request an emergency unkey (the
+         access check above); only the live TX-lease holder can key.  Renewing on a valid TX command prevents a heartbeat racing
          the button from expiring an otherwise active controller. */
       if(request->flag && !web_lease_is_owner(client,TRUE))
         return ws_send_error(client,request->id,"lease_required","take TX control before keying");
@@ -874,7 +1037,8 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
          web_radio->transmitter==NULL)
         return ws_send_error(client,request->id,"not_armed","browser PTT is not armed in Configure");
       /* Tune is an RF-emitting action but does not consume microphone media.
-         On is lease-gated; off remains an emergency action for every client. */
+         On is lease-gated; off remains an emergency action for every
+         control-role connection. */
       if(request->flag && !web_lease_is_owner(client,TRUE))
         return ws_send_error(client,request->id,"lease_required","take TX control before tuning");
       g_atomic_int_set(&web_remote_tune,request->flag);
@@ -1064,13 +1228,13 @@ static gpointer web_sender_thread(gpointer data) {
 
 static gboolean websocket_session(WEB_CLIENT *client) {
   gchar *hello=g_strdup_printf(
-      "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\","
+      "{\"type\":\"hello\",\"protocol\":1,\"server\":\"MacHPSDR\",\"role\":\"%s\","
 #ifdef WEBRTC
-      "\"capabilities\":[\"control\",\"spectrum\",\"audio\",\"tx_lease\"],\"audio_udp_port\":%d}",
+      "\"capabilities\":[\"control\",\"spectrum\",\"audio\",\"tx_lease\",\"control_lease\"],\"audio_udp_port\":%d}",
 #else
-      "\"capabilities\":[\"control\",\"spectrum\",\"tx_lease\"],\"audio_udp_port\":%d}",
+      "\"capabilities\":[\"control\",\"spectrum\",\"tx_lease\",\"control_lease\"],\"audio_udp_port\":%d}",
 #endif
-      web_radio->web_rtc_port);
+      web_role_name(client->role),web_radio->web_rtc_port);
   g_atomic_int_set(&client->upgraded,TRUE);
   client->sender=g_thread_new("web-spectrum",web_sender_thread,client);
   gboolean hello_ok=ws_send_text(client,hello);
@@ -1113,7 +1277,9 @@ static void web_client_release(WEB_CLIENT *client) {
     g_thread_join(client->sender);
     client->sender=NULL;
   }
-  /* A dead controlling socket must unkey before any lengthy WebRTC teardown. */
+  /* A dead controlling socket must unkey before any lengthy WebRTC teardown;
+     dropping control drops the TX lease too. */
+  web_control_release_client(client,FALSE);
   web_lease_release_client(client,FALSE);
 #ifdef WEBRTC
   /* closing is set above, so any in-flight signal callback early-returns from
@@ -1180,9 +1346,15 @@ static gpointer web_client_thread(gpointer data) {
     http_error(&client->io,404,"not found\n");
     web_client_release(client); return NULL;
   }
-  if(!request_authenticated(request)) {
-    http_unauthorized(&client->io);
-    web_client_release(client); return NULL;
+  gint64 wait_us=0;
+  switch(request_login(request,client,&client->role,&wait_us)) {
+    case WEB_LOGIN_OK: break;
+    case WEB_LOGIN_THROTTLED:
+      http_too_many(&client->io,wait_us);
+      web_client_release(client); return NULL;
+    default:
+      http_unauthorized(&client->io);
+      web_client_release(client); return NULL;
   }
   if(websocket) {
     char key[128], upgrade[64], protocol[128];
@@ -1242,7 +1414,10 @@ static gpointer web_server_thread(gpointer data) {
   log_info("web: listening on %s\n",web_status_line);
 
   while(g_atomic_int_get(&web_running)) {
-    int client_fd=accept(fd,NULL,NULL);
+    struct sockaddr_in peer;
+    socklen_t peer_len=sizeof(peer);
+    memset(&peer,0,sizeof(peer));
+    int client_fd=accept(fd,(struct sockaddr *)&peer,&peer_len);
     if(client_fd<0) {
       if(!g_atomic_int_get(&web_running)) break;
       if(errno==EINTR) continue;
@@ -1261,6 +1436,10 @@ static gpointer web_server_thread(gpointer data) {
       g_atomic_int_set(&slot->closing,FALSE);
       g_atomic_int_set(&slot->upgraded,FALSE);
       slot->sender=NULL;
+      slot->peer=peer.sin_addr.s_addr;
+      slot->role=WEB_ROLE_VIEW;           /* until the request authenticates */
+      if(inet_ntop(AF_INET,&peer.sin_addr,slot->peer_name,(socklen_t)sizeof(slot->peer_name))==NULL)
+        g_strlcpy(slot->peer_name,"?",sizeof(slot->peer_name));
       for(int j=0;j<MAX_RECEIVERS;j++) {
         web_latest_frame_clear(&slot->pending[j]);
         slot->pending[j].dropped=0;
@@ -1303,6 +1482,8 @@ void web_server_init(RADIO *radio) {
   web_radio=radio;
   if(!web_sync_initialized) {
     g_mutex_init(&web_lease_mutex);
+    g_mutex_init(&web_auth_mutex);
+    web_auth_throttle_init(&web_auth_throttle);
     g_mutex_init(&web_tx_audio_mutex);
     for(int i=0;i<WEB_MAX_CLIENTS;i++) {
       web_clients[i].fd=-1;
@@ -1337,6 +1518,8 @@ void web_server_start(void) {
   g_mutex_lock(&web_lease_mutex);
   web_tx_lease_owner=NULL;
   web_tx_lease_deadline_us=0;
+  web_control_owner=NULL;
+  web_control_deadline_us=0;
   g_mutex_unlock(&web_lease_mutex);
   g_atomic_int_set(&web_remote_ptt,FALSE);
   g_atomic_int_set(&web_remote_mox,FALSE);
@@ -1378,6 +1561,8 @@ void web_server_stop(void) {
   g_mutex_lock(&web_lease_mutex);
   web_tx_lease_owner=NULL;
   web_tx_lease_deadline_us=0;
+  web_control_owner=NULL;
+  web_control_deadline_us=0;
   g_mutex_unlock(&web_lease_mutex);
   web_remote_unkey();
   g_mutex_lock(&web_spectrum_mutex);
@@ -1426,6 +1611,11 @@ static gboolean web_state_tick(gpointer data) {
   /* A heartbeat timeout, or the operator withdrawing the session-only desktop
      arm, revokes TX control and schedules an emergency unkey. */
   WEB_CLIENT *lease_owner;
+  /* A silent control holder expires here too, telling it and dropping its TX. */
+  g_mutex_lock(&web_lease_mutex);
+  lease_owner=web_control_owner;
+  g_mutex_unlock(&web_lease_mutex);
+  if(lease_owner!=NULL) web_control_is_owner(lease_owner,FALSE);
   g_mutex_lock(&web_lease_mutex);
   lease_owner=web_tx_lease_owner;
   g_mutex_unlock(&web_lease_mutex);

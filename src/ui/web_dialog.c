@@ -70,6 +70,18 @@ static gboolean auth_credentials_set(const RADIO *radio) {
          strlen(radio->web_auth_hash)==WEB_AUTH_HASH_HEX_SIZE-1;
 }
 
+static gboolean view_login_set(const RADIO *radio) {
+  return radio->web_view_salt[0]!='\0' &&
+         strlen(radio->web_view_hash)==WEB_AUTH_HASH_HEX_SIZE-1;
+}
+
+static const char *view_note_text(const RADIO *radio) {
+  if(!view_login_set(radio)) return "No viewer login: every login can take control.";
+  return radio->web_auth_enable ?
+      "Viewer login is on: it can watch and listen, never control." :
+      "Viewer login is saved but idle until password protection is on.";
+}
+
 static void auth_enable_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   gboolean enabled=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
@@ -85,6 +97,8 @@ static void auth_enable_cb(GtkWidget *widget, gpointer data) {
   if(radio->web_enable) web_server_start();
   if(note!=NULL) gtk_label_set_text(GTK_LABEL(note),
       enabled?"Password protection is on.":"Password protection is off: anyone on the network can connect.");
+  GtkWidget *view_note=g_object_get_data(G_OBJECT(widget),"view-note");
+  if(view_note!=NULL) gtk_label_set_text(GTK_LABEL(view_note),view_note_text(radio));
   refresh_status();
 }
 
@@ -98,6 +112,10 @@ static void set_password_cb(GtkWidget *widget, gpointer data) {
   const char *username=gtk_editable_get_text(GTK_EDITABLE(user_entry));
   if(*username=='\0' || strchr(username,':')!=NULL) {
     gtk_label_set_text(GTK_LABEL(note),"Username must not be empty or contain a colon.");
+    return;
+  }
+  if(view_login_set(radio) && strcmp(username,radio->web_view_user)==0) {
+    gtk_label_set_text(GTK_LABEL(note),"Username must differ from the viewer username.");
     return;
   }
   if(g_utf8_strlen(password,-1)<8) {
@@ -140,6 +158,61 @@ static void clear_password_cb(GtkWidget *widget, gpointer data) {
   gtk_check_button_set_active(GTK_CHECK_BUTTON(check),FALSE);
   if(radio->web_enable) web_server_start();
   gtk_label_set_text(GTK_LABEL(note),"Password cleared: anyone on the network can connect.");
+  GtkWidget *view_note=g_object_get_data(G_OBJECT(check),"view-note");
+  if(view_note!=NULL) gtk_label_set_text(GTK_LABEL(view_note),view_note_text(radio));
+  refresh_status();
+}
+
+/* The viewer login is a second Basic-auth account with the same salted-hash
+   storage.  Its username must differ from the controller's, or one header
+   would match both and the role would depend on the check order. */
+static void set_view_password_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  GtkWidget *entry=g_object_get_data(G_OBJECT(widget),"password-entry");
+  GtkWidget *user_entry=g_object_get_data(G_OBJECT(widget),"username-entry");
+  GtkWidget *note=g_object_get_data(G_OBJECT(widget),"view-note");
+  const char *password=gtk_editable_get_text(GTK_EDITABLE(entry));
+  const char *username=gtk_editable_get_text(GTK_EDITABLE(user_entry));
+  if(*username=='\0' || strchr(username,':')!=NULL) {
+    gtk_label_set_text(GTK_LABEL(note),"Viewer username must not be empty or contain a colon.");
+    return;
+  }
+  if(strcmp(username,radio->web_auth_user)==0) {
+    gtk_label_set_text(GTK_LABEL(note),"Viewer username must differ from the main username.");
+    return;
+  }
+  if(g_utf8_strlen(password,-1)<8) {
+    gtk_label_set_text(GTK_LABEL(note),"Viewer password must contain at least 8 characters.");
+    return;
+  }
+  gchar *salt=g_uuid_string_random();
+  char hash[WEB_AUTH_HASH_HEX_SIZE];
+  if(salt==NULL || !web_auth_password_hash(password,salt,
+                                            WEB_AUTH_PBKDF2_ITERATIONS,hash)) {
+    gtk_label_set_text(GTK_LABEL(note),"Could not store the viewer password.");
+    g_free(salt);
+    return;
+  }
+  if(radio->web_enable) web_server_stop();
+  g_strlcpy(radio->web_view_salt,salt,sizeof(radio->web_view_salt));
+  g_strlcpy(radio->web_view_hash,hash,sizeof(radio->web_view_hash));
+  g_strlcpy(radio->web_view_user,username,sizeof(radio->web_view_user));
+  memset(hash,0,sizeof(hash));
+  gtk_editable_set_text(GTK_EDITABLE(entry),"");
+  if(radio->web_enable) web_server_start();
+  gtk_label_set_text(GTK_LABEL(note),view_note_text(radio));
+  refresh_status();
+  g_free(salt);
+}
+
+static void clear_view_password_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  GtkWidget *note=g_object_get_data(G_OBJECT(widget),"view-note");
+  if(radio->web_enable) web_server_stop();
+  memset(radio->web_view_salt,0,sizeof(radio->web_view_salt));
+  memset(radio->web_view_hash,0,sizeof(radio->web_view_hash));
+  if(radio->web_enable) web_server_start();
+  gtk_label_set_text(GTK_LABEL(note),view_note_text(radio));
   refresh_status();
 }
 
@@ -147,6 +220,7 @@ static void username_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=data;
   const char *user=gtk_editable_get_text(GTK_EDITABLE(widget));
   if(*user=='\0' || strchr(user,':')!=NULL) return;
+  if(view_login_set(radio) && strcmp(user,radio->web_view_user)==0) return;
   gboolean restart=radio->web_enable;
   if(restart) web_server_stop();
   g_strlcpy(radio->web_auth_user,user,sizeof(radio->web_auth_user));
@@ -248,15 +322,57 @@ GtkWidget *create_web_dialog(RADIO *radio) {
   g_object_set_data(G_OBJECT(clear_password),"auth-note",auth_note);
   g_signal_connect(clear_password,"clicked",G_CALLBACK(clear_password_cb),radio);
 
+  /* Optional view-only login (rows 8-12): watches and listens, never controls. */
+  GtkWidget *view_user_label=gtk_label_new("Viewer username:");
+  gtk_widget_set_halign(view_user_label,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),view_user_label,0,8,1,1);
+  GtkWidget *view_user=gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(view_user),64);
+  gtk_editable_set_text(GTK_EDITABLE(view_user),radio->web_view_user);
+  gtk_grid_attach(GTK_GRID(grid),view_user,1,8,1,1);
+
+  GtkWidget *view_password_label=gtk_label_new("Viewer password:");
+  gtk_widget_set_halign(view_password_label,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),view_password_label,0,9,1,1);
+  GtkWidget *view_password=gtk_entry_new();
+  gtk_entry_set_visibility(GTK_ENTRY(view_password),FALSE);
+  gtk_entry_set_max_length(GTK_ENTRY(view_password),128);
+  gtk_entry_set_placeholder_text(GTK_ENTRY(view_password),"minimum 8 characters");
+  gtk_grid_attach(GTK_GRID(grid),view_password,1,9,1,1);
+
+  GtkWidget *view_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
+  GtkWidget *set_view=gtk_button_new_with_label("Set viewer password");
+  GtkWidget *clear_view=gtk_button_new_with_label("Clear viewer password");
+  gtk_box_append(GTK_BOX(view_buttons),set_view);
+  gtk_box_append(GTK_BOX(view_buttons),clear_view);
+  gtk_grid_attach(GTK_GRID(grid),view_buttons,1,10,1,1);
+
+  GtkWidget *view_note=gtk_label_new(view_note_text(radio));
+  gtk_widget_set_halign(view_note,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),view_note,0,11,2,1);
+  GtkWidget *control_note=gtk_label_new(
+      "One browser at a time has control; the others watch until they take over.\n"
+      "Five wrong logins lock that address out for 30 s, doubling to 15 min.");
+  sui_label_desc(control_note);
+  gtk_widget_set_halign(control_note,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(grid),control_note,0,12,2,1);
+  g_object_set_data(G_OBJECT(auth),"view-note",view_note);
+  g_object_set_data(G_OBJECT(set_view),"password-entry",view_password);
+  g_object_set_data(G_OBJECT(set_view),"username-entry",view_user);
+  g_object_set_data(G_OBJECT(set_view),"view-note",view_note);
+  g_signal_connect(set_view,"clicked",G_CALLBACK(set_view_password_cb),radio);
+  g_object_set_data(G_OBJECT(clear_view),"view-note",view_note);
+  g_signal_connect(clear_view,"clicked",G_CALLBACK(clear_view_password_cb),radio);
+
   GtkWidget *bundle_label=gtk_label_new("TLS PEM bundle:");
   gtk_widget_set_halign(bundle_label,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),bundle_label,0,8,1,1);
+  gtk_grid_attach(GTK_GRID(grid),bundle_label,0,13,1,1);
   GtkWidget *bundle=gtk_entry_new();
   gtk_entry_set_placeholder_text(GTK_ENTRY(bundle),"empty = generated self-signed certificate");
   gtk_editable_set_text(GTK_EDITABLE(bundle),radio->web_tls_bundle);
-  gtk_grid_attach(GTK_GRID(grid),bundle,1,8,1,1);
+  gtk_grid_attach(GTK_GRID(grid),bundle,1,13,1,1);
   GtkWidget *apply_bundle=gtk_button_new_with_label("Apply certificate");
-  gtk_grid_attach(GTK_GRID(grid),apply_bundle,1,9,1,1);
+  gtk_grid_attach(GTK_GRID(grid),apply_bundle,1,14,1,1);
   char tls_note[256];
   const char *fingerprint=web_server_tls_fingerprint();
   if(fingerprint!=NULL && *fingerprint!='\0')
@@ -266,38 +382,38 @@ GtkWidget *create_web_dialog(RADIO *radio) {
   GtkWidget *bundle_note=gtk_label_new(tls_note);
   gtk_widget_set_halign(bundle_note,GTK_ALIGN_START);
   gtk_label_set_wrap(GTK_LABEL(bundle_note),TRUE);
-  gtk_grid_attach(GTK_GRID(grid),bundle_note,0,10,2,1);
+  gtk_grid_attach(GTK_GRID(grid),bundle_note,0,15,2,1);
   g_object_set_data(G_OBJECT(apply_bundle),"bundle-entry",bundle);
   g_object_set_data(G_OBJECT(apply_bundle),"bundle-note",bundle_note);
   g_signal_connect(apply_bundle,"clicked",G_CALLBACK(apply_bundle_cb),radio);
 
   GtkWidget *port_label=gtk_label_new("Port:");
   gtk_widget_set_halign(port_label,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),port_label,0,11,1,1);
+  gtk_grid_attach(GTK_GRID(grid),port_label,0,16,1,1);
   GtkWidget *port=gtk_spin_button_new_with_range(1,65535,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(port),
                             radio->web_port>0?radio->web_port:WEB_DEFAULT_PORT);
   gtk_widget_set_halign(port,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),port,1,11,1,1);
+  gtk_grid_attach(GTK_GRID(grid),port,1,16,1,1);
   g_signal_connect(port,"value-changed",G_CALLBACK(port_cb),radio);
 
   GtkWidget *rtc_port_label=gtk_label_new("WebRTC audio UDP port:");
   gtk_widget_set_halign(rtc_port_label,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),rtc_port_label,0,12,1,1);
+  gtk_grid_attach(GTK_GRID(grid),rtc_port_label,0,17,1,1);
   GtkWidget *rtc_port=gtk_spin_button_new_with_range(1,65535,1);
   gtk_spin_button_set_value(GTK_SPIN_BUTTON(rtc_port),radio->web_rtc_port);
   gtk_widget_set_halign(rtc_port,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),rtc_port,1,12,1,1);
+  gtk_grid_attach(GTK_GRID(grid),rtc_port,1,17,1,1);
   g_signal_connect(rtc_port,"value-changed",G_CALLBACK(rtc_port_cb),radio);
 
   GtkWidget *hint=gtk_label_new("Internet: forward the HTTPS TCP port and WebRTC UDP port to this computer.");
   gtk_widget_set_halign(hint,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),hint,0,13,2,1);
+  gtk_grid_attach(GTK_GRID(grid),hint,0,18,2,1);
 
   status_label=gtk_label_new("Status: stopped");
   gtk_widget_set_halign(status_label,GTK_ALIGN_START);
   gtk_widget_set_margin_top(status_label,8);
-  gtk_grid_attach(GTK_GRID(grid),status_label,0,14,2,1);
+  gtk_grid_attach(GTK_GRID(grid),status_label,0,19,2,1);
   refresh_status();
 
   if(poll_id!=0) g_source_remove(poll_id);
