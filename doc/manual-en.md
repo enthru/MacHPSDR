@@ -846,7 +846,7 @@ With the TX lease held, the lower bar also enables **TUNE**, transmit **DRV**,
 tune power, microphone **GAIN**, compressor gain and its **COMP** switch,
 **LVLR**, and **CESSB**. Tune uses the radio's test generator and therefore does
 not require microphone media. Tune-off and MOX-off remain emergency actions;
-losing the lease switches off either form of transmission. Enter a username and
+losing the lease switches off either form of transmission. **Install as an app:** with a certificate the browser trusts (a PEM bundle from your own or a public CA), Chrome/Edge offer *Install app* in the address bar and iPhone/iPad Safari offers *Share → Add to Home Screen*; the page then opens in its own window with the MacHPSDR icon. The installed app keeps only the page itself, never radio state: until MacHPSDR answers it shows **Disconnected**, and every reconnect logs in again and re-reads the radio. With the automatic self-signed certificate browsers refuse the offline shell, so the page works as before but may not offer installation. The spectrum can also be tuned from the keyboard: focus it and press ←/→ for one step (Shift for ten); ↑/↓ on a focused **RIT**/**XIT** chip nudge the offset by 10 Hz. Enter a username and
 at least eight characters in **New password**, then
 press **Set password**; the browser prompts for those credentials.
 **Require password on browser remote** can turn the challenge off

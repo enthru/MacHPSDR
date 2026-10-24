@@ -26,6 +26,14 @@ body {
   background: var(--bg); color: var(--ink); font-size: 14px;
 }
 button, input, select { font: inherit; color: inherit; }
+/* One visible keyboard-focus ring for every control.  A chip-styled <select>
+   hides its own outline, so its chip wrapper carries the ring instead. */
+button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 1px;
+}
+.chip-select-wrap:has(select:focus-visible), .chip-sql:has(input:focus-visible) {
+  outline: 2px solid var(--cyan); outline-offset: 1px;
+}
 
 /* ---- Title bar ---- */
 .titlebar {
@@ -172,7 +180,7 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .tune { color: #fff; background: #3b3219; border: 1px solid #78652a; border-radius: 7px; padding: .5rem .75rem; font-weight: 800; cursor: pointer; }
 .tune:disabled { opacity: .45; cursor: default; }
 .tune.on { color: #201700; background: var(--amber); border-color: var(--amber); box-shadow: 0 0 18px rgba(255,190,70,.35); }
-.tx-control { color: var(--text); background: #162731; border: 1px solid #315064; border-radius: 7px; padding: .5rem .75rem; cursor: pointer; }
+.tx-control { color: var(--ink); background: #162731; border: 1px solid #315064; border-radius: 7px; padding: .5rem .75rem; cursor: pointer; }
 .tx-control:disabled { opacity: .45; cursor: default; }
 .tx-control.held { color: #07140b; background: var(--green); border-color: var(--green); }
 .mic-level { display: flex; align-items: center; gap: .35rem; color: var(--ink-dim); font-size: .65rem; font-weight: 800; letter-spacing: .08em; }
@@ -186,6 +194,23 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .tx-check { display: flex; align-items: center; gap: .15rem; color: var(--ink-dim); font-size: .58rem; font-weight: 800; }
 .remote-ptt { color: #190407; background: var(--red); border-radius: 999px; padding: .35rem .65rem; font-size: .72rem; font-weight: 900; letter-spacing: .08em; box-shadow: 0 0 18px rgba(255,95,109,.45); }
 
+/* ---- Installed (standalone) app: keep clear of a notch / home indicator ---- */
+.titlebar { padding-top: max(.45rem, env(safe-area-inset-top)); padding-left: max(.9rem, env(safe-area-inset-left)); padding-right: max(.9rem, env(safe-area-inset-right)); }
+.bottom-bar { padding-bottom: max(.45rem, env(safe-area-inset-bottom)); padding-left: max(.55rem, env(safe-area-inset-left)); padding-right: max(.55rem, env(safe-area-inset-right)); }
+
+/* ---- Touch: finger-sized targets ---- */
+@media (pointer: coarse) {
+  .chip { min-height: 2.5rem; padding: .4rem .75rem; }
+  .mox, .tune, .tx-control { min-height: 2.75rem; }
+  .gain input[type=range], .chip-sql input[type=range], .tx-settings input[type=range] { height: 1.75rem; }
+  .tx-check input { width: 1.25rem; height: 1.25rem; }
+}
+
+/* ---- Reduced motion: no animated meter sweep ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
 /* ---- Narrow screens ---- */
 @media (max-width: 760px) {
   .vfo-bar { gap: .5rem; }
@@ -195,5 +220,6 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
   .gain { flex: 1 1 auto; width: auto; min-width: 80px; }
   .smeter { width: 100%; }
   .bottom-bar, .status-copy { flex-wrap: wrap; }
+  .panel { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
   #decoder-text { flex-basis: 100%; }
 }

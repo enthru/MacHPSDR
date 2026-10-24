@@ -156,6 +156,31 @@ int main(int argc, char **argv) {
         web_protocol_route("/app.js",&asset,&type,&ws) && strstr(type,"javascript")!=NULL);
   check("WebSocket is a distinct route",
         web_protocol_route("/ws",&asset,&type,&ws) && ws && asset==NULL);
+  check("manifest has the web-app-manifest MIME type",
+        web_protocol_route("/manifest.webmanifest",&asset,&type,&ws) && !ws &&
+        strcmp(type,"application/manifest+json")==0);
+  check("service worker is served from the root, as JavaScript",
+        web_protocol_route("/sw.js",&asset,&type,&ws) && strcmp(asset,"sw.js")==0 &&
+        strstr(type,"javascript")!=NULL);
+  check("manifest icons are PNG",
+        web_protocol_route("/icon-192.png",&asset,&type,&ws) && strcmp(type,"image/png")==0 &&
+        web_protocol_route("/icon-512.png",&asset,&type,&ws) && strcmp(type,"image/png")==0);
+  check("a shell name is matched whole, not as a prefix",
+        !web_protocol_route("/sw.js.bak",&asset,&type,&ws) &&
+        !web_protocol_route("/icon-512.png/x",&asset,&type,&ws));
+  {
+    /* Every routed asset must exist in the tree, or the page 500s on it. */
+    static const char *routed[]={"/","/app.css","/app.js","/manifest.webmanifest",
+                                 "/sw.js","/icon-192.png","/icon-512.png"};
+    gboolean all=TRUE;
+    for(size_t i=0;i<G_N_ELEMENTS(routed);i++) {
+      if(!web_protocol_route(routed[i],&asset,&type,&ws) || asset==NULL) { all=FALSE; continue; }
+      gchar *path=g_build_filename("assets","web",asset,NULL);
+      if(!g_file_test(path,G_FILE_TEST_IS_REGULAR)) { fprintf(stderr,"missing %s\n",path); all=FALSE; }
+      g_free(path);
+    }
+    check("every routed asset exists under assets/web",all);
+  }
   check("unknown files are rejected",
         !web_protocol_route("/radio.props",&asset,&type,&ws));
   check("path traversal is rejected",

@@ -519,6 +519,19 @@ gboolean web_protocol_route(const char *target, const char **asset_name,
     if(content_type) *content_type="text/javascript; charset=utf-8";
     return TRUE;
   }
+  /* PWA shell: the manifest, the service worker (served from the root so its
+     scope is the whole page) and the two icons the manifest names. */
+  static const struct { const char *target, *asset, *type; } shell[]={
+    {"/manifest.webmanifest","manifest.webmanifest","application/manifest+json"},
+    {"/sw.js","sw.js","text/javascript; charset=utf-8"},
+    {"/icon-192.png","icon-192.png","image/png"},
+    {"/icon-512.png","icon-512.png","image/png"},
+  };
+  for(size_t i=0;i<G_N_ELEMENTS(shell);i++) if(strcmp(target,shell[i].target)==0) {
+    if(asset_name) *asset_name=shell[i].asset;
+    if(content_type) *content_type=shell[i].type;
+    return TRUE;
+  }
   if(strcmp(target,"/ws")==0) {
     if(websocket) *websocket=TRUE;
     return TRUE;

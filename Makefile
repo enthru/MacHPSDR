@@ -1552,10 +1552,8 @@ app: $(PROGRAM)
 	@if [ -d assets/web ]; then \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/web; \
 		mkdir -p $(APP_BUNDLE)/Contents/Resources/share/machpsdr/web; \
-		cp assets/web/index.html assets/web/app.css assets/web/app.js \
-		   $(APP_BUNDLE)/Contents/Resources/web/; \
-		cp assets/web/index.html assets/web/app.css assets/web/app.js \
-		   $(APP_BUNDLE)/Contents/Resources/share/machpsdr/web/; \
+		cp assets/web/* $(APP_BUNDLE)/Contents/Resources/web/; \
+		cp assets/web/* $(APP_BUNDLE)/Contents/Resources/share/machpsdr/web/; \
 	fi
 
 	@# Create app icon

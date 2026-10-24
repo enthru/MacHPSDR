@@ -615,6 +615,9 @@ can be replayed separately in the I/Q Player.
   tune power, microphone gain, compressor gain/on-off, leveler and CESSB in the
   lower bar. Tune does not require microphone media; Tune-off and MOX-off remain
   emergency actions, and every lease-loss path drops both kinds of transmission.
+  Served with a certificate the browser trusts, the page installs as an app (manifest +
+  a service worker that caches only the static page, never radio state or traffic);
+  the spectrum and RIT/XIT also take arrow keys.
   The server pushes state as it changes rather than the page polling, so
   a control moved on the desktop or in one browser echoes to every browser live.
   Each receiver's demodulated audio plays automatically over a **WebRTC

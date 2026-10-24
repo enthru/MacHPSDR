@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>MacHPSDR Remote</title>
+  <meta name="theme-color" content="#152430">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="MacHPSDR">
+  <!-- use-credentials: a manifest is fetched without them by default, so behind
+       the remote's password it would 401 and the page would not install. -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="icon" type="image/png" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -15,7 +24,7 @@
   <main>
     <button id="enable-sound" class="enable-sound" type="button" hidden>🔈 Tap to enable sound</button>
     <section id="empty" class="empty" hidden>No visible receiver is available.</section>
-    <section id="receivers" class="receivers" aria-live="polite"></section>
+    <section id="receivers" class="receivers" aria-label="Receivers"></section>
   </main>
 
   <template id="receiver-template">
@@ -51,8 +60,8 @@
         <div class="vfo-freqs">
           <div class="vfo-a">
             <span class="vfo-tag">VFO A</span>
-            <span class="freq freq-a" tabindex="0" title="Click to enter a frequency">00000.000.000</span>
-            <input class="freq-edit" inputmode="numeric" autocomplete="off" hidden>
+            <span class="freq freq-a" role="button" tabindex="0" title="Click to enter a frequency">00000.000.000</span>
+            <input class="freq-edit" inputmode="numeric" autocomplete="off" aria-label="VFO A frequency in hertz" hidden>
           </div>
           <div class="vfo-b">
             <span class="vfo-tag">VFO B</span>
@@ -66,7 +75,7 @@
               <span class="gain-tag">AF<b class="af-gain-val"></b></span>
               <input class="af-gain" type="range" min="0" max="100" step="1">
             </label>
-            <button class="chip mute audio-toggle" type="button" hidden aria-pressed="false" title="Mute received audio">🔈</button>
+            <button class="chip mute audio-toggle" type="button" hidden aria-pressed="false" title="Mute received audio" aria-label="Mute received audio">🔈</button>
             <label class="gain gain-agc" title="AGC gain">
               <span class="gain-tag">AGC<b class="agc-gain-val"></b></span>
               <input class="agc-gain" type="range" min="-20" max="120" step="1">
@@ -89,10 +98,10 @@
       <div class="mode-bar">
         <button class="chip lock-chip dead" type="button" disabled title="VFO lock is set on the desktop radio">LOCK</button>
         <label class="chip chip-select-wrap chip-on" title="Demodulation mode">
-          <select class="mode chip-select"></select>
+          <select class="mode chip-select" aria-label="Mode"></select>
         </label>
         <label class="chip chip-select-wrap chip-on filter-wrap" title="Filter width preset (or drag the panadapter edges)">
-          <select class="filter-sel chip-select"></select>
+          <select class="filter-sel chip-select" aria-label="Filter width"></select>
         </label>
         <label class="chip chip-select-wrap nb-wrap" title="Noise blanker">
           <span class="chip-select-prefix">NB</span>
@@ -124,8 +133,8 @@
             <option value="4">FAST</option>
           </select>
         </label>
-        <button class="chip rit-chip" type="button" title="RIT — click to toggle, wheel to adjust">RIT</button>
-        <button class="chip xit-chip" type="button" title="XIT — click to toggle, wheel to adjust">XIT</button>
+        <button class="chip rit-chip" type="button" title="RIT — click to toggle, wheel or up/down arrows to adjust">RIT</button>
+        <button class="chip xit-chip" type="button" title="XIT — click to toggle, wheel or up/down arrows to adjust">XIT</button>
         <button class="chip dead" type="button" disabled title="Click-tune — not yet available in the browser remote">CTUN</button>
         <button class="chip dead" type="button" disabled title="Duplex — not yet available in the browser remote">DUP</button>
         <button class="chip subrx-chip" type="button" title="Enable the sub-receiver on VFO B">SUB RX</button>
@@ -135,7 +144,7 @@
         </label>
         <label class="chip chip-select-wrap bookmark-wrap" title="Recall a saved desktop bookmark">
           <span class="chip-select-prefix">BMK</span>
-          <select class="bookmark-sel chip-select"><option value="">—</option></select>
+          <select class="bookmark-sel chip-select" aria-label="Recall bookmark"><option value="">—</option></select>
         </label>
         <label class="chip chip-sql" title="Squelch threshold">
           <span class="chip-select-prefix">SQL<b class="squelch-val"></b></span>
@@ -145,7 +154,7 @@
 
       <!-- Panadapter + waterfall -->
       <canvas class="spectrum" tabindex="0"
-              aria-label="Live panadapter and waterfall. Click or drag to tune, use the wheel to step, or drag a filter edge."></canvas>
+              aria-label="Live panadapter and waterfall. Click or drag to tune, use the wheel or left/right arrows to step (Shift for ten steps), or drag a filter edge."></canvas>
 
       <div class="rx-status">
         <span class="spectrum-status">Waiting for spectrum</span>
@@ -163,7 +172,7 @@
     </article>
   </template>
 
-  <footer class="bottom-bar">
+  <footer class="bottom-bar" aria-label="Transmit and status">
     <div class="panel panel-transmit">
       <span class="panel-tag">TRANSMIT</span>
       <button id="tx-control" class="tx-control" type="button" disabled>Take TX control</button>

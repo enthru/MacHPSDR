@@ -167,14 +167,22 @@ function installSpectrumGestures(card, rxId) {
     canvas._drag = null;
   });
   canvas.addEventListener("pointercancel", () => { canvas._drag = null; });
+  const stepBy = steps => {
+    const value = Math.max(1, card._rx.frequency + steps * Math.max(1, card._rx.step));
+    card._rx.frequency = value;
+    command("set_frequency", { rx: rxId, value });
+  };
   canvas.addEventListener("wheel", event => {
     if (!card._rx) return;
     event.preventDefault();
-    const direction = event.deltaY < 0 ? 1 : -1;
-    const value = Math.max(1, card._rx.frequency + direction * Math.max(1, card._rx.step));
-    card._rx.frequency = value;
-    command("set_frequency", { rx: rxId, value });
+    stepBy(event.deltaY < 0 ? 1 : -1);
   }, { passive: false });
+  // Keyboard twin of the wheel: left/right one step, Shift for ten.
+  canvas.addEventListener("keydown", event => {
+    if (!card._rx || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    event.preventDefault();
+    stepBy((event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 10 : 1));
+  });
 }
 
 function makeCard(rx) {
@@ -247,16 +255,20 @@ function makeCard(rx) {
   card.querySelector(".band-down").addEventListener("click", () => command("band_step", { rx: rx.id, value: -1 }));
   card.querySelector(".band-up").addEventListener("click", () => command("band_step", { rx: rx.id, value: 1 }));
   card.querySelector(".split-chip").addEventListener("click", () => command("set_split", { rx: rx.id, value: card._rx?.split ? 0 : 1 }));
-  // RIT/XIT: click toggles on/off, wheel nudges the offset by 10 Hz (the desktop's
-  // rit_step), clamped server-side to +/-10 kHz.
+  // RIT/XIT: click toggles on/off, wheel (or up/down arrows when focused) nudges
+  // the offset by 10 Hz (the desktop's rit_step), clamped server-side to +/-10 kHz.
   const offsetChip = (sel, enableAction, valueAction, field, onField) => {
     const el = card.querySelector(sel);
-    el.addEventListener("click", () => command(enableAction, { rx: rx.id, value: card._rx?.[onField] ? 0 : 1 }));
-    el.addEventListener("wheel", event => {
-      event.preventDefault();
-      const next = (Number(card._rx?.[field]) || 0) + (event.deltaY < 0 ? 10 : -10);
+    const nudge = up => {
+      const next = (Number(card._rx?.[field]) || 0) + (up ? 10 : -10);
       command(valueAction, { rx: rx.id, value: Math.max(-10000, Math.min(10000, next)) });
-    }, { passive: false });
+    };
+    el.addEventListener("click", () => command(enableAction, { rx: rx.id, value: card._rx?.[onField] ? 0 : 1 }));
+    el.addEventListener("wheel", event => { event.preventDefault(); nudge(event.deltaY < 0); }, { passive: false });
+    el.addEventListener("keydown", event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault(); nudge(event.key === "ArrowUp");
+    });
   };
   offsetChip(".rit-chip", "set_rit_enable", "set_rit", "rit", "rit_on");
   offsetChip(".xit-chip", "set_xit_enable", "set_xit", "xit", "xit_on");
@@ -469,10 +481,11 @@ function updateSpectrumStatus(message) {
 function refreshAudioButton(card) {
   const button = card.querySelector(".audio-toggle");
   if (!button) return;
-  if (!card._connected) { button.disabled = true; button.textContent = "⏳"; button.setAttribute("aria-pressed", "false"); button.title = "Connecting audio…"; return; }
+  if (!card._connected) { button.disabled = true; button.textContent = "⏳"; button.setAttribute("aria-pressed", "false"); button.title = "Connecting audio…"; button.setAttribute("aria-label", button.title); return; }
   button.disabled = false;
   button.textContent = card._muted ? "🔇" : "🔈";
   button.title = card._muted ? "Unmute received audio" : "Mute received audio";
+  button.setAttribute("aria-label", button.title);
   button.setAttribute("aria-pressed", card._muted ? "true" : "false");
 }
 function updateAudioAvailability() {
@@ -653,7 +666,7 @@ function connect() {
     }
   });
   socket.addEventListener("close", () => {
-    clearTimeout(stateWatchdog); setLeaseHeld(false); setConnection("Disconnected"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
+    clearTimeout(stateWatchdog); setLeaseHeld(false); setConnection(navigator.onLine ? "Disconnected" : "Offline"); closeAllAudio(); reconnectTimer = setTimeout(connect, 1500);
   });
   socket.addEventListener("error", () => socket.close());
 }
@@ -683,3 +696,9 @@ enableSound.addEventListener("click", () => {
   for (const card of cards.values()) if (card._audio && !card._muted) card._audio.play().catch(() => {});
 });
 connect();
+// Installable shell (manifest + sw.js).  Browsers allow a service worker only in
+// a secure context -- HTTPS with a certificate they trust, or localhost -- so on
+// plain-HTTP LAN or a self-signed certificate this quietly does nothing and the
+// page works exactly as before.
+if ("serviceWorker" in navigator && window.isSecureContext)
+  navigator.serviceWorker.register("/sw.js").catch(error => console.info("MacHPSDR: no offline shell:", error.message));

@@ -172,8 +172,25 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   media; Tune-off and MOX-off remain emergency actions.  Lease loss now drops
   both Tune and MOX, so the emergency path no longer assumes MOX is the only RF
   source.
-- Not implemented yet: failed-auth throttling, token/QR pairing, general
-  viewer/controller roles and the Phase 6 PWA/accessibility polish.
+- Phase 6 slice 4 is implemented in the current work: the PWA and
+  accessibility pass.  `manifest.webmanifest`, `sw.js` and two icons are routed
+  (exact names, `web_offline` asserts each routed asset exists in the tree) and
+  shipped by `make app`/the AppImage (`assets/web/*`).  The service worker caches
+  only the static shell, network-first; it never intercepts an online navigation
+  (so the HTTP Basic challenge is the browser's own) and cannot see WebSocket or
+  WebRTC traffic, so no radio state is ever served from cache.  The manifest link
+  carries `crossorigin="use-credentials"`, without which it would 401 behind the
+  password.  Registration needs a trusted secure context, so it is inert on plain
+  HTTP and with the automatic self-signed certificate.  Accessibility: one
+  focus-visible ring for every control (chip selects ring their wrapper), arrow
+  keys on the spectrum (step, Shift x10) and RIT/XIT (10 Hz), names for the
+  mode/filter/bookmark selects and the frequency editor, the mute button's label
+  follows its state, `aria-live` dropped from the receiver stack (the S-meter
+  re-rendered it five times a second), `prefers-reduced-motion`, `pointer:
+  coarse` target sizes, safe-area insets, and a wrapping bottom bar on narrow
+  screens.  Fixed on the way: `.tx-control` used an undefined `--text` colour.
+- Not implemented yet: failed-auth throttling, token/QR pairing and general
+  viewer/controller roles (deferred by operator request).
 
 The browser remote provides a disabled-by-default LAN listener, bundled static
 assets, the `machpsdr.v1` WebSocket subprotocol,
@@ -250,6 +267,20 @@ click/drag/wheel tuning and draggable filter edges.
     block only its web sender and has a 250 ms socket timeout.
 
 ## Verification record
+
+### 2026-10-24 — Phase 6 slice 4: PWA shell and accessibility
+
+Verified in this work session on macOS: `web_offline --selftest` passes with four
+new cases (manifest MIME, root-scoped `sw.js`, PNG icons, whole-name matching)
+plus one that every routed asset exists under `assets/web`; Node accepts
+`app.js` and `sw.js` with `--check`; the service worker run against mocked
+`caches`/`fetch` (scratch script, not in the tree) passes 11 cases — precache,
+online navigation passed through, offline navigation served the cached page,
+POST/non-shell/query/cross-origin ignored, shell network-first, cache fallback
+when the radio is unreachable, a 401 returned and not cached; the manifest parses
+as JSON; `make` links and `make check` passes.  NOT verified live: installation
+in a real browser (needs a trusted certificate or localhost), the offline launch,
+keyboard/screen-reader behaviour, the touch sizes and safe-area insets on a phone.
 
 ### 2026-10-23 — Phase 6 slice 3: remaining transmit controls
 
@@ -847,14 +878,16 @@ a real browser, observing the Soapy/HPSDR front-end read-back, sub-RX audio,
 bookmark recall or live decoder text.  No physical-HPSDR RF-effect claim is
 needed for this web adapter; the existing desktop hardware path is reused.
 
-## Exact next slice: Phase 6 — PWA and accessibility polish
+## Exact next slice: live verification of Phase 6, then the deferred Phase 5 work
 
-Add an installable manifest and service-worker shell without caching live
-control/media traffic, then complete keyboard/focus labels, reduced-motion and
-small-screen checks.  Keep offline installation separate from radio-state
-claims and preserve the rule that reconnect always re-authenticates and
-re-synchronises state.  The remaining Phase 5 pairing/roles/throttling work is
-intentionally deferred by operator request.
+Phase 6 is implemented end to end; none of its four slices has been run live.
+The next step is an operator session on HackRF or Pluto into a dummy load: take
+the lease, key MOX with the microphone, close the tab while keyed (must unkey),
+Tune off by closing the tab and by withdrawing the desktop arm, a drive change
+read back on the desktop; then install the page from a trusted-certificate or
+localhost origin.  After that, the deferred Phase 5 items (failed-auth
+throttling, token/QR pairing, viewer/controller roles) remain, only when the
+operator asks for them.
 
 ### 2026-10-22 — WAN/jitter design decision
 

@@ -105,7 +105,17 @@ assets.
 The first implementation uses the project's existing socket and GLib support,
 not an additional HTTP library.  This keeps the macOS bundle and the Windows
 cross-build self-contained.  The server accepts only GET/HEAD for known assets
-and an Upgrade request for `/ws`.
+(`/`, `app.css`, `app.js` and the PWA shell `manifest.webmanifest`, `sw.js`,
+`icon-192.png`, `icon-512.png`, each matched whole) and an Upgrade request for
+`/ws`.
+
+The service worker is an install shell, never a radio cache: it stores only those
+static assets (network-first, refreshed only from a successful answer), never
+intercepts an online navigation (so the Basic challenge reaches the browser
+untouched), and cannot see the WebSocket or WebRTC traffic.  A page started from
+it shows Disconnected until the radio answers; reconnect always re-authenticates
+and re-synchronises.  Browsers permit it only in a trusted secure context, so it
+is inert on plain HTTP or with the automatic self-signed certificate.
 
 The remote uses HTTP Basic authentication over both asset requests and the
 WebSocket Upgrade.  The username defaults to `machpsdr` and is configurable; the
@@ -449,7 +459,10 @@ Opus on the bidirectional WebRTC audio track.  MOX requires fresh media; a
 same lease exposes Tune, drive, tune power, microphone gain, compressor
 gain/on-off, leveler and CESSB.  Tune does not require microphone media; Tune
 off and MOX off remain emergency actions, and lease loss drops both.  The
-PWA/accessibility pass remains.
+PWA/accessibility pass is implemented too: an installable manifest and shell
+service worker, a visible keyboard-focus ring on every control, arrow-key tuning
+on the spectrum and RIT/XIT, names for the unlabelled selects, no live-region
+churn, reduced-motion, finger-sized targets on touch and safe-area insets.
 
 ## Non-functional targets
 
