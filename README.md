@@ -589,7 +589,8 @@ can be replayed separately in the I/Q Player.
   skimmer.)*
 
 - **Browser remote (LAN control, spectrum and audio).** An optional web server built into
-  MacHPSDR and enabled in **Configure → Network**. When enabled it listens on all
+  MacHPSDR and enabled in **Configure → Network** (or run windowless as a pure server with
+  `--headless`, see [Running](#running)). When enabled it listens on all
   IPv4 interfaces; open `https://<this-computer-IP>:8080` to see every visible receiver's frequency, mode
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
@@ -1364,6 +1365,7 @@ Start it from the build directory:
 ./machpsdr --usb-only      # skip network discovery (USB devices only)
 ./machpsdr --open Hermes   # open a discovered radio straight away, no dialog
 ./machpsdr --faker ft8.wav # no hardware: loop an I/Q WAV through the RX chain
+./machpsdr --headless      # no window: serve the radio to the browser remote only
 ./machpsdr --debug         # verbose diagnostic logging
 ```
 
@@ -1375,6 +1377,14 @@ the discovered list instead, for when two radios share a name. If it matches
 nothing the selection window opens as usual and the reason is logged. Useful if
 you always work with the same radio, and needed for headless testing: a device
 that is discovered but never opened runs none of its protocol code.
+
+**`--headless`** runs with no window at all, as a server for the browser remote
+only: nothing is drawn and nothing plays on this computer. It opens `--open` /
+`--faker`, otherwise the first radio found, and starts the browser remote even
+if it is off in Configure (without changing that setting); browser PTT is
+allowed only with `--web-tx`. Set the password beforehand in a windowed run.
+Ctrl-C or SIGTERM saves and quits. A display session is still required (on a
+Linux server use e.g. `xvfb-run`).
 
 ### Logging
 

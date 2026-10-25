@@ -745,6 +745,9 @@ int audio_open_output(RECEIVER *rx) {
 #if !defined(__APPLE__) && !defined(_WIN32)
   pa_sample_spec sample_spec;
 #endif
+  // --headless: nothing plays on this computer (receiver.c never writes to an
+  // output there); refusing here too covers the callers that reopen a device.
+  if(radio_headless) return 0;
   // A different device deserves its own verdict, so re-arm the "sink is not
   // taking the audio" warning and restart the measurement window — otherwise
   // the outgoing device's drops would be charged to the incoming one.

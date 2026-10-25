@@ -1087,6 +1087,35 @@ static void pan_auto_levels(RECEIVER *rx, float *samples, int offset, int width,
   if(rx->panadapter_high<=rx->panadapter_low) rx->panadapter_high=rx->panadapter_low+1;
 }
 
+// The dB the trace is shifted by for the ADC attenuator (sign flipped on the
+// HL2, nothing while the diversity mixer calibrates gain).
+static double pan_attenuation(RECEIVER *rx) {
+  double attenuation=radio->adc[rx->adc].attenuation;
+  if (radio->divmixer[rx->dmix_id] != NULL) {
+    if (radio->divmixer[rx->dmix_id]->calibrate_gain) {
+      attenuation = 0;
+      rx->panadapter_filled = FALSE;
+    }
+  }
+  if(radio->discovered->device==DEVICE_HERMES_LITE2) {
+      attenuation = attenuation * -1;
+  }
+  return attenuation;
+}
+
+// --headless: the one part of the per-frame update that is not drawing.  The
+// auto dB scale moves panadapter_low/high, which the browser's spectrum rows
+// are quantised against, so it must keep running with nothing on screen.
+void update_rx_panadapter_headless(RECEIVER *rx,gboolean running) {
+  rx->pan_running=running;
+  if(rx->pixel_samples==NULL || !rx->panadapter_automatic || !running ||
+     rx->panadapter_phase) return;
+  int sample_width=pan_sample_width(rx,rx->panadapter_width,rx->pan);
+  if(sample_width<=0) return;
+  pan_auto_levels(rx,rx->pixel_samples,rx->pan,sample_width,
+                  pan_attenuation(rx)+radio->panadapter_calibration);
+}
+
 // ---------------------------------------------------------------------------
 // Per-frame STATE update (fps timer). Only the frame-rate-locked buffers are
 // touched here (peak-hold decay, phosphor occupancy EMA + colour-map); the
@@ -1117,16 +1146,7 @@ void update_rx_panadapter(RECEIVER *rx,gboolean running) {
 
   samples[sample_width-1+offset]=-200;
 
-  double attenuation=radio->adc[rx->adc].attenuation;
-  if (radio->divmixer[rx->dmix_id] != NULL) {
-    if (radio->divmixer[rx->dmix_id]->calibrate_gain) {
-      attenuation = 0;
-      rx->panadapter_filled = FALSE;
-    }
-  }
-  if(radio->discovered->device==DEVICE_HERMES_LITE2) {
-      attenuation = attenuation * -1;
-  }
+  double attenuation=pan_attenuation(rx);
 
   if(display_height<=1) { gtk_widget_queue_draw(rx->panadapter); return; }
 

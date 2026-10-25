@@ -19,6 +19,7 @@
 
 extern GtkWidget *create_rx_panadapter(RECEIVER *rx);
 extern void update_rx_panadapter(RECEIVER *rx,gboolean running);
+extern void update_rx_panadapter_headless(RECEIVER *rx,gboolean running);
 // Draw the DX-cluster spot overlay (row-packed ticks + labels) onto cr, mapping
 // absolute-RF spot frequencies to x with the same formula the panadapter/
 // waterfall use. Shared so both the spectrum surface and the waterfall overlay

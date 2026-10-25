@@ -696,6 +696,7 @@ extern void calculate_display_average(RECEIVER *rx);
 extern void receiver_fps_changed(RECEIVER *rx);
 extern void receiver_refit_vpaned(RECEIVER *rx);
 extern void receiver_change_zoom(RECEIVER *rx,int zoom);
+extern void receiver_headless_geometry(RECEIVER *rx);
 extern void update_frequency(RECEIVER *rx);
 extern void receiver_sync_vfo_b_lo(RECEIVER *rx);
 extern void receiver_move(RECEIVER *rx,long long hz,gboolean round);

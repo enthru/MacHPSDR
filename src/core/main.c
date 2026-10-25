@@ -38,6 +38,9 @@
 #include <glib/gstdio.h>   // g_chdir
 #endif
 #include <wdsp.h>
+#ifdef G_OS_UNIX
+#include <glib-unix.h>     // g_unix_signal_add: a clean stop for --headless
+#endif
 
 #ifdef __APPLE__
 #include <gdk/macos/gdkmacos.h>
@@ -116,6 +119,8 @@ static DISCOVERED *d=NULL;
 
 RADIO *radio;
 gboolean opengl=FALSE;
+gboolean radio_headless=FALSE;
+gboolean radio_headless_web_tx=FALSE;
 
 enum {
   NAME_COLUMN,
@@ -202,6 +207,16 @@ gboolean main_delete (GtkWidget *widget) {
   }
   _exit(0);
 }
+
+#ifdef G_OS_UNIX
+// --headless has no window to close, so Ctrl-C/SIGTERM is its Quit: the same
+// save-and-stop path, run on the main loop (never from the signal itself).
+static gboolean headless_signal_cb(gpointer data) {
+  log_info("headless: signal %d, saving and stopping\n",GPOINTER_TO_INT(data));
+  main_delete(NULL);
+  return G_SOURCE_REMOVE;
+}
+#endif
 
 // Action invoked by the "Quit" menu item / Cmd-Q (macOS) or Ctrl-Q accelerator.
 static void quit_action(GSimpleAction *action, GVariant *parameter, gpointer data) {
@@ -432,6 +447,22 @@ static int discover(void *data) {
     }
     gtk_widget_realize(main_window);
     start_cb(NULL,NULL);
+  } else if(radio_headless && open_match==NULL) {
+    // --headless with no --open: there is no selection window to fall back on,
+    // so open the first REAL device (the I/Q Player is always appended last and
+    // is only taken when asked for with --faker).
+    int sel=-1;
+    for(i=0;i<devices;i++) {
+      if(discovered[i].protocol!=PROTOCOL_FAKE) { sel=i; break; }
+    }
+    if(sel<0) {
+      log_error("--headless: no radio discovered (use --open <name> or --faker)\n");
+      _exit(1);
+    }
+    log_info("--headless -> device %d (%s)\n",sel,discovered[sel].name);
+    gtk_single_selection_set_selected(dev_selection, sel);
+    gtk_widget_realize(main_window);
+    start_cb(NULL,NULL);
   } else if(open_match!=NULL && devices>0) {
     // --open: the same skip-the-dialog path for a REAL device. An all-digit
     // argument is an index into the discovered list; anything else is matched
@@ -454,7 +485,11 @@ static int discover(void *data) {
       }
       g_free(needle);
     }
-    if(sel<0) {
+    if(sel<0 && radio_headless) {
+      log_error("--open '%s' matched none of the %d discovered devices\n",
+                open_match,devices);
+      _exit(1);
+    } else if(sel<0) {
       log_error("--open '%s' matched none of the %d discovered devices; "
                 "showing the selection window\n",open_match,devices);
     } else {
@@ -463,6 +498,13 @@ static int discover(void *data) {
       gtk_widget_realize(main_window);
       start_cb(NULL,NULL);
     }
+  }
+
+  // --headless: the radio is built into a window that is never shown, so GTK
+  // maps nothing and renders nothing; the browser remote is the only face.
+  if(radio_headless) {
+    log_info("headless: running with no window; stop with Ctrl-C or SIGTERM\n");
+    return 0;
   }
 
   gtk_widget_set_visible(main_window, TRUE);
@@ -520,27 +562,37 @@ static int check_wisdom(void *data) {
         exit( -1 );
       }
 
-      dialog=gtk_window_new();
-      g_signal_connect (dialog, "close-request", G_CALLBACK (wisdom_delete), NULL);
-      gtk_window_set_title(GTK_WINDOW(dialog),"MacHPSDR: Creating FFTW3 wisdom file");
-      GtkWidget *grid=gtk_grid_new();
-      gtk_grid_set_row_spacing(GTK_GRID(grid),10);
-      GtkWidget *info=gtk_label_new("               Optimizing FFT sizes through 262145:               ");
-      gtk_grid_attach(GTK_GRID(grid),info,0,0,1,1);
-      GtkWidget *text=gtk_label_new("                         ");
-      gtk_grid_attach(GTK_GRID(grid),text,0,1,1,1);
-      GtkWidget *patient=gtk_label_new("(Please be patient. This will take several minutes.)");
-      gtk_grid_attach(GTK_GRID(grid),patient,0,2,1,1);
-      gtk_window_set_child(GTK_WINDOW(dialog),grid);
-      gtk_widget_set_visible(dialog, TRUE);
+      // --headless: nobody to show a progress window to, so the same wait
+      // runs with the window left out and the start said in the log.
+      GtkWidget *text=NULL;
+      dialog=NULL;
+      if(radio_headless) {
+        log_info("headless: creating FFTW wisdom, this takes several minutes\n");
+      } else {
+        dialog=gtk_window_new();
+        g_signal_connect (dialog, "close-request", G_CALLBACK (wisdom_delete), NULL);
+        gtk_window_set_title(GTK_WINDOW(dialog),"MacHPSDR: Creating FFTW3 wisdom file");
+        GtkWidget *grid=gtk_grid_new();
+        gtk_grid_set_row_spacing(GTK_GRID(grid),10);
+        GtkWidget *info=gtk_label_new("               Optimizing FFT sizes through 262145:               ");
+        gtk_grid_attach(GTK_GRID(grid),info,0,0,1,1);
+        text=gtk_label_new("                         ");
+        gtk_grid_attach(GTK_GRID(grid),text,0,1,1,1);
+        GtkWidget *patient=gtk_label_new("(Please be patient. This will take several minutes.)");
+        gtk_grid_attach(GTK_GRID(grid),patient,0,2,1,1);
+        gtk_window_set_child(GTK_WINDOW(dialog),grid);
+        gtk_widget_set_visible(dialog, TRUE);
+      }
       while(sem_trywait(wisdom_sem)<0) {
-        sprintf(label,"          %s          ",wisdom_get_status());
-        gtk_label_set_label(GTK_LABEL(text),label);
+        if(text!=NULL) {
+          sprintf(label,"          %s          ",wisdom_get_status());
+          gtk_label_set_label(GTK_LABEL(text),label);
+        }
         while (g_main_context_pending(NULL))
           g_main_context_iteration(NULL, FALSE);
         usleep(100000); // 100ms
       }
-      gtk_window_destroy(GTK_WINDOW(dialog));
+      if(dialog!=NULL) gtk_window_destroy(GTK_WINDOW(dialog));
 
       // The semaphore was posted from the END of wisdom_thread, so the thread
       // is finished: join it (which also drops g_thread_new's reference -- the
@@ -779,6 +831,25 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   if(display==NULL) {
     log_info("HPSDR: no default display!\n");
     _exit(0);
+  }
+
+  if(radio_headless) {
+#ifdef G_OS_UNIX
+    g_unix_signal_add(SIGINT,headless_signal_cb,GINT_TO_POINTER(SIGINT));
+    g_unix_signal_add(SIGTERM,headless_signal_cb,GINT_TO_POINTER(SIGTERM));
+#endif
+#ifdef __APPLE__
+    // No window means no business in the Dock or the app switcher:
+    // NSApplicationActivationPolicyAccessory (1), via the Obj-C runtime as
+    // below, so no AppKit link and no .m file.
+    Class app_class = objc_getClass("NSApplication");
+    if(app_class) {
+      id (*msg_id)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+      BOOL (*msg_long)(id, SEL, long) = (BOOL (*)(id, SEL, long))objc_msgSend;
+      id app = msg_id((id)app_class, sel_registerName("sharedApplication"));
+      if(app) msg_long(app, sel_registerName("setActivationPolicy:"), 1);
+    }
+#endif
   }
 
 #ifdef OPENGL
@@ -1087,6 +1158,14 @@ int main(int argc, char **argv) {
         if(i+1<argc && argv[i+1][0]!='-') {
           fake_iq_file=argv[++i];
         }
+      } else if(strcmp(argv[i],"--headless")==0) {
+        // No window at all: open a device straight away (--open, --faker, or
+        // the first one discovered) and serve it to the browser remote only.
+        radio_headless=TRUE;
+      } else if(strcmp(argv[i],"--web-tx")==0) {
+        // Arm browser PTT for this session -- what the Configure -> Network
+        // checkbox does on the desktop, and like it never saved.
+        radio_headless_web_tx=TRUE;
       } else if(strcmp(argv[i],"--usb-only")==0) {
         // Skip the blocking Protocol 1/2 network discovery; only enumerate
         // USB/SoapySDR devices for a near-instant startup.

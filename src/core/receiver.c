@@ -712,6 +712,14 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
 static gboolean decoder_taps_audio(RECEIVER *rx);   // defined below
 #endif
 
+// --headless serves the browser, so the computer it runs on stays silent: no
+// output device is opened and nothing is written to one.  local_audio itself is
+// left alone -- it is the operator's saved choice for the desktop, and it is
+// what a later windowed run reads back.
+static gboolean rx_plays_locally(const RECEIVER *rx) {
+  return rx->local_audio && !radio_headless;
+}
+
 // TRUE when this RX needs the CLEANEST possible signal, so every WDSP block that
 // alters the waveform for the human ear is bypassed: the noise blankers (NB/NB2),
 // all four noise-reduction algorithms (NR/NR2/NR3/NR4), the auto-notch (ANF), the
@@ -2203,7 +2211,8 @@ static gboolean update_timer_cb(void *data) {
            the audio's ring hides and the waterfall cannot.  This measures
            what the eye sees; everything else measures samples. */
         rx_wf_cadence_note(rx);
-        update_rx_panadapter(rx,running);
+        if(radio_headless) update_rx_panadapter_headless(rx,running);
+        else update_rx_panadapter(rx,running);
         int web_offset=MAX(0,rx->pan);
         int web_count=MIN(rx->panadapter_width,rx->pixels-web_offset);
         if(web_count>0) {
@@ -2217,12 +2226,12 @@ static gboolean update_timer_cb(void *data) {
                                       (float)rx->panadapter_low,
                                       (float)(rx->panadapter_high-rx->panadapter_low));
         }
-        update_waterfall(rx);
-      } else if(!running) {
+        if(!radio_headless) update_waterfall(rx);
+      } else if(!running && !radio_headless) {
         update_rx_panadapter(rx,running);
       }
     }
-    update_meter(rx);
+    if(!radio_headless) update_meter(rx);
   }
   update_radio_info(rx);
 
@@ -2914,7 +2923,7 @@ static void process_rx_buffer(RECEIVER *rx) {
     left_audio_sample=(short)(left_sample*32767.0);
     right_audio_sample=(short)(right_sample*32767.0);
 
-    if(rx->local_audio) {
+    if(rx_plays_locally(rx)) {
       audio_write(rx,(float)left_sample,(float)right_sample);
     }
 
@@ -2936,7 +2945,7 @@ static void process_rx_buffer(RECEIVER *rx) {
       }
     }
   }
-  if(rx->local_audio && !rx->output_started) {
+  if(rx_plays_locally(rx) && !rx->output_started) {
     audio_start_output(rx);
   }
 
@@ -3791,6 +3800,28 @@ void receiver_init_analyzer(RECEIVER *rx) {
 // so cap the zoom to whatever keeps pixels within that ceiling.
 #define WDSP_MAX_PIXELS 16384
 
+// --headless: no window is ever mapped, so the panadapter's resize - the only
+// thing that sets panadapter_width and with it rx->pixels - never comes.  Give
+// the analyzer the width it would have had instead: as many bins as the
+// browser's widest profile (Ultra) asks for, so the remote gets one source bin
+// per row bin.  Done the way resize_timeout does it, under rx->mutex.
+#define HEADLESS_PANADAPTER_WIDTH  2048
+#define HEADLESS_PANADAPTER_HEIGHT 300
+
+void receiver_headless_geometry(RECEIVER *rx) {
+  g_mutex_lock(&rx->mutex);
+  rx->panadapter_width=HEADLESS_PANADAPTER_WIDTH;
+  rx->panadapter_height=HEADLESS_PANADAPTER_HEIGHT;
+  int max_zoom=WDSP_MAX_PIXELS/rx->panadapter_width;
+  if(max_zoom<1) max_zoom=1;
+  if(rx->zoom>max_zoom) rx->zoom=max_zoom;
+  if(rx->zoom<1) rx->zoom=1;
+  rx->pixels=rx->panadapter_width*rx->zoom;
+  center_pan_on_cursor(rx);
+  receiver_init_analyzer(rx);
+  g_mutex_unlock(&rx->mutex);
+}
+
 void receiver_change_zoom(RECEIVER *rx,int zoom) {
 log_info("%s: %d\n",__FUNCTION__,zoom);
   if(rx->panadapter_width>0) {
@@ -4554,6 +4585,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   // takes the whole pane (the restore above no-ops while hidden).
   receiver_apply_panadapter_visibility(rx);
   update_frequency(rx);
+  if(radio_headless) receiver_headless_geometry(rx);
 
   // Poll the display faster than WDSP produces frames (production ~= fps, tied to
   // the analyzer overlap). Polling AT fps aliased against the ~fps production and
@@ -4564,7 +4596,7 @@ log_info("receiver_change_sample_rate: resample_step=%d\n",rx->resample_step);
   rx->update_timer_id=g_timeout_add(poll_ms,update_timer_cb,(gpointer)rx);
 
 
-  if(rx->local_audio) {
+  if(rx_plays_locally(rx)) {
     if(audio_open_output(rx)<0) {
       rx->local_audio=FALSE;
     }

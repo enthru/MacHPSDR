@@ -221,6 +221,15 @@ quantized latest-only spectrum row per subscribed receiver, a Canvas panadapter
 and browser-derived waterfall, Low/Balanced/High/Ultra profiles, adaptive fallback,
 click/drag/wheel tuning and draggable filter edges.
 
+Headless server (2026-10-25): `--headless` runs with no window, as the browser
+remote's server only — no rendering, no local sound, server forced on without
+persisting it, browser PTT armed only by `--web-tx`.  Details in the spec's
+"Headless server".  Code: `main.c` (flags, device pick, hidden window, wisdom
+without its window, signals, macOS accessory policy), `receiver.c`
+(`receiver_headless_geometry`, `rx_plays_locally`, render skips),
+`rx_panadapter.c` (`update_rx_panadapter_headless`), `audio.c`
+(`audio_open_output` refuses), `web_server.c` (force-start, open-login warning).
+
 ## File map
 
 | Area | Files | Responsibility |
@@ -299,6 +308,27 @@ click/drag/wheel tuning and draggable filter edges.
 ## Verification record
 
 ### 2026-10-25 — receive recording in the browser
+### 2026-10-25 — headless server
+
+Operator request: a mode with no drawing at all, serving only the browser.
+A true GTK-free core was rejected for now (radio and receiver state are built
+inside the widget tree); the window is built and never shown instead.  First
+live run played local audio on the operator's machine and was killed by them,
+so local output is now never opened in this mode.
+
+Verified: `make`, `make check`, `tools/win-crossbuild.sh`.  Live faker on macOS
+(`HOME=<tmp> MACHPSDR_WEB=18443 ./machpsdr --headless --faker iq.wav`) with a
+scripted TLS WebSocket client (scratch): `GET /` 200, upgrade 101, `hello` +
+`state`; Ultra subscription answered `bins 2048, fps 30` and delivered 76 rows
+of 2048 bins in 4 s (19/s, the receiver's fps) with live data (bytes 25..239);
+Low delivered exactly 5/s of 256 bins; ~9 % CPU, ~370 MB RSS; no window, no
+audio device opened (none logged); SIGTERM logged `signal 15, saving and
+stopping`, exited and wrote the props.  NOT verified: a real browser page and
+WebRTC audio against a headless server, `--web-tx` keying, `--open` on real
+hardware headless, Linux under `xvfb-run`, the Dock icon actually absent (no
+screenshot taken), the CPU saving against a windowed run (not measured — it
+would put a window over the operator).
+
 
 Operator request: record audio in the browser.  Built client-side only: the
 server already sends the demodulated audio (tapped before the listen gain), so

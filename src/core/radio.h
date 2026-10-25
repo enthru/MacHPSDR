@@ -496,6 +496,15 @@ static inline void radio_dc_block_set(RADIO *r,gboolean enabled) {
   g_atomic_int_set(&r->dc_block,enabled ? TRUE : FALSE);
 }
 
+/* --headless: the radio runs with no window on screen, as a server for the
+   browser remote only.  The GTK widget tree is still built (the application is
+   written around it) but never shown, so nothing is rendered; the analyzer gets
+   a fixed width instead of one from a widget allocation that never arrives.
+   radio_headless_web_tx is --web-tx, the launch-time stand-in for the
+   desktop's session-only browser-PTT arm.  Both defined in main.c. */
+extern gboolean radio_headless;
+extern gboolean radio_headless_web_tx;
+
 extern int radio_restart(void *data);
 extern int radio_start(void *data);
 extern gboolean isTransmitting(RADIO *r);

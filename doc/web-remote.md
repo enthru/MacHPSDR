@@ -86,6 +86,8 @@ assets.
    use the existing `ext_*` main-loop dispatch pattern.
 5. PTT is separately armed in the desktop application.  A disconnect, expired
    control lease or missing audio heartbeat unkeys the transmitter.
+   A headless server (`--headless`, no window) has no checkbox to arm, so it
+   stays disarmed unless launched with `--web-tx`, which arms that run only.
 6. Network backpressure may drop spectrum/audio frames; it must never block the
    GTK, protocol, DSP or audio threads.
 7. HTTP paths are fixed and cannot contain `..`, percent-decoded paths or user
@@ -145,6 +147,22 @@ reuse cached browser credentials to open the control socket.
   calls WDSP itself.
 - The RX audio thread feeds a bounded single-producer queue.  Encoding and
   socket writes happen elsewhere.
+
+### Headless server
+
+`--headless` runs the radio as this server alone.  The GTK widget tree is still
+built (the application is written around it) but the window is never shown, so
+nothing is mapped or rendered.  Because no panadapter allocation ever arrives,
+`receiver_headless_geometry()` gives each receiver a fixed 2048-pixel analyzer
+(one source bin per Ultra bin); the fps timer still fetches pixels, keeps the
+auto dB scale (`update_rx_panadapter_headless()`) and publishes the spectrum,
+but skips the panadapter, waterfall and S-meter rendering.  No local audio
+output is opened or written; the saved `local_audio` choice is left untouched
+for the next windowed run.  The server starts whatever `radio.web_enable` says
+and does not write it.  The device is `--open`, `--faker` or the first real one
+discovered; a miss exits instead of showing the selection window.  SIGINT and
+SIGTERM run the normal save-and-stop path.  A display connection is still
+required (GTK cannot initialise without one).
 
 ### Transport classes and bandwidth adaptation
 

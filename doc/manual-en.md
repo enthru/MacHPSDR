@@ -888,6 +888,19 @@ third-party service is used: WebRTC uses the address through which the browser
 opened the page together with the configured UDP port. The status line shows
 both ports, the protection state and connected-client count.
 
+**Headless server (`--headless`).** `./machpsdr --headless` runs the radio with
+no window at all, purely as the server for the browser remote: nothing is drawn
+and no sound plays on this computer (audio goes only to browsers). It opens the
+device given with `--open <name>` or `--faker <iq.wav>`, otherwise the first
+radio discovered, and starts the browser remote even if it is switched off in
+Configure, without changing that setting. Port, password and certificate are
+the saved ones — set the password once in a normal windowed run beforehand, or
+the log warns that the remote is open. Browser transmit stays disarmed unless
+`--web-tx` is given (the launch-time equivalent of the **Allow browser PTT**
+checkbox, for this run only). Stop it with Ctrl-C or `kill` (SIGTERM): settings
+are saved as on a normal quit. On macOS it does not appear in the Dock. A
+graphical session is still required (on a Linux server, e.g. under `xvfb-run`).
+
 **Remove DC spike (Configure → Radio, SoapySDR).** Enabled by default and applied
 immediately to the shared device stream, before individual receivers are tuned
 out of it. It suppresses DC around the device LO with a 20 Hz corner; this may
@@ -1020,6 +1033,8 @@ recorder replay, and the UI without a radio.
 | `--open <name\|index>` | Open a discovered device straight away, no selection window. Matched against the device name (case-insensitive, first match); a bare number is an index into the discovered list. |
 | `--faker <iq.wav>` | Start the synthetic "I/Q Player" device on that recording, skipping the selection window (§14). |
 | `--usb-only` | Skip network discovery — USB devices only. Also skips the ~5 s libiio network browse. |
+| `--headless` | No window: serve the radio to the browser remote only, no local sound (§ browser remote). Opens `--open`/`--faker`, else the first radio found. |
+| `--web-tx` | With `--headless`: allow browser PTT for this run. |
 | `--log-level <error\|info\|debug>` | Console log threshold (`--log-level=debug` also works). |
 | `-v`, `--verbose` | Shorthand for `--log-level debug`. |
 | `--debug=rx,tx,...` | Enable DEBUG for selected comma-separated areas; `all` / `none` are accepted. |

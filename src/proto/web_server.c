@@ -1514,7 +1514,16 @@ void web_server_init(RADIO *radio) {
     int port=atoi(env);
     if(port>0 && port<=65535) radio->web_port=port;
   }
-  if(radio!=NULL && radio->web_enable) web_server_start();
+  /* --headless exists to be this server, so it starts whatever the saved
+     switch says -- without writing the switch, so a later desktop run keeps
+     the operator's own choice.  --web-tx stands in for the desktop arm. */
+  if(radio!=NULL && radio_headless) {
+    if(radio_headless_web_tx) radio->web_tx_enable=TRUE;
+    if(!radio->web_auth_enable)
+      log_error("web: headless and NOT password protected -- anyone who can reach "
+                "the port controls the radio (set a password in Configure -> Network)\n");
+  }
+  if(radio!=NULL && (radio->web_enable || radio_headless)) web_server_start();
 }
 
 void web_server_start(void) {
