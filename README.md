@@ -594,7 +594,8 @@ can be replayed separately in the I/Q Player.
   and S-meter plus a bandwidth-bounded live panadapter and browser-generated
   waterfall. Per-receiver Low (256/5 fps), Balanced (512/10, default) and High
   (1024/15) plus LAN-oriented Ultra (2048/30) profiles stay latest-only and automatically back off for a slow
-  browser. Click/drag/wheel tuning and draggable filter edges are available, plus
+  browser. Click/drag/wheel tuning, per-digit VFO tuning (wheel over a digit, or
+  hover a digit and type 0-9) and draggable filter edges are available, plus
   per-receiver tuning step, AGC mode, AF gain, squelch, AGC gain, the noise
   controls (NB/NR dropdowns off/NB/NB2 and off/NR/NR2/NR3/NR4, SNB/ANF toggles —
   dimmed and suppressed in DIGU/DIGL or under a decoder, exactly as on the desktop),

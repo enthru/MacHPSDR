@@ -802,7 +802,9 @@ or change the port (default 8080), then open
 `https://<this-computer-IP>:8080` in a browser on this computer or another device
 on the LAN. The page shows every visible receiver's frequency, mode,
 S-meter, live panadapter and rolling waterfall; it can retune, change mode and
-follows the MOX state. Each receiver card also carries **tuning step**, **AGC
+follows the MOX state. As on the desktop VFO, the **wheel over a digit** of the
+frequency tunes by that digit, and **typing 0-9 with the pointer over a digit**
+overwrites it and moves to the next digit on the right. Each receiver card also carries **tuning step**, **AGC
 mode**, **AF gain**, **squelch**, **AGC gain** and the **noise** controls (**NB**
 and **NR** dropdowns — off/NB/NB2 and off/NR/NR2/NR3/NR4 — plus **SNB** and **ANF**
 toggle chips). As on the desktop, the noise controls are dimmed in DIGU/DIGL or

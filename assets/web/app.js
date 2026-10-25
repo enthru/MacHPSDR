@@ -38,6 +38,19 @@ function formatFreq(hz) {
   const d = String(Math.max(0, Math.round(hz))).padStart(11, "0").slice(-11);
   return `${d.slice(0, 5)}.${d.slice(5, 8)}.${d.slice(8, 11)}`;
 }
+// The readout's 13 characters, as the desktop's freq_digit_at() indexes them:
+// the place value of each digit, 0 for a separator.
+const FREQ_PLACES = [1e10, 1e9, 1e8, 1e7, 1e6, 0, 1e5, 1e4, 1e3, 0, 100, 10, 1];
+const FREQ_MAX = 99999999999;
+// The digit typing targets: the one under the pointer, then (after each typed
+// digit) the next to its right, as the desktop's vfo_type_digit() does.
+// {card, index}, or null once the pointer leaves the readout.
+let digitCursor = null;
+function setDigitCursor(card, index) {
+  document.querySelectorAll(".freq-digit.digit-cursor").forEach(el => el.classList.remove("digit-cursor"));
+  digitCursor = card && index >= 0 ? { card, index } : null;
+  if (digitCursor) card.querySelectorAll(".freq-a > span")[index].classList.add("digit-cursor");
+}
 function formatWidth(hz) {
   const w = Math.abs(Math.round(hz));
   return w >= 1000 ? `${(w / 1000).toFixed(w % 1000 ? 1 : 0)}k` : `${w}`;
@@ -258,6 +271,27 @@ function installSpectrumGestures(card, rxId) {
   });
 }
 
+function showFrequency(card, hz) {
+  const text = formatFreq(hz);
+  card.querySelectorAll(".freq-a > span").forEach((span, i) => {
+    if (span.textContent !== text[i]) span.textContent = text[i];
+  });
+}
+// A digit key while the pointer is over a VFO digit types into it -- unless the
+// viewer is typing into a field of the page.
+document.addEventListener("keydown", event => {
+  if (!digitCursor || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (!/^[0-9]$/.test(event.key)) return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement ||
+      target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+  if (!digitCursor.card.isConnected || digitCursor.card.querySelector(".freq-a").hidden) {
+    setDigitCursor(null, -1); return;
+  }
+  event.preventDefault();
+  digitCursor.card._typeDigit(digitCursor.index, Number(event.key));
+});
+
 function makeCard(rx) {
   const card = template.content.firstElementChild.cloneNode(true);
   card.dataset.rx = rx.id;
@@ -271,6 +305,7 @@ function makeCard(rx) {
   const display = card.querySelector(".freq-a");
   const editor = card.querySelector(".freq-edit");
   const openEditor = () => {
+    setDigitCursor(null, -1);
     editor.value = String(card._rx?.frequency ?? "");
     display.hidden = true; editor.hidden = false; editor.focus(); editor.select();
   };
@@ -279,6 +314,49 @@ function makeCard(rx) {
     const value = Number(editor.value.replace(/[^0-9]/g, ""));
     if (Number.isSafeInteger(value) && value > 0) command("set_frequency", { rx: rx.id, value });
     closeEditor();
+  };
+  // Per-digit tuning, the desktop VFO's twin: one span per readout character
+  // (render() rewrites their text). The wheel over a digit tunes by its place
+  // value; a typed 0-9 overwrites the digit under the pointer and moves one to
+  // the right. Both send an absolute set_frequency, so ctun/freetune and the VFO
+  // lock are the server's business exactly as for the type-in editor.
+  FREQ_PLACES.forEach(place => {
+    const span = document.createElement("span");
+    span.textContent = place ? "0" : ".";
+    if (place) span.className = "freq-digit";
+    display.append(span);
+  });
+  const digitSpans = [...display.children];
+  const retune = value => {
+    if (!card._rx || card._rx.locked || !canControl()) return false;
+    value = Math.max(1, Math.min(FREQ_MAX, value));
+    if (value === card._rx.frequency) return false;
+    card._rx.frequency = value;           // optimistic, so a burst compounds
+    showFrequency(card, value);
+    command("set_frequency", { rx: rx.id, value });
+    return true;
+  };
+  display.addEventListener("mouseover", event => {
+    const i = digitSpans.indexOf(event.target);
+    if (i >= 0 && FREQ_PLACES[i]) setDigitCursor(card, i);
+  });
+  display.addEventListener("mouseleave", () => { if (digitCursor?.card === card) setDigitCursor(null, -1); });
+  display.addEventListener("wheel", event => {
+    const i = digitSpans.indexOf(event.target);
+    if (i < 0 || !FREQ_PLACES[i] || !card._rx) return;
+    event.preventDefault();
+    let notch = wheelNotches(display, event);
+    if (radioState?.vfo_scroll_reversed) notch = -notch;
+    if (notch) retune(card._rx.frequency + notch * FREQ_PLACES[i]);
+  }, { passive: false });
+  card._typeDigit = (index, n) => {
+    if (!card._rx) return;
+    const place = FREQ_PLACES[index];
+    const current = Math.floor(card._rx.frequency / place) % 10;
+    retune(card._rx.frequency + (n - current) * place);
+    let next = index + 1;
+    while (next < FREQ_PLACES.length && !FREQ_PLACES[next]) next++;
+    if (next < FREQ_PLACES.length) setDigitCursor(card, next);
   };
   display.addEventListener("click", openEditor);
   display.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } });
@@ -385,7 +463,7 @@ function render(state) {
     subscribe(card, rx.id);
     card.classList.toggle("active", state.radio.active_rx === rx.id);
     const editor = card.querySelector(".freq-edit");
-    if (editor.hidden) card.querySelector(".freq-a").textContent = formatFreq(rx.frequency);
+    if (editor.hidden) showFrequency(card, rx.frequency);
     card.querySelector(".mode").value = String(rx.mode);
     // Filter presets: rebuild the dropdown when the mode's list changes, then
     // reflect the current preset (unless the viewer is holding the select open).

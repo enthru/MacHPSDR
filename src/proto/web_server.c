@@ -608,7 +608,7 @@ static void append_state_body(GString *s, gboolean include_meter) {
       "\"drive\":%d,\"tune_drive\":%d,\"mic_gain\":%d,"
       "\"compressor\":%s,\"comp_level\":%d,\"leveler\":%s,\"cessb\":%s,"
       "\"decoder_mode\":%d,\"decoder_title\":\"%s\",\"decoder_text\":\"%s\","
-      "\"bookmarks\":[",
+      "\"vfo_scroll_reversed\":%s,\"bookmarks\":[",
       web_radio->mox?"true":"false",
       web_radio->tune?"true":"false",
       g_atomic_int_get(&web_remote_ptt)?"true":"false",
@@ -623,7 +623,8 @@ static void append_state_body(GString *s, gboolean include_meter) {
       web_radio->transmitter?(int)lround(web_radio->transmitter->compressor_level):0,
       (web_radio->transmitter && web_radio->transmitter->leveler)?"true":"false",
       (web_radio->transmitter && web_radio->transmitter->cessb)?"true":"false",
-      web_radio->decode_mode,decoder_title,decoder_text);
+      web_radio->decode_mode,decoder_title,decoder_text,
+      web_radio->vfo_scroll_reversed?"true":"false");
   g_free(decoder_title); g_free(decoder_text);
   gboolean first_bookmark=TRUE;
   int bookmark_count=bookmarks_count();

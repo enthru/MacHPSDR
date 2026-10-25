@@ -426,6 +426,7 @@ gain — ship as
 allow-listed `command` actions whose read-back fields are in `state`, so a change
 from any surface echoes to every browser. Filter presets, the noise controls
 (NB/NR/ANF/SNB under the DIGU/DIGL and decoder bypass rule), a band dropdown,
+per-digit VFO tuning (wheel over a digit, hover and type 0-9, as on the desktop),
 RIT/split, sub-receiver enable/crossfeed, saved-bookmark recall and the active
 decoder's textual readout are included.
 

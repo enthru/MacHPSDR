@@ -289,6 +289,29 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-25 — per-digit VFO tuning
+
+Operator request: the wheel over a digit of the frequency should tune by that
+digit, and a typed digit should overwrite the digit under the pointer — the
+desktop VFO's behaviour (`frequency_a_scroll_event_cb`, `vfo_type_digit`).  The
+readout is now 13 spans indexed like `freq_digit_at()`; the wheel (through
+`wheelNotches()`, so a trackpad is one notch per 16 px) adds the digit's place
+value; a document-level 0-9 key while a digit is hovered overwrites it and moves
+the cursor one digit right, skipping the separators, like the desktop.  Both
+send an absolute `set_frequency` (ctun/freetune, the lock and the range stay
+the server's) after an optimistic local update, so a fast burst compounds.  Keys
+are ignored after the pointer leaves the readout, while the type-in editor is
+open and inside any input/select.  `state.radio.vfo_scroll_reversed` carries the
+desktop's Configure → Display preference, which the wheel honours.
+
+Verified: `make check`; app.js parses (JavaScriptCore); live faker + headless
+Chrome driven over the DevTools protocol (synthetic events, scratch): wheel up
+over the 10 kHz digit +10 000 Hz, two down −20 000, over the 1 Hz digit +1;
+hover the 10 MHz digit and type 1 4 0 → 100.024.000 → 114.024.000 with the
+cursor ending on the 10 kHz digit; a key after leaving the readout does nothing;
+a key inside the editor input is not taken; no GTK-CRITICAL.  NOT verified: a
+real mouse wheel/trackpad and keyboard in a browser (operator), a locked VFO.
+
 ### 2026-10-25 — band dropdown replaces the band up/down chips
 
 Operator question: why band up/down chips instead of a dropdown.  There was no
