@@ -151,6 +151,29 @@ function subscribe(card, rx) {
   card.dataset.subscription = String(socketGeneration);
   send({ type: "spectrum_subscribe", rx, profile: card.querySelector(".spectrum-profile").value });
 }
+// The browser twin of the desktop's scroll_notches(): a wheel event becomes at
+// most one notch.  A mouse detent (line/page mode, or a legacy wheelDelta that
+// is a whole multiple of 120) is one notch as before.  A trackpad delivers dozens
+// of small pixel deltas per swipe plus momentum, so those are accumulated on the
+// element and a notch is emitted each WHEEL_PIXEL_STEP; whole notches beyond one
+// are discarded rather than banked, and a reversal starts afresh.  Returns +1 for
+// up/away (deltaY < 0), -1 for down, 0 for no notch (incl. a horizontal swipe).
+const WHEEL_PIXEL_STEP = 16;
+function wheelNotches(el, event) {
+  const dy = event.deltaY;
+  if (!dy) return 0;
+  const legacy = Math.abs(event.wheelDeltaY || 0);
+  if (event.deltaMode !== 0 || (legacy >= 120 && legacy % 120 === 0)) {
+    el._wheelAcc = 0;
+    return dy < 0 ? 1 : -1;
+  }
+  let acc = el._wheelAcc || 0;
+  if ((acc > 0 && dy < 0) || (acc < 0 && dy > 0)) acc = 0;
+  acc += dy;
+  if (Math.abs(acc) < WHEEL_PIXEL_STEP) { el._wheelAcc = acc; return 0; }
+  el._wheelAcc = acc % WHEEL_PIXEL_STEP;
+  return acc < 0 ? 1 : -1;
+}
 function canvasX(event, canvas) {
   const rect = canvas.getBoundingClientRect();
   return Math.max(0, Math.min(rect.width, event.clientX - rect.left));
@@ -224,7 +247,8 @@ function installSpectrumGestures(card, rxId) {
   canvas.addEventListener("wheel", event => {
     if (!card._rx) return;
     event.preventDefault();
-    stepBy(event.deltaY < 0 ? 1 : -1);
+    const notch = wheelNotches(canvas, event);
+    if (notch) stepBy(notch);
   }, { passive: false });
   // Keyboard twin of the wheel: left/right one step, Shift for ten.
   canvas.addEventListener("keydown", event => {
@@ -313,7 +337,11 @@ function makeCard(rx) {
       command(valueAction, { rx: rx.id, value: Math.max(-10000, Math.min(10000, next)) });
     };
     el.addEventListener("click", () => command(enableAction, { rx: rx.id, value: card._rx?.[onField] ? 0 : 1 }));
-    el.addEventListener("wheel", event => { event.preventDefault(); nudge(event.deltaY < 0); }, { passive: false });
+    el.addEventListener("wheel", event => {
+      event.preventDefault();
+      const notch = wheelNotches(el, event);
+      if (notch) nudge(notch > 0);
+    }, { passive: false });
     el.addEventListener("keydown", event => {
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       event.preventDefault(); nudge(event.key === "ArrowUp");

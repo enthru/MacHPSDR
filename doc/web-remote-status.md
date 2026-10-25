@@ -289,6 +289,26 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-25 — trackpad wheel normalisation
+
+Operator report: on a Mac trackpad the spectrum wheel "skips wildly".  Every
+wheel event was one tuning step, and a single trackpad swipe with momentum
+fires ~60 of them; a horizontal swipe (`deltaY == 0`) also stepped down.
+`wheelNotches()` in `app.js` is now the browser twin of the desktop's
+`scroll_notches()`: a mouse detent (line/page `deltaMode`, or a legacy
+`wheelDeltaY` that is a whole multiple of 120) stays one step; pixel deltas are
+accumulated per element, one step per 16 px (the desktop's
+`SCROLL_SURFACE_STEP`), at most one per event, surplus discarded, a reversal
+starting afresh, zero `deltaY` ignored.  The spectrum and the RIT/XIT chips use
+it.
+
+Verified: the function, extracted from `app.js` and run under JavaScriptCore
+(`osascript -l JavaScript`) on synthetic streams — a 60-event 585 px swipe with
+momentum gives 34 steps (was 60), five mouse detents give five in each
+direction (Chrome/Safari pixel+wheelDelta and Firefox line mode), a 30-event
+horizontal swipe and 10 px of jitter give none, a reversal steps on its first
+16 px.  NOT verified: a real trackpad in a real browser (operator).
+
 ### 2026-10-25 — Phase 5 slice 4 run against a live server; Windows build
 
 The roles/control-lease/throttling check ran against a live server: the faker

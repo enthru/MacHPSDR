@@ -820,7 +820,8 @@ or any of these settings on the desktop — updates every connected browser live
 the server pushes state as it changes rather than the page polling for it. Choose
 **Low** (256 bins/5 fps), **Balanced** (the default, 512/10), **High** (1024/15)
 or **Ultra** (2048/30, LAN/wide-window use) for each receiver. Click the spectrum to tune,
-drag it to move the tuning frequency, use the wheel for one tuning step, pick a
+drag it to move the tuning frequency, use the wheel for one tuning step (a trackpad swipe
+gives one step per ~16 px of travel, the same feel as the desktop), pick a
 filter preset, or drag either highlighted filter edge. The status beside the profile reports the
 effective profile, received FPS, row age and rows dropped for a slow browser;
 MacHPSDR automatically reduces FPS before width and recovers after congestion.
