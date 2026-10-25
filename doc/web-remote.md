@@ -425,7 +425,7 @@ controls — tuning step, AGC mode, AF/RF gain or attenuation, squelch and AGC
 gain — ship as
 allow-listed `command` actions whose read-back fields are in `state`, so a change
 from any surface echoes to every browser. Filter presets, the noise controls
-(NB/NR/ANF/SNB under the DIGU/DIGL and decoder bypass rule), band up/down,
+(NB/NR/ANF/SNB under the DIGU/DIGL and decoder bypass rule), a band dropdown,
 RIT/split, sub-receiver enable/crossfeed, saved-bookmark recall and the active
 decoder's textual readout are included.
 

@@ -324,9 +324,10 @@ function makeCard(rx) {
   // still works; this is the reliable width control.
   const filterSel = card.querySelector(".filter-sel");
   filterSel.addEventListener("change", () => command("set_filter_preset", { rx: rx.id, value: Number(filterSel.value) }));
-  // Band up/down (set_band, which refuses a locked VFO) and split toggle.
-  card.querySelector(".band-down").addEventListener("click", () => command("band_step", { rx: rx.id, value: -1 }));
-  card.querySelector(".band-up").addEventListener("click", () => command("band_step", { rx: rx.id, value: 1 }));
+  // Band: a dropdown of the bands the desktop menu offers (set_band, which
+  // refuses a locked VFO), and the split toggle.
+  const bandSel = card.querySelector(".band-sel");
+  bandSel.addEventListener("change", () => command("set_band", { rx: rx.id, value: Number(bandSel.value) }));
   card.querySelector(".split-chip").addEventListener("click", () => command("set_split", { rx: rx.id, value: card._rx?.split ? 0 : 1 }));
   // RIT/XIT: click toggles on/off, wheel (or up/down arrows when focused) nudges
   // the offset by 10 Hz (the desktop's rit_step), clamped server-side to +/-10 kHz.
@@ -444,7 +445,25 @@ function render(state) {
       card.querySelector(sel).classList.toggle("chip-suppressed", !!rx.noise_bypassed);
     // Band name, split and RIT/XIT. The offset chips show the value when on; XIT
     // is only meaningful on a transmit-capable radio.
-    if (rx.band !== undefined) card.querySelector(".band-name").textContent = rx.band;
+    // Band dropdown: rebuilt when the offered list changes (a transverter row
+    // named or cleared), then set to this receiver's band.
+    const bandSel = card.querySelector(".band-sel");
+    const bands = state.radio.bands;
+    if (Array.isArray(bands)) {
+      const key = bands.map(b => b.i + "=" + b.n).join("|");
+      if (bandSel._key !== key) {
+        bandSel._key = key;
+        bandSel.textContent = "";
+        bands.forEach(b => bandSel.add(new Option(b.n, b.i)));
+      }
+    }
+    if (rx.band_id !== undefined && document.activeElement !== bandSel) {
+      // A band outside the list (never expected) shows its name rather than a
+      // wrong row.
+      if (![...bandSel.options].some(o => o.value === String(rx.band_id)))
+        bandSel.add(new Option(rx.band || "?", rx.band_id));
+      bandSel.value = String(rx.band_id);
+    }
     card.querySelector(".split-chip").classList.toggle("chip-on", !!rx.split);
     const fmtOffset = v => (v >= 0 ? "+" : "") + v;
     const ritChip = card.querySelector(".rit-chip");

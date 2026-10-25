@@ -289,6 +289,26 @@ click/drag/wheel tuning and draggable filter edges.
 
 ## Verification record
 
+### 2026-10-25 — band dropdown replaces the band up/down chips
+
+Operator question: why band up/down chips instead of a dropdown.  There was no
+reason — the chips copied the desktop's band up/down while the same commit made
+NB/NR dropdowns under the rule "a control with several discrete states is a
+`<select>`".  Now `state.radio.bands` carries `{i, n}` for every band the
+desktop band menu offers (`band_is_offered()` in `band.c`, which the GTK menu
+uses too: a named row, VHF/UHF only on SoapySDR, named XVTR slots included),
+each receiver carries `band_id`, and `set_band` (`WEB_CTRL_SET_BAND`) goes
+through `set_band(rx, i, -1)` — the band's current stack entry, refused on a
+locked VFO — dropping an index the menu would not offer.  `band_step` stays in
+the protocol (unused by the page).  The receiver's `band` name and the list are
+JSON-escaped now: an XVTR title is the operator's own text.
+
+Verified: `make check`; `web_offline` parses `set_band` and rejects it without
+`rx`; app.js parses (JavaScriptCore).  Live faker over WSS (scratch stdlib
+client): 15 bands listed (no VHF on the fake device), `set_band 5` moved GEN →
+40 m at 7 152 000 Hz, indices 99 and 16 (VHF) left it there, no GTK-CRITICAL.
+NOT verified: the dropdown in a real browser (operator), a named XVTR row.
+
 ### 2026-10-25 — trackpad wheel normalisation
 
 Operator report: on a Mac trackpad the spectrum wheel "skips wildly".  Every

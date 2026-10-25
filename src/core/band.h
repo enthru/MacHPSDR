@@ -124,6 +124,10 @@ extern void bandSaveState(void);
 extern void bandRestoreState(void);
 extern void change_filters(void);
 
+/* TRUE for a band the band menu offers: a named row (an unnamed XVTR slot is
+   empty), and the VHF/UHF rows only on a SoapySDR device. The GTK band menu and
+   the browser remote's band dropdown both list exactly these. */
+extern gboolean band_is_offered(int b);
 extern int next_band(int current_band);
 extern int previous_band(int current_band);
 

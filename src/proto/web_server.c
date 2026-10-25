@@ -636,6 +636,17 @@ static void append_state_body(GString *s, gboolean include_meter) {
     first_bookmark=FALSE;
     g_free(raw_name); g_free(name);
   }
+  // The band list the desktop band menu offers (transverter names are the
+  // operator's own text, so escaped).
+  g_string_append(s,"],\"bands\":[");
+  gboolean first_band=TRUE;
+  for(int b=0;b<BANDS+XVTRS;b++) {
+    if(!band_is_offered(b)) continue;
+    gchar *name=web_json_escape(band_display_name(b));
+    g_string_append_printf(s,"%s{\"i\":%d,\"n\":\"%s\"}",first_band?"":",",b,name);
+    first_band=FALSE;
+    g_free(name);
+  }
   g_string_append(s,"]},\"receivers\":[");
   gboolean first=TRUE;
   for(int i=0;i<web_radio->discovered->supported_receivers;i++) {
@@ -707,12 +718,15 @@ static void append_state_body(GString *s, gboolean include_meter) {
     // the browser can offer a reliable width dropdown instead of only edge drags.
     gboolean xit_on = web_radio->transmitter ? web_radio->transmitter->xit_enabled : FALSE;
     long long xit = web_radio->transmitter ? (long long)web_radio->transmitter->xit : 0;
+    // An XVTR band's name is the operator's own typed text: escape it.
+    gchar *band_name=web_json_escape(band_display_name(rx->band_a));
     g_string_append_printf(s,
-        "\"band\":\"%s\",\"split\":%s,\"rit\":%lld,\"rit_on\":%s,"
+        "\"band\":\"%s\",\"band_id\":%d,\"split\":%s,\"rit\":%lld,\"rit_on\":%s,"
         "\"xit\":%lld,\"xit_on\":%s,\"filter\":%d,\"filters\":[",
-        band_display_name(rx->band_a),rx->split!=SPLIT_OFF?"true":"false",
+        band_name,rx->band_a,rx->split!=SPLIT_OFF?"true":"false",
         (long long)rx->rit,rx->rit_enabled?"true":"false",
         xit,xit_on?"true":"false",rx->filter_a);
+    g_free(band_name);
     FILTER *mode_filters=filters[mode];
     for(int fi=0;fi<FILTERS;fi++) {
       // Preset titles are compiled ASCII constants (no quote/backslash).

@@ -1618,17 +1618,10 @@ static gboolean frequency_a_press_cb(GtkGestureClick *gesture,int n_press,double
   if(!rx->locked) {
     menu=gtk_menu_new();
     for(i=0;i<BANDS+XVTRS;i++) {
-#ifdef SOAPYSDR
-      if(radio->discovered->protocol!=PROTOCOL_SOAPYSDR) {
-        if(i>=band70 && i<=bandAIR) {
-          continue;
-        }
-      }
-#endif
       band=(BAND*)band_get_band(i);
       bandstack=band->bandstack;
 
-      if(strlen(band->title)>0) {
+      if(band_is_offered(i)) {
         // GTK4: no submenus in this flat popover — the band title is a
         // non-clickable header and its entries follow it in the same popover.
         GtkWidget *band_menu=menu;

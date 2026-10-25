@@ -759,6 +759,16 @@ int get_band_from_frequency(gint64 f) {
   return found;
 }
 
+gboolean band_is_offered(int b) {
+  if(b<0 || b>=BANDS+XVTRS || bands[b].title[0]=='\0') return FALSE;
+#ifdef SOAPYSDR
+  if(b>=band70 && b<=bandAIR &&
+     (radio==NULL || radio->discovered==NULL ||
+      radio->discovered->protocol!=PROTOCOL_SOAPYSDR)) return FALSE;
+#endif
+  return TRUE;
+}
+
 int next_band(int current_band) {
   int b=current_band+1;
   if(b>=BANDS) {

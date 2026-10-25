@@ -808,7 +808,7 @@ and **NR** dropdowns — off/NB/NB2 and off/NR/NR2/NR3/NR4 — plus **SNB** and 
 toggle chips). As on the desktop, the noise controls are dimmed in DIGU/DIGL or
 while a decoder is running — the radio keeps your selection but suppresses those
 blocks there, so the control shows the choice without pretending it is taking effect. There are also
-**band down/up** chips (which show the current band and refuse a locked VFO), a
+a **band** dropdown (the bands the desktop band menu offers; refused on a locked VFO), a
 **filter-width** dropdown of the mode's presets, a **SPLIT** toggle, and **RIT**/
 **XIT** chips you click to arm and scroll to nudge by 10 Hz. The **RF** slider
 uses the connected device's own gain or attenuation range. **SUB RX** enables

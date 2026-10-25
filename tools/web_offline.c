@@ -116,6 +116,11 @@ int main(int argc, char **argv) {
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_BAND && r.value==-1);
   check("band step still requires a receiver index",
         !parse("{\"type\":\"command\",\"id\":7,\"action\":\"band_step\",\"value\":1}",&r));
+  check("band select parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_band\",\"rx\":0,\"value\":7}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_SET_BAND && r.value==7);
+  check("band select requires a receiver index",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_band\",\"value\":7}",&r));
   check("RF front-end control parses",
         parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_rf_gain\",\"rx\":0,\"value\":24}",&r) &&
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_RF_GAIN && r.value==24);

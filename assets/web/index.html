@@ -36,9 +36,10 @@
       <div class="vfo-bar">
         <div class="vfo-nav">
           <span class="rx-name chip chip-static">RX</span>
-          <button class="chip band-down" type="button" title="Band down">◂ BND</button>
-          <span class="chip band-name chip-static" title="Current band">—</span>
-          <button class="chip band-up" type="button" title="Band up">BND ▸</button>
+          <label class="chip chip-select-wrap" title="Band (refused while the VFO is locked)">
+            <span class="chip-select-prefix">BAND</span>
+            <select class="band-sel chip-select" aria-label="Band"></select>
+          </label>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&gt;B</button>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;B</button>
           <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;&gt;B</button>

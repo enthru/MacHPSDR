@@ -343,6 +343,12 @@ int ext_set_rx_control(void *data) {
       if(c->value>0) set_band(rx,next_band(rx->band_a),-1);
       else if(c->value<0) set_band(rx,previous_band(rx->band_a),-1);
       break;
+    // Band by index, as the band menu does (bandstack entry -1 keeps the band's
+    // current one). An index the menu would not offer is dropped, not folded.
+    case WEB_CTRL_SET_BAND:
+      if(c->value>=0 && c->value<BANDS+XVTRS && band_is_offered((int)c->value))
+        set_band(rx,(int)c->value,-1);
+      break;
     // One device-shaped front-end value.  Soapy calls it gain and exposes its
     // range during discovery; HPSDR-family radios expose the existing ADC
     // attenuation/LNA value.  Both paths use the same fields and hardware

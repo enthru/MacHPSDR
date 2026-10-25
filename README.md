@@ -598,7 +598,7 @@ can be replayed separately in the I/Q Player.
   per-receiver tuning step, AGC mode, AF gain, squelch, AGC gain, the noise
   controls (NB/NR dropdowns off/NB/NB2 and off/NR/NR2/NR3/NR4, SNB/ANF toggles —
   dimmed and suppressed in DIGU/DIGL or under a decoder, exactly as on the desktop),
-  band down/up (lock-aware),
+  a band dropdown (lock-aware),
   a filter-width preset dropdown, SPLIT, and click-to-arm/scroll-to-nudge RIT/XIT; the
   device-shaped RF gain/attenuation slider, sub-receiver enable and crossfeed,
   saved-bookmark recall, and the active decoder's status/text readout are also
