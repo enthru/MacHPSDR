@@ -405,6 +405,14 @@ Opus-over-WebSocket PCM/local fallback — WebRTC is the single audio transport
 audio live on 2026-10-23 (faker, macOS); the finer acceptance checks were waived
 as in Phase 2.
 
+Implemented (2026-10-25): per-receiver recording in the browser.  A record
+chip beside Mute records the received WebRTC stream with `MediaRecorder`
+(Opus in WebM/Ogg, or AAC in MP4 on Safari) and saves the file on the viewing
+device when stopped; nothing is sent to the radio, so a viewer may record.  The
+recorder is fed through a Web Audio destination re-wired to each new session,
+so a session rebuild (microphone, reconnect) is a gap in one file, not a second
+file; Mute and AF gain do not change the recording.
+
 ### Phase 4 - complete receive controls
 
 - Filters, step, AGC, AF/RF gain, attenuation, squelch, noise controls, RIT,

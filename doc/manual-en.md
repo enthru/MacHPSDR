@@ -831,7 +831,11 @@ Each receiver's demodulated audio plays automatically — there is no "listen"
 step — as a WebRTC Opus stream the browser decodes with its own jitter buffer,
 so it rides a lossy link far better than the control channel would. The
 per-receiver **Mute**/**Unmute** button silences it locally without tearing the
-stream down. Because browsers block sound until you interact with the page, the
+stream down. The **⏺** button beside it records that receiver's audio in the
+browser — it shows **⏹** and the running time — and pressing it again saves the
+file (`machpsdr_rx<n>_<UTC time>`, WebM/Opus, or M4A in Safari) to the device you
+are browsing from. Mute and AF gain do not affect the recording, a viewer login
+may record too, and the page asks before closing while a recording runs. Because browsers block sound until you interact with the page, the
 first time you may see a green **Tap to enable sound** button; one tap starts the
 audio and it does not appear again. Browser
 PTT is disabled separately: tick **Allow browser PTT (this session only)** when

@@ -603,7 +603,8 @@ can be replayed separately in the I/Q Player.
   a filter-width preset dropdown, SPLIT, and click-to-arm/scroll-to-nudge RIT/XIT; the
   device-shaped RF gain/attenuation slider, sub-receiver enable and crossfeed,
   saved-bookmark recall, and the active decoder's status/text readout are also
-  available. The page also follows/toggles MOX on a transmit-capable
+  available. A per-receiver ⏺ button records the received audio in the browser
+  and saves it as a file on that device. The page also follows/toggles MOX on a transmit-capable
   radio after **Allow browser PTT** has been armed for the current desktop
   session and one browser has pressed **Take TX control**. The renewable TX
   lease is exclusive; disconnect, a five-second heartbeat timeout, release, or

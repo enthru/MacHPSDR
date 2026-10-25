@@ -68,6 +68,15 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   `client->rtc` under `queue_mutex` (the lock the tap holds) and frees — joining
   the worker — with no lock held, so the audio thread never touches a freed
   session and the join never stalls the RX thread.
+- Browser-side receive recording (2026-10-25): the ⏺ chip beside Mute records
+  that receiver's WebRTC stream in the page (`MediaRecorder` on an
+  `AudioContext` `MediaStreamDestination`, 1 s slices) and downloads
+  `machpsdr_rx<id>_<UTC>.<webm|ogg|m4a>` on stop; it shows ⏹ m:ss while
+  running.  No protocol or server change.  The context source is re-wired on
+  every `track` event, so `restartAudioSessions()` (microphone start/stop) or a
+  reconnect keeps one file; removing the receiver stops and saves; leaving the
+  tab with a recording running asks first (`beforeunload`).  Exempt from the
+  control-lock loop like Mute, so a viewer can record.
 - Phase 4 implementation is COMPLETE and operator live-confirmed.  Its
   first slice is done on `origin/master`:
   server-pushed state replaces the browser's 500 ms `get_state` poll.  A GTK
@@ -288,6 +297,29 @@ click/drag/wheel tuning and draggable filter edges.
     fresh address.
 
 ## Verification record
+
+### 2026-10-25 — receive recording in the browser
+
+Operator request: record audio in the browser.  Built client-side only: the
+server already sends the demodulated audio (tapped before the listen gain), so
+recording what arrives needs no protocol.  `MediaRecorder` straight on the
+WebRTC stream was rejected because the session is torn down and rebuilt under
+it (microphone start/stop, reconnect) and the recorder would end with the old
+stream; it records a Web Audio destination instead and re-connects each new
+stream to it.  Format is the first of webm/opus, ogg/opus, mp4, webm the
+browser supports.
+
+Verified: `make check`; app.js parses (JavaScriptCore).  Live faker
+(`--faker iq.wav`, `MACHPSDR_WEB`) + headless Chrome over the DevTools
+protocol (scratch): the chip is enabled once the audio connects, reads `⏹ 0:03`
+mid-way, and a 6 s recording with Mute toggled mid-way decoded (Web Audio) to
+5.94 s, 48 kHz, `audio/webm;codecs=opus`, 48 200 bytes, -4..-11 dB per 250 ms
+after the mute (mute does not silence it; one -74 dB slice at 1.25 s, before
+the mute, not investigated); an 8 s recording with `restartAudioSessions()`
+mid-way decoded to 7.98 s in one file with signal on both sides of the rebuild;
+no page errors, no GTK-CRITICAL.  NOT verified: Safari/Firefox (format and the
+Web Audio path), a real download dialog and click, `beforeunload`, long
+recordings, a viewer login.
 
 ### 2026-10-25 — per-digit VFO tuning
 

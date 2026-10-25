@@ -112,8 +112,10 @@ function renderControl() {
   for (const card of cards.values()) {
     card.classList.toggle("no-control", locked);
     for (const el of card.querySelectorAll("button, select, input")) {
-      // Mute and the spectrum profile are this browser's own; dead chips stay dead.
-      if (el.classList.contains("audio-toggle") || el.classList.contains("spectrum-profile") ||
+      // Mute, recording and the spectrum profile are this browser's own; dead
+      // chips stay dead.
+      if (el.classList.contains("audio-toggle") || el.classList.contains("rec-toggle") ||
+          el.classList.contains("spectrum-profile") ||
           el.classList.contains("dead")) continue;
       el.disabled = locked;
     }
@@ -439,6 +441,9 @@ function makeCard(rx) {
   const audioBtn = card.querySelector(".audio-toggle");
   audioBtn.hidden = !capabilities.includes("audio");
   audioBtn.addEventListener("click", () => toggleMute(card));
+  const recBtn = card.querySelector(".rec-toggle");
+  recBtn.hidden = !recordingSupported();
+  recBtn.addEventListener("click", () => card._rec ? stopRecording(card) : startRecording(card, rx.id));
   installSpectrumGestures(card, rx.id);
   receivers.append(card);
   cards.set(rx.id, card);
@@ -455,6 +460,7 @@ function render(state) {
   for (const [id, card] of cards) if (!live.has(id)) {
     send({ type: "spectrum_unsubscribe", rx: id });
     if (card._pc) { send({ type: "audio_unsubscribe", rx: id }); try { card._pc.close(); } catch {} card._pc = null; }
+    stopRecording(card);
     card.remove(); cards.delete(id);
   }
   for (const rx of state.receivers) {
@@ -650,9 +656,115 @@ function updateSpectrumStatus(message) {
   card.querySelector(".spectrum-profile").value = message.profile;
 }
 
+// Recording happens in the browser, on what the browser receives: the WebRTC
+// stream, taken before the <audio> element, so Mute never silences a recording
+// and AF gain never changes its level (the server taps before the listen gain,
+// as the desktop AF recorder does).  The recorder hangs off an AudioContext
+// destination rather than the stream itself, because a WebRTC session is torn
+// down and rebuilt under it (microphone start/stop, reconnect) and a
+// MediaRecorder on the old stream would end with it; the context is re-wired to
+// each new stream, and a gap is recorded as silence, never a second file.
+// Nothing is sent to the radio, so a viewer may record too.
+const RECORD_TYPES = [["audio/webm;codecs=opus", "webm"], ["audio/ogg;codecs=opus", "ogg"],
+                      ["audio/mp4", "m4a"], ["audio/webm", "webm"]];
+function recordingSupported() {
+  return capabilities.includes("audio") && typeof MediaRecorder === "function" &&
+         typeof AudioContext === "function";
+}
+function recordingFormat() {
+  for (const [mime, ext] of RECORD_TYPES) if (MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+  return { mime: "", ext: "webm" };
+}
+function recordingFollowStream(card) {
+  const rec = card._rec;
+  const stream = card._audio?.srcObject;
+  if (!rec || rec.stream === stream) return;
+  if (rec.source) { try { rec.source.disconnect(); } catch {} rec.source = null; }
+  rec.stream = stream || null;
+  if (stream && stream.getAudioTracks().length) {
+    rec.source = rec.context.createMediaStreamSource(stream);
+    rec.source.connect(rec.destination);
+  }
+}
+function startRecording(card, rxId) {
+  if (card._rec || !recordingSupported() || !card._connected) return;
+  const format = recordingFormat();
+  // Created inside the click, so no autoplay policy can leave it suspended.  No
+  // sampleRate: Firefox refuses to connect a stream at another rate.
+  const context = new AudioContext();
+  const destination = context.createMediaStreamDestination();
+  let recorder;
+  try {
+    recorder = new MediaRecorder(destination.stream, format.mime ? { mimeType: format.mime, audioBitsPerSecond: 64000 } : undefined);
+  } catch (error) {
+    context.close().catch(() => {});
+    revision.textContent = `Recording unavailable: ${error?.message || error}`;
+    return;
+  }
+  const started = new Date();
+  const rec = { context, destination, recorder, chunks: [], started, rxId, source: null, stream: null,
+                ext: format.ext, timer: null };
+  card._rec = rec;
+  recordingFollowStream(card);
+  recorder.addEventListener("dataavailable", event => { if (event.data?.size) rec.chunks.push(event.data); });
+  recorder.addEventListener("stop", () => saveRecording(rec));
+  // One-second slices: an interrupted page still holds everything up to the
+  // last second, and no single Blob grows for the whole recording.
+  recorder.start(1000);
+  rec.timer = setInterval(() => refreshRecordButton(card), 1000);
+  // Chrome feeds a remote stream into Web Audio only while an element plays it;
+  // the click is the gesture a blocked autoplay was waiting for.
+  tryPlay(card);
+  refreshRecordButton(card);
+}
+function stopRecording(card) {
+  const rec = card?._rec;
+  if (!rec) return;
+  card._rec = null;
+  clearInterval(rec.timer);
+  if (rec.source) { try { rec.source.disconnect(); } catch {} }
+  if (rec.recorder.state !== "inactive") rec.recorder.stop();
+  else saveRecording(rec);
+  refreshRecordButton(card);
+}
+function saveRecording(rec) {
+  rec.context.close().catch(() => {});
+  if (rec.saved || !rec.chunks.length) return;
+  rec.saved = true;
+  const blob = new Blob(rec.chunks, { type: rec.chunks[0].type || rec.recorder.mimeType || "audio/webm" });
+  const stamp = rec.started.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `machpsdr_rx${rec.rxId}_${stamp}.${rec.ext}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+}
+function refreshRecordButton(card) {
+  const button = card.querySelector(".rec-toggle");
+  if (!button) return;
+  const rec = card._rec;
+  if (rec) {
+    const secs = Math.floor((Date.now() - rec.started.getTime()) / 1000);
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    button.disabled = false;
+    button.textContent = `⏹ ${clock}`;
+    button.title = "Stop recording and save the file";
+  } else {
+    // Starting needs a live stream; stopping is always allowed.
+    button.disabled = !card._connected;
+    button.textContent = "⏺";
+    button.title = card._connected ? "Record received audio to a file on this device" : "Recording needs the audio connection";
+  }
+  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-pressed", rec ? "true" : "false");
+}
+
 // The button shows, and flips, the mute state; while the track is still coming
 // up it is disabled and reads "Connecting…".
 function refreshAudioButton(card) {
+  refreshRecordButton(card);
   const button = card.querySelector(".audio-toggle");
   if (!button) return;
   if (!card._connected) { button.disabled = true; button.textContent = "⏳"; button.setAttribute("aria-pressed", "false"); button.title = "Connecting audio…"; button.setAttribute("aria-label", button.title); return; }
@@ -667,6 +779,8 @@ function updateAudioAvailability() {
   for (const [rxId, card] of cards) {
     const button = card.querySelector(".audio-toggle");
     if (button) button.hidden = !available;
+    const rec = card.querySelector(".rec-toggle");
+    if (rec) rec.hidden = !recordingSupported();
     // A hello arriving after the cards were built (e.g. a reconnect) is where a
     // newly-available audio capability turns into a running stream.
     if (available && !card._pc) startAudio(card, rxId);
@@ -753,6 +867,7 @@ function startAudio(card, rxId) {
     card._audio.srcObject = event.streams[0];
     card._audio.muted = card._muted;
     tryPlay(card);
+    recordingFollowStream(card);
   });
   pc.addEventListener("icecandidate", event => {
     if (event.candidate)
@@ -877,6 +992,12 @@ controlBtn.addEventListener("click", () => {
   if (controlHeld) send({ type: "control_release" });
   else send({ type: "control_acquire", force: !!radioState?.control_active });
 });
+// A recording lives only in this tab until it is stopped, and the save cannot
+// finish while the page unloads, so leaving with one running asks first.
+window.addEventListener("beforeunload", event => {
+  if ([...cards.values()].some(card => card._rec)) event.preventDefault();
+});
+
 // One tap unlocks audio for the whole tab, then the prompt never returns.
 enableSound.addEventListener("click", () => {
   audioUnlocked = true;

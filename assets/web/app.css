@@ -138,6 +138,8 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .gain-rf input[type=range] { accent-color: var(--green); }
 .mute { padding: .3rem .5rem; font-size: 1rem; }
 .mute[aria-pressed="true"] { background: #311a1e; border-color: #773c45; }
+.rec { padding: .3rem .5rem; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.rec[aria-pressed="true"] { background: #4a1418; border-color: #c2414c; color: #ffd9dc; }
 
 /* ---- S-meter ---- */
 .smeter { width: 165px; display: flex; flex-direction: column; gap: .12rem; }
