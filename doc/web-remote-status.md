@@ -323,7 +323,11 @@ scripted TLS WebSocket client (scratch): `GET /` 200, upgrade 101, `hello` +
 of 2048 bins in 4 s (19/s, the receiver's fps) with live data (bytes 25..239);
 Low delivered exactly 5/s of 256 bins; ~9 % CPU, ~370 MB RSS; no window, no
 audio device opened (none logged); SIGTERM logged `signal 15, saving and
-stopping`, exited and wrote the props.  NOT verified: a real browser page and
+stopping`, exited and wrote the props.  Missed in that run and reported by
+the operator: the system-default-output follower (`default_output_apply`) saw
+`local_audio` set with no stream as a failed re-open and "re-opened" every 4 s
+for the whole run (silently — the open refuses).  It now stands down in
+headless; an 18 s rerun logs no re-open at all.  NOT verified: a real browser page and
 WebRTC audio against a headless server, `--web-tx` keying, `--open` on real
 hardware headless, Linux under `xvfb-run`, the Dock icon actually absent (no
 screenshot taken), the CPU saving against a windowed run (not measured — it

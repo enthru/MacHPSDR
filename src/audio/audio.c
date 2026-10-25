@@ -2243,6 +2243,10 @@ static guint default_output_monitor_id=0;
 static gboolean default_output_apply(void) {
   if(radio==NULL || radio->which_audio!=USE_SOUNDIO || soundio==NULL)
     return FALSE;
+  // --headless opens no output at all, so a receiver with local_audio set and
+  // no stream is the intended state there, not a failed re-open to recover --
+  // treating it as one re-"opened" it every few seconds for the whole run.
+  if(radio_headless) return FALSE;
 
   // Anything that should be following the system default?  Note we do NOT
   // require an open stream here: a previous transition may have left a receiver
