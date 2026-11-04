@@ -1074,7 +1074,7 @@ web-offline: web_offline$(EXE)
 web_offline$(EXE): tools/web_offline.c web_protocol.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/web_offline.c web_protocol.o \
-	  $(shell pkg-config --libs glib-2.0)
+	  $(shell pkg-config --libs glib-2.0) -lm
 
 # TLS certificate generation and encrypted transport round-trip. This harness
 # uses a Unix socketpair and is therefore a macOS/Linux developer check.
@@ -1094,7 +1094,7 @@ webrtc-offline: webrtc_offline$(EXE)
 webrtc_offline$(EXE): tools/webrtc_offline.c web_rtc.o log.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(WEBRTC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/webrtc_offline.c web_rtc.o log.o \
-	  $(WEBRTC_LIBS) $(WEBRTC_RPATH) $(shell pkg-config --libs glib-2.0)
+	  $(WEBRTC_LIBS) $(WEBRTC_RPATH) $(shell pkg-config --libs glib-2.0) -lm
 
 # Headless DC-blocker harness.  The zero-IF spike remover runs on the raw
 # SoapySDR block, ahead of every receiver's mixer and decimator, so a mistake
