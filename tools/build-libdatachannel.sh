@@ -67,6 +67,10 @@ else
   git -C "$WORK/libdatachannel" submodule update --init --recursive --depth 1
 fi
 
+# ENABLE_WARNINGS_AS_ERRORS=OFF is libsrtp's (a submodule, so the option reaches
+# it through the cache): it builds with -Werror, and MinGW gcc 16 rejects its
+# `%x` over a Windows u_long -- a warning in code we never call, not a bug here.
+#
 # NO_MEDIA=OFF keeps the SRTP media path (the Opus RTP track); NO_WEBSOCKET=ON
 # because the application's control plane is its own WebSocket, not this one;
 # shared libs so `make app` bundles one dylib per transitive library.
@@ -81,6 +85,7 @@ cmake -S "$WORK/libdatachannel" -B "$WORK/build" ${GEN_ARGS[@]+"${GEN_ARGS[@]}"}
   -DNO_EXAMPLES=ON -DNO_TESTS=ON \
   -DNO_MEDIA=OFF -DNO_WEBSOCKET=ON \
   -DUSE_GNUTLS=OFF -DUSE_MBEDTLS=OFF -DUSE_NICE=OFF \
+  -DENABLE_WARNINGS_AS_ERRORS=OFF \
   ${OPENSSL_ARGS[@]+"${OPENSSL_ARGS[@]}"}
 cmake --build "$WORK/build" --parallel
 cmake --install "$WORK/build"
