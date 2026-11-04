@@ -56,6 +56,12 @@ foundation`), pushed to `origin/master` on 2026-10-22.
     `make WEBRTC_INCLUDE=off` forces it off.  libopus is a hard companion of the
     flag, found through `pkg-config` (brew `opus` / `libopus-dev` / mingw `opus`).
     The operator's `./machpsdr` is a WebRTC build.
+  - Release bundles carry it (2026-11-04).  Until then CI never built
+    libdatachannel, so every released `.app`, AppImage and Windows zip had a
+    browser remote with no sound.  Both workflows now build it from the pinned
+    tag (cached on the script's hash), force `WEBRTC_INCLUDE=WEBRTC`, run
+    `webrtc_offline --selftest`, and assert the bundle carries libdatachannel
+    and libopus.  Details in the verification record.
 - How the audio flows: `process_rx_buffer()` taps the clean 48 kHz
   interleaved-stereo demod block (beside the AF recorder, before the software
   listen gain) and calls `web_server_audio_tap()`, which fans it to every client
@@ -306,6 +312,37 @@ without its window, signals, macOS accessory policy), `receiver.c`
     fresh address.
 
 ## Verification record
+
+### 2026-11-04 — WebRTC in the CI builds and release bundles
+
+`tools/build-libdatachannel.sh` runs in `ci.yml` (macOS arm64, macOS x86_64,
+Ubuntu 24.04) and `windows.yml` (MSYS2 UCRT64).  Changes it needed: an explicit
+`CMAKE_INSTALL_LIBDIR=lib`, Ninja when present, empty-array guards for macOS
+bash 3.2, and `ENABLE_WARNINGS_AS_ERRORS=OFF` because libsrtp builds with
+`-Werror` and MinGW gcc 16 rejects a `%x` over a Windows `u_long`.
+`win-package.sh` also searches `build/libdatachannel/bin`, and
+`build-appimage.sh` puts the prefix on `LD_LIBRARY_PATH` for linuxdeploy's walk.
+
+Verified on manually dispatched runs of branch `ci-webrtc`:
+- `webrtc_offline --selftest` reported 0 failures on Linux, both macOS
+  architectures and Windows.  That was its first run on Windows, and the first
+  time `web_rtc.c` and the WEBRTC blocks of `web_server.c` were compiled there.
+- Linux: libdatachannel and libopus are in `AppDir/usr/lib`, and
+  `ldd AppDir/usr/bin/machpsdr` resolves libdatachannel inside the AppDir.
+- macOS: both libraries are in `Contents/Frameworks`, the executable names the
+  bundled copies, and libdatachannel links nothing outside the bundle.
+- Windows: `libdatachannel.dll` and `libopus-0.dll` are in the package.
+
+Not verified: no bundle was started, so browser audio from a released bundle
+has not been heard.  That needs the operator, as for every bundle claim.
+
+Found on the way, unrelated to WebRTC (nothing had run since 2026-09-26):
+- Homebrew dropped the `gnome-icon-theme` alias.
+- Homebrew's SoapySDR moved to 0.9, so the bundled modules are in `modules0.9`.
+- `web_offline` linked without `-lm`.
+- `ubuntu-latest` became 26.04.  The Linux build and the sanitizer job are now
+  pinned to 24.04: the AppImage's glibc floor and the LSan suppression list
+  both belong to that image.
 
 ### 2026-10-25 — receive recording in the browser
 ### 2026-10-25 — headless server

@@ -25,7 +25,9 @@ compressor, leveler and CESSB controls.  Phase 5 is complete in code
 (2026-10-24): a single control lease with takeover, an optional view-only
 login, and failed-login throttling; their protocol has been run against a live
 faker server over HTTPS/WSS (2026-10-25), the browser-side button states not
-yet.  The Windows build compiles them (UCRT64) without WebRTC audio.
+yet.  Every release bundle (macOS, Linux AppImage, Windows UCRT64) is built
+with WebRTC audio since 2026-11-04; only the macOS-hosted Windows cross-build
+is compiled without it.
 Per-slice live acceptance is recorded in the status record.  A headless
 `--faker` run serves the protocol for scripted checks; browser and RF checks
 happen in the operator's desktop session.
