@@ -780,8 +780,12 @@ jobs:
   #     answering the protocol-1 packet layout this tree also parses; it agrees
   #     with our own reading of the protocol, not with a board.
   sanitize:
-    name: ubuntu-latest (ASan + UBSan + LeakSanitizer)
-    runs-on: ubuntu-latest
+    name: ubuntu-24.04 (ASan + UBSan + LeakSanitizer)
+    # Pinned for the same reason as the build matrix, and one more: the
+    # suppression list names upstream leaks of 24.04's Mesa/GTK.  26.04's Mesa
+    # leaks elsewhere under gdk_display_prepare_gl, and widening the list to
+    # follow a moving image is exactly what tools/lsan-suppressions.txt forbids.
+    runs-on: ubuntu-24.04
     # A SEPARATE JOB, not another matrix leg of `build`, and it has to be:
     # SANITIZE=1 rides in OPTIONS, .build-flags compares OPTIONS, and objects
     # land in the repo root under fixed names — so a sanitised and an ordinary
