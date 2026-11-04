@@ -78,7 +78,12 @@ jobs:
       # and cancelling the sibling job throws away exactly that distinction.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # ubuntu-24.04, NOT ubuntu-latest: the AppImage bundles no glibc, so its
+        # floor is the runner's.  ubuntu-latest moved to 26.04 by 2026-11, which
+        # would silently drop 24.04 from what a release starts on (and its gtk4
+        # has no lib/gtk-4.0, which the rolling linuxdeploy GTK plugin cannot
+        # cope with).  Move this on purpose, with a release note, never by drift.
+        os: [ubuntu-24.04, macos-latest]
 
     steps:
       - uses: actions/checkout@v7
