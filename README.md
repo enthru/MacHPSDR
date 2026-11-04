@@ -1070,8 +1070,8 @@ brew install pkgconf fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liq
 > src/core/main.c:21:10: fatal error: 'gtk/gtk.h' file not found
 > ```
 >
-> (`gnome-icon-theme` is the old name of `adwaita-icon-theme`; Homebrew still
-> accepts it, but installs the latter.)
+> (`gnome-icon-theme` is the old name of `adwaita-icon-theme`; Homebrew no
+> longer accepts it.)
 
 ```bash
 git clone https://github.com/enthru/MacHPSDR.git machpsdr

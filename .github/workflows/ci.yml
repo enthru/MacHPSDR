@@ -122,10 +122,10 @@ jobs:
             ninja-build
 
       # dylibbundler is here for `make app` at the end of the job — it is the
-      # one tool that target refuses to run without.  gnome-icon-theme is an
-      # alias for
-      # adwaita-icon-theme and is a runtime resource rather than a build
-      # dependency, but it is kept so this list stays the one CLAUDE.md
+      # one tool that target refuses to run without.  adwaita-icon-theme is a
+      # runtime resource rather than a build dependency (it used to be spelled
+      # gnome-icon-theme here; Homebrew dropped that alias by 2026-11 and the
+      # install step failed on it), but it is kept so this list stays the one CLAUDE.md
       # documents — a CI environment that has quietly drifted from the
       # documented one is worse than a slightly over-broad install.
       #
@@ -145,7 +145,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+          brew install fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
           brew install soapyhackrf soapyrtlsdr soapyremote
           brew install opus openssl@3 ninja
 
@@ -553,7 +553,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
+          brew install fftw gtk4 adwaita-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
           brew install soapyhackrf soapyrtlsdr soapyremote
           brew install opus openssl@3 ninja
 
