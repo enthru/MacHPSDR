@@ -432,7 +432,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -e
-          MODS=MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules0.8
+          # The ABI directory follows Homebrew's SoapySDR (modules0.8 until
+          # 0.9 landed in 2026-11), so it is found, not named; exactly one.
+          MODS=$(ls -d MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules* )
+          [ "$(echo "$MODS" | wc -l)" -eq 1 ] || { echo "expected one modules dir: $MODS"; exit 1; }
           for m in libHackRFSupport.so librtlsdrSupport.so libPlutoSDRSupport.so; do
             [ -f "$MODS/$m" ] || { echo "missing driver: $m"; exit 1; }
           done
@@ -628,7 +631,10 @@ jobs:
       - name: Check the bundle carries its SoapySDR drivers
         run: |
           set -e
-          MODS=MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules0.8
+          # The ABI directory follows Homebrew's SoapySDR (modules0.8 until
+          # 0.9 landed in 2026-11), so it is found, not named; exactly one.
+          MODS=$(ls -d MacHPSDR.app/Contents/Resources/lib/SoapySDR/modules* )
+          [ "$(echo "$MODS" | wc -l)" -eq 1 ] || { echo "expected one modules dir: $MODS"; exit 1; }
           for m in libHackRFSupport.so librtlsdrSupport.so libPlutoSDRSupport.so; do
             [ -f "$MODS/$m" ] || { echo "missing driver: $m"; exit 1; }
           done
