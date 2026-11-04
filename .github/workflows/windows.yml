@@ -42,6 +42,11 @@ jobs:
     # it; nothing else in this job writes back to the repository.
     permissions:
       contents: write
+    # Same reason as ci.yml: the browser remote's audio exists only in a WEBRTC
+    # build, so a missing libdatachannel is a compile error here, not a package
+    # whose browser is mute.
+    env:
+      WEBRTC_INCLUDE: WEBRTC
     defaults:
       run:
         shell: msys2 {0}
@@ -76,6 +81,8 @@ jobs:
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-openssl
             mingw-w64-ucrt-x86_64-soapysdr
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-ninja
 
       # Pinned to a tag, not a moving master: an unannounced upstream change
       # would otherwise turn into a mystery build failure of THIS tree.
@@ -98,6 +105,23 @@ jobs:
           set -e
           cp -r liquid-install/include/* /ucrt64/include/
           cp -r liquid-install/lib/*      /ucrt64/lib/
+
+      # libdatachannel has no MSYS2 package (checked 2026-11), so it is built
+      # from the same pinned tag as on macOS/Linux.  The DLL installs into bin/,
+      # the import library into lib/; tools/win-package.sh copies the DLL.
+      - name: Cache libdatachannel
+        id: dc-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/libdatachannel/include
+            build/libdatachannel/lib
+            build/libdatachannel/bin
+          key: libdatachannel-ucrt64-${{ hashFiles('tools/build-libdatachannel.sh') }}
+
+      - name: Build libdatachannel
+        if: steps.dc-cache.outputs.cache-hit != 'true'
+        run: tools/build-libdatachannel.sh
 
       - name: Build
         run: make -j"$(nproc)"
@@ -132,6 +156,13 @@ jobs:
       - name: Run the offline self-tests
         run: make check
 
+      # The WebRTC loopback session (see ci.yml).  Windows finds DLLs on PATH,
+      # not through an rpath, so the prefix's bin/ goes there for this run.
+      - name: WebRTC loopback self-test
+        run: |
+          make webrtc-offline
+          PATH="$PWD/build/libdatachannel/bin:$PATH" ./webrtc_offline.exe --selftest
+
       - name: Report
         run: |
           file machpsdr.exe
@@ -165,6 +196,7 @@ jobs:
           set -e
           d=machpsdr-win64
           for f in "$d/machpsdr.exe" "$d/libwdsp.dll" \
+                   "$d/libdatachannel.dll" "$d/libopus-0.dll" \
                    "$d/share/glib-2.0/schemas/gschemas.compiled" \
                    "$d/assets/cty.dat"; do
             [ -e "$f" ] || { echo "missing: $f"; exit 1; }

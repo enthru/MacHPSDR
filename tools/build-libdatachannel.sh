@@ -16,7 +16,9 @@
 # is built from source here rather than vendored into the tree, and an ordinary
 # `make` that has never run this script simply builds without WEBRTC.
 #
-# It is opt-in: the application links it only with `make WEBRTC_INCLUDE=WEBRTC`.
+# The Makefile auto-enables WEBRTC once this prefix exists; CI and the release
+# bundles run it on all three platforms (macOS, Linux, MSYS2 UCRT64) and build
+# with WEBRTC_INCLUDE=WEBRTC, so a bundle without browser audio fails the build.
 #
 # LICENSE.  libdatachannel is MPL-2.0 (since 0.18), which is GPL-compatible; this
 # tree is already effectively GPLv3 via the HFDL port.  usrsctp and libsrtp are
@@ -47,6 +49,14 @@ if command -v brew >/dev/null 2>&1 && brew --prefix openssl >/dev/null 2>&1; the
   OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR="$(brew --prefix openssl)")
 fi
 
+# Ninja when it is installed: MSYS2's cmake has no make-based default that works
+# from a bash shell, and it is faster everywhere else.  An explicit
+# CMAKE_GENERATOR in the environment wins.
+GEN_ARGS=()
+if [ -z "${CMAKE_GENERATOR:-}" ] && command -v ninja >/dev/null 2>&1; then
+  GEN_ARGS=(-G Ninja)
+fi
+
 mkdir -p "$WORK"
 if [ ! -d "$WORK/libdatachannel/.git" ]; then
   git clone --recursive --depth 1 --branch "$DC_TAG" \
@@ -60,14 +70,18 @@ fi
 # NO_MEDIA=OFF keeps the SRTP media path (the Opus RTP track); NO_WEBSOCKET=ON
 # because the application's control plane is its own WebSocket, not this one;
 # shared libs so `make app` bundles one dylib per transitive library.
-cmake -S "$WORK/libdatachannel" -B "$WORK/build" \
+# CMAKE_INSTALL_LIBDIR=lib: the Makefile links -L$(WEBRTC_PREFIX)/lib, and
+# GNUInstallDirs would otherwise pick lib64 on some distributions.  On Windows the
+# DLL itself lands in bin/ (the import library in lib/).
+cmake -S "$WORK/libdatachannel" -B "$WORK/build" ${GEN_ARGS[@]+"${GEN_ARGS[@]}"} \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+  -DCMAKE_INSTALL_LIBDIR=lib \
   -DBUILD_SHARED_LIBS=ON \
   -DNO_EXAMPLES=ON -DNO_TESTS=ON \
   -DNO_MEDIA=OFF -DNO_WEBSOCKET=ON \
   -DUSE_GNUTLS=OFF -DUSE_MBEDTLS=OFF -DUSE_NICE=OFF \
-  "${OPENSSL_ARGS[@]}"
+  ${OPENSSL_ARGS[@]+"${OPENSSL_ARGS[@]}"}
 cmake --build "$WORK/build" --parallel
 cmake --install "$WORK/build"
 

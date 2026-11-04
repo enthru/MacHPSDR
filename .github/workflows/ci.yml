@@ -48,6 +48,9 @@ on:
     # a regex -- it matches 4.4 and 3.8.1 alike and nothing that does not start
     # with a digit.  master is deliberately still not built.
     tags: ['[0-9]*']
+  # A manual run on any branch builds, tests and bundles; only a tag build
+  # attaches anything to a release.
+  workflow_dispatch:
 
 # Cancel obsolete builds when another commit is pushed to the same release
 # branch, or when a tag is re-pointed at a different commit.  Keyed on the ref,
@@ -64,6 +67,12 @@ jobs:
     # nothing else in this job writes anything back to the repository.
     permissions:
       contents: write
+    # The browser remote's audio (receive and the microphone for TX) exists only
+    # in a WEBRTC build.  The Makefile auto-enables it when build/libdatachannel
+    # is present; forcing it here turns "the libdatachannel step quietly produced
+    # nothing" into a compile error instead of a release whose browser is mute.
+    env:
+      WEBRTC_INCLUDE: WEBRTC
     strategy:
       # Not fail-fast: "broken on both" and "broken on one" are different bugs,
       # and cancelling the sibling job throws away exactly that distinction.
@@ -106,7 +115,11 @@ jobs:
             libgtk-4-dev \
             libsoapysdr-dev \
             libliquid-dev \
-            zlib1g-dev
+            zlib1g-dev \
+            libssl-dev \
+            libopus-dev \
+            cmake \
+            ninja-build
 
       # dylibbundler is here for `make app` at the end of the job — it is the
       # one tool that target refuses to run without.  gnome-icon-theme is an
@@ -134,6 +147,7 @@ jobs:
         run: |
           brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
           brew install soapyhackrf soapyrtlsdr soapyremote
+          brew install opus openssl@3 ninja
 
       # `getconf`, not `nproc`: macOS has no nproc.  This also builds the
       # vendored trees (wdsp/, ft8_lib/, sgp4sdp4/, hfdl_lib/asn1/) through
@@ -146,6 +160,23 @@ jobs:
       # `fatal error:` in the middle of an unrelated `ar` line.  The serial pass
       # costs a few minutes only when something is already broken, and it puts
       # the real error at the END of the log, where anyone reading it looks.
+      # libdatachannel is in neither Homebrew nor Ubuntu nor MSYS2, so it is
+      # built from the pinned tag in tools/build-libdatachannel.sh (a few
+      # minutes, three submodules).  The cache keys on that script, so bumping
+      # the tag rebuilds; only the installed headers and libraries are kept.
+      - name: Cache libdatachannel
+        id: dc-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/libdatachannel/include
+            build/libdatachannel/lib
+          key: libdatachannel-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/build-libdatachannel.sh') }}
+
+      - name: Build libdatachannel
+        if: steps.dc-cache.outputs.cache-hit != 'true'
+        run: tools/build-libdatachannel.sh
+
       - name: Build
         run: |
           make -j"$(getconf _NPROCESSORS_ONLN)" && exit 0
@@ -157,6 +188,14 @@ jobs:
       # This is the whole test surface: no GUI binary is started.
       - name: Self-tests
         run: make check
+
+      # Not in `make check` (it needs the WEBRTC build), so it is run by name:
+      # a loopback offer/answer/ICE/DTLS session on the fixed UDP-mux port,
+      # Opus RTP pulled off the track and browser-side Opus decoded back.  It
+      # is the one test that the libdatachannel this job just built WORKS, not
+      # merely links.
+      - name: WebRTC loopback self-test
+        run: make webrtc-offline && ./webrtc_offline --selftest
 
       # The decoded pictures behind the SSTV numbers.  `make check` asserts an
       # MAE/PSNR per mode, which says PASS or FAIL and nothing about *how* a
@@ -293,11 +332,16 @@ jobs:
         run: |
           set -e
           LIB=AppDir/usr/lib
-          for want in libgtk-4 libwdsp libliquid libSoapySDR libsoundio libfftw3; do
+          for want in libgtk-4 libwdsp libliquid libSoapySDR libsoundio libfftw3 libdatachannel libopus; do
             ls "$LIB" "$LIB"/../bin/wdsp 2>/dev/null | grep -q "^$want" || {
               echo "not bundled: $want"; ls "$LIB"; exit 1; }
           done
           echo "bundled: $(ls "$LIB" | wc -l) libraries, $(du -sh AppDir | cut -f1) AppDir"
+          # libdatachannel comes from build/, whose rpath means nothing inside
+          # the AppDir: it must resolve to the bundled copy, not the build tree.
+          ldd AppDir/usr/bin/machpsdr | grep libdatachannel | grep -qF "$PWD/AppDir/" || {
+            echo "libdatachannel does not resolve inside the AppDir"
+            ldd AppDir/usr/bin/machpsdr | grep -iE 'datachannel|opus'; exit 1; }
 
           # The drivers load and register their factories, with the BUNDLE's
           # libraries first on the search path.  SoapySDRUtil is the runner's,
@@ -408,6 +452,27 @@ jobs:
           done
           echo "SoapySDR drivers: hackrf, rtlsdr, plutosdr -- self-contained and loading"
 
+      # The browser remote's audio rides on two libraries no system provides:
+      # libdatachannel (from build/, an @rpath id) and libopus (Homebrew).
+      # Both must be in Frameworks and the executable must name the bundled
+      # copies, or the app starts with a browser remote that has no sound.
+      - name: Check the bundle carries WebRTC
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          FW=MacHPSDR.app/Contents/Frameworks
+          BIN=MacHPSDR.app/Contents/MacOS/MacHPSDR-bin
+          for l in libdatachannel.0.dylib libopus.0.dylib; do
+            [ -f "$FW/$l" ] || { echo "missing: $l"; exit 1; }
+            otool -L "$BIN" | grep -qF "@executable_path/../Frameworks/$l" \
+              || { echo "the executable does not name the bundled $l"; exit 1; }
+          done
+          if otool -L "$FW/libdatachannel.0.dylib" | grep -E '^[[:space:]]' | awk '{print $1}' \
+             | grep -vE '^(@executable_path|@loader_path|@rpath|/usr/lib/|/System/)'; then
+            echo "libdatachannel links outside the bundle"; exit 1
+          fi
+          echo "WebRTC: libdatachannel + libopus bundled"
+
       - name: Upload the .app (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
@@ -467,6 +532,12 @@ jobs:
     runs-on: macos-15-intel
     permissions:
       contents: write
+    # The browser remote's audio (receive and the microphone for TX) exists only
+    # in a WEBRTC build.  The Makefile auto-enables it when build/libdatachannel
+    # is present; forcing it here turns "the libdatachannel step quietly produced
+    # nothing" into a compile error instead of a release whose browser is mute.
+    env:
+      WEBRTC_INCLUDE: WEBRTC
 
     steps:
       - uses: actions/checkout@v7
@@ -484,6 +555,24 @@ jobs:
         run: |
           brew install fftw gtk4 gnome-icon-theme libsoundio libffi soapysdr liquid-dsp dylibbundler
           brew install soapyhackrf soapyrtlsdr soapyremote
+          brew install opus openssl@3 ninja
+
+      # libdatachannel is in neither Homebrew nor Ubuntu nor MSYS2, so it is
+      # built from the pinned tag in tools/build-libdatachannel.sh (a few
+      # minutes, three submodules).  The cache keys on that script, so bumping
+      # the tag rebuilds; only the installed headers and libraries are kept.
+      - name: Cache libdatachannel
+        id: dc-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/libdatachannel/include
+            build/libdatachannel/lib
+          key: libdatachannel-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/build-libdatachannel.sh') }}
+
+      - name: Build libdatachannel
+        if: steps.dc-cache.outputs.cache-hit != 'true'
+        run: tools/build-libdatachannel.sh
 
       - name: Build
         run: |
@@ -496,6 +585,14 @@ jobs:
       # the arm64 one fails here rather than in an operator's shack.
       - name: Self-tests
         run: make check
+
+      # Not in `make check` (it needs the WEBRTC build), so it is run by name:
+      # a loopback offer/answer/ICE/DTLS session on the fixed UDP-mux port,
+      # Opus RTP pulled off the track and browser-side Opus decoded back.  It
+      # is the one test that the libdatachannel this job just built WORKS, not
+      # merely links.
+      - name: WebRTC loopback self-test
+        run: make webrtc-offline && ./webrtc_offline --selftest
 
       # PlutoSDR is not in Homebrew -- neither the driver nor libiio -- so it is
       # built from pinned upstream tags here, the same way windows.yml builds
@@ -550,6 +647,26 @@ jobs:
             echo "$facs" | grep -qw "$f" || { echo "factory not registered: $f"; exit 1; }
           done
           echo "SoapySDR drivers: hackrf, rtlsdr, plutosdr -- self-contained and loading"
+
+      # The browser remote's audio rides on two libraries no system provides:
+      # libdatachannel (from build/, an @rpath id) and libopus (Homebrew).
+      # Both must be in Frameworks and the executable must name the bundled
+      # copies, or the app starts with a browser remote that has no sound.
+      - name: Check the bundle carries WebRTC
+        run: |
+          set -e
+          FW=MacHPSDR.app/Contents/Frameworks
+          BIN=MacHPSDR.app/Contents/MacOS/MacHPSDR-bin
+          for l in libdatachannel.0.dylib libopus.0.dylib; do
+            [ -f "$FW/$l" ] || { echo "missing: $l"; exit 1; }
+            otool -L "$BIN" | grep -qF "@executable_path/../Frameworks/$l" \
+              || { echo "the executable does not name the bundled $l"; exit 1; }
+          done
+          if otool -L "$FW/libdatachannel.0.dylib" | grep -E '^[[:space:]]' | awk '{print $1}' \
+             | grep -vE '^(@executable_path|@loader_path|@rpath|/usr/lib/|/System/)'; then
+            echo "libdatachannel links outside the bundle"; exit 1
+          fi
+          echo "WebRTC: libdatachannel + libopus bundled"
 
       - name: Upload the .app
         uses: actions/upload-artifact@v7

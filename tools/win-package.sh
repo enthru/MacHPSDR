@@ -27,6 +27,7 @@ OBJDUMP="${OBJDUMP:-objdump}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # The cross-build harness builds in a copy of the tree, not in the repo.
 BUILD="${BUILD_DIR:-$REPO}"
+WEBRTC_BIN="$BUILD/build/libdatachannel/bin"
 
 [ -d "$PREFIX/bin" ] || { echo "error: no $PREFIX/bin — set MINGW_PREFIX"; exit 1; }
 [ -f "$BUILD/machpsdr.exe" ] || { echo "error: no $BUILD/machpsdr.exe — build it first"; exit 1; }
@@ -52,14 +53,16 @@ copy_deps() {
     # libsoundio-2.dll in lib/, and missing it means the .exe does not start at
     # all ("Library libsoundio-2.dll not found", status c0000135).  Found by
     # running the package, not by reading it.
+    # And the libdatachannel prefix: it is built from source (no MSYS2 package),
+    # so its DLL lives in build/, not under $PREFIX.
     src=""
-    for dir in "$PREFIX/bin" "$PREFIX/lib"; do
+    for dir in "$PREFIX/bin" "$PREFIX/lib" "$WEBRTC_BIN"; do
       [ -f "$dir/$dll" ] && { src="$dir/$dll"; break; }
     done
     if [ -z "$src" ]; then
       # Case-insensitive retry: import tables spell names as the linker found
       # them, which does not always match the file on a case-sensitive host.
-      for dir in "$PREFIX/bin" "$PREFIX/lib"; do
+      for dir in "$PREFIX/bin" "$PREFIX/lib" "$WEBRTC_BIN"; do
         src="$(find "$dir" -maxdepth 1 -iname "$dll" -print -quit 2>/dev/null || true)"
         [ -n "$src" ] && break
       done

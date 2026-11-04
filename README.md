@@ -78,6 +78,14 @@ marked together with a warm amber highlight on the selected page.
 
 ![Settings — appearance & skin selection](./doc/settings.jpg)
 
+**Browser remote** — the radio driven from a web browser over HTTPS: the same
+chip strip, VFO readout and S-meter as the desktop window, a live panadapter
+and browser-drawn waterfall, receive audio over WebRTC and, once armed on the
+desktop, transmit controls in the lower bar (see
+[Browser remote](#features) below).
+
+![Browser remote — QO-100 narrowband transponder](./doc/web-remote.jpg)
+
 More screenshots and an overview of the project are available in
 [Big update of the LinHPSDR — now it’s MacHPSDR](https://enthru.net/2026/08/25/big-update-of-the-linhpsdr-now-its-machpsdr/).
 
@@ -1295,6 +1303,7 @@ line near the top of the `Makefile`. A change forces a full rebuild by itself
 | `FREEDV_INCLUDE` | **off** | FreeDV 2020 receive in DIGU. Run `tools/build-freedv2020.sh`, then build with `make FREEDV_INCLUDE=FREEDV`; ordinary codec2 packages omit the required LPCNet backend. |
 | `SSTV_INCLUDE` | on | SSTV — **and also** WEFAX, the CW decoder/encoder/keyer, and APT. |
 | `HFDL_INCLUDE` | on | HFDL — **and also** VHF ACARS, whose message layer is the same code. Needs `liquid-dsp`; because the decoder is a port of `dumphfdl` (GPL-3.0) the resulting build is effectively GPLv3. It is also what enables the liquid-dsp resampler the wide spans want — without it they still work, just more slowly. |
+| `WEBRTC_INCLUDE` | on when `build/libdatachannel` exists | The browser remote's audio — receive, and the microphone for transmit — over WebRTC (libdatachannel + libopus). libdatachannel is in no package manager: run `tools/build-libdatachannel.sh` once (needs `cmake`, plus `opus`/`libopus-dev`/`mingw-w64-ucrt-x86_64-opus`) and the next `make` picks it up. Without it the browser remote still controls the radio and shows the spectrum, but has **no sound**. The release bundles are built with it. `make WEBRTC_INCLUDE=off` forces it off. |
 | `CWDAEMON_INCLUDE` | **off** (Linux only) | CW keying through `unixcw`; needs `libcw`, which no stock system ships, so enabling it by default would break a plain `make`. |
 | `OPENGL_INCLUDES` | off | Unused legacy path — rendering goes through GTK4's own GPU renderer. |
 

@@ -169,6 +169,15 @@ for so in "$APPDIR"/usr/lib/SoapySDR/modules*/*.so; do
     [ -f "$so" ] && DEPS_ONLY+=(--deploy-deps-only="$so")
 done
 
+# libdatachannel (the browser remote's WebRTC audio) is linked from build/ with an
+# $ORIGIN/build/libdatachannel/lib rpath, which means nothing once the binary sits
+# in usr/bin, so linuxdeploy's ldd walk would not find it.  Put the prefix on the
+# search path for the walk only; it copies the library into usr/lib like the rest.
+DC_LIB="$ROOT/build/libdatachannel/lib"
+if [ -d "$DC_LIB" ]; then
+    export LD_LIBRARY_PATH="$DC_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 echo "==> linuxdeploy"
 "$TOOLS/linuxdeploy" \
     --appdir "$APPDIR" \
