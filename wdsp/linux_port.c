@@ -95,14 +95,26 @@ sem_t *LinuxCreateSemaphore(int attributes,int initial_count,int maximum_count,c
 #ifdef __APPLE__
         //DL1YCF
 	//This routine is invoked with name=NULL several times, so we have to make
-	//a unique name of tpye WDSPxxxxx for each invocation.
+	//a unique name for each invocation.
+	//
+	//macOS only has NAMED semaphores, and the namespace belongs to the whole
+	//machine.  The name carries the pid because a bare counter collides with any
+	//other process running WDSP (sem_unlink here, O_EXCL there), and the counter
+	//is atomic because a flush thread creates semaphores too.  A collision is
+	//not a reported failure: SEM_FAILED goes into the channel, every wait on it
+	//returns at once and the DSP thread spins through blocks that never came.
+	//The name is unlinked straight away, since nothing ever opens it again and
+	//the kernel would otherwise keep it until a reboot.
 	static int semcount=0;
-	char sname[12];
-        sprintf(sname,"WDSP%05d",semcount++);
+	char sname[32];
+	snprintf(sname,sizeof(sname),"WDSP%d.%d",(int)getpid(),
+	         __atomic_fetch_add(&semcount,1,__ATOMIC_RELAXED));
 	sem_unlink(sname);
         sem=sem_open(sname, O_CREAT | O_EXCL, 0700, initial_count);
 	if (sem == SEM_FAILED) {
 	  perror("WDSP:CreateSemaphore");
+	} else {
+	  sem_unlink(sname);
 	}
 #else
         sem=malloc(sizeof(sem_t));

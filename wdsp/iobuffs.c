@@ -603,7 +603,14 @@ void dexchange (int channel, double* in, double* out)
 {
 	int n;
 	IOB a = ch[channel].iob.pd;
-	if (!_InterlockedAnd (&ch[channel].run, 1)) _endthread();
+	if (!_InterlockedAnd (&ch[channel].run, 1))
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);	// taken by the caller
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
+		dsp_thread_done (channel);
+#endif
+		_endthread();
+	}
 
 	EnterCriticalSection (&a->r2_ControlSection);
 	a->r2_havesamps += a->r2_insize;
@@ -611,13 +618,17 @@ void dexchange (int channel, double* in, double* out)
 	memcpy (a->r2_baseptr + 2 * a->r2_inidx, in, a->r2_insize * sizeof (complex));
 	if ((a->r2_inidx += a->r2_insize) == a->r2_active_buffsize)
 		a->r2_inidx = 0;
+	// Take the next input block BEFORE releasing fexchange.  With bfo=1 the release
+	// is what lets the feeder write again, and when the ring is full the slot it
+	// writes next is the one read here: a preempted DSP thread then copies a torn
+	// block, which an adaptive NR carries on for the rest of the run.
+	memcpy (out, a->r1_baseptr + 2 * a->r1_outidx, a->r1_outsize * sizeof (complex));
+	if ((a->r1_outidx += a->r1_outsize) == a->r1_active_buffsize)
+		a->r1_outidx = 0;
 	if (a->bfo && (a->r2_unqueuedsamps += a->r2_insize) >= a->out_size)
 	{
 		n = a->r2_unqueuedsamps / a->out_size;
 		ReleaseSemaphore(a->Sem_OutReady, n, 0);	
 		a->r2_unqueuedsamps -= n * a->out_size;
 	}
-	memcpy (out, a->r1_baseptr + 2 * a->r1_outidx, a->r1_outsize * sizeof (complex));
-	if ((a->r1_outidx += a->r1_outsize) == a->r1_active_buffsize)
-		a->r1_outidx = 0;
 }

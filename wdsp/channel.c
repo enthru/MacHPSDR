@@ -31,12 +31,20 @@ struct _ch ch[MAX_CHANNELS];
 void start_thread (int channel)
 {
 #if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
-	HANDLE handle = (HANDLE) _beginthread(wdspmain, 0, (void *)channel);
+	HANDLE handle;
+	__atomic_add_fetch (&ch[channel].dsp_threads, 1, __ATOMIC_SEQ_CST);
+	handle = (HANDLE) _beginthread(wdspmain, 0, (void *)channel);
 #else
 	HANDLE handle = (HANDLE) _beginthread(main, 0, (void *)channel);
 #endif
 
 	//SetThreadPriority(handle, THREAD_PRIORITY_HIGHEST);
+}
+
+// The last thing a DSP thread does before it ends, on every way out.
+void dsp_thread_done (int channel)
+{
+	__atomic_sub_fetch (&ch[channel].dsp_threads, 1, __ATOMIC_SEQ_CST);
 }
 
 void pre_main_build (int channel)
@@ -115,6 +123,20 @@ void pre_main_destroy (int channel)
 	InterlockedBitTestAndSet (&ch[channel].iob.pc->exec_bypass, 0);
 	ReleaseSemaphore (a->Sem_BuffReady, 1, 0);
 	Sleep (25);
+	// 25 ms is a guess about a thread that may be descheduled or mid-block.  What
+	// follows frees the buffers and semaphores it is using, and a rebuild sets
+	// run again, so one that outlives the guess crashes or stays on as a second
+	// DSP thread.  Bounded, so a stuck thread costs a log line and not the GUI.
+	{
+		int waited = 0;
+		while (__atomic_load_n (&ch[channel].dsp_threads, __ATOMIC_SEQ_CST) > 0 && waited < 2000)
+		{
+			Sleep (1);
+			waited++;
+		}
+		if (waited >= 2000)
+			fprintf (stderr, "WDSP: channel %d: DSP thread did not exit in 2 s\n", channel);
+	}
 }
 
 void post_main_destroy (int channel)

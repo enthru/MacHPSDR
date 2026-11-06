@@ -32,6 +32,7 @@ struct _ch
 {
 	int type;
 	volatile long run;			// when 1, thread loops; when 0, thread terminates
+	volatile long dsp_threads;	// DSP threads that have not finished exiting yet
 	volatile long exchange;		// when 1, fexchange() operates; when 0, it just returns
 	int in_rate;				// input samplerate
 	int out_rate;				// output samplerate
@@ -58,6 +59,8 @@ struct _ch
 };
 
 extern struct _ch ch[];
+
+extern void dsp_thread_done (int channel);
 
 PORT void OpenChannel (int channel, int in_size, int dsp_size, int input_samplerate, int dsp_rate, int output_samplerate, int type, int state, double tdelayup, double tslewup, double tdelaydown, double tslewdown, int bfo);
 

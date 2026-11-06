@@ -63,6 +63,9 @@ void main (void *pargs)
 		}
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}
+#if defined(linux) || defined(__APPLE__) || defined(__MINGW32__)
+	dsp_thread_done (channel);
+#endif
 	_endthread();
 }
 
