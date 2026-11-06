@@ -609,7 +609,8 @@ can be replayed separately in the I/Q Player.
   controls (NB/NR dropdowns off/NB/NB2 and off/NR/NR2/NR3/NR4, SNB/ANF toggles —
   dimmed and suppressed in DIGU/DIGL or under a decoder, exactly as on the desktop),
   a band dropdown (lock-aware),
-  a filter-width preset dropdown, SPLIT, and click-to-arm/scroll-to-nudge RIT/XIT; the
+  a filter-width preset dropdown, SPLIT, click-to-arm/scroll-to-nudge RIT/XIT, VFO B
+  tuning, A>B/A<B/A<>B, LOCK, CTUN, DUP and a zoom dropdown; the
   device-shaped RF gain/attenuation slider, sub-receiver enable and crossfeed,
   saved-bookmark recall, and the active decoder's status/text readout are also
   available. A per-receiver ⏺ button records the received audio in the browser

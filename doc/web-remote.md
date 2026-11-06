@@ -302,6 +302,12 @@ device-reported Soapy gain range or the existing HPSDR attenuation/LNA range),
 `set_subrx`, `set_subrx_mix` (0 hard left/right split through 100 mono blend)
 and `recall_bookmark` (zero-based index from `radio.bookmarks`).  Receiver state
 reports `rf_gain`, `rf_min`, `rf_max`, `rf_kind`, `subrx` and `subrx_mix`.
+The VFO controls are `set_frequency_b` (absolute hertz), `vfo_op` (0 A>B, 1 B>A,
+2 A<>B), `set_lock`, `set_ctun`, `set_duplex` (each 0/1) and `set_zoom` (a factor
+the server clamps to what the panadapter width allows).  Receiver state reports
+`frequency_b`, `mode_b_name`, `locked`, `ctun`, `freetune`, `duplex`, `zoom` and
+`zoom_max`.  A locked VFO refuses `set_frequency_b` and B>A/A<>B but not A>B, as
+on the desktop.
 Radio state reports the saved bookmark names/frequencies and the active
 decoder's `decoder_title`/plain-text `decoder_text`; these are pushed through
 the same state-change detector as the other controls.
@@ -456,7 +462,8 @@ from any surface echoes to every browser. Filter presets, the noise controls
 (NB/NR/ANF/SNB under the DIGU/DIGL and decoder bypass rule), a band dropdown,
 per-digit VFO tuning (wheel over a digit, hover and type 0-9, as on the desktop),
 RIT/split, sub-receiver enable/crossfeed, saved-bookmark recall and the active
-decoder's textual readout are included.
+decoder's textual readout are included, as are VFO B tuning, A>B/B>A/A<>B, VFO
+lock, CTUN, duplex and panadapter zoom (2026-11-06).
 
 ### Phase 5 - authenticated LAN/Internet operation
 

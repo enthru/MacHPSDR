@@ -117,6 +117,11 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   (`chip-suppressed`) when `noise_bypassed` so a suppressed selection is shown, not
   pretended applied.  `web_offline` covers parse of each action plus the rx-required
   and boolean-rejected guards.
+- Phase 4 slice 6 (2026-11-06) closes the desktop VFO row: VFO B is shown with
+  its mode and tunes like VFO A (`set_frequency_b`), A>B/A<B/A<>B (`vfo_op`),
+  LOCK, CTUN, DUP and a ZOOM dropdown.  No chip in the page is dead any more.
+  What stays desktop-only on purpose: the SAT/RSAT split modes (SPLIT toggles the
+  mode last in effect) and LINK.
 - Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
   listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
   clear password protection; authentication uses HTTP Basic with configurable
@@ -312,6 +317,41 @@ without its window, signals, macOS accessory policy), `receiver.c`
     fresh address.
 
 ## Verification record
+
+### 2026-11-06 — VFO B, A/B operations, LOCK, CTUN, DUP, ZOOM
+
+Each control goes through the desktop's own function: `vfo_a2b`/`vfo_b2a`/
+`vfo_aswapb`, `receiver_set_ctun`, `receiver_change_zoom`, and for VFO B the
+absolute setter TCI already used, because a `receiver_move_b()` delta is ambiguous
+under SAT/RSAT.  `receiver_max_zoom()` is now the one spelling of the zoom ceiling.
+
+Bugs found while wiring it, all fixed here:
+- `set_split` only wrote `rx->split`: the transmitter stayed on the other VFO's
+  mode, the radio did not retune and a SAT/RSAT split came back as plain split.  It
+  now uses `vfo_toggle_split()`.
+- `ext_set_mode` (browser and TCI) never moved the transmitter's mode, and assigned
+  `mode_a` before `receiver_mode_changed()`, which files the outgoing mode's filter
+  memory by `mode_a`.  It now uses `vfo_set_mode()`.
+- A drag on the spectrum under CTUN/freetune moved the cursor the wrong way.
+- The ZOOM chip was hard-coded to x1 whatever the receiver was on.
+- `update_vfo` never repainted the desktop's LOCK button.
+- Escape in the frequency editor applied the typed value through the `blur` handler.
+
+Verified: `make`, `make check`, `web_offline --selftest` with eight new cases.
+Live headless faker: a scripted WSS client passed 28/28, covering the refusal
+without the lease, A>B/A<B/A<>B, the lock's A>B asymmetry, CTUN holding the window
+still while the cursor moves, the zoom span and clamp, and split being idempotent.
+Headless Chrome with real mouse and keyboard input passed 28/28: wheel, typing and
+the editor on both readouts, the buttons and chips, drag direction with and without
+CTUN, every new control disabled without control, no uncaught page exception and no
+GTK-CRITICAL.  Mode routing was proven indirectly: only `vfo_set_mode()` copies a
+mode onto VFO B under split.
+
+NOT verified: the transmitter's mode or a retune on real hardware after
+`set_split`/`set_mode`; the desktop LOCK button repainting on a visible window
+(only that `update_vfo` runs it without a GTK-CRITICAL); TCI's mode change against
+a real client; Safari and Firefox; a real wheel or trackpad; zoom above x8, which
+needs a panadapter narrower than the headless 2048 pixels.
 
 ### 2026-11-04 — WebRTC in the CI builds and release bundles
 

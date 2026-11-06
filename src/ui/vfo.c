@@ -2545,6 +2545,11 @@ void update_vfo(RECEIVER *rx) {
     g_signal_handlers_unblock_by_func(v->xit_b,G_CALLBACK(xit_b_cb),rx);
   }
 
+  // update LOCK button: the browser remote sets rx->locked too
+  g_signal_handlers_block_by_func(v->lock_b,G_CALLBACK(lock_b_cb),rx);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->lock_b),rx->locked);
+  g_signal_handlers_unblock_by_func(v->lock_b,G_CALLBACK(lock_b_cb),rx);
+
   // update CTUN button
   g_signal_handlers_block_by_func(v->ctun_b,G_CALLBACK(ctun_b_cb),rx);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v->ctun_b),rx->ctun);

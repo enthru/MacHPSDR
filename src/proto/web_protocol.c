@@ -481,6 +481,12 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
       {"set_subrx",    WEB_CTRL_SUBRX},
       {"set_subrx_mix", WEB_CTRL_SUBRX_MIX},
       {"recall_bookmark", WEB_CTRL_BOOKMARK},
+      {"set_frequency_b", WEB_CTRL_FREQUENCY_B},
+      {"vfo_op",       WEB_CTRL_VFO_OP},
+      {"set_lock",     WEB_CTRL_LOCK},
+      {"set_ctun",     WEB_CTRL_CTUN},
+      {"set_duplex",   WEB_CTRL_DUPLEX},
+      {"set_zoom",     WEB_CTRL_ZOOM},
     };
     if(out->type!=WEB_REQUEST_SET_TX_CONTROL) {
       for(size_t i=0;i<G_N_ELEMENTS(controls);i++)

@@ -42,14 +42,15 @@ function formatFreq(hz) {
 // the place value of each digit, 0 for a separator.
 const FREQ_PLACES = [1e10, 1e9, 1e8, 1e7, 1e6, 0, 1e5, 1e4, 1e3, 0, 100, 10, 1];
 const FREQ_MAX = 99999999999;
+const ZOOM_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 32];
 // The digit typing targets: the one under the pointer, then (after each typed
 // digit) the next to its right, as the desktop's vfo_type_digit() does.
-// {card, index}, or null once the pointer leaves the readout.
+// {display, index}, or null once the pointer leaves the readout.
 let digitCursor = null;
-function setDigitCursor(card, index) {
+function setDigitCursor(display, index) {
   document.querySelectorAll(".freq-digit.digit-cursor").forEach(el => el.classList.remove("digit-cursor"));
-  digitCursor = card && index >= 0 ? { card, index } : null;
-  if (digitCursor) card.querySelectorAll(".freq-a > span")[index].classList.add("digit-cursor");
+  digitCursor = display && index >= 0 ? { display, index } : null;
+  if (digitCursor) display.children[index].classList.add("digit-cursor");
 }
 function formatWidth(hz) {
   const w = Math.abs(Math.round(hz));
@@ -221,7 +222,12 @@ function installSpectrumGestures(card, rxId) {
     const delta = Math.round((x - drag.startX) / width * geometry.span);
     if (drag.kind === "left") command("set_filter", { rx: rxId, low: drag.low + delta, high: drag.high });
     else if (drag.kind === "right") command("set_filter", { rx: rxId, low: drag.low, high: drag.high + delta });
-    else command("set_frequency", { rx: rxId, value: Math.max(1, Math.round(drag.frequency - delta)) });
+    else {
+      // A plain VFO drags the spectrum under a fixed dial; under ctun/freetune the
+      // spectrum stays put and the cursor follows the pointer (receiver_move()).
+      const cursor = card._rx?.ctun || card._rx?.freetune;
+      command("set_frequency", { rx: rxId, value: Math.max(1, Math.round(cursor ? drag.frequency + delta : drag.frequency - delta)) });
+    }
   };
   canvas.addEventListener("pointerdown", event => {
     if (event.button !== 0 || !card._rx) return;
@@ -273,9 +279,9 @@ function installSpectrumGestures(card, rxId) {
   });
 }
 
-function showFrequency(card, hz) {
+function showFrequency(display, hz) {
   const text = formatFreq(hz);
-  card.querySelectorAll(".freq-a > span").forEach((span, i) => {
+  [...display.children].forEach((span, i) => {
     if (span.textContent !== text[i]) span.textContent = text[i];
   });
 }
@@ -287,40 +293,34 @@ document.addEventListener("keydown", event => {
   const target = event.target;
   if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement ||
       target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
-  if (!digitCursor.card.isConnected || digitCursor.card.querySelector(".freq-a").hidden) {
+  if (!digitCursor.display.isConnected || digitCursor.display.hidden) {
     setDigitCursor(null, -1); return;
   }
   event.preventDefault();
-  digitCursor.card._typeDigit(digitCursor.index, Number(event.key));
+  digitCursor.display._typeDigit(digitCursor.index, Number(event.key));
 });
 
-function makeCard(rx) {
-  const card = template.content.firstElementChild.cloneNode(true);
-  card.dataset.rx = rx.id;
-  card.querySelector(".rx-name").textContent = `RX${rx.id + 1}`;
-  const select = card.querySelector(".mode");
-  modes.forEach((name, value) => select.add(new Option(name, value)));
-  select.addEventListener("change", () => command("set_mode", { rx: rx.id, value: Number(select.value) }));
-  const profile = card.querySelector(".spectrum-profile");
-  profile.addEventListener("change", () => send({ type: "spectrum_subscribe", rx: rx.id, profile: profile.value }));
-  // Big VFO-A readout: click (or focus+Enter) swaps in an inline numeric editor.
-  const display = card.querySelector(".freq-a");
-  const editor = card.querySelector(".freq-edit");
+// One big frequency readout, VFO A's or VFO B's: click (or focus+Enter) swaps in
+// an inline numeric editor.
+function installVfoReadout(card, rxId, displaySel, editorSel, field, action) {
+  const display = card.querySelector(displaySel);
+  const editor = card.querySelector(editorSel);
   const openEditor = () => {
     setDigitCursor(null, -1);
-    editor.value = String(card._rx?.frequency ?? "");
+    editor.value = String(card._rx?.[field] ?? "");
     display.hidden = true; editor.hidden = false; editor.focus(); editor.select();
   };
   const closeEditor = () => { editor.hidden = true; display.hidden = false; };
   const applyEditor = () => {
+    if (editor.hidden) return;
     const value = Number(editor.value.replace(/[^0-9]/g, ""));
-    if (Number.isSafeInteger(value) && value > 0) command("set_frequency", { rx: rx.id, value });
+    if (Number.isSafeInteger(value) && value > 0) command(action, { rx: rxId, value });
     closeEditor();
   };
   // Per-digit tuning, the desktop VFO's twin: one span per readout character
   // (render() rewrites their text). The wheel over a digit tunes by its place
   // value; a typed 0-9 overwrites the digit under the pointer and moves one to
-  // the right. Both send an absolute set_frequency, so ctun/freetune and the VFO
+  // the right. Both send an absolute frequency, so ctun/freetune and the VFO
   // lock are the server's business exactly as for the type-in editor.
   FREQ_PLACES.forEach(place => {
     const span = document.createElement("span");
@@ -332,33 +332,33 @@ function makeCard(rx) {
   const retune = value => {
     if (!card._rx || card._rx.locked || !canControl()) return false;
     value = Math.max(1, Math.min(FREQ_MAX, value));
-    if (value === card._rx.frequency) return false;
-    card._rx.frequency = value;           // optimistic, so a burst compounds
-    showFrequency(card, value);
-    command("set_frequency", { rx: rx.id, value });
+    if (value === card._rx[field]) return false;
+    card._rx[field] = value;              // optimistic, so a burst compounds
+    showFrequency(display, value);
+    command(action, { rx: rxId, value });
     return true;
   };
   display.addEventListener("mouseover", event => {
     const i = digitSpans.indexOf(event.target);
-    if (i >= 0 && FREQ_PLACES[i]) setDigitCursor(card, i);
+    if (i >= 0 && FREQ_PLACES[i]) setDigitCursor(display, i);
   });
-  display.addEventListener("mouseleave", () => { if (digitCursor?.card === card) setDigitCursor(null, -1); });
+  display.addEventListener("mouseleave", () => { if (digitCursor?.display === display) setDigitCursor(null, -1); });
   display.addEventListener("wheel", event => {
     const i = digitSpans.indexOf(event.target);
     if (i < 0 || !FREQ_PLACES[i] || !card._rx) return;
     event.preventDefault();
     let notch = wheelNotches(display, event);
     if (radioState?.vfo_scroll_reversed) notch = -notch;
-    if (notch) retune(card._rx.frequency + notch * FREQ_PLACES[i]);
+    if (notch) retune(card._rx[field] + notch * FREQ_PLACES[i]);
   }, { passive: false });
-  card._typeDigit = (index, n) => {
+  display._typeDigit = (index, n) => {
     if (!card._rx) return;
     const place = FREQ_PLACES[index];
-    const current = Math.floor(card._rx.frequency / place) % 10;
-    retune(card._rx.frequency + (n - current) * place);
+    const current = Math.floor(card._rx[field] / place) % 10;
+    retune(card._rx[field] + (n - current) * place);
     let next = index + 1;
     while (next < FREQ_PLACES.length && !FREQ_PLACES[next]) next++;
-    if (next < FREQ_PLACES.length) setDigitCursor(card, next);
+    if (next < FREQ_PLACES.length) setDigitCursor(display, next);
   };
   display.addEventListener("click", openEditor);
   display.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(); } });
@@ -367,6 +367,19 @@ function makeCard(rx) {
     else if (event.key === "Escape") closeEditor();
   });
   editor.addEventListener("blur", applyEditor);
+}
+
+function makeCard(rx) {
+  const card = template.content.firstElementChild.cloneNode(true);
+  card.dataset.rx = rx.id;
+  card.querySelector(".rx-name").textContent = `RX${rx.id + 1}`;
+  const select = card.querySelector(".mode");
+  modes.forEach((name, value) => select.add(new Option(name, value)));
+  select.addEventListener("change", () => command("set_mode", { rx: rx.id, value: Number(select.value) }));
+  const profile = card.querySelector(".spectrum-profile");
+  profile.addEventListener("change", () => send({ type: "spectrum_subscribe", rx: rx.id, profile: profile.value }));
+  installVfoReadout(card, rx.id, ".freq-a", ".freq-edit", "frequency", "set_frequency");
+  installVfoReadout(card, rx.id, ".freq-b", ".freq-edit-b", "frequency_b", "set_frequency_b");
   // Scalar receiver controls. Sliders send live (throttled) while dragging and
   // once more on release; the select controls send on change. render() writes
   // each back from server state, skipping whichever one the user is holding.
@@ -399,6 +412,13 @@ function makeCard(rx) {
       command(action, { rx: rx.id, value: card._rx?.[field] ? 0 : 1 }));
   toggleChip(".snb-chip", "set_snb", "snb");
   toggleChip(".anf-chip", "set_anf", "anf");
+  toggleChip(".lock-chip", "set_lock", "locked");
+  toggleChip(".ctun-chip", "set_ctun", "ctun");
+  toggleChip(".dup-chip", "set_duplex", "duplex");
+  card.querySelectorAll(".vfo-op").forEach(el =>
+    el.addEventListener("click", () => command("vfo_op", { rx: rx.id, value: Number(el.dataset.op) })));
+  const zoomSel = card.querySelector(".zoom-sel");
+  zoomSel.addEventListener("change", () => command("set_zoom", { rx: rx.id, value: Number(zoomSel.value) }));
   // Filter width: a preset dropdown (the mode's filters[] list) applied through
   // the desktop's receiver_filter_changed choke point. The panadapter edge drag
   // still works; this is the reliable width control.
@@ -468,8 +488,9 @@ function render(state) {
     card._rx = rx;
     subscribe(card, rx.id);
     card.classList.toggle("active", state.radio.active_rx === rx.id);
-    const editor = card.querySelector(".freq-edit");
-    if (editor.hidden) showFrequency(card, rx.frequency);
+    if (card.querySelector(".freq-edit").hidden) showFrequency(card.querySelector(".freq-a"), rx.frequency);
+    if (card.querySelector(".freq-edit-b").hidden) showFrequency(card.querySelector(".freq-b"), rx.frequency_b);
+    card.querySelector(".mode-b").textContent = rx.mode_b_name || "";
     card.querySelector(".mode").value = String(rx.mode);
     // Filter presets: rebuild the dropdown when the mode's list changes, then
     // reflect the current preset (unless the viewer is holding the select open).
@@ -493,6 +514,19 @@ function render(state) {
       : `S${Math.max(1, Math.min(9, Math.round((rx.meter_db + 121) / 6) + 1))}`;
     card.querySelector(".smeter-read").textContent = `${sText} · ${Math.round(rx.meter_db)} dBm`;
     card.querySelector(".lock-chip").classList.toggle("chip-on", !!rx.locked);
+    card.querySelector(".ctun-chip").classList.toggle("chip-on", !!rx.ctun);
+    card.querySelector(".dup-chip").classList.toggle("chip-on", !!rx.duplex);
+    // Zoom: the desktop menu's levels up to what this panadapter width allows,
+    // plus whatever level the receiver is actually on.
+    const zoomSel = card.querySelector(".zoom-sel");
+    const zoomLevels = ZOOM_LEVELS.filter(z => z <= (rx.zoom_max || 1) || z === rx.zoom);
+    const zoomKey = zoomLevels.join();
+    if (zoomSel._key !== zoomKey) {
+      zoomSel._key = zoomKey;
+      zoomSel.textContent = "";
+      zoomLevels.forEach(z => zoomSel.add(new Option(`x${z}`, z)));
+    }
+    if (document.activeElement !== zoomSel) zoomSel.value = String(rx.zoom);
     // Reflect server state onto the controls, but never yank one the user is
     // actively dragging/opening (active element) out from under them.
     const setSlider = (inputSel, valSel, value) => {

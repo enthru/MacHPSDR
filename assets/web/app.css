@@ -54,8 +54,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
 .control-btn:disabled { opacity: .6; cursor: default; }
 /* Without control the receiver controls are disabled by app.js; the frequency
    readout and spectrum are not form controls, so they stop looking clickable. */
-.rx.no-control .freq-a, .rx.no-control .spectrum { cursor: default; }
-.rx.no-control .freq-a { pointer-events: none; }
+.rx.no-control .freq-a, .rx.no-control .freq-b, .rx.no-control .spectrum { cursor: default; }
+.rx.no-control .freq-a, .rx.no-control .freq-b { pointer-events: none; }
 
 /* ---- Main / receiver stack ---- */
 main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: .55rem; gap: .55rem; overflow: auto; }
@@ -121,11 +121,14 @@ main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; pad
 .freq-digit { border-radius: 3px; cursor: ns-resize; }
 .freq-digit.digit-cursor { background: rgba(79,214,242,.28); }
 .freq-b { color: var(--orange); font-size: clamp(.95rem, 1.6vw, 1.2rem); opacity: .85; }
+.freq-b:hover { background: rgba(232,147,107,.12); }
+.freq-b:focus-visible { outline: 2px solid var(--orange); }
 .freq-edit {
   font-variant-numeric: tabular-nums; font-size: clamp(1.35rem, 2.6vw, 2rem); font-weight: 600;
   color: var(--cyan); background: #06121b; border: 1px solid var(--cyan); border-radius: 6px;
   padding: 0 .25rem; width: 11ch; outline: none;
 }
+.freq-edit-b { color: var(--orange); border-color: var(--orange); font-size: clamp(.95rem, 1.6vw, 1.2rem); }
 
 .vfo-right { display: flex; align-items: center; gap: .7rem; margin-left: auto; }
 .vfo-aux { display: flex; align-items: center; gap: .5rem; }

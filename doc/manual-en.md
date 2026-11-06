@@ -812,7 +812,11 @@ while a decoder is running — the radio keeps your selection but suppresses tho
 blocks there, so the control shows the choice without pretending it is taking effect. There are also
 a **band** dropdown (the bands the desktop band menu offers; refused on a locked VFO), a
 **filter-width** dropdown of the mode's presets, a **SPLIT** toggle, and **RIT**/
-**XIT** chips you click to arm and scroll to nudge by 10 Hz. The **RF** slider
+**XIT** chips you click to arm and scroll to nudge by 10 Hz. **VFO B** tunes like
+VFO A (click to type, wheel over a digit, hover a digit and type); **A>B**, **A<B**
+and **A<>B** copy or swap the two, and as on the desktop a locked VFO refuses the
+last two. **LOCK**, **CTUN**, **DUP** and the **ZOOM** dropdown are the desktop's
+own controls; under CTUN a drag on the spectrum moves the cursor, not the spectrum. The **RF** slider
 uses the connected device's own gain or attenuation range. **SUB RX** enables
 the second demodulator on VFO B and **MIX** moves its audio from a hard
 main-left/sub-right split toward mono. **BMK** recalls bookmarks saved in the

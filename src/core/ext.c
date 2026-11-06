@@ -135,36 +135,38 @@ int ext_set_frequency_a(void *data) {
 // "put VFO B on this frequency" has one meaning. The [0, fmax] guard is the
 // same directional one receiver_move_b uses — reject only a move that pushes
 // further out of range, so a B already above the device max can be brought back.
+static void apply_frequency_b(RECEIVER *rx,long long nf) {
+  g_mutex_lock(&rx->mutex);
+  if(!rx->locked) {
+    long long fmax=receiver_max_frequency(rx);
+    if(!((nf <= 0    && nf < rx->frequency_b) ||
+         (nf >  fmax && nf > rx->frequency_b))) {
+      rx->frequency_b=nf;
+      rx->band_b=get_band_from_frequency(nf);
+      frequency_changed(rx);
+      update_vfo(rx);
+    }
+  }
+  g_mutex_unlock(&rx->mutex);
+}
+
 int ext_set_frequency_b(void *data) {
   RX_FREQUENCY *f=(RX_FREQUENCY *)data;
 
   if(!receiver_is_live(f->rx)) { g_free(f); return 0; }
-  g_mutex_lock(&f->rx->mutex);
-  if(f->rx!=NULL && !f->rx->locked) {
-    long long fmax=receiver_max_frequency(f->rx);
-    long long nf=f->frequency;
-    if(!((nf <= 0    && nf < f->rx->frequency_b) ||
-         (nf >  fmax && nf > f->rx->frequency_b))) {
-      f->rx->frequency_b=nf;
-      f->rx->band_b=get_band_from_frequency(nf);
-      frequency_changed(f->rx);
-      update_vfo(f->rx);
-    }
-  }
-  g_mutex_unlock(&f->rx->mutex);
+  apply_frequency_b(f->rx,f->frequency);
 
   g_free(f);
   return 0;
 }
 
+// A mode from the network, applied the way the mode menu does: vfo_set_mode()
+// moves the transmitter too and lets receiver_mode_changed() file the outgoing
+// mode's filter memory under that mode, which assigning mode_a first defeated.
 int ext_set_mode(void *data) {
   MODE *m=(MODE *)data;
   if(!receiver_is_live(m->rx)) { g_free(m); return 0; }
-  if (m->rx != NULL) {
-    m->rx->mode_a = m->mode_a;
-  }
-  receiver_mode_changed(m->rx, m->rx->mode_a);    
-  update_vfo(m->rx);
+  vfo_set_mode(m->rx,m->mode_a);
   g_free(m);
   return 0;
 }
@@ -332,10 +334,36 @@ int ext_set_rx_control(void *data) {
         if(radio->transmitter->rx!=NULL) frequency_changed(radio->transmitter->rx);
       }
       break;
-    // Split toggle: SPLIT_ON <-> SPLIT_OFF, keeping split_last like the VFO button.
+    // Split toggle: the VFO button's own, so the transmitter follows the VFO it
+    // will key on, the radio retunes and the mode last in effect comes back.
     case WEB_CTRL_SPLIT:
-      if(c->value!=0) { rx->split=SPLIT_ON; rx->split_last=SPLIT_ON; }
-      else rx->split=SPLIT_OFF;
+      if((c->value!=0)!=(rx->split!=SPLIT_OFF)) vfo_toggle_split(rx);
+      break;
+    case WEB_CTRL_FREQUENCY_B:
+      apply_frequency_b(rx,c->value);
+      break;
+    // A>B stays allowed on a locked VFO, B>A and A<>B refuse: vfo.c owns that rule.
+    case WEB_CTRL_VFO_OP:
+      if(c->value==0) vfo_a2b(rx);
+      else if(c->value==1) vfo_b2a(rx);
+      else if(c->value==2) vfo_aswapb(rx);
+      break;
+    case WEB_CTRL_LOCK:
+      rx->locked=(c->value!=0);
+      break;
+    case WEB_CTRL_CTUN:
+      if((c->value!=0)!=(rx->ctun!=FALSE)) {
+        rx->ctun=(c->value!=0);
+        receiver_set_ctun(rx);
+      }
+      break;
+    case WEB_CTRL_DUPLEX:
+      rx->duplex=(c->value!=0);
+      break;
+    // receiver_change_zoom() holds the crash invariant (pixels <= WDSP_MAX_PIXELS).
+    case WEB_CTRL_ZOOM:
+      if(rx->channel>=0)
+        receiver_change_zoom(rx,(int)CLAMP(c->value,(gint64)1,(gint64)32));
       break;
     // Band up (+1) / down (-1). set_band is the one choke point that refuses a
     // locked VFO (CLAUDE.md), so the lock rule needs no repeat here.

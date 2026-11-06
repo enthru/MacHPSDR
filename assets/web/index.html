@@ -40,11 +40,14 @@
             <span class="chip-select-prefix">BAND</span>
             <select class="band-sel chip-select" aria-label="Band"></select>
           </label>
-          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&gt;B</button>
-          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;B</button>
-          <button class="chip dead" type="button" disabled title="Not yet available in the browser remote">A&lt;&gt;B</button>
+          <button class="chip vfo-op" data-op="0" type="button" title="Copy VFO A to VFO B">A&gt;B</button>
+          <button class="chip vfo-op" data-op="1" type="button" title="Copy VFO B to VFO A (refused while the VFO is locked)">A&lt;B</button>
+          <button class="chip vfo-op" data-op="2" type="button" title="Swap VFO A and VFO B (refused while the VFO is locked)">A&lt;&gt;B</button>
           <button class="chip split-chip" type="button" title="Split (VFO A/B)">SPLIT</button>
-          <span class="chip chip-zoom chip-static" title="Zoom follows the desktop radio">ZOOM&nbsp;x1</span>
+          <label class="chip chip-select-wrap" title="Panadapter zoom">
+            <span class="chip-select-prefix">ZOOM</span>
+            <select class="zoom-sel chip-select"></select>
+          </label>
           <label class="chip chip-select-wrap" title="Tuning step">
             <span class="chip-select-prefix">STEP</span>
             <select class="step chip-select">
@@ -75,8 +78,9 @@
             <input class="freq-edit" inputmode="numeric" autocomplete="off" aria-label="VFO A frequency in hertz" hidden>
           </div>
           <div class="vfo-b">
-            <span class="vfo-tag">VFO B</span>
-            <span class="freq freq-b" title="VFO B is not yet exposed by the remote protocol">—</span>
+            <span class="vfo-tag">VFO B <span class="mode-b"></span></span>
+            <span class="freq freq-b" role="button" tabindex="0" title="Click to enter a frequency; wheel over a digit tunes by that digit; hover a digit and type 0-9 to overwrite it"></span>
+            <input class="freq-edit freq-edit-b" inputmode="numeric" autocomplete="off" aria-label="VFO B frequency in hertz" hidden>
           </div>
         </div>
 
@@ -108,7 +112,7 @@
 
       <!-- Mode/status strip -->
       <div class="mode-bar">
-        <button class="chip lock-chip dead" type="button" disabled title="VFO lock is set on the desktop radio">LOCK</button>
+        <button class="chip lock-chip" type="button" title="Lock the VFO against tuning">LOCK</button>
         <label class="chip chip-select-wrap chip-on" title="Demodulation mode">
           <select class="mode chip-select" aria-label="Mode"></select>
         </label>
@@ -147,8 +151,8 @@
         </label>
         <button class="chip rit-chip" type="button" title="RIT — click to toggle, wheel or up/down arrows to adjust">RIT</button>
         <button class="chip xit-chip" type="button" title="XIT — click to toggle, wheel or up/down arrows to adjust">XIT</button>
-        <button class="chip dead" type="button" disabled title="Click-tune — not yet available in the browser remote">CTUN</button>
-        <button class="chip dead" type="button" disabled title="Duplex — not yet available in the browser remote">DUP</button>
+        <button class="chip ctun-chip" type="button" title="Click tuning: tune inside the span without moving the hardware dial">CTUN</button>
+        <button class="chip dup-chip" type="button" title="Duplex: keep this receiver running while transmitting">DUP</button>
         <button class="chip subrx-chip" type="button" title="Enable the sub-receiver on VFO B">SUB RX</button>
         <label class="chip chip-sql subrx-mix-wrap" title="Sub-RX crossfeed: split to mono">
           <span class="chip-select-prefix">MIX<b class="subrx-mix-val"></b></span>

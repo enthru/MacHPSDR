@@ -695,6 +695,7 @@ extern int receiver_histogram_cells(int width,int height);
 extern void calculate_display_average(RECEIVER *rx);
 extern void receiver_fps_changed(RECEIVER *rx);
 extern void receiver_refit_vpaned(RECEIVER *rx);
+extern int receiver_max_zoom(RECEIVER *rx);
 extern void receiver_change_zoom(RECEIVER *rx,int zoom);
 extern void receiver_headless_geometry(RECEIVER *rx);
 extern void update_frequency(RECEIVER *rx);

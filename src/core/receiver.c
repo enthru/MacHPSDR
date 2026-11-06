@@ -3822,11 +3822,15 @@ void receiver_headless_geometry(RECEIVER *rx) {
   g_mutex_unlock(&rx->mutex);
 }
 
+int receiver_max_zoom(RECEIVER *rx) {
+  int max_zoom=rx->panadapter_width>0?WDSP_MAX_PIXELS/rx->panadapter_width:1;
+  return max_zoom<1?1:max_zoom;
+}
+
 void receiver_change_zoom(RECEIVER *rx,int zoom) {
 log_info("%s: %d\n",__FUNCTION__,zoom);
   if(rx->panadapter_width>0) {
-    int max_zoom=WDSP_MAX_PIXELS/rx->panadapter_width;
-    if(max_zoom<1) max_zoom=1;
+    int max_zoom=receiver_max_zoom(rx);
     if(zoom>max_zoom) zoom=max_zoom;
   }
   if(zoom<1) zoom=1;

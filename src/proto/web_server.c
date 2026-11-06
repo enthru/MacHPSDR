@@ -714,6 +714,14 @@ static void append_state_body(GString *s, gboolean include_meter) {
         (long long)(rx->frequency_a-(rx->sample_rate/2)+(rx->pan*rx->hz_per_pixel)),
         (long long)(rx->frequency_a-(rx->sample_rate/2)+
                     ((rx->pan+rx->panadapter_width)*rx->hz_per_pixel)));
+    // VFO B's mode, the tuning modes and the zoom with the ceiling
+    // receiver_change_zoom() will apply at this panadapter width.
+    int mode_b=(rx->mode_b>=0 && rx->mode_b<MODES)?rx->mode_b:USB;
+    g_string_append_printf(s,
+        "\"mode_b_name\":\"%s\",\"ctun\":%s,\"freetune\":%s,\"duplex\":%s,"
+        "\"zoom\":%d,\"zoom_max\":%d,",
+        mode_string[mode_b],rx->ctun?"true":"false",rx->freetune?"true":"false",
+        rx->duplex?"true":"false",rx->zoom,receiver_max_zoom(rx));
     // Band, split, RIT/XIT (XIT from the transmitter, 0/off without one) and the
     // current filter preset plus the mode's whole preset list (name + edges), so
     // the browser can offer a reliable width dropdown instead of only edge drags.

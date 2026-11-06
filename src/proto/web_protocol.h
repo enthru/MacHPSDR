@@ -105,7 +105,13 @@ typedef enum {
   WEB_CTRL_RF_GAIN,    /* device-shaped RX gain or attenuation, dB */
   WEB_CTRL_SUBRX,      /* 0/1 second demodulator */
   WEB_CTRL_SUBRX_MIX,  /* 0 hard L/R split .. 100 mono blend */
-  WEB_CTRL_BOOKMARK    /* recall bookmark by zero-based index */
+  WEB_CTRL_BOOKMARK,   /* recall bookmark by zero-based index */
+  WEB_CTRL_FREQUENCY_B,/* absolute VFO B frequency, Hz */
+  WEB_CTRL_VFO_OP,     /* 0 A>B, 1 B>A, 2 A<>B */
+  WEB_CTRL_LOCK,       /* 0/1 VFO lock */
+  WEB_CTRL_CTUN,       /* 0/1 click tuning */
+  WEB_CTRL_DUPLEX,     /* 0/1 keep receiving while transmitting */
+  WEB_CTRL_ZOOM        /* panadapter zoom factor */
 } WEB_CONTROL;
 
 /* Scalar transmitter controls.  They are global (no receiver index) and may

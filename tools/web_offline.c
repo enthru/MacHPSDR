@@ -111,6 +111,29 @@ int main(int argc, char **argv) {
   check("split parses",
         parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_split\",\"rx\":0,\"value\":1}",&r) &&
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_SPLIT);
+  check("VFO B frequency parses above 32 bits",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_frequency_b\",\"rx\":0,\"value\":10489750000}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_FREQUENCY_B && r.value==10489750000LL);
+  check("VFO B frequency requires a receiver index",
+        !parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_frequency_b\",\"value\":14074000}",&r));
+  check("VFO operation parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"vfo_op\",\"rx\":0,\"value\":2}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_VFO_OP && r.value==2);
+  check("lock parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_lock\",\"rx\":0,\"value\":1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_LOCK);
+  check("ctun parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_ctun\",\"rx\":0,\"value\":1}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_CTUN);
+  check("duplex parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_duplex\",\"rx\":0,\"value\":0}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_DUPLEX);
+  check("zoom parses",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"set_zoom\",\"rx\":0,\"value\":4}",&r) &&
+        r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_ZOOM && r.value==4);
+  check("a VFO operation needs the control lease",
+        parse("{\"type\":\"command\",\"id\":7,\"action\":\"vfo_op\",\"rx\":0,\"value\":0}",&r) &&
+        web_request_access(&r)==WEB_ACCESS_CONTROL_LEASE);
   check("band step parses (down)",
         parse("{\"type\":\"command\",\"id\":7,\"action\":\"band_step\",\"rx\":0,\"value\":-1}",&r) &&
         r.type==WEB_REQUEST_SET_CONTROL && r.control==WEB_CTRL_BAND && r.value==-1);
