@@ -537,6 +537,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
 // shift and the stream stays that far from the dial, so a carrier read off the
 // stream has to be judged against where the stream is.
 static double txcal_lnb_hz;
+static gboolean txcal_no_wait;
 static double txcal_last_trim;
 
 typedef struct {
@@ -616,7 +617,8 @@ static gboolean run_txcal(const TXCAL_AIR *air, gint64 *error_b_out,
     while(g_main_context_iteration(NULL,FALSE)) ;
 
     if(!started && qo100_beacon_locked() &&
-       (txcal_lnb_hz==0.0 || fabs(rx->lo_trim+txcal_lnb_hz)<5.0)) {
+       (txcal_lnb_hz==0.0 || txcal_no_wait ||
+        fabs((double)rx->error_a+rx->lo_trim+txcal_lnb_hz)<5.0)) {
       char why[192];
       if(qo100_txcal_start(radio,why,sizeof(why))) started=TRUE;
       else { g_strlcpy(status,why,(gsize)status_sz); break; }
@@ -2511,6 +2513,28 @@ int main(int argc, char **argv) {
              (long long)eb,txcal_last_trim,st);
     check("txcal: the LNB's trim is not read as an uplink error",
           ok && llabs(eb+1500)<=4 && fabs(txcal_last_trim+80.0)<10.0, d);
+  }
+
+  // The same 80 Hz with no trim, on the retuning loop. Started the moment the lock
+  // is declared they would be written into the uplink (-1421 instead of -1500), so
+  // that start is refused and nothing is written; once the dial is true it works.
+  {
+    TXCAL_AIR air={ .err_hz={ 1500.0, 1500.0, 1500.0, 1500.0 } };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    txcal_lnb_hz=80.0;
+    txcal_no_wait=TRUE;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    txcal_no_wait=FALSE;
+    snprintf(d,sizeof(d),"error_b=%lld, %d cycles \342\200\224 %s",(long long)eb,cycles,st);
+    check("txcal: a lock whose dial is not true yet is refused, nothing written",
+          !ok && eb==0 && cycles==0 && strstr(st,"off the beacon")!=NULL, d);
+
+    eb=0; st[0]=0; cycles=0;
+    ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    txcal_lnb_hz=0.0;
+    snprintf(d,sizeof(d),"error_b=%lld \342\200\224 %s",(long long)eb,st);
+    check("txcal: the same radio calibrates once the dial is true",
+          ok && llabs(eb+1500)<=4, d);
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

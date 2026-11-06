@@ -665,6 +665,7 @@ gboolean qo100_transponder_setup(RADIO *r) {
 // operator watched the dial crawl for twenty seconds.
 #define QO100_MAX_STEP_HZ 400000.0   // never jump further than this in one go
 #define QO100_SETTLED_HZ    1000.0   // residual below which the narrow window is safe
+#define QO100_TXCAL_DIAL_HZ   25.0   // dial error the transmit calibration will start on
 #define QO100_HOLD_DIV           2   // ...and 1/N s of stream discarded after each one
 #define QO100_LOST_MS       10000.0  // locked, but nothing found for this long => let go
 #define QO100_AVG_MS         1000.0  // stream integrated into one measurement
@@ -3478,6 +3479,13 @@ gboolean qo100_txcal_start(RADIO *r, char *msg, int msgsz) {
   if(!r->qo100_beacon_lock || !qo100_beacon_locked())
     TXCAL_NO("Lock the beacon first \342\200\224 an untrue downlink dial would be "
              "measured as a transmit error");
+  // A lock is not yet a true dial: the correction that trues it arrives after the
+  // lock does, and may wait for the quiet end of a slot. Whatever the dial is still
+  // off by goes straight into error_b, since the carrier is measured against it.
+  double dial_off=qo100_beacon_residual_hz();
+  if(fabs(dial_off)>QO100_TXCAL_DIAL_HZ)
+    TXCAL_NO("The dial is still %+.0f Hz off the beacon \342\200\224 give the lock a "
+             "moment to true it, then calibrate",dial_off);
 
   // Our own carrier has to be IN the span, and the operator can put VFO B
   // anywhere. Saying so up front turns a mysterious "nothing appeared on the
