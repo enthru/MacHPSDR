@@ -440,6 +440,9 @@ static void rx_sync_shared_followers(RECEIVER *rx) {
       f->error_a=rx->error_a;
       f->frequency_a=f_real+f->lo_a;
       f->band_a=get_band_from_frequency(f->frequency_a);
+      f->lo_trim=rx->lo_trim;
+      f->lo_trim_error=f->error_a;
+      f->lo_trim_band=f->band_a;
       frequency_changed(f);
       update_vfo(f);
     } else if(rx_clamp_to_shared_window(f)) {
@@ -2050,6 +2053,8 @@ void add_receivers(RADIO *r) {
     if(ds>QO100_CORRECT_DS_MAX) ds=QO100_CORRECT_DS_MAX;
     r->qo100_correct_ds=ds;
   }
+  value=getProperty("radio.qo100_digital_trim");
+  if(value!=NULL) r->qo100_digital_trim=atoi(value);
   value=getProperty("radio.cluster_enable");
   if(value!=NULL) r->cluster_enable=atoi(value);
   value=getProperty("radio.cluster_spots_show");
@@ -4010,6 +4015,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->qo100_tx_lo = 0;            // 0 = the radio reaches 2.4 GHz without a converter
   r->qo100_beacon_ref = FALSE;
   r->qo100_correct_ds = QO100_CORRECT_DS_DEFAULT;
+  r->qo100_digital_trim = FALSE;
 
   r->cluster_enable = FALSE;
   r->cluster_spots_show = TRUE;

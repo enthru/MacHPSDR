@@ -728,6 +728,20 @@ gboolean qo100_transponder_setup(RADIO *r) {
 #define QO100_FT8_QUIET_S     13.4
 #define QO100_FT4_SLOT_S       7.5
 #define QO100_FT4_QUIET_S      5.6
+// radio->qo100_digital_trim: a fine correction is added to the receiver's digital
+// shift instead of retuning the radio (rx->lo_trim), which costs nothing, so the
+// loop takes one per measurement and neither the interval nor the slot gate has a
+// price to protect. It does not move the raw stream, though, and everything drawn
+// from that -- the panadapter above all -- sits off by the trim, so the trim is
+// handed to the LO (the "commit") once it reaches this much. 100 Hz is the error
+// a warming LNB already reached with the old loop, and well under a pixel at the
+// 768 kHz span this runs at. The hand-over itself is a step, since the shift takes
+// effect at once and the LO a pipeline later: it waits for the operator's interval
+// and the slot's quiet tail, which it can afford to because the trim goes on
+// correcting in the meantime...
+#define QO100_TRIM_COMMIT_HZ   100.0
+// ...up to this, where the picture is worth more than the decode.
+#define QO100_TRIM_MAX_HZ      300.0
 #define QO100_STUCK_RUN          3   // coarse steps that changed nothing => not our radio
 #define QO100_MAX_APPLIED_HZ 1000000.0 // total correction one session may ever apply
 
@@ -794,6 +808,7 @@ static double   b_stream_samples;      // the loop's own clock, in samples of st
 // loop lives on, and it is what makes the offline stand -- which feeds far faster
 // than real time -- measure the behaviour the operator gets.
 static double   b_since_apply;        // stream since the radio was last moved
+static double   b_since_commit;       // ...and since a trim was last handed to the LO
 // Samples to throw away after a correction. A step takes time to reach the radio
 // and time to come back: the driver's transfers already in flight, the FIFO
 // between the receive thread and the DSP thread, and the retune itself. Frames
@@ -807,6 +822,13 @@ static double   b_since_apply;        // stream since the radio was last moved
 static int      b_hold;
 
 static volatile gint apply_queued;   // one applier in flight at a time
+// What the applier is being asked to do.
+typedef enum {
+  PEND_RETUNE,                       // pend_step goes into error_a: the radio moves
+  PEND_TRIM,                         // pend_step goes into lo_trim: the shift moves
+  PEND_COMMIT                        // lo_trim goes into error_a: the dial stands still
+} PEND_KIND;
+static PEND_KIND pend_kind;
 static double   pend_step;           // Hz to add to error_a, under bmtx
 static double   pend_residual;       // measurement the pending step came from
 static RECEIVER *pend_rx;            // exact receiver the request belongs to
@@ -1234,7 +1256,12 @@ static double qo100_correct_interval_s(void) {
 // time-shaped decisions -- how far to feed the drift forward and how much of
 // the error to take now -- are both made of this number, so it has to be the
 // same one the limiter below enforces.
+static gboolean qo100_trim_on(void) {
+  return radio!=NULL && radio->qo100_digital_trim;
+}
 static double qo100_next_chance_s(RECEIVER *rx, double act) {
+  // A digital trim is free, so the next one is the next measurement.
+  if(qo100_trim_on() && fabs(act)<=QO100_COARSE_HZ) return QO100_AVG_MS/1000.0;
   double need=qo100_correct_interval_s();
   double wait=qo100_gate_wait_s(rx,act);
   if(wait>need) need=wait;
@@ -1291,7 +1318,9 @@ static double qo100_realised_period_s(double wait_s) {
 //   ff = d*[T - g*(T - a)/2].
 // which is the old d*T/2 at g = 1 and a = 0, and half as much again at g = 0.5.
 static double qo100_feed_forward(double slope, double chance) {
-  double t=qo100_realised_period_s(chance);
+  // ...and a digital trim has no hold after it, so its period is the wait itself.
+  double t=(qo100_trim_on() && chance<=QO100_AVG_MS/1000.0)
+             ?QO100_AVG_MS/1000.0:qo100_realised_period_s(chance);
   double a=QO100_AVG_MS/1000.0;
   return slope*(t-0.5*qo100_damping_gain(chance)*(t-a));
 }
@@ -1592,6 +1621,19 @@ static void middle_beacon_verdict(double off, double width, int bins) {
              k,(k==1||k==-1)?"":"s",shift);
 }
 
+// Whether the trim has grown to where the LO should take it (QO100_TRIM_COMMIT_HZ).
+static gboolean qo100_trim_commit_due(RECEIVER *rx) {
+  const double t=fabs(rx->lo_trim);
+  if(t<QO100_TRIM_COMMIT_HZ) return FALSE;
+  if(t>=QO100_TRIM_MAX_HZ) return TRUE;
+  // A calibration is reading our own carrier out of this same stream.
+  if(qo100_txcal_active()) return FALSE;
+  if(b_since_commit/(double)track_fs<qo100_correct_interval_s()) return FALSE;
+  double slot=0.0, quiet=0.0;
+  if(qo100_decoder_slot(rx,&slot,&quiet) && fmod(qo100_clock(),slot)<quiet) return FALSE;
+  return TRUE;
+}
+
 static gboolean qo100_may_retune_now(RECEIVER *rx, double act, double since_s) {
   if(radio==NULL || rx==NULL) return TRUE;
   // The ceiling first: whatever else this function thinks, a correction that has
@@ -1651,6 +1693,21 @@ static double median_of(const double *v, int n) {
   return t[n/2];
 }
 
+// Hand the whole trim to the LO. The dial's error is the same afterwards, only
+// who is carrying it has changed. The fraction of a hertz the radio cannot be
+// told stays behind in the shift. GTK thread.
+void qo100_beacon_trim_fold(RECEIVER *rx) {
+  if(rx==NULL || rx->lo_trim==0.0) return;
+  gint64 whole=llround(rx->lo_trim);
+  double left=rx->lo_trim-(double)whole;
+  rx->error_a+=whole;
+  BAND *band=band_get_band(rx->band_a);
+  if(band!=NULL) band->errorLO=rx->error_a;
+  receiver_set_lo_trim(rx,left);
+  frequency_changed(rx);
+  update_frequency(rx);
+}
+
 // GTK-thread half: push the queued step into the receiver and the band it is on.
 // Everything here touches WDSP / the protocol layer and so cannot run on the
 // audio thread the measurement lives on.
@@ -1659,8 +1716,10 @@ static gboolean apply_idle(gpointer data) {
   RECEIVER *rx;
   guint64 epoch;
   gboolean valid;
+  PEND_KIND kind;
 
   g_mutex_lock(&bmtx);
+  kind=pend_kind;
   step=pend_step;
   residual=pend_residual;
   rx=pend_rx;
@@ -1671,9 +1730,18 @@ static gboolean apply_idle(gpointer data) {
   // The receiver may have gone away, or the operator may have switched away from
   // it, between the measurement and this callback.
   gboolean applied=FALSE;
-  if(valid && radio!=NULL && rx==radio->active_receiver && step!=0.0) {
+  if(valid && radio!=NULL && rx==radio->active_receiver && kind==PEND_COMMIT) {
+    qo100_beacon_trim_fold(rx);
+    receiver_set_lo_trim(rx,rx->lo_trim+step);
+    applied=TRUE;
+  } else if(valid && radio!=NULL && rx==radio->active_receiver && kind==PEND_TRIM && step!=0.0) {
+    receiver_set_lo_trim(rx,rx->lo_trim+step);
+    update_frequency(rx);
+    applied=TRUE;
+  } else if(valid && radio!=NULL && rx==radio->active_receiver && step!=0.0) {
     gint64 t0=g_get_monotonic_time();
     rx->error_a += (gint64)llround(step);
+    rx->lo_trim_error=rx->error_a;              // a trim on top of this stays valid
     BAND *band=band_get_band(rx->band_a);
     if(band!=NULL) band->errorLO=rx->error_a;   // so it survives a band change and a restart
     frequency_changed(rx);
@@ -1693,6 +1761,7 @@ static gboolean apply_idle(gpointer data) {
   // so it cannot interpret old-frequency samples in the new reference frame.
   g_mutex_lock(&bmtx);
   if(applied && epoch==b_epoch && rx==track_rx) {
+    if(kind==PEND_COMMIT) b_since_commit=0.0;
     for(int i=0;i<b_med_n;i++) b_med[i]-=step;
     b_tone_up=FALSE;
     b_applied+=step;
@@ -1701,8 +1770,14 @@ static gboolean apply_idle(gpointer data) {
     b_expect=residual-step;
     b_expect_samples=0.0;
     b_since_apply=0.0;
-    b_hold=track_fs/QO100_HOLD_DIV;
-    spectrum_clear();
+    // A trim does not touch the stream this loop measures, so there is nothing
+    // in flight to wait out and nothing stale in the spectrum.
+    if(kind==PEND_TRIM) {
+      b_hold=0;
+    } else {
+      b_hold=track_fs/QO100_HOLD_DIV;
+      spectrum_clear();
+    }
     if(b_boot)
       snprintf(b_status,sizeof(b_status),
                "Locked on the %s CW beacon  %+.1f Hz  (LO %+.0f Hz)",
@@ -1763,6 +1838,7 @@ static void beacon_reset_locked(void) {
   b_check[0]='\0';
   b_mid_n=0;
   b_since_apply=1.0e12;                 // a fresh lock may trim at once
+  b_since_commit=1.0e12;
   b_hold=0;
 }
 
@@ -1871,7 +1947,11 @@ static void beacon_frame(RECEIVER *rx) {
   long long eff_beacon=b_boot?qo100_beacon_track_frequency(b_boot_sel):track_beacon;
   // A middle beacon at DC (or outside the usable span) cannot be measured.
   // Start CW immediately; these geometry refusals must not bypass fallback.
-  double middle_expected=(double)(track_beacon-rx->frequency_a);
+  // The stream is measured where the RADIO is tuned, and the dial is true at the
+  // trim on top of that, so that is where a true dial expects every line to be:
+  // from here on each reading is the DIAL's error, whoever is carrying the rest.
+  const double trim=rx->lo_trim;
+  double middle_expected=(double)(track_beacon-rx->frequency_a)+trim;
   gboolean middle_reachable=fabs(middle_expected)<=span_half &&
                             fabs(middle_expected)>=2.0*QO100_DC_GUARD_HZ;
   // Count time since an estimate was accepted, not consecutive missing peaks.
@@ -1894,7 +1974,7 @@ static void beacon_frame(RECEIVER *rx) {
       log_debug_area(LOG_SYNC, "qo100: %s\n",b_status);
     }
   }
-  double expected=(double)(eff_beacon-rx->frequency_a);
+  double expected=(double)(eff_beacon-rx->frequency_a)+trim;
 
   if(fabs(expected)>span_half) {
     beacon_reset_locked();
@@ -2136,7 +2216,7 @@ static void beacon_frame(RECEIVER *rx) {
   // the reading would only say by how much. Every five seconds, like the
   // summary it sits beside.
   if(say && b_locked && b_settled && use_bpsk) {
-    double cw=(double)(QO100_BEACON_LOWER-rx->frequency_a);
+    double cw=(double)(QO100_BEACON_LOWER-rx->frequency_a)+trim;
     double off=0.0, sn=0.0;
     if(fabs(cw)>span_half-2.0*QO100_FSK_SHIFT_HZ)
       g_strlcpy(b_check,"Lower CW beacon outside the span — nothing to check "
@@ -2148,7 +2228,7 @@ static void beacon_frame(RECEIVER *rx) {
                         "unchecked",sizeof(b_check));
     if(b_check[0]!='\0') log_debug_area(LOG_SYNC, "qo100: %s\n",b_check);
   } else if(say && b_locked && b_settled) {
-    double mid=(double)(QO100_BEACON_MIDDLE-rx->frequency_a);
+    double mid=(double)(QO100_BEACON_MIDDLE-rx->frequency_a)+trim;
     double c=0.0, w=0.0;
     int nb=0;
     if(fabs(mid)+QO100_MID_WIN_HZ>span_half)
@@ -2228,6 +2308,7 @@ static void beacon_frame(RECEIVER *rx) {
       bacc=0;
       spectrum_clear();
       b_since_apply+=avg_samples;
+      b_since_commit+=avg_samples;
       b_return_run=0;
       b_return_samples=0.0;
       b_reject=b_stuck=0;
@@ -2254,6 +2335,7 @@ static void beacon_frame(RECEIVER *rx) {
 
   spectrum_clear();
   b_since_apply+=avg_samples;
+  b_since_commit+=avg_samples;
   b_dry_samples=0.0;
   b_gone_samples=0.0;
 
@@ -2606,6 +2688,31 @@ static void beacon_frame(RECEIVER *rx) {
   }
   b_slope=slope;                        // ...for the guards, which run earlier
 
+  // Time to hand the trim to the LO? The stream is about to move under the
+  // measurement, so the loop is blind for this frame, the hold and the next one,
+  // and the dial still has to get through that. So this frame's trim goes with
+  // it, carrying the drift to the far side of the blind stretch: leaving it out
+  // was measured at 12.9 Hz of wander at 6 Hz/s, against the 8.8 of the retuning
+  // loop this is supposed to beat.
+  if(qo100_trim_on() && qo100_trim_commit_due(rx) &&
+     g_atomic_int_compare_and_exchange(&apply_queued,0,1)) {
+    double est=residual;
+    if(b_med_n>=QO100_MED_N)
+      est=median_of(b_med,b_med_n)+slope*(now_s-b_med_t[b_med_n/2]);
+    double step=QO100_GAIN*est+slope*(1.0/(double)QO100_HOLD_DIV+QO100_AVG_MS/1000.0);
+    if(step> QO100_COARSE_HZ) step= QO100_COARSE_HZ;
+    if(step<-QO100_COARSE_HZ) step=-QO100_COARSE_HZ;
+    pend_kind=PEND_COMMIT;
+    pend_step=step;
+    pend_residual=residual;
+    pend_rx=rx;
+    pend_epoch=b_epoch;
+    b_hold=-1;
+    spectrum_clear();
+    g_idle_add(apply_idle,NULL);
+    return;
+  }
+
   // The drift is fed forward to the MIDDLE of the wait ahead -- half of it, not
   // all: feeding the whole wait forward was measured and is unstable, because
   // the wait itself shrinks as the error it is derived from grows (161.9 Hz of
@@ -2696,9 +2803,13 @@ static void beacon_frame(RECEIVER *rx) {
     return;
   }
 
+  // A digital trim moves nothing but the frequency being listened to, by about
+  // what the converter just moved it the other way: neither wait below applies.
+  const gboolean digital=qo100_trim_on() && fabs(act)<=QO100_COARSE_HZ;
+
   // A step is a jump in the audio, so it waits for a gap in the traffic that
   // cares: see qo100_may_retune_now().
-  if(!qo100_may_retune_now(rx,act,b_since_apply/(double)track_fs)) {
+  if(!digital && !qo100_may_retune_now(rx,act,b_since_apply/(double)track_fs)) {
     b_expect=residual;
     b_expect_samples=0.0;
     snprintf(b_status,sizeof(b_status),
@@ -2709,7 +2820,7 @@ static void beacon_frame(RECEIVER *rx) {
   // ...and a FINE step waits for the operator's interval as well, because the
   // retune itself costs them something (see qo100_correct_interval_s). A COARSE
   // step is acquisition and is not held for it.
-  if(fabs(act)<=QO100_COARSE_HZ) {
+  if(!digital && fabs(act)<=QO100_COARSE_HZ) {
     double since=b_since_apply/(double)track_fs;
     double need=qo100_correct_interval_s();
     if(since<need) {
@@ -2766,12 +2877,13 @@ static void beacon_frame(RECEIVER *rx) {
     // `step`, every stored residual means `residual - step` in the new frame.
     // Inside this branch, because a step that was NOT queued moves nothing and
     // a window shifted for it would be describing a dial that never existed.
+    pend_kind=digital?PEND_TRIM:PEND_RETUNE;
     pend_step=step;
     pend_residual=residual;
     pend_rx=rx;
     pend_epoch=b_epoch;
     b_hold=-1;                           // wait for the GTK-side acknowledgement
-    spectrum_clear();                   // ...and it must not be averaged with this
+    if(!digital) spectrum_clear();      // ...and it must not be averaged with this
     snprintf(b_status,sizeof(b_status),"Locked  %+.1f Hz  (applying %+.1f Hz)",
              residual,step);
     g_idle_add(apply_idle,NULL);
@@ -3039,7 +3151,10 @@ static gboolean txcal_measure(double *found, double *snr_out, const char **why) 
   if(t_nbase<1 || t_nmeas<1) { *why="no spectrum was integrated"; return FALSE; }
   const double sb=1.0/(double)t_nbase, sm=1.0/(double)t_nmeas;
 
-  double lo=t_expect-QO100_TXCAL_SEARCH_HZ, hi=t_expect+QO100_TXCAL_SEARCH_HZ;
+  // Like the beacon, the carrier is read off the stream, which sits the trim away
+  // from the dial the expectation was built on.
+  const double expect=t_expect+t_rx->lo_trim;
+  double lo=expect-QO100_TXCAL_SEARCH_HZ, hi=expect+QO100_TXCAL_SEARCH_HZ;
   double base_sum=0.0, peak=-1.0;
   int pk=-1, count=0;
   for(int m=0;m<N;m++) {
@@ -3085,7 +3200,7 @@ static void txcal_measured_locked(void) {
     snprintf(t_status,sizeof(t_status),"Calibration failed \342\200\224 %s",why);
     t_runs=-1;                       // ...and do not start another cycle
   } else {
-    double residual=found-t_expect;
+    double residual=found-(t_expect+t_rx->lo_trim);
     if(fabs(residual)>QO100_TXCAL_MAX_HZ) {
       snprintf(t_status,sizeof(t_status),
                "Calibration failed \342\200\224 %+.0f Hz is too far out to be our own carrier",

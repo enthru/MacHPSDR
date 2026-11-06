@@ -49,11 +49,11 @@ void subrx_frequency_changed(RECEIVER *rx) {
   if(subrx->feed!=NULL) {
     // The sub-channel sees a stream already centred on VFO-B, so WDSP's shift
     // block stays off and the NCO carries the offset (see receiver_apply_shift).
-    rx_feed_set_offset(subrx->feed,(double)offset);
+    rx_feed_set_offset(subrx->feed,(double)offset+rx->lo_trim);
     SetRXAShiftFreq(subrx->channel, 0.0);
     SetRXAShiftRun(subrx->channel, 0);
   } else {
-    SetRXAShiftFreq(subrx->channel, (double)offset);
+    SetRXAShiftFreq(subrx->channel, (double)offset+rx->lo_trim);
     SetRXAShiftRun(subrx->channel, 1);
   }
 }

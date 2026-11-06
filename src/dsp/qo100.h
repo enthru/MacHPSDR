@@ -185,6 +185,7 @@ extern void     qo100_beacon_check(char *buf, int size);
    correction already written into the band's LO error is deliberately kept — it
    is a real measurement of the converter, not session state. */
 extern void qo100_beacon_reset(void);
+extern void qo100_beacon_trim_fold(RECEIVER *rx);
 
 /* Drop the tracked-receiver pointer if it is this one, and stop the lock.
    Called from receiver_destroy() before the receiver is freed; a no-op for any

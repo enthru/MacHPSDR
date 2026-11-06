@@ -487,17 +487,50 @@ static void receiver_build_feed(RECEIVER *rx) {
 // so the shift is the feed's NCO and WDSP's block is switched off.  The NBP is
 // told the same number either way -- it uses tunefreq+shift only to place the
 // notches (wdsp/nbp.c), it does not move the signal.
+//
+// A QO-100 trim is added to the signal's shift and NOT to the NBP's number: the
+// dial is true, so a notch at an absolute frequency is where the dial says.  A
+// trim outlives nothing it was measured against -- whatever writes error_a or
+// leaves the band (band change, A<>B, the transverter dialog) drops it here,
+// since every one of those ends in frequency_changed().
 void receiver_apply_shift(RECEIVER *rx,gint64 offset,gboolean run) {
+  rx->shift_offset=offset;
+  rx->shift_run=run;
+  if(rx->lo_trim!=0.0 &&
+     (rx->error_a!=rx->lo_trim_error || rx->band_a!=rx->lo_trim_band)) rx->lo_trim=0.0;
   const double hz=run?(double)offset:0.0;
+  const double signal_hz=hz+rx->lo_trim;
+  const gboolean signal_run=run || rx->lo_trim!=0.0;
   RXANBPSetShiftFrequency(rx->channel,hz);
   if(rx->dsp_feed!=NULL) {
-    rx_feed_set_offset(rx->dsp_feed,hz);
+    rx_feed_set_offset(rx->dsp_feed,signal_hz);
     SetRXAShiftFreq(rx->channel,0.0);
     SetRXAShiftRun(rx->channel,0);
   } else {
-    SetRXAShiftFreq(rx->channel,hz);
-    SetRXAShiftRun(rx->channel,run?1:0);
+    SetRXAShiftFreq(rx->channel,signal_hz);
+    SetRXAShiftRun(rx->channel,signal_run?1:0);
   }
+}
+
+// Set the digital part of the LO's error, against the error_a and the band this
+// receiver has now.  Costs a frequency word and no device round trip, which is
+// the whole point.  GTK thread, like every other caller of the shift.
+void receiver_set_lo_trim(RECEIVER *rx,double hz) {
+  rx->lo_trim=hz;
+  rx->lo_trim_error=rx->error_a;
+  rx->lo_trim_band=rx->band_a;
+  receiver_apply_shift(rx,rx->shift_offset,rx->shift_run);
+  if(rx->subrx_enable && rx->subrx!=NULL) subrx_frequency_changed(rx);
+#ifdef SOAPYSDR
+  // A follower's stream is mixed off the owner's LO, so what the owner's LO is
+  // off by, it is off by too.
+  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR && soapy_protocol_rx_owns_hardware(rx)) {
+    for(int i=0;i<radio->discovered->supported_receivers && i<MAX_RECEIVERS;i++) {
+      RECEIVER *f=radio->receiver[i];
+      if(f!=NULL && f!=rx && f->adc==rx->adc) receiver_set_lo_trim(f,hz);
+    }
+  }
+#endif
 }
 
 // The ring depth for THIS channel geometry: enough slots to cover
@@ -3089,7 +3122,7 @@ static void scope_iq_feed_tuned(RECEIVER *rx, double *iq, int nsamples) {
   int D = rx->sample_rate/12000;
   if(D<1) D=1;
 
-  double off_hz = (double)(rx->ctun_frequency - rx->frequency_a);
+  double off_hz = (double)(rx->ctun_frequency - rx->frequency_a) + rx->lo_trim;
   double dph = -2.0*M_PI*off_hz/(double)rx->sample_rate;
 
   int n = nsamples;

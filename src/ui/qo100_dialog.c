@@ -172,7 +172,10 @@ static void ref_cb(GtkWidget *w, gpointer data) {
 static void lock_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->qo100_beacon_lock=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
-  if(!r->qo100_beacon_lock) qo100_beacon_reset();
+  if(!r->qo100_beacon_lock) {
+    qo100_beacon_trim_fold(r->active_receiver); // nothing will look after it now
+    qo100_beacon_reset();
+  }
   status_refresh();
 }
 
@@ -202,6 +205,12 @@ static void correct_ds_cb(GtkWidget *w, gpointer data) {
   if(ds<QO100_CORRECT_DS_MIN) ds=QO100_CORRECT_DS_MIN;
   if(ds>QO100_CORRECT_DS_MAX) ds=QO100_CORRECT_DS_MAX;
   r->qo100_correct_ds=ds;
+}
+
+static void digital_trim_cb(GtkWidget *w, gpointer data) {
+  RADIO *r=(RADIO *)data;
+  r->qo100_digital_trim=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
+  if(!r->qo100_digital_trim) qo100_beacon_trim_fold(r->active_receiver);
 }
 
 static void reacquire_cb(GtkWidget *w, gpointer data) {
@@ -385,6 +394,18 @@ GtkWidget *create_qo100_dialog(RADIO *r) {
     "1.5 s however far below that this is set.");
   gtk_grid_attach(GTK_GRID(grid),iv,1,row++,1,1);
   g_signal_connect(iv,"value-changed",G_CALLBACK(correct_ds_cb),r);
+
+  GtkWidget *dt=gtk_check_button_new_with_label("Fine corrections without retuning");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dt),r->qo100_digital_trim);
+  gtk_widget_set_tooltip_text(dt,
+    "Applies fine corrections digitally inside the receiver instead of retuning "
+    "the radio, so there is no hitch in the waterfall and the audio follows a "
+    "warming LNB every second. The radio is retuned only once they add up to "
+    "100 Hz, and with FT8/FT4 in the slot's quiet tail. Until then the panadapter "
+    "and waterfall picture, I/Q recordings and the TCI I/Q stream sit up to that "
+    "far from the dial, which shows only at high zoom.");
+  gtk_grid_attach(GTK_GRID(grid),dt,0,row++,2,1);
+  g_signal_connect(dt,"toggled",G_CALLBACK(digital_trim_cb),r);
 
   GtkWidget *re=gtk_button_new_with_label("Re-acquire");
   gtk_widget_set_halign(re,GTK_ALIGN_START);

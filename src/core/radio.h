@@ -204,6 +204,10 @@ typedef struct _radio {
                                // operator's number, not the loop's: the cadence
                                // used to be derived from the error and the drift
                                // and there was no way to overrule it.
+  gboolean qo100_digital_trim; // fine corrections go into the receiver's digital
+                               // shift (rx->lo_trim) and the LO moves only when
+                               // they have added up. Off by default, and with it
+                               // off the loop never trims a shift.
   // DX cluster client (P4.2): telnet spot feed + panadapter overlay. Persisted.
   gboolean cluster_enable;      // connect to DX cluster
   gboolean cluster_spots_show;  // draw spot overlay on panadapter

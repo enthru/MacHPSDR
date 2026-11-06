@@ -167,7 +167,28 @@ BAND *band_get_band(int b) {
   if(b<0 || b>=BANDS+XVTRS) return NULL;
   return &test_bands[b];
 }
-void frequency_changed(RECEIVER *rx) { (void)rx; retunes++; }
+// How many times the radio moved outside a slot's quiet tail with the trim below
+// its hard limit, once the run is past its acquisition: a hand-over from the shift
+// to the LO may not land on a decode.
+static int    commits_in_slot;
+static double commit_watch_from;
+void frequency_changed(RECEIVER *rx) {
+  (void)rx;
+  retunes++;
+  if(commit_watch_from>0.0 && mock_utc>=commit_watch_from && fmod(mock_utc,15.0)<13.4)
+    commits_in_slot++;
+}
+// The digital shift: it moves what is listened to and nothing in the stream, so
+// the model of the air below has no term for it. A wrong sign anywhere in the
+// loop's frame therefore has nothing to hide behind.
+static int trims;
+static gboolean digital_trim;
+void receiver_set_lo_trim(RECEIVER *rx,double hz) {
+  rx->lo_trim=hz;
+  rx->lo_trim_error=rx->error_a;
+  rx->lo_trim_band=rx->band_a;
+  trims++;
+}
 void update_frequency(RECEIVER *rx) { (void)rx; }
 void receiver_sync_vfo_b_lo(RECEIVER *rx) { (void)rx; }
 gboolean receiver_is_live(RECEIVER *rx) { return rx!=NULL; }
@@ -280,6 +301,7 @@ static RADIO *mk_radio(RECEIVER *rx) {
   // turns into 0.1 s -- a cadence no station is configured for, quietly
   // measuring something other than what is shipped.
   r->qo100_correct_ds=correct_ds;
+  r->qo100_digital_trim=digital_trim;
   return r;
 }
 
@@ -328,7 +350,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
                                           // from -- last_move_t is seeded with
                                           // the block it is noticed on.
   double slot_lo=1e18, slot_hi=-1e18, slot_t0=-1.0;
-  long long last_err=0;
+  double last_err=0.0;
   double pull_lo=1e18, pull_hi=-1e18;
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)fs;
@@ -336,7 +358,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
     // Second half of the run only: the first correction is the LNB's real error
     // being taken out, which is the loop doing its job.
     if(b>max_blocks/2) {
-      double e=(double)rx->error_a;
+      double e=(double)rx->error_a+rx->lo_trim;     // what the DIAL is corrected by
       double err=lo_error+lo_drift_hz_s*t+e;         // dial vs the real beacon
       if(slot_t0<0.0 || t-slot_t0>=15.0) {
         slot_t0=t; slot_lo=slot_hi=e; err_lo=err_hi=err;
@@ -352,7 +374,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
       if(e<pull_lo) pull_lo=e;
       if(e>pull_hi) pull_hi=e;
       worst_pull=pull_hi-pull_lo;
-      double st=fabs((double)(rx->error_a-last_err));
+      double st=fabs(e-last_err);
       if(st>worst_step) worst_step=st;
       if(last_move_t<0.0) last_move_t=t;
       if(st>0.0) {
@@ -362,7 +384,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
         moved_once=TRUE;
       } else if(t-last_move_t>worst_gap) worst_gap=t-last_move_t;
     }
-    last_err=rx->error_a;
+    last_err=(double)rx->error_a+rx->lo_trim;
     // The ident as a beacon actually sends it: bursts of keying with idle
     // carrier between them. A carrier that hops for ever is not a beacon, it is
     // a loop-breaker -- and asserting against it would only pin the loop's
@@ -488,7 +510,7 @@ static double run_loop(double lo_error, double noise, int max_blocks,
   }
 
   qo100_beacon_set_clock(NULL);
-  double residual=lo_error+(double)rx->error_a;
+  double residual=lo_error+(double)rx->error_a+rx->lo_trim;
   if(locked_out!=NULL) *locked_out=qo100_beacon_locked();
   g_free(iq);
   g_free(rx);
@@ -510,6 +532,12 @@ static double run_loop(double lo_error, double noise, int max_blocks,
 // asserted the direction.
 #define TXCAL_RX_CENTRE 10489650000LL
 #define TXCAL_PATH_S    0.25            // geostationary round trip
+
+// The LNB's own error during a calibration. With digital trims it ends up in the
+// shift and the stream stays that far from the dial, so a carrier read off the
+// stream has to be judged against where the stream is.
+static double txcal_lnb_hz;
+static double txcal_last_trim;
 
 typedef struct {
   double err_hz[4];        // the transmit error each key cycle is given
@@ -549,11 +577,12 @@ static gboolean run_txcal(const TXCAL_AIR *air, gint64 *error_b_out,
   gboolean started=FALSE, done=FALSE;
   double on_at=-1.0, off_at=-1.0;      // when our carrier appears / stops, on air
   int cycle=0;
-  const int max_blocks=(int)(25.0*(double)FS/(double)BLOCK);
+  const int max_blocks=(int)(60.0*(double)FS/(double)BLOCK);
 
   for(int b=0;b<max_blocks;b++) {
     double t=(double)b*(double)BLOCK/(double)FS;
-    double applied=(double)rx->error_a;
+    double applied=(double)rx->error_a+txcal_lnb_hz;
+    txcal_last_trim=rx->lo_trim;
 
     // The beacon the lock lives on, plus the middle BPSK that confirms its
     // identity -- the same pair run_loop generates, so the lock behaves here
@@ -586,7 +615,8 @@ static gboolean run_txcal(const TXCAL_AIR *air, gint64 *error_b_out,
     qo100_txcal_iq_feed(rx,iq,BLOCK);
     while(g_main_context_iteration(NULL,FALSE)) ;
 
-    if(!started && qo100_beacon_locked()) {
+    if(!started && qo100_beacon_locked() &&
+       (txcal_lnb_hz==0.0 || fabs(rx->lo_trim+txcal_lnb_hz)<5.0)) {
       char why[192];
       if(qo100_txcal_start(radio,why,sizeof(why))) started=TRUE;
       else { g_strlcpy(status,why,(gsize)status_sz); break; }
@@ -2369,6 +2399,118 @@ int main(int argc, char **argv) {
     check("txcal: split, duplex and a beacon lock are all refused in words",
           no_split && no_dup && no_lock && keyings==0 && !r->tune, d);
     g_free(r->transmitter); g_free(rx); g_free(r); radio=NULL;
+  }
+
+  // ---- Digital trims (radio->qo100_digital_trim). Off, the loop must never
+  //      touch the shift, which is what makes the switch a promise; on, a warming
+  //      LNB is held closer than the retuning loop can with far fewer retunes.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    trims=0;
+    lo_drift_hz_s=6.0;
+    run_loop(3000.0,0.0,blocks*18,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    snprintf(d,sizeof(d),"%d shift changes, %d retunes, %.1f Hz of wander, locked=%d",
+             trims,retunes,worst_track,locked);
+    check("trim off: the loop never touches the shift",locked && trims==0,d);
+    qo100_beacon_reset();
+  }
+  {
+    // The retuning loop over this same 273 s, for scale: 100/105/105 retunes and
+    // 4.8/8.8/13.8 Hz of wander. The dial is held about as well; what the shift
+    // buys is the retunes. An FT8 tone's own 6.25 Hz is why in-slot is printed.
+    const double rates[3]={2.0,6.0,10.0}, bound[3]={8.0,14.0,22.0};
+    const int most_retunes[3]={10,25,35};
+    for(int k=0;k<3;k++) {
+      bands_init();
+      gboolean locked=FALSE;
+      trims=0;
+      digital_trim=TRUE;
+      lo_drift_hz_s=rates[k];
+      double res=run_loop(3000.0,0.0,blocks*40,&locked,FS,10489540000LL);
+      lo_drift_hz_s=0.0;
+      digital_trim=FALSE;
+      snprintf(d,sizeof(d),"%.0f Hz/s: %.1f Hz of wander, %.1f Hz biggest step, "
+               "%.1f Hz inside a slot, %d trims, %d retunes, %+.1f left, locked=%d",
+               rates[k],worst_track,worst_step,worst_slot_err,trims,retunes,res,locked);
+      check("trim on: a warming LNB is held by the shift",
+            locked && worst_track<bound[k] && retunes<=most_retunes[k], d);
+      qo100_beacon_reset();
+    }
+  }
+  // The hand-over moves the stream under the measurement, and a loop that took the
+  // lag for a real movement would chase it: the dial's wander pins that it does not.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    trims=0;
+    digital_trim=TRUE;
+    lag_blocks=40;
+    lo_drift_hz_s=6.0;
+    run_loop(3000.0,0.0,blocks*40,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    lag_blocks=0;
+    digital_trim=FALSE;
+    snprintf(d,sizeof(d),"%.1f Hz of wander, %d trims, %d retunes, locked=%d",
+             worst_track,trims,retunes,locked);
+    check("trim on: a hand-over to a slow radio is not chased",
+          locked && worst_track<20.0, d);
+    qo100_beacon_reset();
+  }
+  // With a decoder running the trim keeps correcting through the slot and the LO
+  // takes it only in the quiet tail.
+  {
+    bands_init();
+    gboolean locked=FALSE;
+    trims=0;
+    commits_in_slot=0;
+    commit_watch_from=60.0;
+    digital_trim=TRUE;
+    ft8_gate=TRUE;
+    lo_drift_hz_s=6.0;
+    run_loop(3000.0,0.0,blocks*60,&locked,FS,10489540000LL);
+    lo_drift_hz_s=0.0;
+    ft8_gate=FALSE;
+    digital_trim=FALSE;
+    commit_watch_from=0.0;
+    snprintf(d,sizeof(d),"%.1f Hz inside a slot, %.1f Hz of wander, %d retunes, "
+             "%d of them mid-slot, %d trims, locked=%d",
+             worst_slot_err,worst_track,retunes,commits_in_slot,trims,locked);
+    check("trim on: the LO moves only in the slot's quiet tail",
+          locked && commits_in_slot==0 && worst_slot_err<20.0 && retunes>2, d);
+    qo100_beacon_reset();
+  }
+  // Switching the lock or the trim off hands over what the shift was carrying.
+  {
+    bands_init();
+    RECEIVER *rx=mk_rx(10489540000LL,FS);
+    radio=mk_radio(rx);
+    test_band.errorLO=0;
+    rx->error_a=1000;
+    receiver_set_lo_trim(rx,-123.75);
+    retunes=0;
+    qo100_beacon_trim_fold(rx);
+    snprintf(d,sizeof(d),"error_a=%lld errorLO=%lld trim=%.2f retunes=%d",
+             (long long)rx->error_a,(long long)test_band.errorLO,rx->lo_trim,retunes);
+    check("trim fold: the dial's correction survives, in the LO",
+          rx->error_a==876 && test_band.errorLO==876 && rx->lo_trim==0.25 && retunes==1, d);
+    g_free(radio); g_free(rx); radio=NULL;
+  }
+  // A carrier measured off a stream that is 80 Hz from the dial. Without the trim
+  // in txcal's expectation those 80 Hz of LNB would be written into the UPLINK.
+  {
+    TXCAL_AIR air={ .err_hz={ 1500.0, 1500.0, 1500.0, 1500.0 } };
+    gint64 eb=0; char st[192]=""; int cycles=0;
+    digital_trim=TRUE;
+    txcal_lnb_hz=80.0;
+    gboolean ok=run_txcal(&air,&eb,st,sizeof(st),&cycles);
+    txcal_lnb_hz=0.0;
+    digital_trim=FALSE;
+    snprintf(d,sizeof(d),"error_b=%lld, trim %+.1f Hz \342\200\224 %s",
+             (long long)eb,txcal_last_trim,st);
+    check("txcal: the LNB's trim is not read as an uplink error",
+          ok && llabs(eb+1500)<=4 && fabs(txcal_last_trim+80.0)<10.0, d);
   }
 
   printf("\n%s\n", failures==0 ? "all cases passed" : "FAILURES ABOVE");

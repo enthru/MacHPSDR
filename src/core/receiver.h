@@ -179,6 +179,16 @@ typedef struct _receiver {
   gint64 frequency_a;
   gint64 lo_a;
   gint64 error_a;
+  // The part of the LO's error the QO-100 lock is correcting digitally rather
+  // than on the radio: the dial is true at error_a + lo_trim, the hardware is
+  // commanded error_a. Zero unless that lock put it there, and it belongs to the
+  // error_a and the band it was measured on (receiver_set_lo_trim). Not persisted.
+  double lo_trim;
+  gint64 lo_trim_error;
+  gint lo_trim_band;
+  // ...and what receiver_apply_shift was last asked for, to add a new trim to.
+  gint64 shift_offset;
+  gboolean shift_run;
   gint band_a;
   gint mode_a;
   gint filter_a;
@@ -610,6 +620,7 @@ extern void rx_feed_push(void *feed,const gdouble *iq,int n);
 extern gboolean rx_feed_take(void *feed,gdouble **block);
 // The digital tuning shift, wherever it lives for this receiver (see dsp_feed).
 extern void receiver_apply_shift(RECEIVER *rx,gint64 offset,gboolean run);
+extern void receiver_set_lo_trim(RECEIVER *rx,double hz);
 
 // The span a receiver opens at when nothing is persisted for it (see the
 // definition in receiver.c).  radio.h includes this header, not the other way

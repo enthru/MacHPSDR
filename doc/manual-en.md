@@ -697,6 +697,16 @@ confirmation. Selecting a CW beacon keeps it as the correction source; the
 middle beacon provides an independent check. Status remains visible in the
 QO-100 panel; detailed measurements are available with `--debug=sync`.
 
+**Fine corrections without retuning** (off by default, saved between sessions)
+applies fine corrections as a digital shift inside the receiver, once a second,
+instead of retuning the radio, so the waterfall does not hitch and the audio
+follows a warming LNB. The radio is retuned only once the shift reaches 100 Hz
+(300 Hz at most), no more often than the correction interval, and with FT8/FT4 in
+the quiet tail of a slot. Until then the panadapter and waterfall picture, I/Q
+recordings and the TCI I/Q stream can sit up to that far from the dial, which shows
+only at high zoom; the frequency readout, the audio and the decoders stay on the
+dial. This has been measured on the bench but not yet used on the real satellite.
+
 ---
 
 ## 10. I/Q + audio recorder
