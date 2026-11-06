@@ -149,7 +149,6 @@ typedef struct _fircore
 	double** fftout;		// fftout delay line
 	double* accum;			// frequency domain accumulator
 	int buffidx;			// fft out buffer index
-	int idxmask;			// mask for index computations
 	double* maskgen;		// input for mask generation FFT
 	fftw_plan* pcfor;		// array of forward FFT plans
 	fftw_plan crev;			// reverse fft plan

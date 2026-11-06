@@ -294,7 +294,6 @@ void plan_fircore (FIRCORE a)
 	a->nfor = a->nc / a->size;
 	a->cset = 0;
 	a->buffidx = 0;
-	a->idxmask = a->nfor - 1;
 	a->fftin = (double *) malloc0 (2 * a->size * sizeof (complex));
 	a->fftout   = (double **) malloc0 (a->nfor * sizeof (double *));
 	a->fmask    = (double ***) malloc0 (2 * sizeof (double **));
@@ -406,6 +405,11 @@ void flush_fircore (FIRCORE a)
 	a->buffidx = 0;
 }
 
+// The partition history is a ring of nfor entries, and nfor is whatever nc/size
+// comes to: 5 at a 1920 kHz span (5120/1024), so it is walked with a modulus. A
+// mask stuck buffidx at 0 and summed partitions 0, 2 and 4 onto the current block,
+// which is the filter cut to its middle 1024 taps: -28 dB at 100 Hz past the edge
+// where the same filter reaches -126 dB.
 void xfircore (FIRCORE a)
 {
 	int i, j, k;
@@ -421,10 +425,10 @@ void xfircore (FIRCORE a)
 			a->accum[2 * i + 0] += a->fftout[k][2 * i + 0] * a->fmask[a->cset][j][2 * i + 0] - a->fftout[k][2 * i + 1] * a->fmask[a->cset][j][2 * i + 1];
 			a->accum[2 * i + 1] += a->fftout[k][2 * i + 0] * a->fmask[a->cset][j][2 * i + 1] + a->fftout[k][2 * i + 1] * a->fmask[a->cset][j][2 * i + 0];
 		}
-		k = (k + a->idxmask) & a->idxmask;
+		k = (k + a->nfor - 1) % a->nfor;
 	}
 	LeaveCriticalSection (&a->update);
-	a->buffidx = (a->buffidx + 1) & a->idxmask;
+	a->buffidx = (a->buffidx + 1) % a->nfor;
 	fftw_execute (a->crev);
 	memcpy (a->fftin, &(a->fftin[2 * a->size]), a->size * sizeof(complex));
 }

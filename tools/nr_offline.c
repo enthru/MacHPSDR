@@ -602,6 +602,32 @@ int main(int argc, char **argv) {
     SetRXARNNRdepth(CH, 1.0);
   }
   CloseChannel(CH);
+
+  /* ---- the passband filter, across every block a span change produces.  The
+   * filter length stays at NC while the block follows the span, so nc/size is 5
+   * at 1920 kHz, and fircore's partition ring has to work for a count that is not
+   * a power of two.  Walked with a mask it kept only the filter's middle block:
+   * -28 dB 100 Hz past the edge where the same filter reaches -126 dB, with the
+   * passband still flat, which is why nothing in the audio gave it away. ---- */
+  printf("\n-- the passband filter, across every span's block --\n");
+  {
+    static const struct { int block; const char *span; } tier[] = {
+      { 5120, "192/384 kHz" }, { 2560, "768 kHz" },
+      { 1280, "1536 kHz"    }, { 1024, "1920 kHz and up" },
+    };
+    for(int t=0;t<(int)(sizeof tier / sizeof tier[0]);t++) {
+      channel_open(tier[t].block);
+      make_tone(0.01, 1500.0);
+      const double in = measure(NR_OFF, tier[t].block).voice;
+      make_tone(0.01, 3100.0);
+      const double out = measure(NR_OFF, tier[t].block).voice;
+      char name[80];
+      snprintf(name, sizeof name, "100 Hz past the edge at a %s span", tier[t].span);
+      check(name, out < in*1e-4, "%.1f dB (mask: -28.9 at 1920 kHz)",
+            20.0*log10((out > 0.0 ? out : 1e-30)/in));
+      CloseChannel(CH);
+    }
+  }
   make_signal(0.001, noise);   /* put the speech back for what follows */
 
   /* ---- the sample rate.  RNNoise's 480-sample frame IS 10 ms at 48 kHz and
