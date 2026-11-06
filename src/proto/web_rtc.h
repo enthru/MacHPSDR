@@ -42,13 +42,32 @@ typedef void (*web_rtc_state_cb)(void *user, gboolean connected, gboolean failed
 /* Decoded browser microphone audio: 48 kHz mono float samples, delivered on a
    libdatachannel worker thread.  The owner must only perform a bounded copy. */
 typedef void (*web_rtc_tx_audio_cb)(void *user, const float *mono, int frames);
+/* The spectrum DataChannel opened (`channel` is its id) or closed (-1), from a
+   libdatachannel worker thread. */
+typedef void (*web_rtc_channel_cb)(void *user, int channel);
 
 /* Create a session (does not negotiate yet).  Returns NULL on failure. */
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
                                      web_rtc_state_cb state,
-                                     web_rtc_tx_audio_cb tx_audio, void *user,
+                                     web_rtc_tx_audio_cb tx_audio,
+                                     web_rtc_channel_cb channel, void *user,
                                      const char *advertised_address,
                                      guint16 udp_port);
+
+typedef enum {
+  WEB_RTC_SENT = 0,
+  WEB_RTC_CONGESTED,   /* row dropped: the channel still holds earlier ones */
+  WEB_RTC_CLOSED       /* the channel is gone; use the WebSocket */
+} WEB_RTC_SEND_RESULT;
+
+/* Send one spectrum row, never blocking and never queueing behind a backlog.  A
+   channel id stays safe to pass after its session is freed (the call then reports
+   WEB_RTC_CLOSED), so the caller holds no lock on the session. */
+WEB_RTC_SEND_RESULT web_rtc_channel_send(int channel, const void *data, gsize len);
+
+/* What the Opus encoder should run at from its next frame on: bits per second and
+   the packet loss it should protect against with FEC.  Any thread. */
+void web_rtc_session_set_audio_rate(WEB_RTC_SESSION *s, guint bitrate, guint loss_percent);
 
 /* Add the Opus send-only audio track and emit the SDP offer via the signal
  * callback.  Call once, after creation. */

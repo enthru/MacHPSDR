@@ -122,6 +122,13 @@ foundation`), pushed to `origin/master` on 2026-10-22.
   LOCK, CTUN, DUP and a ZOOM dropdown.  No chip in the page is dead any more.
   What stays desktop-only on purpose: the SAT/RSAT split modes (SPLIT toggles the
   mode last in effect) and LINK.
+- The WAN media plane (2026-11-06): spectrum rows moved onto an unordered,
+  partially reliable DataChannel on the audio session, with the WebSocket as the
+  automatic fallback, and the Opus bitrate now follows the browser's measured loss
+  under the spec's arbitration (display gives way first, audio recovers first).
+  The default audio bitrate fell from a fixed 32 kbit/s to the profile table's
+  (Balanced 24).  A client has one audio session, so only that receiver's rows use
+  the channel; any other receiver's stay on the WebSocket.  mDNS is not built.
 - Phase 5 slice 1 is implemented in the current work: the HTTP/WebSocket
   listener binds all IPv4 interfaces.  Configure -> Network can set, disable or
   clear password protection; authentication uses HTTP Basic with configurable
@@ -317,6 +324,30 @@ without its window, signals, macOS accessory policy), `receiver.c`
     fresh address.
 
 ## Verification record
+
+### 2026-11-06 — spectrum DataChannel and adaptive audio bitrate
+
+Verified: `make`, `make check`, `tools/win-crossbuild.sh`.  `web_offline` covers the
+loss report's parsing, its viewer access and the arbitration rule on a mock clock.
+`webrtc_offline` covers the channel's reliability as the far peer sees it, rows
+across it, a 400-row burst refused rather than queued (377 refused, 0 closed), a
+freed session's channel reporting closed, and the wire following the rate setting
+(8860 bytes/s at 64 kbit/s, 2490 at 16).
+
+Live: the real page in headless Chrome against a headless faker, with a scratch UDP
+relay as the only ICE path, dropping server-to-browser datagrams.  On the clean path
+rows arrived on the channel at 9 fps with audio at 24 kbit/s and the page reported
+0 % loss.  At 20 % the page reported 12-21 %, and within 6 s the display was at Low
+and the audio at 16 kbit/s, with rows still flowing.  Clean again, the audio returned
+first and the display ten seconds after it.  With the relay dropping everything the
+rows were back on the WebSocket after 17-28 s over three runs.  That is the real cost
+of the UDP path dying: the spectrum is blank until the peer is declared lost.  The
+server was also compile-checked without `-D WEBRTC`.
+
+NOT verified: a real router or Internet path (the relay's loss is random and it
+models no bandwidth limit, delay or jitter, so the spec's shaped 300 kbit/s target
+is unmeasured); how the audio sounds at 16 kbit/s or under loss; Safari and Firefox.
+The relay and the Chrome driver are scratch, not in the tree.
 
 ### 2026-11-06 — VFO B, A/B operations, LOCK, CTUN, DUP, ZOOM
 

@@ -178,6 +178,7 @@ WEB_ACCESS web_request_access(const WEB_REQUEST *req) {
     case WEB_REQUEST_AUDIO_UNSUBSCRIBE:
     case WEB_REQUEST_RTC_ANSWER:
     case WEB_REQUEST_RTC_CANDIDATE:
+    case WEB_REQUEST_AUDIO_FEEDBACK:
       return WEB_ACCESS_VIEW;
     case WEB_REQUEST_CONTROL_ACQUIRE:
     case WEB_REQUEST_CONTROL_RENEW:
@@ -414,6 +415,14 @@ gboolean web_protocol_parse(const char *text, size_t len, WEB_REQUEST *out,
     out->type=WEB_REQUEST_AUDIO_UNSUBSCRIBE;
     return TRUE;
   }
+  if(strcmp(type,"audio_feedback")==0) {
+    if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
+    if(!have_value || out->value_is_bool || out->value<0 || out->value>100) {
+      set_error(error,error_len,"audio_feedback value must be a loss percentage"); return FALSE;
+    }
+    out->type=WEB_REQUEST_AUDIO_FEEDBACK;
+    return TRUE;
+  }
   /* The two signaling replies allocate their payload here, only on success. */
   if(strcmp(type,"rtc_answer")==0) {
     if(!have_rx) { set_error(error,error_len,"missing receiver index"); return FALSE; }
@@ -576,6 +585,47 @@ WEB_SPECTRUM_LIMITS web_spectrum_profile_limits(int profile) {
   if(profile<WEB_SPECTRUM_LOW) profile=WEB_SPECTRUM_LOW;
   if(profile>WEB_SPECTRUM_ULTRA) profile=WEB_SPECTRUM_ULTRA;
   return limits[(unsigned)profile];
+}
+
+#define WEB_AUDIO_LOSS_CONGESTED 5    /* % -- FEC and PLC ride out less than this */
+#define WEB_AUDIO_LOSS_HEALTHY   2
+#define WEB_AUDIO_RECOVERY_US    (10*G_USEC_PER_SEC)
+#define WEB_AUDIO_FEC_MIN        2
+#define WEB_AUDIO_FEC_MAX        25
+
+guint web_audio_rate_target(WEB_SPECTRUM_PROFILE profile) {
+  static const guint target[]={16000,24000,48000,64000};
+  if(profile<WEB_SPECTRUM_LOW) profile=WEB_SPECTRUM_LOW;
+  if(profile>WEB_SPECTRUM_ULTRA) profile=WEB_SPECTRUM_ULTRA;
+  return target[(unsigned)profile];
+}
+
+void web_audio_rate_reset(WEB_AUDIO_RATE *r, WEB_SPECTRUM_PROFILE profile, gint64 now_us) {
+  r->target=web_audio_rate_target(profile);
+  r->bitrate=r->target;
+  r->fec_loss=10;
+  r->healthy_since_us=now_us;
+}
+
+gboolean web_audio_rate_report(WEB_AUDIO_RATE *r, guint loss_percent,
+                               gboolean display_at_low, gint64 now_us) {
+  static const guint ladder[]={16000,24000,32000,48000,64000};
+  r->fec_loss=CLAMP(loss_percent,WEB_AUDIO_FEC_MIN,WEB_AUDIO_FEC_MAX);
+  if(loss_percent>=WEB_AUDIO_LOSS_CONGESTED) {
+    r->healthy_since_us=now_us;
+    if(display_at_low)
+      for(int i=(int)G_N_ELEMENTS(ladder)-1;i>=0;i--)
+        if(ladder[i]<r->bitrate) { r->bitrate=ladder[i]; break; }
+    return TRUE;
+  }
+  if(loss_percent>WEB_AUDIO_LOSS_HEALTHY) {
+    r->healthy_since_us=now_us;
+  } else if(r->bitrate<r->target && now_us-r->healthy_since_us>=WEB_AUDIO_RECOVERY_US) {
+    for(guint i=0;i<G_N_ELEMENTS(ladder);i++)
+      if(ladder[i]>r->bitrate) { r->bitrate=MIN(ladder[i],r->target); break; }
+    r->healthy_since_us=now_us;
+  }
+  return FALSE;
 }
 
 gboolean web_spectrum_quantize(const float *input, guint input_count,

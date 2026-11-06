@@ -660,7 +660,7 @@ function drawSpectrum(card, bins, floor, span) {
   ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, panHeight); ctx.stroke();
 }
 
-function handleBinary(buffer) {
+function handleBinary(buffer, via) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 36) return;
   const view = new DataView(buffer);
   if (view.getUint8(0) !== 77 || view.getUint8(1) !== 80 || view.getUint8(2) !== 83 || view.getUint8(3) !== 68 ||
@@ -669,6 +669,13 @@ function handleBinary(buffer) {
   if (count === 0 || count > 2048 || payload !== count + 4 || buffer.byteLength !== 32 + payload) return;
   const card = cards.get(rx);
   if (!card) return;
+  // The channel is unordered, so a row may arrive behind a newer one.  The
+  // waterfall scrolls by arrival, so a late row is dropped rather than drawn
+  // out of place.  A big backward jump is a new sequence, not a late row.
+  const sequence = view.getUint32(8, true);
+  if (card._lastSeq !== undefined && sequence <= card._lastSeq && card._lastSeq - sequence < 256) return;
+  card._lastSeq = sequence;
+  card._via = via;
   const timestamp = Number(view.getBigUint64(12, true));
   const floor = view.getInt16(32, true) / 10, span = view.getUint16(34, true) / 10;
   if (!(span > 0)) return;
@@ -686,7 +693,9 @@ function updateSpectrumStatus(message) {
   if (!card) return;
   const fps = card._frames?.length || 0;
   const age = Number.isFinite(card._age) ? `${Math.round(card._age)} ms` : "—";
-  card.querySelector(".spectrum-status").textContent = `${message.profile} · ${fps} fps · ${age} · ${message.dropped} dropped`;
+  const audio = message.audio_bitrate ? ` · audio ${Math.round(message.audio_bitrate / 1000)} kbit/s` : "";
+  const via = card._via ? ` · ${card._via}` : "";
+  card.querySelector(".spectrum-status").textContent = `${message.profile} · ${fps} fps · ${age} · ${message.dropped} dropped${via}${audio}`;
   card.querySelector(".spectrum-profile").value = message.profile;
 }
 
@@ -907,6 +916,12 @@ function startAudio(card, rxId) {
     if (event.candidate)
       send({ type: "rtc_candidate", rx: rxId, candidate: event.candidate.candidate, mid: event.candidate.sdpMid || "" });
   });
+  // The server moves this receiver's spectrum rows onto the channel when it opens
+  // and back onto the WebSocket when it closes; handleBinary takes both.
+  pc.addEventListener("datachannel", event => {
+    event.channel.binaryType = "arraybuffer";
+    event.channel.addEventListener("message", message => handleBinary(message.data, "UDP"));
+  });
   pc.addEventListener("connectionstatechange", () => {
     if (!card._pc) return;
     if (pc.connectionState === "connected") { card._connected = true; refreshAudioButton(card); tryPlay(card); }
@@ -940,6 +955,28 @@ async function handleRtcCandidate(rxId, candidate, mid) {
   if (!card || !card._pc || !candidate) return;
   try { await card._pc.addIceCandidate({ candidate, sdpMid: mid || null }); } catch {}
 }
+// The audio bitrate follows the loss this browser actually sees.  packetsLost is
+// cumulative and can step backwards when a late packet arrives, so each report
+// uses the difference over its own window and a short window says nothing.
+const AUDIO_FEEDBACK_MS = 2000, AUDIO_FEEDBACK_MIN_PACKETS = 20;
+async function reportAudioLoss(card, rxId) {
+  const pc = card._pc;
+  if (!pc || !card._connected) return;
+  let received = null, lost = 0;
+  (await pc.getStats()).forEach(stat => {
+    if (stat.type === "inbound-rtp" && stat.kind === "audio") { received = stat.packetsReceived || 0; lost = stat.packetsLost || 0; }
+  });
+  if (received === null || pc !== card._pc) return;
+  const previous = card._lossBase?.pc === pc ? card._lossBase : { received: 0, lost: 0 };
+  const gotten = received - previous.received, missed = Math.max(0, lost - previous.lost);
+  if (gotten + missed < AUDIO_FEEDBACK_MIN_PACKETS) return;
+  card._lossBase = { pc, received, lost };
+  send({ type: "audio_feedback", rx: rxId, value: Math.round(100 * missed / (gotten + missed)) });
+}
+setInterval(() => {
+  for (const [rxId, card] of cards) reportAudioLoss(card, rxId).catch(() => {});
+}, AUDIO_FEEDBACK_MS);
+
 function closeAllAudio() {
   for (const card of cards.values()) {
     if (card._pc) { try { card._pc.close(); } catch {} card._pc = null; }
@@ -969,7 +1006,7 @@ function connect() {
     socketGeneration++; setConnection("Connected", true); send({ type: "get_state" }); armStateWatchdog();
   });
   socket.addEventListener("message", event => {
-    if (typeof event.data !== "string") { handleBinary(event.data); return; }
+    if (typeof event.data !== "string") { handleBinary(event.data, "TCP"); return; }
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === "hello") {
       capabilities = message.capabilities || [];

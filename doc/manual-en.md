@@ -829,7 +829,7 @@ or **Ultra** (2048/30, LAN/wide-window use) for each receiver. Click the spectru
 drag it to move the tuning frequency, use the wheel for one tuning step (a trackpad swipe
 gives one step per ~16 px of travel, the same feel as the desktop), pick a
 filter preset, or drag either highlighted filter edge. The status beside the profile reports the
-effective profile, received FPS, row age and rows dropped for a slow browser;
+effective profile, received FPS, row age, rows dropped for a slow browser, whether rows arrive by **UDP** or **TCP**, and the audio bitrate. The profile also sets the audio quality (Low 16, Balanced 24, High 48, Ultra 64 kbit/s); on a lossy link the display gives way first and the audio only after it, and both recover on their own;
 MacHPSDR automatically reduces FPS before width and recovers after congestion.
 Each receiver's demodulated audio plays automatically — there is no "listen"
 step — as a WebRTC Opus stream the browser decodes with its own jitter buffer,

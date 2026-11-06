@@ -92,6 +92,11 @@ typedef struct {
   WEB_RTC_SESSION *rtc;
   gint rtc_rx;
   char rtc_address[INET_ADDRSTRLEN];
+  /* The session's open spectrum channel, -1 until then and whenever the rows
+     must go by WebSocket.  A channel id, not a session pointer: the sender thread
+     can keep using it across a teardown and only gets told it is closed. */
+  volatile gint rtc_channel;
+  WEB_AUDIO_RATE audio_rate;          /* guarded by queue_mutex */
 #endif
 } WEB_CLIENT;
 
@@ -798,6 +803,9 @@ static void web_rtc_on_state(void *user, gboolean connected, gboolean failed) {
   if(client==NULL) return;
   log_info("web: rtc rx %d %s\n",client->rtc_rx,
            connected?"connected":(failed?"failed":"closed"));
+  /* A lost peer never comes back on this session, and its channel may not be told
+     for a long time: bring the spectrum home now. */
+  if(!connected) g_atomic_int_set(&client->rtc_channel,-1);
   char msg[96];
   g_snprintf(msg,sizeof(msg),
              "{\"type\":\"rtc_state\",\"rx\":%d,\"connected\":%s}",
@@ -833,6 +841,14 @@ static void web_rtc_on_tx_audio(void *user, const float *mono, int frames) {
   g_mutex_unlock(&web_tx_audio_mutex);
 }
 
+static void web_rtc_on_channel(void *user, int channel) {
+  WEB_CLIENT *client=(WEB_CLIENT *)user;
+  if(client==NULL) return;
+  g_atomic_int_set(&client->rtc_channel,channel);
+  log_info("web: rtc rx %d spectrum %s\n",client->rtc_rx,
+           channel>=0?"on the data channel":"back on the WebSocket");
+}
+
 /* Free the audio session.  The pointer is cleared under queue_mutex (the lock
    the RX-audio tap holds while feeding the session), so the tap never touches a
    session being freed; the actual free -- which joins libdatachannel and the
@@ -844,6 +860,7 @@ static void web_rtc_teardown(WEB_CLIENT *client) {
   client->rtc=NULL;
   g_mutex_unlock(&client->queue_mutex);
   if(s!=NULL) web_rtc_session_free(s);
+  g_atomic_int_set(&client->rtc_channel,-1);
 }
 #endif /* WEBRTC */
 
@@ -937,6 +954,13 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
       client->effective_fps[request->rx]=selected.fps;
       client->pressure[request->rx]=0;
       client->healthy_since_us[request->rx]=g_get_monotonic_time();
+#ifdef WEBRTC
+      if(client->rtc!=NULL && client->rtc_rx==request->rx) {
+        web_audio_rate_reset(&client->audio_rate,request->profile,g_get_monotonic_time());
+        web_rtc_session_set_audio_rate(client->rtc,client->audio_rate.bitrate,
+                                       client->audio_rate.fec_loss);
+      }
+#endif
     } else {
       client->subscribed[request->rx]=FALSE;
       web_latest_frame_clear(&client->pending[request->rx]);
@@ -955,6 +979,31 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         web_spectrum_profile_name(effective),bins,fps,
         (unsigned long long)dropped);
     return ws_send_text(client,reply);
+  }
+
+  /* The browser's measured receive loss.  It can only change this connection's
+     own media, so a viewer may send it and it gets no reply. */
+  if(request->type==WEB_REQUEST_AUDIO_FEEDBACK) {
+#ifdef WEBRTC
+    g_mutex_lock(&client->queue_mutex);
+    int fb_rx=request->rx;
+    if(client->rtc!=NULL && client->rtc_rx==fb_rx) {
+      gint64 fb_now=g_get_monotonic_time();
+      gboolean at_low=!client->subscribed[fb_rx] || client->effective[fb_rx]==WEB_SPECTRUM_LOW;
+      guint fb_before=client->audio_rate.bitrate;
+      if(web_audio_rate_report(&client->audio_rate,(guint)request->value,at_low,fb_now)) {
+        client->pressure[fb_rx]=3;
+        client->healthy_since_us[fb_rx]=fb_now;
+      }
+      /* The link has to carry the bigger bitrate for a while before the display
+         asks for more too. */
+      if(client->audio_rate.bitrate>fb_before) client->healthy_since_us[fb_rx]=fb_now;
+      web_rtc_session_set_audio_rate(client->rtc,client->audio_rate.bitrate,
+                                     client->audio_rate.fec_loss);
+    }
+    g_mutex_unlock(&client->queue_mutex);
+#endif
+    return TRUE;
   }
 
   if(request->type==WEB_REQUEST_AUDIO_SUBSCRIBE ||
@@ -976,7 +1025,7 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
         client->rtc_rx=request->rx;
         g_mutex_unlock(&client->queue_mutex);
         WEB_RTC_SESSION *s=web_rtc_session_new(web_rtc_on_signal,web_rtc_on_state,
-                                               web_rtc_on_tx_audio,client,
+                                               web_rtc_on_tx_audio,web_rtc_on_channel,client,
                                                client->rtc_address,
                                                (guint16)web_radio->web_rtc_port);
         if(s==NULL || !web_rtc_session_offer(s)) {
@@ -984,6 +1033,10 @@ static gboolean dispatch_request(WEB_CLIENT *client, const WEB_REQUEST *request)
           return ws_send_error(client,request->id,"rtc_failed","could not start audio");
         }
         g_mutex_lock(&client->queue_mutex);
+        web_audio_rate_reset(&client->audio_rate,
+                             client->subscribed[request->rx]?client->desired[request->rx]:WEB_SPECTRUM_BALANCED,
+                             g_get_monotonic_time());
+        web_rtc_session_set_audio_rate(s,client->audio_rate.bitrate,client->audio_rate.fec_loss);
         client->rtc=s;
         g_mutex_unlock(&client->queue_mutex);
         break;
@@ -1134,12 +1187,16 @@ static void spectrum_status(WEB_CLIENT *client, int rx_index) {
   guint bins=client->effective_bins[rx_index];
   guint fps=client->effective_fps[rx_index];
   guint64 dropped=client->pending[rx_index].dropped+client->expired[rx_index];
+  guint audio_bitrate=0;
+#ifdef WEBRTC
+  if(client->rtc!=NULL && client->rtc_rx==rx_index) audio_bitrate=client->audio_rate.bitrate;
+#endif
   g_mutex_unlock(&client->queue_mutex);
   g_snprintf(line,sizeof(line),
       "{\"type\":\"spectrum_status\",\"rx\":%d,\"profile\":\"%s\","
-      "\"bins\":%u,\"fps\":%u,\"dropped\":%llu}",
+      "\"bins\":%u,\"fps\":%u,\"dropped\":%llu,\"audio_bitrate\":%u}",
       rx_index,web_spectrum_profile_name(profile),bins,fps,
-      (unsigned long long)dropped);
+      (unsigned long long)dropped,audio_bitrate);
   ws_send_text(client,line);
 }
 
@@ -1196,7 +1253,13 @@ static gpointer web_sender_thread(gpointer data) {
         client->healthy_since_us[i]=now;
         status_due=TRUE;
       } else if(client->pressure[i]==0 &&
-                now-client->healthy_since_us[i]>=WEB_RECOVERY_US) {
+                now-client->healthy_since_us[i]>=WEB_RECOVERY_US &&
+#ifdef WEBRTC
+                /* Audio gets its bitrate back before the display gets anything. */
+                (client->rtc==NULL || client->rtc_rx!=i ||
+                 client->audio_rate.bitrate>=client->audio_rate.target) &&
+#endif
+                TRUE) {
         WEB_SPECTRUM_LIMITS wanted=web_spectrum_profile_limits(client->desired[i]);
         if(client->effective_bins[i]<wanted.bins) {
           client->effective[i]++;
@@ -1231,11 +1294,22 @@ static gpointer web_sender_thread(gpointer data) {
     if(wire==NULL) continue;
     gsize wire_len=0; const guint8 *wire_data=g_bytes_get_data(wire,&wire_len);
     gint64 started=g_get_monotonic_time();
-    gboolean ok=client_send(client,2,wire_data,wire_len);
+    gboolean ok=TRUE, congested=FALSE, sent=FALSE;
+#ifdef WEBRTC
+    int channel=g_atomic_int_get(&client->rtc_channel);
+    if(channel>=0 && g_atomic_int_get(&client->rtc_rx)==rx_index) {
+      WEB_RTC_SEND_RESULT result=web_rtc_channel_send(channel,wire_data,wire_len);
+      if(result==WEB_RTC_SENT) sent=TRUE;
+      else if(result==WEB_RTC_CONGESTED) { sent=TRUE; congested=TRUE; }
+      else g_atomic_int_compare_and_exchange(&client->rtc_channel,channel,-1);
+    }
+#endif
+    if(!sent) ok=client_send(client,2,wire_data,wire_len);
     gint64 elapsed=g_get_monotonic_time()-started;
     g_bytes_unref(wire);
     g_mutex_lock(&client->queue_mutex);
-    if(elapsed>WEB_SLOW_SEND_US) client->pressure[rx_index]++;
+    if(congested) client->expired[rx_index]++;
+    if(congested || elapsed>WEB_SLOW_SEND_US) client->pressure[rx_index]++;
     else if(client->pressure[rx_index]>0) client->pressure[rx_index]--;
     if(now-client->last_status_us[rx_index]>=G_USEC_PER_SEC) {
       client->last_status_us[rx_index]=now;
@@ -1480,6 +1554,7 @@ static gpointer web_server_thread(gpointer data) {
 #ifdef WEBRTC
       slot->rtc=NULL;
       slot->rtc_rx=-1;
+      g_atomic_int_set(&slot->rtc_channel,-1);
 #endif
       g_mutex_unlock(&slot->queue_mutex);
       web_client_workers++;

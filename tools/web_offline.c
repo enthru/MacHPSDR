@@ -338,7 +338,8 @@ int main(int argc, char **argv) {
       gboolean receive_side=t==WEB_REQUEST_GET_STATE ||
           t==WEB_REQUEST_SPECTRUM_SUBSCRIBE || t==WEB_REQUEST_SPECTRUM_UNSUBSCRIBE ||
           t==WEB_REQUEST_AUDIO_SUBSCRIBE || t==WEB_REQUEST_AUDIO_UNSUBSCRIBE ||
-          t==WEB_REQUEST_RTC_ANSWER || t==WEB_REQUEST_RTC_CANDIDATE;
+          t==WEB_REQUEST_RTC_ANSWER || t==WEB_REQUEST_RTC_CANDIDATE ||
+          t==WEB_REQUEST_AUDIO_FEEDBACK;
       gboolean role_only=t==WEB_REQUEST_CONTROL_ACQUIRE || t==WEB_REQUEST_CONTROL_RENEW ||
           t==WEB_REQUEST_CONTROL_RELEASE || t==WEB_REQUEST_LEASE_RELEASE;
       WEB_ACCESS a=web_request_access(&q);
@@ -358,6 +359,57 @@ int main(int argc, char **argv) {
     check("an unnamed request type defaults to the lease",
           web_request_access(&q)==WEB_ACCESS_CONTROL_LEASE &&
           web_request_access(NULL)==WEB_ACCESS_CONTROL_LEASE);
+  }
+
+  /* The browser's loss report, and the audio/display arbitration on a mock clock. */
+  {
+    check("audio feedback parses",
+          parse("{\"type\":\"audio_feedback\",\"id\":3,\"rx\":0,\"value\":7}",&r) &&
+          r.type==WEB_REQUEST_AUDIO_FEEDBACK && r.value==7 && r.rx==0);
+    check("audio feedback needs a receiver",
+          !parse("{\"type\":\"audio_feedback\",\"id\":3,\"value\":7}",&r));
+    check("audio feedback rejects a loss outside 0..100",
+          !parse("{\"type\":\"audio_feedback\",\"id\":3,\"rx\":0,\"value\":101}",&r) &&
+          !parse("{\"type\":\"audio_feedback\",\"id\":3,\"rx\":0,\"value\":-1}",&r) &&
+          !parse("{\"type\":\"audio_feedback\",\"id\":3,\"rx\":0,\"value\":true}",&r) &&
+          !parse("{\"type\":\"audio_feedback\",\"id\":3,\"rx\":0}",&r));
+
+    check("the bitrate table is the spec's",
+          web_audio_rate_target(WEB_SPECTRUM_LOW)==16000 &&
+          web_audio_rate_target(WEB_SPECTRUM_BALANCED)==24000 &&
+          web_audio_rate_target(WEB_SPECTRUM_HIGH)==48000 &&
+          web_audio_rate_target(WEB_SPECTRUM_ULTRA)==64000);
+    WEB_AUDIO_RATE a;
+    const gint64 sec=G_USEC_PER_SEC;
+    web_audio_rate_reset(&a,WEB_SPECTRUM_ULTRA,0);
+    check("a lossy report asks the display to back off and leaves the audio",
+          web_audio_rate_report(&a,20,FALSE,2*sec) && a.bitrate==64000);
+    gboolean walked=web_audio_rate_report(&a,20,TRUE,4*sec) && a.bitrate==48000;
+    walked=walked && web_audio_rate_report(&a,20,TRUE,6*sec) && a.bitrate==32000;
+    walked=walked && web_audio_rate_report(&a,20,TRUE,8*sec) && a.bitrate==24000;
+    walked=walked && web_audio_rate_report(&a,20,TRUE,10*sec) && a.bitrate==16000;
+    check("with the display at Low the audio walks down one rung a report",walked);
+    check("the floor is 16 kbit/s",web_audio_rate_report(&a,90,TRUE,12*sec) && a.bitrate==16000);
+    check("FEC protection follows the loss and is capped",a.fec_loss==25);
+    check("2 % random loss is not congestion",!web_audio_rate_report(&a,2,TRUE,13*sec) && a.bitrate==16000);
+    check("...and FEC follows it down",a.fec_loss==2);
+    check("recovery waits out ten healthy seconds",
+          !web_audio_rate_report(&a,0,TRUE,21*sec) && a.bitrate==16000);
+    web_audio_rate_report(&a,0,TRUE,22*sec);
+    check("then one rung",a.bitrate==24000);
+    web_audio_rate_report(&a,4,TRUE,40*sec);
+    check("3..4 % holds, and restarts the healthy clock",a.bitrate==24000);
+    web_audio_rate_report(&a,0,TRUE,45*sec);
+    check("...so a clean report 5 s later does not climb",a.bitrate==24000);
+    web_audio_rate_report(&a,0,TRUE,50*sec);
+    check("ten seconds after it does",a.bitrate==32000);
+    web_audio_rate_reset(&a,WEB_SPECTRUM_BALANCED,0);
+    web_audio_rate_report(&a,50,TRUE,2*sec);
+    check("Balanced falls from its own 24 kbit/s",a.bitrate==16000);
+    web_audio_rate_report(&a,0,TRUE,12*sec);
+    check("and climbs no further than its own target",a.bitrate==24000);
+    web_audio_rate_report(&a,0,TRUE,99*sec);
+    check("...even when healthy for long",a.bitrate==24000);
   }
 
   /* Failed-login throttling on a mock clock. */

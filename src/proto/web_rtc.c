@@ -22,7 +22,15 @@
 #define WEB_RTC_FRAME       960                  /* 20 ms @ 48 kHz */
 #define WEB_RTC_RING        (WEB_RTC_SAMPLE_RATE / 5) /* 200 ms */
 #define WEB_RTC_MAX_PACKET  1500                 /* one Opus frame, with margin */
-#define WEB_RTC_BITRATE     32000
+#define WEB_RTC_BITRATE     24000                /* until the owner sets one */
+#define WEB_RTC_LOSS        10                   /* until the first loss report */
+
+/* Spectrum rows are disposable: one unordered, partially reliable channel that
+ * stops retransmitting a row well before the 500 ms it stops being useful, and a
+ * sender that drops a row rather than queue behind two others. */
+#define WEB_RTC_SPECTRUM_LABEL    "spectrum"
+#define WEB_RTC_SPECTRUM_LIFE_MS  250
+#define WEB_RTC_SPECTRUM_BACKLOG  2
 
 static gboolean web_rtc_inited;
 
@@ -62,9 +70,11 @@ struct WEB_RTC_SESSION {
   int pc;
   int track;
   int rx_track;
+  int spectrum;
   web_rtc_signal_cb signal;
   web_rtc_state_cb state;
   web_rtc_tx_audio_cb tx_audio;
+  web_rtc_channel_cb channel;
   void *user;
   char advertised_address[64];
   guint16 udp_port;
@@ -83,6 +93,9 @@ struct WEB_RTC_SESSION {
   volatile gint worker_run;
   volatile gint connected;
   uint32_t rtp_ts;
+  /* Requested encoder settings; only the worker touches the encoder. */
+  volatile gint want_bitrate;
+  volatile gint want_loss;
 };
 
 /* Locate an Opus payload in one RTP packet.  The browser may include CSRCs,
@@ -143,6 +156,7 @@ static gpointer web_rtc_worker(gpointer data) {
   WEB_RTC_SESSION *s = (WEB_RTC_SESSION *)data;
   float frame[WEB_RTC_FRAME];
   unsigned char packet[WEB_RTC_MAX_PACKET];
+  int bitrate=0, loss=-1;
 
   for(;;) {
     g_mutex_lock(&s->af_mutex);
@@ -159,6 +173,18 @@ static gpointer web_rtc_worker(gpointer data) {
        was consumed above (so the ring cannot back up) and is simply dropped. */
     if(!g_atomic_int_get(&s->connected)) continue;
 
+    int want=g_atomic_int_get(&s->want_bitrate);
+    if(want!=bitrate) {
+      bitrate=want;
+      opus_encoder_ctl(s->enc, OPUS_SET_BITRATE(bitrate));
+      log_info("webrtc: audio at %d bit/s\n", bitrate);
+    }
+    want=g_atomic_int_get(&s->want_loss);
+    if(want!=loss) {
+      loss=want;
+      opus_encoder_ctl(s->enc, OPUS_SET_PACKET_LOSS_PERC(loss));
+    }
+
     int bytes = opus_encode_float(s->enc, frame, WEB_RTC_FRAME, packet, sizeof(packet));
     if(bytes < 0) { log_error("webrtc: opus_encode_float failed (%d)\n", bytes); continue; }
     if(bytes <= 2) continue; /* DTX / no payload: emit nothing */
@@ -173,6 +199,33 @@ static gpointer web_rtc_worker(gpointer data) {
     s->rtp_ts += WEB_RTC_FRAME;
   }
   return NULL;
+}
+
+/* --- spectrum DataChannel ------------------------------------------------- */
+
+static void on_spectrum_open(int id, void *ptr) {
+  WEB_RTC_SESSION *s = (WEB_RTC_SESSION *)ptr;
+  if(s != NULL && s->channel != NULL) s->channel(s->user, id);
+}
+
+static void on_spectrum_closed(int id, void *ptr) {
+  (void)id;
+  WEB_RTC_SESSION *s = (WEB_RTC_SESSION *)ptr;
+  if(s != NULL && s->channel != NULL) s->channel(s->user, -1);
+}
+
+WEB_RTC_SEND_RESULT web_rtc_channel_send(int channel, const void *data, gsize len) {
+  int buffered = rtcGetBufferedAmount(channel);
+  if(buffered < 0) return WEB_RTC_CLOSED;
+  if((gsize)buffered > WEB_RTC_SPECTRUM_BACKLOG * len) return WEB_RTC_CONGESTED;
+  int rc = rtcSendMessage(channel, (const char *)data, (int)len);
+  return rc < 0 ? WEB_RTC_CLOSED : WEB_RTC_SENT;
+}
+
+void web_rtc_session_set_audio_rate(WEB_RTC_SESSION *s, guint bitrate, guint loss_percent) {
+  if(s == NULL) return;
+  g_atomic_int_set(&s->want_bitrate, (gint)bitrate);
+  g_atomic_int_set(&s->want_loss, (gint)loss_percent);
 }
 
 /* --- libdatachannel callbacks (run on its worker threads) ----------------- */
@@ -232,17 +285,22 @@ static void on_state_change(int pc, rtcState state, void *ptr) {
 
 WEB_RTC_SESSION *web_rtc_session_new(web_rtc_signal_cb signal,
                                      web_rtc_state_cb state,
-                                     web_rtc_tx_audio_cb tx_audio, void *user,
+                                     web_rtc_tx_audio_cb tx_audio,
+                                     web_rtc_channel_cb channel, void *user,
                                      const char *advertised_address,
                                      guint16 udp_port) {
   web_rtc_init();
   WEB_RTC_SESSION *s = g_new0(WEB_RTC_SESSION, 1);
   s->track = -1;
   s->rx_track = -1;
+  s->spectrum = -1;
   s->signal = signal;
   s->state = state;
   s->tx_audio = tx_audio;
+  s->channel = channel;
   s->user = user;
+  s->want_bitrate = WEB_RTC_BITRATE;
+  s->want_loss = WEB_RTC_LOSS;
   if(advertised_address!=NULL)
     g_strlcpy(s->advertised_address,advertised_address,sizeof(s->advertised_address));
   s->udp_port=udp_port;
@@ -321,11 +379,10 @@ gboolean web_rtc_session_offer(WEB_RTC_SESSION *s) {
     log_error("webrtc: opus_encoder_create failed (%d)\n", oerr);
     return FALSE;
   }
-  opus_encoder_ctl(s->enc, OPUS_SET_BITRATE(WEB_RTC_BITRATE));
   /* Receive audio crosses the public Internet; in-band FEC lets the browser
-     reconstruct a lost packet from the next one. */
+     reconstruct a lost packet from the next one.  Bitrate and expected loss are
+     set by the worker from want_bitrate/want_loss. */
   opus_encoder_ctl(s->enc, OPUS_SET_INBAND_FEC(1));
-  opus_encoder_ctl(s->enc, OPUS_SET_PACKET_LOSS_PERC(10));
   s->dec = opus_decoder_create(WEB_RTC_SAMPLE_RATE,1,&oerr);
   if(s->dec==NULL || oerr!=OPUS_OK) {
     log_error("webrtc: opus_decoder_create failed (%d)\n",oerr);
@@ -334,6 +391,22 @@ gboolean web_rtc_session_offer(WEB_RTC_SESSION *s) {
   s->ring = g_new0(float, WEB_RTC_RING);
   g_atomic_int_set(&s->worker_run, 1);
   s->worker = g_thread_new("web-opus", web_rtc_worker, s);
+
+  /* Created before the offer so the SDP carries the application m-line.  A
+     failure costs only the UDP path: the spectrum stays on the WebSocket. */
+  rtcDataChannelInit dc_init;
+  memset(&dc_init, 0, sizeof(dc_init));
+  dc_init.reliability.unordered = true;
+  dc_init.reliability.unreliable = true;
+  dc_init.reliability.maxPacketLifeTime = WEB_RTC_SPECTRUM_LIFE_MS;
+  s->spectrum = rtcCreateDataChannelEx(s->pc, WEB_RTC_SPECTRUM_LABEL, &dc_init);
+  if(s->spectrum >= 0) {
+    rtcSetUserPointer(s->spectrum, s);
+    rtcSetOpenCallback(s->spectrum, on_spectrum_open);
+    rtcSetClosedCallback(s->spectrum, on_spectrum_closed);
+  } else {
+    log_error("webrtc: rtcCreateDataChannelEx failed (%d)\n", s->spectrum);
+  }
 
   int rc = rtcSetLocalDescription(s->pc, "offer");
   if(rc < 0) {
@@ -390,6 +463,12 @@ void web_rtc_session_free(WEB_RTC_SESSION *s) {
     log_info("webrtc: dropped %llu audio samples to a slow connection\n",
              (unsigned long long)s->dropped);
   if(s->pc >= 0) {
+    if(s->spectrum>=0) {
+      rtcSetOpenCallback(s->spectrum,NULL);
+      rtcSetClosedCallback(s->spectrum,NULL);
+      rtcSetUserPointer(s->spectrum,NULL);
+      rtcDeleteDataChannel(s->spectrum);
+    }
     if(s->track>=0) {
       rtcSetMessageCallback(s->track,NULL);
       rtcSetUserPointer(s->track,NULL);

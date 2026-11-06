@@ -12,6 +12,10 @@
  *   2. Synthetic 48 kHz audio fed in each direction at real time arrives
  *      on the answerer's track as RTP packets at ~50/s (one 20 ms Opus frame
  *      each) carrying the negotiated payload type 111.
+ *   3. The spectrum DataChannel opens unordered and partially reliable, carries
+ *      rows, refuses to queue behind a backlog and reports closed once its
+ *      session is gone.
+ *   4. Setting the audio rate changes what is on the wire.
  */
 #include <glib.h>
 #include <rtc/rtc.h>
@@ -52,6 +56,14 @@ static volatile gint g_rtp_step_bad; /* seq or timestamp did not advance as expe
 static GMutex g_tx_audio_mutex;
 static gint g_tx_audio_frames;
 static double g_tx_audio_energy;
+static volatile gint g_rtp_bytes;    /* RTP bytes on the track, for the rate check */
+
+/* The spectrum channel: its id at the server, and what the fake browser saw. */
+static volatile gint g_channel = -1;
+static volatile gint g_dc_seen;
+static volatile gint g_dc_unordered;
+static volatile gint g_dc_lifetime;
+static volatile gint g_dc_rows;
 
 /* Server -> browser: the session hands us its offer and ICE candidates. */
 static void offerer_signal(void *user, const char *kind, const char *data, const char *mid) {
@@ -85,6 +97,29 @@ static void offerer_tx_audio(void *user, const float *mono, int frames) {
   g_mutex_unlock(&g_tx_audio_mutex);
 }
 
+static void offerer_channel(void *user, int channel) {
+  (void)user;
+  g_atomic_int_set(&g_channel, channel);
+}
+
+static void answerer_dc_message(int id, const char *message, int size, void *ptr) {
+  (void)id; (void)message; (void)size; (void)ptr;
+  g_atomic_int_inc(&g_dc_rows);
+}
+
+static void answerer_datachannel(int pc, int dc, void *ptr) {
+  (void)pc; (void)ptr;
+  char label[32] = "";
+  rtcGetDataChannelLabel(dc, label, sizeof(label));
+  rtcReliability reliability;
+  memset(&reliability, 0, sizeof(reliability));
+  rtcGetDataChannelReliability(dc, &reliability);
+  if(g_strcmp0(label, "spectrum") == 0) g_atomic_int_set(&g_dc_seen, 1);
+  g_atomic_int_set(&g_dc_unordered, reliability.unordered && reliability.unreliable);
+  g_atomic_int_set(&g_dc_lifetime, (gint)reliability.maxPacketLifeTime);
+  rtcSetMessageCallback(dc, answerer_dc_message);
+}
+
 /* Browser -> server: the raw peer hands us its answer and ICE candidates. */
 static void answerer_description(int pc, const char *sdp, const char *type, void *ptr) {
   (void)pc; (void)ptr;
@@ -114,6 +149,7 @@ static void answerer_track_message(int id, const char *message, int size, void *
   if(p[1] >= 192 && p[1] <= 223) return;                   /* RTCP, not media */
   if((p[1] & 0x7f) != RTC_OPUS_PT) { g_atomic_int_inc(&g_rtp_other); return; }
   g_atomic_int_inc(&g_rtp_pt111);
+  g_atomic_int_add(&g_rtp_bytes, size);
 
   uint16_t seq = (uint16_t)((p[2] << 8) | p[3]);
   uint32_t ts  = ((uint32_t)p[4] << 24) | ((uint32_t)p[5] << 16) |
@@ -132,6 +168,26 @@ static void answerer_track(int pc, int tr, void *ptr) {
   rtcSetMessageCallback(tr, answerer_track_message);
 }
 
+/* Feed `ms` of a tone at real time and report the RTP bytes that came out. */
+static int feed_and_measure(double *phase, int ms) {
+  double pcm[2 * 960];
+  const double dphi = 2.0 * M_PI * 440.0 / 48000.0;
+  g_usleep(100000);                       /* drain what the last setting sent */
+  g_atomic_int_set(&g_rtp_bytes, 0);
+  gint64 t0 = g_get_monotonic_time();
+  for(int b = 0; b < ms / 20; b++) {
+    for(int i = 0; i < 960; i++) {
+      pcm[2*i] = pcm[2*i+1] = 0.25 * sin(*phase);
+      *phase += dphi;
+    }
+    web_rtc_session_feed(g_offerer, pcm, 960);
+    gint64 target = t0 + (gint64)(b + 1) * 20000;
+    gint64 now = g_get_monotonic_time();
+    if(target > now) g_usleep((gulong)(target - now));
+  }
+  return g_atomic_int_get(&g_rtp_bytes);
+}
+
 static int run_selftest(void) {
   web_rtc_init();
   g_mutex_init(&g_tx_audio_mutex);
@@ -145,6 +201,7 @@ static int run_selftest(void) {
   rtcSetLocalCandidateCallback(g_answerer, answerer_candidate);
   rtcSetStateChangeCallback(g_answerer, answerer_state);
   rtcSetTrackCallback(g_answerer, answerer_track);
+  rtcSetDataChannelCallback(g_answerer, answerer_datachannel);
 
   /* Match the browser's addTrack(microphone) before it answers the server's
      sendrecv offer, and packetize outgoing Opus on the same audio m-line. */
@@ -169,8 +226,8 @@ static int run_selftest(void) {
   rtcChainRtcpReceivingSession(g_answerer_send_track);
   rtcSetMessageCallback(g_answerer_send_track,answerer_track_message);
 
-  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, offerer_tx_audio, NULL,
-                                  "127.0.0.1", 49001);
+  g_offerer = web_rtc_session_new(offerer_signal, offerer_state, offerer_tx_audio,
+                                  offerer_channel, NULL, "127.0.0.1", 49001);
   if(g_offerer == NULL) { fprintf(stderr, "offerer session create failed\n"); return 1; }
 
   if(!web_rtc_session_offer(g_offerer)) { fprintf(stderr, "offer failed\n"); return 1; }
@@ -247,8 +304,42 @@ static int run_selftest(void) {
   double tx_rms=tx_frames>0 ? sqrt(g_tx_audio_energy/tx_frames) : 0.0;
   g_mutex_unlock(&g_tx_audio_mutex);
 
+  /* The spectrum channel: open, the right reliability, rows through, no backlog. */
+  int rows_sent = 0, burst_congested = 0, burst_closed = 0;
+  int channel = -1;
+  if(connect_ok) {
+    for(int i = 0; i < 100 && (channel = g_atomic_int_get(&g_channel)) < 0; i++) g_usleep(50000);
+    if(channel >= 0) {
+      static char row[2084];
+      for(int i = 0; i < 50; i++) {
+        if(web_rtc_channel_send(channel, row, sizeof(row)) == WEB_RTC_SENT) rows_sent++;
+        g_usleep(5000);
+      }
+      g_usleep(300000);
+      /* Far faster than anything can leave: it must refuse, not queue. */
+      static char big[60000];
+      for(int i = 0; i < 400; i++) {
+        WEB_RTC_SEND_RESULT result = web_rtc_channel_send(channel, big, sizeof(big));
+        if(result == WEB_RTC_CONGESTED) burst_congested++;
+        else if(result == WEB_RTC_CLOSED) burst_closed++;
+      }
+    }
+  }
+  int dc_rows = g_atomic_int_get(&g_dc_rows);
+
+  /* The rate setting reaches the wire. */
+  int bytes_high = 0, bytes_low = 0;
+  if(connect_ok) {
+    web_rtc_session_set_audio_rate(g_offerer, 64000, 2);
+    bytes_high = feed_and_measure(&phase, 1000);
+    web_rtc_session_set_audio_rate(g_offerer, 16000, 2);
+    bytes_low = feed_and_measure(&phase, 1000);
+  }
+
   web_rtc_session_free(g_offerer);
   g_offerer = NULL;
+  gboolean closed_after_free = channel < 0 ||
+      web_rtc_channel_send(channel, "x", 1) == WEB_RTC_CLOSED;
   if(g_answerer >= 0) { rtcDeletePeerConnection(g_answerer); g_answerer = -1; }
   web_rtc_cleanup();
   g_mutex_clear(&g_tx_audio_mutex);
@@ -290,6 +381,38 @@ static int run_selftest(void) {
   if(connect_ok) {
     printf("    %d decoded samples, RMS %.3f\n",tx_frames,tx_rms);
     if(!tx_audio_ok) failures++;
+  }
+
+  gboolean dc_ok = connect_ok && channel >= 0 && g_atomic_int_get(&g_dc_seen) &&
+                   g_atomic_int_get(&g_dc_unordered) && g_atomic_int_get(&g_dc_lifetime) == 250;
+  printf("spectrum channel opens unordered, 250 ms lifetime   %s\n",
+         dc_ok ? "PASS" : (connect_ok ? "FAIL" : "SKIP"));
+  if(connect_ok && !dc_ok) failures++;
+  gboolean rows_ok = dc_ok && rows_sent >= 45 && dc_rows >= rows_sent;
+  printf("spectrum rows cross the channel                     %s\n",
+         rows_ok ? "PASS" : (connect_ok ? "FAIL" : "SKIP"));
+  if(connect_ok) {
+    printf("    %d rows accepted, %d arrived\n", rows_sent, dc_rows);
+    if(!rows_ok) failures++;
+  }
+  gboolean refuse_ok = dc_ok && burst_congested > 0 && burst_closed == 0;
+  printf("a burst is refused rather than queued               %s\n",
+         refuse_ok ? "PASS" : (connect_ok ? "FAIL" : "SKIP"));
+  if(connect_ok) {
+    printf("    %d of 400 refused, %d closed\n", burst_congested, burst_closed);
+    if(!refuse_ok) failures++;
+  }
+  printf("a freed session's channel reports closed            %s\n",
+         closed_after_free ? "PASS" : "FAIL");
+  if(!closed_after_free) failures++;
+
+  /* Payload scales with the bitrate; 64 k against 16 k must clearly differ. */
+  gboolean rate_ok = connect_ok && bytes_high > 0 && bytes_low > 0 && bytes_low * 2 < bytes_high;
+  printf("the audio rate setting changes the wire             %s\n",
+         rate_ok ? "PASS" : (connect_ok ? "FAIL" : "SKIP"));
+  if(connect_ok) {
+    printf("    %d bytes/s at 64 kbit/s, %d bytes/s at 16 kbit/s\n", bytes_high, bytes_low);
+    if(!rate_ok) failures++;
   }
 
   printf("\n%d failures\n", failures);

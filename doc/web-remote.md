@@ -359,8 +359,26 @@ expiry or over-100-ms send-pressure observations as congestion.  It first
 reduces FPS to the next profile's rate, then reduces width; a quiet ten-second
 interval advances recovery toward the requested profile.  Socket sends have a
 250-ms timeout, and shutdown wakes and joins every sender before freeing its
-single-row slots.  These constants define the current fallback behaviour, not
-the future WebRTC congestion controller.
+single-row slots.
+
+While a receiver has a WebRTC session its rows travel instead on that session's
+DataChannel `spectrum` (unordered, 250 ms `maxPacketLifeTime`, same binary frame).
+The server moves them there when the channel opens and back to the WebSocket when
+the channel closes or the peer is lost, so a blocked UDP path only costs the
+improvement.  It never queues: a row that finds more than two rows' worth still
+buffered is dropped and counts as a pressure observation.  The browser drops a row
+older than one it has already drawn, because the waterfall scrolls by arrival.
+
+The browser measures its receive loss from `getStats()` and sends it every two
+seconds as `{"type":"audio_feedback","id":9,"rx":0,"value":3}` (percent, 0-100, no
+reply; viewers may send it, since it only changes that connection's own media).  At
+5 % or more each report takes the display one step down; once the display is at
+Low each report takes the audio one rung down the ladder 64/48/32/24/16 kbit/s.  At
+2 % or less for ten seconds the audio climbs back to the profile's target, and ten
+seconds after the audio's last step the display starts to recover.  In between
+nothing moves, so 2 % of random loss is left to FEC, whose expected-loss setting
+follows the report (2-25 %).  `spectrum_status` reports `audio_bitrate`.  The rule
+is the pure `web_audio_rate_report()`.
 
 Audio stream `2` is the compatibility fallback.  Its codec and rate are agreed
 by the subscription acknowledgement; production WAN audio is Opus, mono,
@@ -421,7 +439,8 @@ after a tab sleeps, no RX-thread socket writes, and the shaped-WAN target below
 does not accumulate latency.
 
 Implemented (2026-10-23, see the status record): libdatachannel + libopus
-WebRTC Opus mono track, 20 ms packets, 32 kbps with in-band FEC; a bounded
+WebRTC Opus mono track, 20 ms packets, the profile table's bitrate adapted from
+measured loss (2026-11-06) with in-band FEC; a bounded
 200 ms per-session ring fed from the RX thread (no socket writes there) and
 drained by a per-session encoder worker; auto-start per receiver with a local
 mute and a one-tap autoplay unlock in the browser; the browser's own jitter

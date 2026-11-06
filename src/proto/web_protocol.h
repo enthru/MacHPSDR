@@ -58,6 +58,7 @@ typedef enum {
   WEB_REQUEST_AUDIO_UNSUBSCRIBE,
   WEB_REQUEST_RTC_ANSWER,
   WEB_REQUEST_RTC_CANDIDATE,
+  WEB_REQUEST_AUDIO_FEEDBACK,
   WEB_REQUEST_LEASE_ACQUIRE,
   WEB_REQUEST_LEASE_RENEW,
   WEB_REQUEST_LEASE_RELEASE,
@@ -228,6 +229,24 @@ gboolean web_spectrum_profile_parse(const char *name,
                                     WEB_SPECTRUM_PROFILE *profile);
 const char *web_spectrum_profile_name(WEB_SPECTRUM_PROFILE profile);
 WEB_SPECTRUM_LIMITS web_spectrum_profile_limits(int profile);
+
+/* Receive-audio bitrate from the loss the browser measures.  Audio is the last
+   thing to give way: a lossy report first asks the spectrum to back off, and the
+   bitrate falls only once the display is at its Low profile.  Recovery runs the
+   other way round, audio first. */
+typedef struct {
+  guint bitrate;            /* what the encoder should run at, bit/s */
+  guint target;             /* the subscribed profile's bitrate */
+  guint fec_loss;           /* packet loss the encoder should protect against, % */
+  gint64 healthy_since_us;
+} WEB_AUDIO_RATE;
+
+guint web_audio_rate_target(WEB_SPECTRUM_PROFILE profile);
+void web_audio_rate_reset(WEB_AUDIO_RATE *r, WEB_SPECTRUM_PROFILE profile, gint64 now_us);
+/* Apply one loss report.  TRUE means the link is congested and the spectrum
+   should back off; display_at_low says it has nothing left to give. */
+gboolean web_audio_rate_report(WEB_AUDIO_RATE *r, guint loss_percent,
+                               gboolean display_at_low, gint64 now_us);
 
 /* Peak-preserving bucket reduction followed by floor/span quantization. */
 gboolean web_spectrum_quantize(const float *input, guint input_count,
