@@ -177,6 +177,10 @@ for a in json.load(sys.stdin)["assets"]:
     chmod +x "$4"
 }
 fetch_asset linuxdeploy/linuxdeploy continuous "linuxdeploy-$ARCH.AppImage" "$TOOLS/linuxdeploy"
+# appimagetool downloads the AppImage runtime by itself, through the same kind of
+# link and with no fallback, so it is fetched here and handed over.
+fetch_asset AppImage/type2-runtime continuous "runtime-$ARCH" "$TOOLS/runtime-$ARCH"
+export LDAI_RUNTIME_FILE="$TOOLS/runtime-$ARCH"
 fetch "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh" \
       "$TOOLS/linuxdeploy-plugin-gtk.sh"
 
