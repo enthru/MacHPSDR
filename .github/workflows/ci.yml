@@ -308,6 +308,10 @@ jobs:
 
       - name: Build the AppImage (Linux)
         if: runner.os == 'Linux'
+        # Only for the API fallback when linuxdeploy's download link fails: a
+        # shared runner's address runs out of unauthenticated API calls.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: make appimage
 
       # WHAT IS BUNDLED, checked by name -- and what this does NOT check.

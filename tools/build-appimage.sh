@@ -148,11 +148,35 @@ chmod +x "$APPDIR/apprun-hooks/machpsdr.sh"
 TOOLS=$ROOT/build/appimage-tools
 mkdir -p "$TOOLS"
 fetch() {   # url, destination
-    [ -f "$2" ] || curl -fsSL -o "$2" "$1"
+    [ -f "$2" ] || curl -fsSL --retry 3 -o "$2" "$1"
     chmod +x "$2"
 }
-BASE=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
-fetch "$BASE/linuxdeploy-$ARCH.AppImage" "$TOOLS/linuxdeploy"
+# A release asset, by its download link and, failing that, through the API.  The
+# link is a redirect GitHub's CDN has answered with 504 for hours at a time while
+# the API served the same file; the API path is the fallback, not the default,
+# because unauthenticated it is rate-limited per address.  Both failing is still
+# a failure.
+fetch_asset() {   # owner/repo, tag, asset name, destination
+    [ -f "$4" ] && { chmod +x "$4"; return 0; }
+    if ! curl -fsSL --retry 3 -o "$4" \
+            "https://github.com/$1/releases/download/$2/$3"; then
+        echo "build-appimage: $3: the download link failed; asking the API" >&2
+        rm -f "$4"
+        local auth=()
+        [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+        local url
+        url=$(curl -fsSL --retry 3 ${auth[@]+"${auth[@]}"} \
+                "https://api.github.com/repos/$1/releases/tags/$2" |
+              python3 -c 'import json,sys
+for a in json.load(sys.stdin)["assets"]:
+    if a["name"]==sys.argv[1]: print(a["url"])' "$3")
+        [ -n "$url" ] || { echo "build-appimage: $3 is not in $1 $2" >&2; return 1; }
+        curl -fsSL --retry 3 ${auth[@]+"${auth[@]}"} -H "Accept: application/octet-stream" \
+             -o "$4" "$url"
+    fi
+    chmod +x "$4"
+}
+fetch_asset linuxdeploy/linuxdeploy continuous "linuxdeploy-$ARCH.AppImage" "$TOOLS/linuxdeploy"
 fetch "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh" \
       "$TOOLS/linuxdeploy-plugin-gtk.sh"
 
