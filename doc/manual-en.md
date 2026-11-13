@@ -202,6 +202,10 @@ Right-click without dragging still opens Configure for that receiver.
   tick with the callsign, colour-keyed by DXCC entity. **Left-click a spot
   marker** to tune the receiver straight onto that station (works in normal,
   ctun and freetune tuning). Spots disappear after 15 minutes.
+- **FT8 calling markers** — the Band Plan overlay draws a labelled FT8 dial
+  frequency on every supported band from 160 m through 23 cm. **Left-click the
+  FT8 marker** to tune exactly to that band's conventional USB dial frequency;
+  the shortcut works in normal, ctun and freetune tuning.
 
 **NR3 depth (Configure → RX-*n*).** The **Depth (%)** slider mixes the original
 and denoised audio: 0% is original, 100% is full RNNoise (default). Reduce it if

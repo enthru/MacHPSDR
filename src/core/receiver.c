@@ -34,6 +34,7 @@
 #include "filter.h"
 #include "bandstack.h"
 #include "band.h"
+#include "frequency.h"
 #include "discovered.h"
 #include "bpsk.h"
 #ifdef LIQUID
@@ -1870,13 +1871,19 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
              not the waterfall centre */
           receiver_move(rx,(long long)((double)(moved*rx->hz_per_pixel)),TRUE);
         } else {
-          // Plain click. If a DX-cluster spot marker sits within ~6px of the
-          // click, tune exactly onto its frequency (round=FALSE, no step snap)
-          // via receiver_move() so the move is committed and any SAT/RSAT split
-          // tracks; otherwise fall back to the normal move-to-clicked-frequency.
+          // Plain click.  A visible FT8 calling marker or DX-cluster spot within
+          // ~6px wins over the generic move-to-clicked-frequency path.  Tune
+          // exactly (round=FALSE, no step snap) via receiver_move() so the move
+          // is committed and any SAT/RSAT split tracks.
           long long spot_f;
           long long tol=(long long)(6.0*rx->hz_per_pixel);
-          if(radio->cluster_enable && radio->cluster_spots_show &&
+          GtkWidget *w=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+          if(w==rx->panadapter && rx->panadapter_bandplan &&
+             ft8_frequency_nearest(receiver_x_to_freq(rx,(double)x),tol,&spot_f)) {
+            long long hz=(rx->ctun || rx->freetune) ? (spot_f - rx->ctun_frequency)
+                                                    : (rx->frequency_a - spot_f);
+            receiver_move(rx,hz,FALSE);
+          } else if(radio->cluster_enable && radio->cluster_spots_show &&
              dxcluster_nearest(receiver_x_to_freq(rx,(double)x),tol,&spot_f)) {
             long long hz=(rx->ctun || rx->freetune) ? (spot_f - rx->ctun_frequency)
                                                     : (rx->frequency_a - spot_f);

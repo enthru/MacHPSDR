@@ -46,6 +46,18 @@ typedef enum {
 extern int frequency_info_count(band_plan_region_t region);
 extern const struct frequency_info* frequency_info_at(band_plan_region_t region, int index);
 
+/* Conventional FT8 USB dial frequencies.  These are separate from the
+ * regulatory band-plan tables: they are operating conventions shared by all
+ * regions, and the panadapter renders them as labelled, clickable markers. */
+struct ft8_frequency_info {
+        long long frequency;
+        const char *band;
+    };
+extern int ft8_frequency_count(void);
+extern const struct ft8_frequency_info* ft8_frequency_at(int index);
+extern int ft8_frequency_nearest(long long frequency, long long tolerance,
+                                 long long *nearest);
+
 extern char* getFrequencyInfo(long long frequency,int filter_low,int filter_high);
 extern int getBand(long long frequency);
 extern int canTransmit(void);

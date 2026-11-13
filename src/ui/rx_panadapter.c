@@ -909,6 +909,23 @@ static void receiver_draw_bandplan_nodes(GtkSnapshot *snapshot, GtkWidget *widge
     }
   }
 
+  // FT8 calling frequencies are worldwide operating conventions, not
+  // regulatory allocations, so frequency.c keeps them outside the regional
+  // tables.  Give each supported band one labelled, full-height marker.  The
+  // matching hit-test in receiver_released_cb uses this exact same list.
+  for(int i=0;i<ft8_frequency_count();i++) {
+    const struct ft8_frequency_info *fi=ft8_frequency_at(i);
+    if(fi==NULL || fi->frequency<min_display || fi->frequency>max_display) continue;
+    double x=((double)fi->frequency-(double)min_display)/rx->hz_per_pixel;
+    GdkRGBA marker=nrgba(0.75,0.50,1.00,0.90);
+    lm_line(snapshot,x,0.0,x,(double)display_height-16.0,1.5,&marker);
+    double tw=lm_measure(widget,10.0,"FT8");
+    double tx=x+3.0;
+    if(tx+tw>(double)display_width-2.0) tx=x-tw-3.0;
+    if(tx<2.0) tx=2.0;
+    lm_text(snapshot,widget,tx,12.0,10.0,&marker,"FT8",FALSE);
+  }
+
   // A couple of optional hardware bands do not yet have subdivisions in the
   // legacy detailed table.  Still mark their allocation rather than making the
   // feature mysteriously disappear on precisely those bands.

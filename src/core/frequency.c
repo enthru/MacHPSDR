@@ -50,6 +50,7 @@
 // tools/check_bandplan.py re-verifies the ordering of all three tables.
 
 #include <gtk/gtk.h>
+#include <stdlib.h>
 #include "band.h"
 #include "frequency.h"
 
@@ -626,6 +627,57 @@ int frequency_info_count(band_plan_region_t region) {
 const struct frequency_info* frequency_info_at(band_plan_region_t region, int index) {
     if(index<0 || index>=frequency_info_count(region)) return NULL;
     return &region_table(region)[index];
+}
+
+/* Conventional FT8 USB dial frequencies used by WSJT-X and the wider FT8
+ * community.  Keep one primary calling frequency per supported band so the
+ * panadapter offers an unambiguous target rather than contest/DXpedition
+ * alternatives.  This is deliberately not part of frequencyInfo*: adding
+ * overlapping point rows there would change legacy getFrequencyInfo() lookup
+ * semantics and make a worldwide convention depend on the selected region. */
+static const struct ft8_frequency_info ft8_frequencies[] = {
+    {   1840000LL, "160m"},
+    {   3573000LL,  "80m"},
+    {   5357000LL,  "60m"},
+    {   7074000LL,  "40m"},
+    {  10136000LL,  "30m"},
+    {  14074000LL,  "20m"},
+    {  18100000LL,  "17m"},
+    {  21074000LL,  "15m"},
+    {  24915000LL,  "12m"},
+    {  28074000LL,  "10m"},
+    {  50313000LL,   "6m"},
+    {  70154000LL,   "4m"},
+    { 144174000LL,   "2m"},
+    { 222065000LL, "1.25m"},
+    { 432174000LL, "70cm"},
+    {1296174000LL, "23cm"}
+};
+
+int ft8_frequency_count(void) {
+    return (int)(sizeof(ft8_frequencies)/sizeof(ft8_frequencies[0]));
+}
+
+const struct ft8_frequency_info* ft8_frequency_at(int index) {
+    if(index<0 || index>=ft8_frequency_count()) return NULL;
+    return &ft8_frequencies[index];
+}
+
+int ft8_frequency_nearest(long long frequency, long long tolerance,
+                          long long *nearest) {
+    if(tolerance<0) return FALSE;
+    long long best=tolerance+1LL;
+    long long found=0LL;
+    for(int i=0;i<ft8_frequency_count();i++) {
+        long long delta=llabs(frequency-ft8_frequencies[i].frequency);
+        if(delta<=tolerance && delta<best) {
+            best=delta;
+            found=ft8_frequencies[i].frequency;
+        }
+    }
+    if(found==0LL) return FALSE;
+    if(nearest!=NULL) *nearest=found;
+    return TRUE;
 }
 
 /* --------------------------------------------------------------------------*/

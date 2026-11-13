@@ -39,4 +39,32 @@ for name, body in tables:
     print(f"{name}: {len(rows)} rows, {status}")
     rc |= (1 if errors else 0)
 
+# The panadapter's FT8 markers are a product-level list rather than regulatory
+# band-plan rows.  Pin the conventional primary dial frequency for every
+# supported FT8 band: a typo here would make the click target tune exactly to
+# the wrong place while still looking superficially plausible in the UI.
+ft8_expected = {
+    "160m": 1840000, "80m": 3573000, "60m": 5357000, "40m": 7074000,
+    "30m": 10136000, "20m": 14074000, "17m": 18100000,
+    "15m": 21074000, "12m": 24915000, "10m": 28074000,
+    "6m": 50313000, "4m": 70154000, "2m": 144174000,
+    "1.25m": 222065000, "70cm": 432174000, "23cm": 1296174000,
+}
+ft8_block = re.search(
+    r'ft8_frequencies\s*\[\s*\]\s*=\s*\{(.*?)\n\s*\};', text, re.S)
+if ft8_block is None:
+    print("FAIL: ft8_frequencies table not found")
+    rc = 1
+else:
+    ft8_row = re.compile(r'\{\s*(\d+)LL\s*,\s*"([^"]+)"\s*\}')
+    actual = {band: int(hz) for hz, band in ft8_row.findall(ft8_block.group(1))}
+    if actual != ft8_expected:
+        print(f"FAIL ft8_frequencies: expected {ft8_expected}, got {actual}")
+        rc = 1
+    elif list(actual.values()) != sorted(actual.values()):
+        print("FAIL ft8_frequencies: table is not sorted by frequency")
+        rc = 1
+    else:
+        print(f"ft8_frequencies: {len(actual)} bands, OK")
+
 sys.exit(rc)
