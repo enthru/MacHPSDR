@@ -203,7 +203,7 @@ Right-click without dragging still opens Configure for that receiver.
   marker** to tune the receiver straight onto that station (works in normal,
   ctun and freetune tuning). Spots disappear after 15 minutes.
 - **FT8 calling markers** — the Band Plan overlay draws a labelled FT8 dial
-  frequency on every supported band from 160 m through 23 cm. **Left-click the
+  frequency on every supported terrestrial band from 160 m through 23 cm. **Left-click the
   FT8 marker** to tune exactly to that band's conventional USB dial frequency;
   the shortcut works in normal, ctun and freetune tuning.
 
@@ -645,8 +645,9 @@ If your own converters do not translate by exactly the standard amount, adjust
 ### Band plan on the spectrum
 
 **Show the transponder band plan on the panadapter** draws the published plan as
-tinted segments under the trace, with the beacons marked. The transponder is only
-250 kHz wide and CW, digital modes and SSB each have their own part of it, so this
+tinted segments under the trace, with the beacons and the **FT8 10489.540 MHz**
+calling frequency marked. **Left-click FT8** to tune exactly to it. The transponder is
+500 kHz wide and CW, digital modes and SSB each have their own part of it, so this
 is the quickest way to see that you are about to call in the wrong section.
 
 ### Beacon level reference

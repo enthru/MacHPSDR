@@ -52,6 +52,7 @@
 #define QO100_NB_DOWN_LOW    10489500000LL   /* = lower beacon */
 #define QO100_NB_DOWN_HIGH   10490000000LL   /* = upper beacon */
 #define QO100_BEACON_LOWER   10489500000LL   /* CW, F1A 400 Hz shift */
+#define QO100_FT8_CALLING    10489540000LL   /* conventional FT8 USB dial */
 #define QO100_BEACON_MIDDLE  10489750000LL   /* 400 bd BPSK */
 #define QO100_BEACON_UPPER   10490000000LL   /* CW and other modulations */
 
@@ -107,6 +108,7 @@
 typedef enum {
   QO100_SEG_SPAN = 0,   /* a stretch of the transponder with one use: tinted band */
   QO100_SEG_BEACON,     /* one frequency: full-height marker */
+  QO100_SEG_CALLING,    /* one clickable mode calling frequency, with a label */
   QO100_SEG_CHANNEL,    /* a recommended DATV channel centre: tick above the strip */
 } QO100_SEG_KIND;
 

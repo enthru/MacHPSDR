@@ -1878,13 +1878,23 @@ void receiver_released_cb(GtkGestureClick *gesture, int n_press, double ex, doub
           long long spot_f;
           long long tol=(long long)(6.0*rx->hz_per_pixel);
           GtkWidget *w=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-          if(w==rx->panadapter && rx->panadapter_bandplan &&
-             ft8_frequency_nearest(receiver_x_to_freq(rx,(double)x),tol,&spot_f)) {
+          long long clicked=receiver_x_to_freq(rx,(double)x);
+          gboolean ft8_hit=FALSE;
+          if(w==rx->panadapter) {
+            if(rx->panadapter_bandplan &&
+               ft8_frequency_nearest(clicked,tol,&spot_f)) ft8_hit=TRUE;
+            if(!ft8_hit && radio->qo100_bandplan &&
+               llabs(clicked-QO100_FT8_CALLING)<=tol) {
+              spot_f=QO100_FT8_CALLING;
+              ft8_hit=TRUE;
+            }
+          }
+          if(ft8_hit) {
             long long hz=(rx->ctun || rx->freetune) ? (spot_f - rx->ctun_frequency)
                                                     : (rx->frequency_a - spot_f);
             receiver_move(rx,hz,FALSE);
           } else if(radio->cluster_enable && radio->cluster_spots_show &&
-             dxcluster_nearest(receiver_x_to_freq(rx,(double)x),tol,&spot_f)) {
+             dxcluster_nearest(clicked,tol,&spot_f)) {
             long long hz=(rx->ctun || rx->freetune) ? (spot_f - rx->ctun_frequency)
                                                     : (rx->frequency_a - spot_f);
             receiver_move(rx,hz,FALSE);

@@ -817,7 +817,7 @@ int main(int argc, char **argv) {
   {
     gboolean ok=TRUE;
     long long prev=0, prev_high=0;
-    int nb=0, wb=0, chans=0;
+    int nb=0, wb=0, chans=0, calling=0;
     for(int i=0;i<qo100_segment_count();i++) {
       const QO100_SEGMENT *s=qo100_segment(i);
       if(s->low>s->high) ok=FALSE;
@@ -845,11 +845,16 @@ int main(int argc, char **argv) {
       } else {
         if(s->low!=s->high) ok=FALSE;      // a marker is one frequency
         if(s->kind==QO100_SEG_CHANNEL) chans++;
+        if(s->kind==QO100_SEG_CALLING) {
+          calling++;
+          if(s->low!=QO100_FT8_CALLING || s->label==NULL || strcmp(s->label,"FT8")) ok=FALSE;
+        }
       }
     }
-    snprintf(d,sizeof(d),"%d entries: %d narrow, %d wideband (%d channels)",
-             qo100_segment_count(),nb,wb,chans);
-    check("band plan spans ordered, non-overlapping, in range", ok && nb>0 && wb>0, d);
+    snprintf(d,sizeof(d),"%d entries: %d narrow, %d wideband (%d channels, %d calling)",
+             qo100_segment_count(),nb,wb,chans,calling);
+    check("band plan spans ordered, non-overlapping, in range",
+          ok && nb>0 && wb>0 && calling==1, d);
   }
 
   // ---- 8b. the wideband channel grid, against the published table rather than

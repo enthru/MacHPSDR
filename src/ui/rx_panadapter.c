@@ -748,12 +748,21 @@ static void receiver_draw_qo100_nodes(GtkSnapshot *snapshot, GtkWidget *widget,
       double xl=((double)sg->low -(double)min_display)/rx->hz_per_pixel;
       double xr=((double)sg->high-(double)min_display)/rx->hz_per_pixel;
 
-      if(sg->kind==QO100_SEG_BEACON) {
-        // A beacon is one frequency, not a span: a full-height marker line so it
-        // is visible whatever the zoom.
+      if(sg->kind==QO100_SEG_BEACON || sg->kind==QO100_SEG_CALLING) {
+        // A beacon/calling frequency is one frequency, not a span: a full-height
+        // marker line so it is visible whatever the zoom. Calling markers carry
+        // their short mode label; beacon identity is clear from its position.
         if(xl<0.0 || xl>(double)display_width) continue;
         GdkRGBA bc=nrgba(sg->r,sg->g,sg->b,0.75);
-        lm_line(snapshot, xl, 0.0, xl, (double)display_height-16.0, 1.0, &bc);
+        lm_line(snapshot, xl, 0.0, xl, (double)display_height-16.0,
+                sg->kind==QO100_SEG_CALLING?1.5:1.0, &bc);
+        if(sg->kind==QO100_SEG_CALLING && sg->label!=NULL) {
+          double tw=lm_measure(widget,10.0,sg->label);
+          double tx=xl+3.0;
+          if(tx+tw>(double)display_width-2.0) tx=xl-tw-3.0;
+          if(tx<2.0) tx=2.0;
+          lm_text(snapshot,widget,tx,12.0,10.0,&bc,sg->label,FALSE);
+        }
         continue;
       }
 
