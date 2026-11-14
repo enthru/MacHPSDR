@@ -692,6 +692,15 @@ void radio_restore_state(RADIO *radio) {
         value=getProperty(name);
         if(value!=NULL) radio->dac[i].antenna=atoi(value);
       }
+      // The antenna is an index into the list THIS device offered: a props
+      // file from another driver (or the old one-entry Pluto list) may name a
+      // port that is not there, so it falls back to the first.
+      if(radio->adc[i].antenna<0 ||
+         (size_t)radio->adc[i].antenna>=radio->discovered->info.soapy.rx_antennas)
+        radio->adc[i].antenna=0;
+      if(radio->dac[i].antenna<0 ||
+         (size_t)radio->dac[i].antenna>=radio->discovered->info.soapy.tx_antennas)
+        radio->dac[i].antenna=0;
     }
 #endif
   }

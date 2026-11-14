@@ -2784,13 +2784,28 @@ void soapy_protocol_set_tx_frequency(TRANSMITTER *tx) {
   }
 }
 
+static int soapy_rx_hw_channels(void);
+
 void soapy_protocol_set_rx_antenna(RECEIVER *rx,int ant) {
   int rc;
   if(soapy_device!=NULL) {
-    log_info("%s: set_rx_antenna: %s\n",__FUNCTION__,radio->discovered->info.soapy.rx_antenna[ant]);
-    rc=SoapySDRDevice_setAntenna(soapy_device,SOAPY_SDR_RX,rx->adc,radio->discovered->info.soapy.rx_antenna[ant]);
-    if(rc!=0) {
-      log_info("%s: SoapySDRDevice_setAntenna RX failed: %s\n",__FUNCTION__,SoapySDR_errToStr(rc));
+    // The index is persisted, and the list is whatever this device offered at
+    // discovery: a stale index is refused, never folded onto another port.
+    if(ant<0 || (size_t)ant>=radio->discovered->info.soapy.rx_antennas) {
+      log_error("%s: no RX antenna %d (device offers %d)\n",__FUNCTION__,ant,
+                (int)radio->discovered->info.soapy.rx_antennas);
+      return;
+    }
+    const char *name=radio->discovered->info.soapy.rx_antenna[ant];
+    log_info("%s: set_rx_antenna: %s\n",__FUNCTION__,name);
+    // One ADC, but a 2R2T stream carries two inputs with a port select each:
+    // the selection applies to every feed, as the gain does.
+    const int hwch=soapy_rx_hw_channels();
+    for(int ch=0;ch<hwch;ch++) {
+      rc=SoapySDRDevice_setAntenna(soapy_device,SOAPY_SDR_RX,hwch>1?(size_t)ch:(size_t)rx->adc,name);
+      if(rc!=0) {
+        log_info("%s: SoapySDRDevice_setAntenna RX (ch %d) failed: %s\n",__FUNCTION__,ch,SoapySDR_errToStr(rc));
+      }
     }
   }
 }
@@ -2798,6 +2813,11 @@ void soapy_protocol_set_rx_antenna(RECEIVER *rx,int ant) {
 void soapy_protocol_set_tx_antenna(TRANSMITTER *tx,int ant) {
   int rc;
   if(soapy_device!=NULL) {
+    if(ant<0 || (size_t)ant>=radio->discovered->info.soapy.tx_antennas) {
+      log_error("%s: no TX antenna %d (device offers %d)\n",__FUNCTION__,ant,
+                (int)radio->discovered->info.soapy.tx_antennas);
+      return;
+    }
     log_info("%s: %s\n",__FUNCTION__,radio->discovered->info.soapy.tx_antenna[ant]);
     rc=SoapySDRDevice_setAntenna(soapy_device,SOAPY_SDR_TX,tx->dac,radio->discovered->info.soapy.tx_antenna[ant]);
     if(rc!=0) {
