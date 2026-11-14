@@ -33,6 +33,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "radio.h"
+#include "qo100.h"
 #include "css.h"
 #include "band.h"
 #include "main.h"
@@ -410,6 +411,18 @@ void vfo_set_split(RECEIVER *rx,split_type split) {
   if(rx==NULL) return;
   rx->split=split;
   if(split!=SPLIT_OFF) rx->split_last=split;
+
+  /* The one exception to "VFO B is left as it is": a satellite split on the
+     QO-100 downlink with a VFO B that is no uplink of it (a 2 m frequency left
+     from an old session went out in AM at 145 MHz while the operator measured
+     2.4 GHz).  Such a B cannot be what anyone meant, so it is paired the way
+     Transponder setup pairs it; an uplink the operator tuned is kept. */
+  if((split==SPLIT_SAT || split==SPLIT_RSAT) &&
+     qo100_band_is_downlink(rx->band_a) && !qo100_uplink_paired(radio,rx)) {
+    log_info("%s: VFO B %lld Hz is no QO-100 uplink; pairing it with the downlink\n",
+             __FUNCTION__,(long long)rx->frequency_b);
+    qo100_pair_uplink(radio,rx);
+  }
 
   if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
     transmitter_set_mode(radio->transmitter,
@@ -1857,6 +1870,33 @@ static void vfo_xvtr_indicator_sync(VFO_DATA *v, RECEIVER *rx) {
   }
 }
 
+/* Where the transmitter is going, shown whenever it is NOT where the dial is:
+   under any split the TX goes out on VFO B with mode_b, and nothing else on the
+   main window said so -- a VFO B left on another band from some old session
+   sent a SAT transmission to the wrong band (and the wrong mode) silently.  The
+   number is the on-air one (VFO B), with the device's own frequency added when
+   a converter makes the two differ. */
+static void vfo_txf_indicator_sync(VFO_DATA *v, RECEIVER *rx) {
+  if(v==NULL || v->txf_label==NULL) return;
+  if(rx!=NULL && rx->split!=SPLIT_OFF && radio!=NULL &&
+     radio->transmitter!=NULL && radio->transmitter->rx==rx) {
+    char f[32], hw[32], temp[96];
+    g_ascii_formatd(f,sizeof(f),"%.6f",(double)rx->frequency_b/1.0e6);
+    int m=transmitter_get_mode(radio->transmitter);
+    const char *mode=(m>=0 && m<MODES)?mode_string[m]:"?";
+    if(rx->lo_b!=0) {
+      g_ascii_formatd(hw,sizeof(hw),"%.6f",
+                      (double)transmitter_get_frequency(radio->transmitter)/1.0e6);
+      g_snprintf(temp,sizeof(temp),"TX %s %s (HW %s)",f,mode,hw);
+    } else {
+      g_snprintf(temp,sizeof(temp),"TX %s %s",f,mode);
+    }
+    gtk_label_set_text(GTK_LABEL(v->txf_label),temp);
+  } else {
+    gtk_label_set_text(GTK_LABEL(v->txf_label),"");
+  }
+}
+
 GtkWidget *create_vfo(RECEIVER *rx) {
   char temp[32];
 
@@ -1962,6 +2002,15 @@ GtkWidget *create_vfo(RECEIVER *rx) {
       "non-transverter band on this VFO.");
   gtk_box_append(GTK_BOX(vfo_row_top),v->xvtr_label);
   vfo_xvtr_indicator_sync(v,rx);
+
+  v->txf_label=gtk_label_new("");
+  gtk_widget_set_name(v->txf_label,"warning-label");
+  gtk_widget_set_tooltip_text(v->txf_label,
+      "Split is on: the transmitter goes out on VFO B, at this frequency and in "
+      "this mode -- not on the dial above. HW is what the device itself is tuned "
+      "to when a converter LO is applied.");
+  gtk_box_append(GTK_BOX(vfo_row_top),v->txf_label);
+  vfo_txf_indicator_sync(v,rx);
 
   v->tx_label=gtk_label_new("");
   gtk_widget_set_name(v->tx_label,"warning-label");
@@ -2401,6 +2450,7 @@ void update_vfo(RECEIVER *rx) {
 
   // Transverter/converter indicator (dial != hardware while a converter LO is on)
   vfo_xvtr_indicator_sync(v,rx);
+  vfo_txf_indicator_sync(v,rx);
 
   // ASSIGNED TX
   if(radio!=NULL && radio->transmitter!=NULL) {

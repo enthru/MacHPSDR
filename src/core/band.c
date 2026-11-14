@@ -38,6 +38,7 @@
 #include "main.h"
 #include "alex.h"
 #include "property.h"
+#include "qo100.h"
 
 
 int band=band20;
@@ -804,6 +805,7 @@ void set_band(RECEIVER *rx,int band,int bs_entry) {
      BD/BU/BS -- so the refusal belongs here rather than at each of them, which
      is where it was missing entirely while the LOCK tooltip promised it. */
   if(rx==NULL || rx->locked) return;
+  const int from_band=rx->band_a;
 
   // save current bandstack
   BAND *b=&bands[rx->band_a];
@@ -852,6 +854,22 @@ void set_band(RECEIVER *rx,int band,int bs_entry) {
   rx->waterfall_automatic=b->waterfall_automatic;
 
   receiver_band_changed(rx,band);
+
+  /* The split belongs to the band where the band implies one.  Landing on the
+     QO-100 downlink means working the transponder: SAT, VFO B on the matching
+     uplink.  Leaving it for any other band drops a SAT/RSAT that only made
+     sense there -- kept, it would key the transmitter on a 2.4 GHz VFO B (or
+     whatever B held) while the dial reads 20 m.  A cross-band satellite pair set
+     up by hand elsewhere is left alone: only a split QO-100 implied is undone. */
+  if(qo100_band_is_downlink(band)) {
+    qo100_pair_uplink(radio,rx);
+    rx->split=SPLIT_SAT;
+    rx->split_last=SPLIT_SAT;
+  } else if(qo100_band_is_downlink(from_band) &&
+            (rx->split==SPLIT_SAT || rx->split==SPLIT_RSAT)) {
+    rx->split=SPLIT_OFF;
+  }
+
   if(radio->transmitter) {
     if(radio->transmitter->rx==rx) {
       if(rx->split!=SPLIT_OFF) {

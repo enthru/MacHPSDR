@@ -159,6 +159,9 @@ extern gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz);
    radio->qo100_transponder's downlink unless it is already there. Returns FALSE
    (and changes nothing) only when there are no transverter slots to be had. */
 extern gboolean qo100_transponder_setup(RADIO *r);
+extern void qo100_pair_uplink(RADIO *r, RECEIVER *rx);
+extern gboolean qo100_band_is_downlink(int band);
+extern gboolean qo100_uplink_paired(RADIO *r, RECEIVER *rx);
 
 /* ---------------- beacon lock (LNB drift correction) ---------------- */
 

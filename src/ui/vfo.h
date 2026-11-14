@@ -36,6 +36,7 @@ typedef struct _vfo_data {
   GtkWidget *zoom_b;
   GtkWidget *step_b;
   GtkWidget *xvtr_label;
+  GtkWidget *txf_label;      // "TX <freq> <mode>" while a split sends TX off VFO B
   GtkWidget *tx_label;
   GtkWidget *frequency_a_text;
   GtkWidget *frequency_b_text;

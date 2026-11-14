@@ -452,32 +452,50 @@ gboolean qo100_transponder_setup(RADIO *r) {
     set_band(rx,rxs,wb?QO100_STACK_WB:QO100_STACK_NB);
   }
 
-  long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
   // Re-read the dial: set_band() may have moved it just above, and it clears
   // ctun on the way through.
-  dial=qo100_dial(rx);
-  rx->frequency_b=dial-offset;
-
-  // The transponder is non-inverting, so the uplink keeps the downlink's
-  // sideband — and SPLIT_SAT is the mode that moves both VFOs the same way,
-  // which is exactly a constant translation.  (SPLIT_RSAT, the inverting one, is
-  // for the linear transponders that mirror the passband; it would walk the
-  // uplink the wrong way here.)
+  qo100_pair_uplink(r,rx);
   rx->split=SPLIT_SAT;
-  rx->mode_b=rx->mode_a;
-  rx->filter_b=rx->filter_a;
-
-  receiver_sync_vfo_b_lo(rx);
+  rx->split_last=SPLIT_SAT;
   if(r->transmitter!=NULL && r->transmitter->rx==rx) {
     transmitter_set_mode(r->transmitter,rx->mode_b);
   }
   frequency_changed(rx);
   update_frequency(rx);
 
-  log_info("qo100: %s transponder mode, downlink %lld Hz -> uplink %lld Hz (offset %lld Hz)\n",
+  log_info("qo100: %s transponder mode, downlink %lld Hz -> uplink %lld Hz\n",
            wb?"wideband":"narrow-band",
-           (long long)dial,(long long)rx->frequency_b,offset);
+           (long long)qo100_dial(rx),(long long)rx->frequency_b);
   return TRUE;
+}
+
+/* VFO B onto the uplink that matches the downlink being listened to, in the
+   same mode and filter.  The transponder is non-inverting, so the uplink keeps
+   the downlink's sideband -- and SPLIT_SAT is the mode that moves both VFOs the
+   same way, which is exactly a constant translation (SPLIT_RSAT, for linear
+   transponders that mirror the passband, would walk the uplink the wrong way
+   here).  The caller chooses the split and pushes the frequencies. */
+void qo100_pair_uplink(RADIO *r, RECEIVER *rx) {
+  if(r==NULL || rx==NULL) return;
+  long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
+  rx->frequency_b=qo100_dial(rx)-offset;
+  rx->mode_b=rx->mode_a;
+  rx->filter_b=rx->filter_a;
+  receiver_sync_vfo_b_lo(rx);
+}
+
+gboolean qo100_band_is_downlink(int band) {
+  BAND *b=band_get_band(band);
+  return b!=NULL && strcmp(b->title,QO100_XVTR_RX_TITLE)==0;
+}
+
+/* VFO B is a QO-100 uplink when, carried through the transponder, it lands on
+   one of the two downlinks.  Anything else (a 2 m frequency left from some
+   earlier session) is not a pair this receiver can work. */
+gboolean qo100_uplink_paired(RADIO *r, RECEIVER *rx) {
+  if(r==NULL || rx==NULL) return FALSE;
+  long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
+  return qo100_in_transponder(rx->frequency_b+offset);
 }
 
 // ---------------------------------------------------------------------------
