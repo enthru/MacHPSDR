@@ -723,6 +723,141 @@ PATCH
 }
 patch_tx_port_list
 
+# A 2R2T image has two TX OUTPUTS (TX1, TX2) behind the one TX LO, and the
+# stock tx_streamer enables DMA channels by INDEX 0..1 -- always TX1. Rather
+# than open a second TX stream channel (which the app would have to carry
+# through every TX call), the app's TX channel 0 is ROUTED: writeSetting
+# "machpsdr_tx_output" picks the physical output the next setupStream drives
+# and that gain/antenna calls address; readSetting "machpsdr_tx_outputs"
+# reports how many there are. The output NOT selected is held at maximum
+# attenuation on every TX gain write, so with its DMA channel disabled (where
+# the DAC core may fall back to its DDS) it cannot emit anything.
+patch_tx_output() {
+  python3 - "$WORK/SoapyPlutoSDR/SoapyPlutoSDR.hpp" \
+             "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" \
+             "$WORK/SoapyPlutoSDR/PlutoSDR_Streaming.cpp" <<'PATCH'
+import sys
+from pathlib import Path
+h, s, st = map(Path, sys.argv[1:])
+hs, ss, sts = h.read_text(), s.read_text(), st.read_text()
+if 'MACHPSDR TX output' in ss:
+    assert 'tx_output_count' in hs, 'incomplete TX output patch'
+    print('==> SoapyPlutoSDR already patched (TX output)')
+    sys.exit(0)
+
+def repl(text, old, new, why, count=1):
+    assert text.count(old) == count, why
+    return text.replace(old, new)
+
+anchor = '\t\tsize_t rx_channel_count;'
+hs = repl(hs, anchor, anchor + '\n\t\tsize_t tx_output_count;\n\t\tsize_t tx_output;\n\t\tvoid mute_other_tx_output(void);',
+          'TX output: expected rx_channel_count member (run dual RX patch first)')
+
+# constructor: count the TX DMA's scan elements next to the RX count
+ctor = '''		if (scan >= 4)
+			rx_channel_count = scan / 2;
+	}'''
+ss = repl(ss, ctor, ctor + '''
+
+	/* MACHPSDR TX output: the TX DMA (cf-ad9361-dds-core-lpc) carries two
+	   scan elements per output, so four of them is a 2R2T image with TX2. */
+	tx_output_count = 1;
+	tx_output = 0;
+	{
+		unsigned int n = iio_device_get_channels_count(tx_dev), scan = 0;
+		for (unsigned int i = 0; i < n; i++)
+			if (iio_channel_is_scan_element(iio_device_get_channel(tx_dev, i)))
+				scan++;
+		if (scan >= 4)
+			tx_output_count = scan / 2;
+	}''', 'TX output: unexpected constructor (dual RX count block)')
+
+# settings
+ws = '''void SoapyPlutoSDR::writeSetting(const std::string &key, const std::string &value)
+{'''
+ss = repl(ss, ws, ws + '''
+	if (key == "machpsdr_tx_output") {
+		size_t out;
+		try { out = std::stoul(value); }
+		catch (const std::exception &) { throw std::runtime_error("invalid machpsdr_tx_output: " + value); }
+		if (out >= tx_output_count)
+			throw std::runtime_error("no TX output " + value);
+		std::lock_guard<pluto_spin_mutex> lock(tx_device_mutex);
+		tx_output = out;
+		mute_other_tx_output();
+		return;
+	}''', 'TX output: unexpected writeSetting')
+
+rs = '''std::string SoapyPlutoSDR::readSetting(const std::string &key) const
+{
+	std::string info;
+'''
+ss = repl(ss, rs, rs + '''	if (key == "machpsdr_tx_outputs")
+		return std::to_string(tx_output_count);
+	if (key == "machpsdr_tx_output")
+		return std::to_string(tx_output);
+''', 'TX output: unexpected readSetting')
+
+ss = repl(ss, 'void SoapyPlutoSDR::writeSetting(', '''/* MACHPSDR TX output: the output not driven sits at maximum attenuation. */
+void SoapyPlutoSDR::mute_other_tx_output(void)
+{
+	if (tx_output_count < 2)
+		return;
+	iio_channel *chn = iio_device_find_channel(dev, tx_output ? "voltage0" : "voltage1", true);
+	if (chn != nullptr)
+		iio_channel_attr_write_double(chn, "hardwaregain", -89.75);
+}
+
+void SoapyPlutoSDR::writeSetting(''', 'TX output: writeSetting anchor')
+
+# TX gain, both directions of it, on the routed output
+ss = repl(ss, '''		gain = gain - 89;
+		iio_channel_attr_write_longlong(iio_device_find_channel(dev, "voltage0", true),"hardwaregain", gain);''',
+'''		gain = gain - 89;
+		iio_channel_attr_write_longlong(iio_device_find_channel(dev, tx_output ? "voltage1" : "voltage0", true),"hardwaregain", gain);
+		mute_other_tx_output();''', 'TX output: unexpected TX setGain')
+ss = repl(ss, '''		if(iio_channel_attr_read_longlong(iio_device_find_channel(dev, "voltage0", true),"hardwaregain",&gain )!=0)''',
+'''		if(iio_channel_attr_read_longlong(iio_device_find_channel(dev, tx_output ? "voltage1" : "voltage0", true),"hardwaregain",&gain )!=0)''',
+    'TX output: unexpected TX getGain')
+
+# TX port select follows the routed output (two sites from the TX port patch)
+ss = repl(ss, 'iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", true)',
+          'iio_device_find_channel(dev, (channel || tx_output) ? "voltage1" : "voltage0", true)',
+          'TX output: expected two TX port sites (run TX port patch first)', count=2)
+
+# setupStream(TX): drive the selected output
+sts = repl(sts, '''        this->tx_stream = std::unique_ptr<tx_streamer>(new tx_streamer (tx_dev, streamFormat, channels, args));''',
+'''        /* MACHPSDR TX output: channel 0 is routed to the selected output */
+        std::vector<size_t> routed(channels.empty() ? std::vector<size_t>{0} : channels);
+        for (size_t &c : routed)
+            if (c == 0) c = tx_output;
+        mute_other_tx_output();
+        this->tx_stream = std::unique_ptr<tx_streamer>(new tx_streamer (tx_dev, streamFormat, routed, args));''',
+    'TX output: unexpected TX setupStream')
+
+# tx_streamer: enable each output's I/Q by NAME, not the first 2n channels
+sts = repl(sts, '''	for (i = 0; i < channelIDs.size() * 2; i++) {
+		iio_channel *chn = iio_device_get_channel(dev, i);
+		iio_channel_enable(chn);
+		channel_list.push_back(chn);
+	}''',
+'''	for (size_t id : channelIDs) {
+		for (unsigned int k = 0; k < 2; k++) {
+			std::string name = "voltage" + std::to_string(id * 2 + k);
+			iio_channel *chn = iio_device_find_channel(dev, name.c_str(), true);
+			if (chn == nullptr)
+				throw std::runtime_error("no TX DMA channel " + name);
+			iio_channel_enable(chn);
+			channel_list.push_back(chn);
+		}
+	}''', 'TX output: unexpected tx_streamer channel enable')
+
+h.write_text(hs); s.write_text(ss); st.write_text(sts)
+print('==> patched SoapyPlutoSDR: TX1/TX2 output selectable')
+PATCH
+}
+patch_tx_output
+
 # THE ONE libiio PATCH, and it is worth more than every other line in this file
 # put together: it is ten seconds of every start-up on a NETWORKED Pluto.
 #

@@ -158,6 +158,8 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.sample_rate",value);
   sprintf(value,"%d",radio->soapy_adc_rate);
   setProperty("radio.soapy_adc_rate",value);
+  sprintf(value,"%d",radio->soapy_tx_output);
+  setProperty("radio.soapy_tx_output",value);
   sprintf(value,"%d",radio->buffer_size);
   setProperty("radio.buffer_size",value);
   sprintf(value,"%d",radio->receivers);
@@ -701,6 +703,11 @@ void radio_restore_state(RADIO *radio) {
       if(radio->dac[i].antenna<0 ||
          (size_t)radio->dac[i].antenna>=radio->discovered->info.soapy.tx_antennas)
         radio->dac[i].antenna=0;
+      value=getProperty("radio.soapy_tx_output");
+      if(value!=NULL) {
+        int out=atoi(value);
+        radio->soapy_tx_output=(out>=0 && out<radio->discovered->info.soapy.tx_outputs)?out:0;
+      }
     }
 #endif
   }

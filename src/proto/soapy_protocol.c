@@ -1619,6 +1619,20 @@ log_info("soapy_protocol_create_transmitter: setting samplerate=%f\n",(double)so
     }
   }
 
+  // Pick the physical output BEFORE setupStream: the driver enables that
+  // output's DMA channels when the stream is built.
+  if(radio->discovered->info.soapy.tx_outputs>1) {
+    char out[8];
+    snprintf(out,sizeof(out),"%d",radio->soapy_tx_output);
+    rc=SoapySDRDevice_writeSetting(soapy_device,"machpsdr_tx_output",out);
+    if(rc!=0) {
+      log_error("soapy_protocol_create_transmitter: TX output %d refused: %s\n",
+                radio->soapy_tx_output+1,SoapySDR_errToStr(rc));
+    } else {
+      log_info("soapy_protocol_create_transmitter: TX output TX%d\n",radio->soapy_tx_output+1);
+    }
+  }
+
   size_t channel=tx->dac;
 log_info("soapy_protocol_create_transmitter: SoapySDRDevice_setupStream: channel=%ld\n",(long)channel);
   SoapySDRKwargs tx_args={0};
@@ -2808,6 +2822,30 @@ void soapy_protocol_set_rx_antenna(RECEIVER *rx,int ant) {
       }
     }
   }
+}
+
+/* Move the transmitter to another physical output.  The output is fixed when
+   the TX stream is built, so the (idle) stream is rebuilt; refused while keyed
+   -- the caller restores its widget from radio->soapy_tx_output. */
+gboolean soapy_protocol_set_tx_output(TRANSMITTER *tx,int out) {
+  if(soapy_device==NULL || tx==NULL) return FALSE;
+  if(out<0 || out>=radio->discovered->info.soapy.tx_outputs) return FALSE;
+  if(changing_device_rate || tx_stream_active || tx_thread_id!=NULL || isTransmitting(radio)) {
+    log_error("%s: not while transmitting\n",__FUNCTION__);
+    return FALSE;
+  }
+  radio->soapy_tx_output=out;
+  if(tx_stream!=NULL) {
+    SoapySDRDevice_closeStream(soapy_device,tx_stream);
+    tx_stream=NULL;
+  }
+  if(!soapy_create_transmitter(tx,FALSE)) {
+    log_error("%s: TX stream could not be rebuilt on TX%d\n",__FUNCTION__,out+1);
+    return FALSE;
+  }
+  soapy_protocol_set_tx_antenna(tx,radio->dac[0].antenna);
+  soapy_protocol_set_tx_frequency(tx);
+  return TRUE;
 }
 
 void soapy_protocol_set_tx_antenna(TRANSMITTER *tx,int ant) {

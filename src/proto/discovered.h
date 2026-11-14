@@ -136,6 +136,9 @@ struct _DISCOVERED {
         size_t rx_antennas;
         char **rx_antenna;
         size_t tx_channels;
+        // Physical TX outputs the app's one TX channel can be routed to (2 on a
+        // 2R2T Pluto through the bundled driver's machpsdr_tx_output, else 1).
+        int tx_outputs;
         size_t tx_gains;
         char **tx_gain;
         SoapySDRRange *tx_range;

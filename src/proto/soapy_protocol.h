@@ -86,6 +86,7 @@ void soapy_protocol_set_tx_drive(double drive);
 void soapy_protocol_set_tx_backoff(double db);
 void soapy_protocol_set_tx_frequency(TRANSMITTER *tx);
 void soapy_protocol_set_tx_antenna(TRANSMITTER *tx,int ant);
+gboolean soapy_protocol_set_tx_output(TRANSMITTER *tx,int out);
 void soapy_protocol_set_tx_gain(DAC *dac);
 void soapy_protocol_process_local_mic(RADIO *r);
 void soapy_protocol_iq_samples(float isample,float qsample);

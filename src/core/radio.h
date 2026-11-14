@@ -478,6 +478,9 @@ typedef struct _radio {
   // above overwrites sample_rate: without it "put it back the way it was" is
   // not expressible, and a drop-down cannot say which row is the default.
   int soapy_adc_rate_default;
+  // Which physical TX output (0 = TX1, 1 = TX2) the SoapySDR transmitter drives,
+  // where the driver offers more than one (info.soapy.tx_outputs).
+  int soapy_tx_output;
 
   int wfm_deemphasis;        // broadcast-FM de-emphasis: 0 = 50 us, 1 = 75 us
   int rds_rbds;              // RDS PTY names: 0 = RDS (Europe), 1 = RBDS (N. America)

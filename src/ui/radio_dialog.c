@@ -397,6 +397,18 @@ static void adc1_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) 
 }
 
 #ifdef SOAPYSDR
+static void dac0_output_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  int out=(int)gtk_drop_down_get_selected(widget);
+  if(out==radio->soapy_tx_output) return;
+  if(!soapy_protocol_set_tx_output(radio->transmitter,out)) {
+    // Refused (keyed, or the stream could not be rebuilt): show what is in force.
+    g_signal_handlers_block_by_func(widget,G_CALLBACK(dac0_output_cb),data);
+    gtk_drop_down_set_selected(widget,radio->soapy_tx_output);
+    g_signal_handlers_unblock_by_func(widget,G_CALLBACK(dac0_output_cb),data);
+  }
+}
+
 static void dac0_antenna_cb(GtkDropDown *widget, GParamSpec *ps, gpointer data) {
   RADIO *radio=(RADIO *)data;
   radio->dac[0].antenna=(int)gtk_drop_down_get_selected(widget);
@@ -1389,6 +1401,24 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
         g_signal_connect(dac0_antenna_combo_box,"notify::selected",G_CALLBACK(dac0_antenna_cb),radio);
         gtk_grid_attach(GTK_GRID(dac0_grid),dac0_antenna_combo_box,1,r,1,1);
         r++;
+
+        if(radio->discovered->info.soapy.tx_outputs>1) {
+          GtkWidget *out_label=gtk_label_new("Output:");
+          gtk_grid_attach(GTK_GRID(dac0_grid),out_label,0,r,1,1);
+          GtkWidget *out_combo=gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)),NULL);
+          for(int i=0;i<radio->discovered->info.soapy.tx_outputs;i++) {
+            char label[8];
+            snprintf(label,sizeof(label),"TX%d",i+1);
+            gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(out_combo))),label);
+          }
+          gtk_drop_down_set_selected(GTK_DROP_DOWN(out_combo),radio->soapy_tx_output);
+          gtk_widget_set_tooltip_text(out_combo,
+              "Which transmit connector the Pluto drives; the other is held at full attenuation.\n"
+              "Not changeable while transmitting");
+          g_signal_connect(out_combo,"notify::selected",G_CALLBACK(dac0_output_cb),radio);
+          gtk_grid_attach(GTK_GRID(dac0_grid),out_combo,1,r,1,1);
+          r++;
+        }
 
         GtkWidget *gain_label=gtk_label_new("Gain");
         gtk_grid_attach(GTK_GRID(dac0_grid),gain_label,0,r,1,1);

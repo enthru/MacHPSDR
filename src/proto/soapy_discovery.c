@@ -136,6 +136,18 @@ static gboolean get_info(const char *driver, const SoapySDRKwargs *found) {
     log_info("Tx channel full duplex: channel=%d fullduplex=%d\n",i,SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_TX, i));
     if(i==0 && !SoapySDRDevice_getFullDuplex(sdr, SOAPY_SDR_TX, i)) full_duplex=0;
   }
+  // The bundled Pluto driver routes TX channel 0 to TX1 or TX2 of a 2R2T image
+  // and says how many outputs there are; any other driver answers nothing.
+  int tx_outputs=1;
+  if(tx_channels>0) {
+    char *outs=SoapySDRDevice_readSetting(sdr,"machpsdr_tx_outputs");
+    if(outs!=NULL) {
+      int n=atoi(outs);
+      if(n>1 && n<=2) tx_outputs=n;
+      SoapySDR_free(outs);
+    }
+  }
+  log_info("Tx outputs: %d\n",tx_outputs);
 
 
   int sample_rate=0;
@@ -335,6 +347,7 @@ log_info("Rx gains: \n");
     discovered[devices].info.soapy.rx_antenna=rx_antennas;
 
     discovered[devices].info.soapy.tx_channels=tx_channels;
+    discovered[devices].info.soapy.tx_outputs=tx_outputs;
     discovered[devices].info.soapy.tx_gains=tx_gains_length;
     discovered[devices].info.soapy.tx_gain=tx_gains;
     discovered[devices].info.soapy.tx_range=malloc(tx_gains_length*sizeof(SoapySDRRange));
