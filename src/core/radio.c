@@ -3661,6 +3661,17 @@ static void create_visual(RADIO *r) {
 
 }
 
+#ifdef SOAPYSDR
+/* The Soapy TX default is the LAST antenna the driver lists (the transmit
+   port on drivers that list RX/TX first).  An AD9361 lists A then B, and a
+   stock Pluto has only A wired, so a Pluto starts on the first. */
+static int soapy_default_tx_antenna(DISCOVERED *d) {
+  if(d->info.soapy.tx_antennas==0) return 0;
+  if(strcmp(d->name,"plutosdr")==0) return 0;
+  return (int)d->info.soapy.tx_antennas-1;
+}
+#endif
+
 RADIO *create_radio(DISCOVERED *d) {
   RADIO *r;
   int i;
@@ -3893,7 +3904,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
     r->adc[0].agc=FALSE;
     r->adc[0].agc_fast=FALSE;
     if(r->can_transmit) {
-      r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
+      r->dac[0].antenna=soapy_default_tx_antenna(r->discovered);
       r->dac[0].gain=20;
     }
   }
@@ -3915,7 +3926,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
     r->adc[1].agc=FALSE;
     r->adc[1].agc_fast=FALSE;
     if(r->can_transmit) {
-      r->dac[0].antenna=radio->discovered->info.soapy.tx_antennas>0?radio->discovered->info.soapy.tx_antennas-1:0;
+      r->dac[0].antenna=soapy_default_tx_antenna(r->discovered);
       r->dac[1].gain=20;
     }
   }

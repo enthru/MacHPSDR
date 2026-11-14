@@ -655,6 +655,74 @@ PATCH
 }
 patch_rx_port_list
 
+# The TX half of the same: listAntennas()/getAntenna() answer a hardcoded "A",
+# so the AD9361's TX B output could never be chosen. Read the PHY's own list
+# (A first, so a saved index 0 keeps meaning A). The app's Soapy default is the
+# LAST TX antenna, so radio.c pins a Pluto's default to the first -- otherwise
+# this list would quietly move a stock Pluto's transmitter to an unconnected B.
+patch_tx_port_list() {
+  python3 - "$WORK/SoapyPlutoSDR/PlutoSDR_Settings.cpp" <<'PATCH'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+if 'MACHPSDR TX port list' in s:
+    print('==> SoapyPlutoSDR already patched (TX port list)')
+    sys.exit(0)
+
+def repl(old, new, why):
+    global s
+    assert s.count(old) == 1, why
+    s = s.replace(old, new, 1)
+
+repl('''	if(direction == SOAPY_SDR_TX) options.push_back( "A" );
+	return(options);''',
+'''	if(direction == SOAPY_SDR_TX) {
+		/* MACHPSDR TX port list: what the PHY offers, not one hardcoded name */
+		char buf[512];
+		iio_channel *chn = iio_device_find_channel(dev, "voltage0", true);
+		if (chn != nullptr &&
+		    iio_channel_attr_read(chn, "rf_port_select_available", buf, sizeof(buf)) > 0) {
+			std::string all(buf), name;
+			for (char c : all) {
+				if (c == ' ' || c == '\\n') {
+					if (!name.empty()) options.push_back(name);
+					name.clear();
+				} else {
+					name += c;
+				}
+			}
+			if (!name.empty()) options.push_back(name);
+		}
+		if (options.empty()) options.push_back( "A" );
+	}
+	return(options);''', 'TX port list: unexpected listAntennas (run RX port patch first)')
+
+repl('''		iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", true), "rf_port_select", name.c_str());''',
+'''		iio_channel *chn = iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", true);
+		if (chn != nullptr)
+			iio_channel_attr_write(chn, "rf_port_select", name.c_str());''',
+    'TX port list: unexpected TX setAntenna')
+
+repl('''	else if (direction == SOAPY_SDR_TX) {
+
+		options = "A";
+	}''',
+'''	else if (direction == SOAPY_SDR_TX) {
+		char buf[64];
+		iio_channel *chn = iio_device_find_channel(dev, channel ? "voltage1" : "voltage0", true);
+		if (chn != nullptr && iio_channel_attr_read(chn, "rf_port_select", buf, sizeof(buf)) > 0)
+			options = buf;
+		else
+			options = "A";
+	}''', 'TX port list: unexpected TX getAntenna')
+
+p.write_text(s)
+print('==> patched SoapyPlutoSDR: TX antenna list read from rf_port_select_available')
+PATCH
+}
+patch_tx_port_list
+
 # THE ONE libiio PATCH, and it is worth more than every other line in this file
 # put together: it is ten seconds of every start-up on a NETWORKED Pluto.
 #
