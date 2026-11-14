@@ -159,7 +159,11 @@ void main_save_geometry(void) {
   setProperty("radio.fullscreen",gtk_window_is_fullscreen(window)?"1":"0");
 #ifdef __APPLE__
   id native=main_native_window();
-  if(native && !gtk_window_is_maximized(window) && !gtk_window_is_fullscreen(window)) {
+  /* The frame is saved even when GTK calls the window maximized: GDK's macOS
+     backend reports a window dragged to fill the screen as maximized, and
+     skipping the frame then (while restoring "maximized" at start) made that
+     state permanent -- every run opened maximized and never saved anything else. */
+  if(native && !gtk_window_is_fullscreen(window)) {
     id frame=((id (*)(id,SEL))objc_msgSend)(native,sel_registerName("stringWithSavedFrame"));
     const char *text=((const char *(*)(id,SEL))objc_msgSend)(frame,sel_registerName("UTF8String"));
     g_free(main_saved_frame);
@@ -181,6 +185,10 @@ static gboolean main_restore_geometry_tick(GtkWidget *widget,GdkFrameClock *cloc
   }
 #endif
   int state=GPOINTER_TO_INT(data);
+#ifdef __APPLE__
+  // The native frame above already carries the size, maximized or not.
+  if(native && main_saved_frame) state&=~1;
+#endif
   if(state&1) gtk_window_maximize(GTK_WINDOW(widget));
   if(state&2) gtk_window_fullscreen(GTK_WINDOW(widget));
   return G_SOURCE_REMOVE;
