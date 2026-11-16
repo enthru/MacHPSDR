@@ -413,10 +413,12 @@ void vfo_set_split(RECEIVER *rx,split_type split) {
   if(split!=SPLIT_OFF) rx->split_last=split;
 
   /* The one exception to "VFO B is left as it is": a satellite split on the
-     QO-100 downlink with a VFO B that is no uplink of it (a 2 m frequency left
-     from an old session went out in AM at 145 MHz while the operator measured
-     2.4 GHz).  Such a B cannot be what anyone meant, so it is paired the way
-     Transponder setup pairs it; an uplink the operator tuned is kept. */
+     QO-100 downlink with a VFO B that is not the uplink of the cursor.  A 2 m
+     frequency left from an old session went out in AM at 145 MHz; an uplink
+     typed by hand 78 kHz off the cursor put the carrier where nobody was
+     listening, and SAT keeps any such gap for ever.  So B is paired the way
+     Transponder setup pairs it; listening on one spot and calling on another
+     is what plain SPLIT is for. */
   if((split==SPLIT_SAT || split==SPLIT_RSAT) &&
      qo100_band_is_downlink(rx->band_a) && !qo100_uplink_paired(radio,rx)) {
     log_info("%s: VFO B %lld Hz is no QO-100 uplink; pairing it with the downlink\n",

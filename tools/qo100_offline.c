@@ -2325,6 +2325,28 @@ int main(int argc, char **argv) {
     g_free(rx); g_free(r); radio=NULL;
   }
 
+  // ---- 23b. SAT over the downlink pairs VFO B with the CURSOR, not merely with
+  //           somewhere on the transponder: 2400.102.4 typed by hand while the
+  //           cursor sat on 10489.681 counted as "an uplink" and SAT kept the
+  //           78.6 kHz gap for good.
+  {
+    RECEIVER *rx=mk_rx(10489650000LL,FS);
+    rx->freetune=TRUE;
+    rx->ctun_frequency=10489681000LL;
+    RADIO *r=mk_radio(rx);
+    radio=r;
+    rx->frequency_b=2400102400LL;
+    gboolean off=qo100_uplink_paired(r,rx);
+    qo100_pair_uplink(r,rx);
+    gboolean on=qo100_uplink_paired(r,rx);
+    snprintf(d,sizeof(d),"cursor %lld -> B %lld (before: %s)",
+             (long long)rx->ctun_frequency,(long long)rx->frequency_b,
+             off?"paired":"unpaired");
+    check("sat: an uplink off the cursor is not a pair, and pairing fixes it",
+          !off && on && rx->frequency_b==10489681000LL-QO100_TP_OFFSET, d);
+    g_free(rx); g_free(r); radio=NULL;
+  }
+
   // ---- 21. TRANSMIT CALIBRATION: the sign, which is the whole reason this
   //          rig exists. A carrier that comes back HIGH was transmitted high, so
   //          the uplink converter's LO error must go DOWN by that much. Getting

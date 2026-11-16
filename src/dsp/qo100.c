@@ -489,13 +489,16 @@ gboolean qo100_band_is_downlink(int band) {
   return b!=NULL && strcmp(b->title,QO100_XVTR_RX_TITLE)==0;
 }
 
-/* VFO B is a QO-100 uplink when, carried through the transponder, it lands on
-   one of the two downlinks.  Anything else (a 2 m frequency left from some
-   earlier session) is not a pair this receiver can work. */
+/* VFO B is paired when, carried through the transponder, it lands on the very
+   downlink being listened to.  Landing merely somewhere on the transponder is
+   not enough: an uplink typed by hand 78 kHz off the cursor passed that test,
+   and SAT then moved both VFOs by the same delta, so the operator heard one spot
+   and called on another for good.  The uplink converter's measured error lives
+   in error_b, not in frequency_b, so a pair stays exact through a calibration. */
 gboolean qo100_uplink_paired(RADIO *r, RECEIVER *rx) {
   if(r==NULL || rx==NULL) return FALSE;
   long long offset=(r->qo100_offset!=0) ? r->qo100_offset : QO100_TP_OFFSET;
-  return qo100_in_transponder(rx->frequency_b+offset);
+  return rx->frequency_b+offset==qo100_dial(rx);
 }
 
 // ---------------------------------------------------------------------------
