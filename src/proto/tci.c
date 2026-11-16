@@ -479,7 +479,11 @@ static gboolean tci_apply_state_idle(gpointer data) {
         if (r->transmitter != NULL) r->transmitter->xit = c->v;
         break;
       case TCI_OP_SPLIT:
-        rx->split = c->b ? SPLIT_ON : SPLIT_OFF;
+        // "on" says transmit on VFO B, which SAT/RSAT already do: a client that
+        // re-sends split_enable:true with every mode change must not demote a
+        // satellite split to a plain one.
+        if (!c->b) rx->split = SPLIT_OFF;
+        else if (rx->split == SPLIT_OFF) rx->split = SPLIT_ON;
         if (r->transmitter != NULL)
           transmitter_set_mode(r->transmitter, c->b ? rx->mode_b : rx->mode_a);
         break;

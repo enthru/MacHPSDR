@@ -2336,7 +2336,8 @@ int parse_cmd(void *data) {
               rx->split=SPLIT_OFF;
               if(radio->transmitter) transmitter_set_mode(radio->transmitter,rx->mode_a);
             } else {
-              rx->split=SPLIT_ON;
+              // FT1 is "transmit on B", which SAT/RSAT already are: keep them.
+              if(rx->split==SPLIT_OFF) rx->split=SPLIT_ON;
               if(radio->transmitter) transmitter_set_mode(radio->transmitter,rx->mode_b);
             }
             update_vfo(rx);
