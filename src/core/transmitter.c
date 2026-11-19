@@ -668,6 +668,10 @@ void transmitter_save_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
   sprintf(value,"%d",tx->phrot_nstages);
   setProperty(name,value);
+  sprintf(name,"transmitter[%d].fwd_cal",tx->channel);
+  setPropertyDouble(name,tx->fwd_cal);
+  sprintf(name,"transmitter[%d].rev_cal",tx->channel);
+  setPropertyDouble(name,tx->rev_cal);
 }
 
 void transmitter_restore_state(TRANSMITTER *tx) {
@@ -869,6 +873,21 @@ void transmitter_restore_state(TRANSMITTER *tx) {
   sprintf(name,"transmitter[%d].phrot_nstages",tx->channel);
   value=getProperty(name);
   if(value) tx->phrot_nstages=atoi(value);
+  sprintf(name,"transmitter[%d].fwd_cal",tx->channel);
+  value=getProperty(name);
+  if(value) tx->fwd_cal=transmitter_meter_cal_clamp(propToDouble(value));
+  sprintf(name,"transmitter[%d].rev_cal",tx->channel);
+  value=getProperty(name);
+  if(value) tx->rev_cal=transmitter_meter_cal_clamp(propToDouble(value));
+}
+
+// A persisted or typed calibration factor reaches the meter only through
+// here: an old/hand-edited props file is a supported input, and NaN slips
+// past a plain `x < lo` test.
+double transmitter_meter_cal_clamp(double v) {
+  if(!(v >= TX_METER_CAL_MIN)) return TX_METER_CAL_MIN;
+  if(v > TX_METER_CAL_MAX) return TX_METER_CAL_MAX;
+  return v;
 }
 
 static gboolean update_timer_cb(void *data) {
@@ -960,7 +979,7 @@ static gboolean update_timer_cb(void *data) {
     
     fwd_power=fwd_power-fwd_cal_offset;
     v1=((double)fwd_power/4095.0)*constant1;
-    tx->fwd=(v1*v1)/constant2;    
+    tx->fwd=(v1*v1)/constant2*tx->fwd_cal;
     
     // Peak detection ring buffer
     tx->fwd_peak = get_peak(tx->fwd_peak_buf, tx->fwd);
@@ -976,7 +995,7 @@ static gboolean update_timer_cb(void *data) {
     tx->rev=0.0;
     if(fwd_power!=0) {
       v1=((double)rev_power/4095.0)*constant1;
-      tx->rev=(v1*v1)/constant2;
+      tx->rev=(v1*v1)/constant2*tx->rev_cal;
     }  
   }
   else {
@@ -2014,6 +2033,9 @@ log_info("create_transmitter: channel=%d\n",channel);
   tx->phrot_run=FALSE;
   tx->phrot_corner=338.0;
   tx->phrot_nstages=8;
+
+  tx->fwd_cal=1.0;
+  tx->rev_cal=1.0;
 
   tx->ctcss_enabled=FALSE;
   tx->ctcss=11;

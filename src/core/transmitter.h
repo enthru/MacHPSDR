@@ -93,6 +93,12 @@ typedef struct _transmitter {
   gdouble swr;
   PEAKDETECTOR *fwd_peak_buf;    
   gdouble fwd_peak;
+  // Power-meter calibration: the forward/reflected watts the per-model
+  // constants give are multiplied by these. The tandem match's coupling and
+  // the detector ADC differ from one transceiver to the next, so the stock
+  // constants are only a starting point. 1.0 = uncalibrated.
+  gdouble fwd_cal;
+  gdouble rev_cal;
   
 
   GtkWidget *window;
@@ -284,5 +290,9 @@ extern void transmitter_set_eer_pgain(TRANSMITTER *tx,gdouble gain);
 extern void transmitter_set_eer_pdelay(TRANSMITTER *tx,gdouble delay);
 extern void transmitter_set_eer_mgain(TRANSMITTER *tx,gdouble gain);
 extern void transmitter_set_eer_mdelay(TRANSMITTER *tx,gdouble delay);
+
+#define TX_METER_CAL_MIN 0.05
+#define TX_METER_CAL_MAX 20.0
+extern double transmitter_meter_cal_clamp(double v);
 
 #endif

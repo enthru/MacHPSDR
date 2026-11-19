@@ -64,6 +64,97 @@ static void pa_disable_changed_cb(GtkWidget *widget, gpointer data) {
   //}
 }
 
+// Power-meter calibration. One row per direction: the factor itself, and a
+// "match" helper that sets it from what an external wattmeter reads while a
+// steady carrier (Tune) is on the air.
+typedef struct {
+  gboolean reverse;
+  GtkWidget *factor;     // spin: the factor
+  GtkWidget *reading;    // spin: what the external meter reads (W)
+  GtkWidget *status;
+} METER_CAL_ROW;
+
+static METER_CAL_ROW meter_cal_rows[2];
+
+static gdouble *meter_cal_field(METER_CAL_ROW *row) {
+  return row->reverse ? &radio->transmitter->rev_cal : &radio->transmitter->fwd_cal;
+}
+
+static void meter_cal_factor_cb(GtkWidget *widget, gpointer data) {
+  METER_CAL_ROW *row=(METER_CAL_ROW *)data;
+  *meter_cal_field(row)=transmitter_meter_cal_clamp(gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget)));
+  log_info("PA: %s power calibration x%.3f\n",row->reverse?"reflected":"forward",*meter_cal_field(row));
+}
+
+static void meter_cal_match_cb(GtkWidget *widget, gpointer data) {
+  METER_CAL_ROW *row=(METER_CAL_ROW *)data;
+  TRANSMITTER *tx=radio->transmitter;
+  double shown=row->reverse ? tx->rev : tx->fwd;
+  double actual=gtk_spin_button_get_value(GTK_SPIN_BUTTON(row->reading));
+
+  // The meter is only live while keyed, and a near-zero reading would turn
+  // into an absurd factor -- refuse rather than guess.
+  if(!isTransmitting(radio)) {
+    gtk_label_set_text(GTK_LABEL(row->status),"Key a carrier (Tune) first");
+    return;
+  }
+  if(!(shown > 0.1) || !(actual > 0.0)) {
+    gtk_label_set_text(GTK_LABEL(row->status),"Too little power to match");
+    return;
+  }
+
+  gdouble *cal=meter_cal_field(row);
+  double raw=shown/(*cal);
+  double want=actual/raw;
+  double got=transmitter_meter_cal_clamp(want);
+  *cal=got;
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(row->factor),got);   // emits factor_cb, same value
+
+  char text[64];
+  if(got!=want) g_snprintf(text,sizeof(text),"Clamped to x%.3f",got);
+  else g_snprintf(text,sizeof(text),"Set x%.3f",got);
+  gtk_label_set_text(GTK_LABEL(row->status),text);
+  log_info("PA: %s power matched: showed %.2f W, meter %.2f W -> x%.3f\n",
+           row->reverse?"reflected":"forward",shown,actual,got);
+}
+
+static void meter_cal_add_row(GtkWidget *grid, int y, METER_CAL_ROW *row, gboolean reverse) {
+  TRANSMITTER *tx=radio->transmitter;
+  row->reverse=reverse;
+
+  GtkWidget *label=gtk_label_new(reverse ? "Reflected ×" : "Forward ×");
+  sui_label_left(label);
+  gtk_grid_attach(GTK_GRID(grid),label,0,y,1,1);
+
+  row->factor=gtk_spin_button_new_with_range(TX_METER_CAL_MIN,TX_METER_CAL_MAX,0.01);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(row->factor),3);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(row->factor),reverse ? tx->rev_cal : tx->fwd_cal);
+  gtk_widget_set_tooltip_text(row->factor,reverse
+      ? "Multiplies the reflected power the radio reports (1.000 = uncalibrated). SWR follows from forward and reflected together."
+      : "Multiplies the forward power the radio reports (1.000 = uncalibrated). The tandem match and detector ADC differ between radios.");
+  gtk_grid_attach(GTK_GRID(grid),row->factor,1,y,1,1);
+  g_signal_connect(row->factor,"value_changed",G_CALLBACK(meter_cal_factor_cb),row);
+
+  GtkWidget *meter_label=gtk_label_new("External meter reads (W)");
+  sui_label_left(meter_label);
+  gtk_grid_attach(GTK_GRID(grid),meter_label,2,y,1,1);
+
+  row->reading=gtk_spin_button_new_with_range(0.0,2000.0,0.1);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(row->reading),1);
+  gtk_grid_attach(GTK_GRID(grid),row->reading,3,y,1,1);
+
+  GtkWidget *match=gtk_button_new_with_label("Match");
+  gtk_widget_set_tooltip_text(match,reverse
+      ? "While transmitting into a known mismatch, set the factor so the reflected power shown equals the external meter"
+      : "While transmitting a steady carrier (Tune), set the factor so the forward power shown equals the external meter");
+  gtk_grid_attach(GTK_GRID(grid),match,4,y,1,1);
+  g_signal_connect(match,"clicked",G_CALLBACK(meter_cal_match_cb),row);
+
+  row->status=gtk_label_new("");
+  sui_label_left(row->status);
+  gtk_grid_attach(GTK_GRID(grid),row->status,5,y,1,1);
+}
+
 static void hl2mrf_bias_save_cb(GtkWidget *widget,gpointer data) { 
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;  
   log_info("Saving bias value %d\n", radio->hl2->mrf101_bias_value);
@@ -139,6 +230,15 @@ GtkWidget *create_pa_dialog(RADIO *r) {
     g_signal_connect(pa_r,"value_changed",G_CALLBACK(pa_value_changed_cb),band);
   }
   
+  GtkWidget *cal_frame=gtk_frame_new("Power Meter Calibration");
+  GtkWidget *cal_grid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(cal_grid),10);
+  sui_style_group(cal_grid);
+  gtk_frame_set_child(GTK_FRAME(cal_frame),cal_grid);
+  gtk_grid_attach(GTK_GRID(grid),cal_frame,col,row++,1,1);
+  meter_cal_add_row(cal_grid,0,&meter_cal_rows[0],FALSE);
+  meter_cal_add_row(cal_grid,1,&meter_cal_rows[1],TRUE);
+
   // Hermes-Lite 2 companion card 100 W PA hl2-mrf101
   // bias is set by digital pot (MCP4561) on the hl2-mrf101 PCB
   if ((radio->discovered->device==DEVICE_HERMES_LITE2) && (r->hl2 != NULL) && (radio->filter_board == HL2_MRF101)) {   
