@@ -1003,6 +1003,8 @@ static gboolean update_timer_cb(void *data) {
     tx->fwd_peak = get_peak(tx->fwd_peak_buf, 0);    
   }
 
+  radio_power_readout_sync(radio);
+
   return TRUE;
 }
 

@@ -541,6 +541,7 @@ extern void add_transmitter(RADIO *r);
 extern void radio_save_state(RADIO *radio);
 // Repaint the bottom-bar Record button from recorder_active(). GTK thread only.
 extern void radio_record_button_sync(void);
+extern void radio_power_readout_sync(RADIO *r);
 extern void radio_restore_state(RADIO *radio);
 extern void radio_refresh_skin(RADIO *radio);
 extern void delete_wideband(WIDEBAND *w);
