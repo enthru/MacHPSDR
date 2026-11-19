@@ -980,6 +980,11 @@ log_info("%s: isTransmitting=%d\n",__FUNCTION__,isTransmitting(r));
 
 void set_mox(RADIO *r,gboolean state) {
 log_info("%s: state=%d\n",__FUNCTION__,state);
+  if(state && r->swr_tripped) {
+    log_info("set_mox: refused, transmit is blocked by SWR protection\n");
+    update_radio(r);   // repaint the MOX button back to off
+    return;
+  }
   if(r->tune) {
     r->tune=FALSE;
     SetTXAPostGenRun(radio->transmitter->channel,0);
@@ -1072,6 +1077,11 @@ void radio_tune_program_signal(RADIO *r) {
 }
 
 void set_tune(RADIO *r,gboolean state) {
+  if(state && r->swr_tripped) {
+    log_info("set_tune: refused, transmit is blocked by SWR protection\n");
+    update_radio(r);
+    return;
+  }
   if(r->mox) {
     r->mox=FALSE;
     set_button_text_color(r->mox_button,r->mox?"red":"black");
@@ -2754,6 +2764,96 @@ static void frontend_slot_sync(RADIO *r) {
   }
 }
 
+// --- SWR protection --------------------------------------------------------
+
+// The power scale every protocol applies to the drive it sends. Zero while
+// blocked is the interlock that holds whatever keys the radio -- a hardware
+// PTT, the radio's own CW keyer -- not just the paths that call set_mox().
+double radio_swr_drive_scale(RADIO *r) {
+  if(r->swr_tripped) return 0.0;
+  if(r->swr_reduced) return SWR_REDUCE_FACTOR;
+  return 1.0;
+}
+
+// Protocol 1 recomputes the drive level on every frame; Protocol 2 only when
+// told to.
+static void swr_push_drive(RADIO *r) {
+  if(r->discovered!=NULL && r->discovered->protocol==PROTOCOL_2) protocol2_high_priority();
+}
+
+static void swr_trip_alert(RADIO *r, double swr) {
+  char detail[256];
+  g_snprintf(detail,sizeof(detail),
+      "SWR %.1f:1 stayed above the alarm (%.1f:1); the transmitter was released "
+      "and drive is held at zero.\n\n"
+      "Check the antenna and feed line, then click the SWR indicator to allow "
+      "transmitting again.",swr,r->swr_alarm_value);
+  GtkAlertDialog *dialog=gtk_alert_dialog_new("Transmit blocked: high SWR");
+  gtk_alert_dialog_set_detail(dialog,detail);
+  const char *buttons[]={ "OK", NULL };
+  gtk_alert_dialog_set_buttons(dialog,buttons);
+  gtk_alert_dialog_set_default_button(dialog,0);
+  gtk_alert_dialog_show(dialog,GTK_WINDOW(main_window));
+  g_object_unref(dialog);
+}
+
+// Called from the transmitter's meter timer (GTK thread) after the SWR average
+// is updated. Acts only on an SWR that has stayed over the alarm for
+// SWR_TRIP_HOLD_US with real power behind it, so a key-up transient or a
+// noise-over-noise reading at a few milliwatts does nothing.
+void radio_swr_protect_check(RADIO *r) {
+  static gint64 over_since_us;
+  TRANSMITTER *tx=r->transmitter;
+  if(tx==NULL) return;
+
+  if(!isTransmitting(r)) {
+    over_since_us=0;
+    if(r->swr_reduced) {           // a reduction lasts one over
+      r->swr_reduced=FALSE;
+      swr_push_drive(r);
+    }
+    return;
+  }
+  if(r->swr_protect==SWR_PROTECT_INDICATE || r->swr_tripped ||
+     (r->tune && r->swr_protect_ignore_tune)) {
+    over_since_us=0;
+    return;
+  }
+  if(!(tx->fwd>1E-1) || !(tx->swr>r->swr_alarm_value)) {
+    over_since_us=0;
+    return;
+  }
+  gint64 now=g_get_monotonic_time();
+  if(over_since_us==0) over_since_us=now;
+  if(now-over_since_us<SWR_TRIP_HOLD_US) return;
+  over_since_us=0;
+
+  if(r->swr_protect==SWR_PROTECT_BLOCK) {
+    double swr=tx->swr;
+    log_error("SWR protection: %.1f:1 over the %.1f:1 alarm, transmit blocked\n",swr,r->swr_alarm_value);
+    r->swr_tripped=TRUE;
+    swr_push_drive(r);
+    if(r->tune) set_tune(r,FALSE);
+    if(r->mox) set_mox(r,FALSE);
+    vox_cancel(r);
+    swr_trip_alert(r,swr);
+  } else if(!r->swr_reduced) {
+    log_error("SWR protection: %.1f:1 over the %.1f:1 alarm, power cut to %.0f%% for this over\n",
+              tx->swr,r->swr_alarm_value,SWR_REDUCE_FACTOR*100.0);
+    r->swr_reduced=TRUE;
+    swr_push_drive(r);
+  }
+}
+
+// The operator's acknowledgement (the SWR indicator), or a change of policy.
+void radio_swr_reset(RADIO *r) {
+  if(!r->swr_tripped && !r->swr_reduced) return;
+  log_info("SWR protection: reset\n");
+  r->swr_tripped=FALSE;
+  r->swr_reduced=FALSE;
+  swr_push_drive(r);
+}
+
 // --- the POWER readout ---------------------------------------------------
 
 static void pwr_set(GtkWidget *label, const char *text) {
@@ -4065,6 +4165,8 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->which_audio_backend=0;
 
   r->swr_alarm_value = 2.0;
+  r->swr_protect = SWR_PROTECT_BLOCK;
+  r->swr_protect_ignore_tune = TRUE;
   r->ppm_correction_value = 0.0;
   r->ppm_ref_station = 0;
   r->temperature_alarm_value = 50;

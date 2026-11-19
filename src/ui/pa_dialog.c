@@ -155,6 +155,18 @@ static void meter_cal_add_row(GtkWidget *grid, int y, METER_CAL_ROW *row, gboole
   gtk_grid_attach(GTK_GRID(grid),row->status,5,y,1,1);
 }
 
+static void swr_protect_cb(GtkDropDown *dd, GParamSpec *pspec, gpointer data) {
+  guint sel=gtk_drop_down_get_selected(dd);
+  if(sel>=SWR_PROTECT_MODES) return;
+  radio->swr_protect=(gint)sel;
+  log_info("PA: SWR protection %s\n",sel==SWR_PROTECT_BLOCK?"block":sel==SWR_PROTECT_REDUCE?"reduce":"indicate");
+  radio_swr_reset(radio);   // a block or cut from the old policy does not outlive it
+}
+
+static void swr_ignore_tune_cb(GtkWidget *widget, gpointer data) {
+  radio->swr_protect_ignore_tune=gtk_check_button_get_active(GTK_CHECK_BUTTON(widget));
+}
+
 static void hl2mrf_bias_save_cb(GtkWidget *widget,gpointer data) { 
   HERMESLITE2 *hl2=(HERMESLITE2 *)data;  
   log_info("Saving bias value %d\n", radio->hl2->mrf101_bias_value);
@@ -238,6 +250,38 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(grid),cal_frame,col,row++,1,1);
   meter_cal_add_row(cal_grid,0,&meter_cal_rows[0],FALSE);
   meter_cal_add_row(cal_grid,1,&meter_cal_rows[1],TRUE);
+
+  GtkWidget *swr_frame=gtk_frame_new("SWR Protection");
+  GtkWidget *swr_grid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(swr_grid),10);
+  sui_style_group(swr_grid);
+  gtk_frame_set_child(GTK_FRAME(swr_frame),swr_grid);
+  gtk_grid_attach(GTK_GRID(grid),swr_frame,col,row++,1,1);
+
+  GtkWidget *swr_label=gtk_label_new("Above the SWR alarm");
+  sui_label_left(swr_label);
+  gtk_grid_attach(GTK_GRID(swr_grid),swr_label,0,0,1,1);
+  // Row order is the SWR_PROTECT_* enum.
+  const char *swr_modes[]={ "Indicate only", "Reduce power", "Block transmit", NULL };
+  GtkWidget *swr_dd=gtk_drop_down_new_from_strings(swr_modes);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(swr_dd),(guint)r->swr_protect);
+  gtk_widget_set_tooltip_text(swr_dd,
+      "What happens when the SWR stays above the alarm (Configure \342\206\222 Radio) "
+      "for 0.3 s while transmitting:\n"
+      "Indicate only \342\200\224 the SWR indicator lights\n"
+      "Reduce power \342\200\224 drive is cut to a quarter (-6 dB) for the rest of the over\n"
+      "Block transmit \342\200\224 the transmitter is released, drive held at zero and keying "
+      "refused until the SWR indicator is clicked");
+  gtk_grid_attach(GTK_GRID(swr_grid),swr_dd,1,0,1,1);
+  g_signal_connect(swr_dd,"notify::selected",G_CALLBACK(swr_protect_cb),NULL);
+
+  GtkWidget *swr_tune_b=gtk_check_button_new_with_label("Not during Tune (ATU)");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(swr_tune_b),r->swr_protect_ignore_tune);
+  gtk_widget_set_tooltip_text(swr_tune_b,
+      "An antenna tuner tunes exactly while the SWR is high, at the Tune power; "
+      "leave this on to let it, untick to protect the Tune carrier too");
+  gtk_grid_attach(GTK_GRID(swr_grid),swr_tune_b,2,0,1,1);
+  g_signal_connect(swr_tune_b,"toggled",G_CALLBACK(swr_ignore_tune_cb),NULL);
 
   // Hermes-Lite 2 companion card 100 W PA hl2-mrf101
   // bias is set by digital pot (MCP4561) on the hl2-mrf101 PCB

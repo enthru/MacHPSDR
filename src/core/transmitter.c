@@ -1011,8 +1011,12 @@ static gboolean update_timer_cb(void *data) {
   else {
     // Peak detection ring buffer
     tx->fwd_peak = get_peak(tx->fwd_peak_buf, 0);    
+    // The SWR average starts each over afresh: carried over from the last one
+    // it would trip the SWR protection on the first tick of the next.
+    tx->swr = 1.0;
   }
 
+  radio_swr_protect_check(radio);
   radio_power_readout_sync(radio);
 
   return TRUE;

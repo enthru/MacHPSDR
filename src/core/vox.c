@@ -103,7 +103,7 @@ void update_vox(RADIO *r) {
     }
   }
 
-  if(r->vox_enabled) {
+  if(r->vox_enabled && !r->swr_tripped) {
     if(r->vox_peak>r->vox_threshold) {
       double hang = r->vox_hang > 0.0 ? r->vox_hang : 0.0;
       vox_hang_until_us = g_get_monotonic_time() + (gint64)(hang * 1000.0);

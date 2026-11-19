@@ -435,6 +435,10 @@ log_info("radio_save_state: %s\n",filename);
   sprintf(value,"%d",radio->temperature_alarm_value);
   setProperty("radio.temp_alarm",value);
   setPropertyDouble("radio.swr_alarm",radio->swr_alarm_value);
+  sprintf(value,"%d",radio->swr_protect);
+  setProperty("radio.swr_protect",value);
+  sprintf(value,"%d",radio->swr_protect_ignore_tune);
+  setProperty("radio.swr_protect_ignore_tune",value);
   setPropertyDouble("radio.ppm_correction_value",radio->ppm_correction_value);
   sprintf(value,"%d",radio->ppm_ref_station);
   setProperty("radio.ppm_ref_station",value);
@@ -765,6 +769,13 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->temperature_alarm_value=atoi(value);
   value=getProperty("radio.swr_alarm");
   if(value!=NULL) radio->swr_alarm_value=propToDouble(value);
+  value=getProperty("radio.swr_protect");
+  if(value!=NULL) {
+    int v=atoi(value);
+    if(v>=0 && v<SWR_PROTECT_MODES) radio->swr_protect=v;
+  }
+  value=getProperty("radio.swr_protect_ignore_tune");
+  if(value!=NULL) radio->swr_protect_ignore_tune=atoi(value)!=0;
   value=getProperty("radio.ppm_correction_value");
   if(value!=NULL) radio->ppm_correction_value=propToDouble(value);
   value=getProperty("radio.ppm_ref_station");

@@ -35,6 +35,12 @@
 #include "vfo.h"
 #include "configure_dialog.h"
 
+// "clicked" fires only for the operator's press; update_radio_info's
+// set_active each frame emits "toggled" alone.
+static void swr_b_clicked_cb(GtkWidget *widget, gpointer data) {
+  radio_swr_reset(radio);
+}
+
 #ifdef MIDI
 // GtkButton "clicked" (fires on user click, not the frequent programmatic
 // set_active of this status lamp): open the Configure dialog on the MIDI page.
@@ -79,6 +85,11 @@ GtkWidget *create_radio_info_visual(RECEIVER *rx) {
   // SWR is above a threshold
   info->swr_b=gtk_toggle_button_new_with_label("SWR");
   gtk_widget_set_name(info->swr_b,"info-warning");
+  gtk_widget_set_tooltip_text(info->swr_b,
+      "Lit while the SWR is above the alarm (Configure \342\206\222 Radio), and while "
+      "SWR protection is blocking transmit\n"
+      "Click to clear the block (Configure \342\206\222 PA / Linearity)");
+  g_signal_connect(info->swr_b,"clicked",G_CALLBACK(swr_b_clicked_cb),NULL);
   gtk_box_append(GTK_BOX(row_top),info->swr_b);
 
   if (radio->discovered->device == DEVICE_HERMES_LITE2) {
@@ -135,7 +146,8 @@ void update_radio_info(RECEIVER *rx) {
     if (radio->discovered->device == DEVICE_HERMES_LITE2) {
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->temp_b),radio->transmitter->temperature > radio->temperature_alarm_value);
     }
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->swr_b),radio->transmitter->swr>radio->swr_alarm_value);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->swr_b),
+        radio->swr_tripped || radio->transmitter->swr>radio->swr_alarm_value);
   }
 
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(info->cat_b), rx->cat_client_connected);

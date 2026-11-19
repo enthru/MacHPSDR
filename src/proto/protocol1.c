@@ -1244,6 +1244,7 @@ void ozy_send_buffer(void) {
               power=(int)radio->transmitter->drive;
             }
           }
+          power=(int)(power*radio_swr_drive_scale(radio));
 
           double target_dbm = 10.0 * log10(power * 1000.0);
           double gbb=(band!=NULL)?band->pa_calibration:0.0;

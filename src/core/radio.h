@@ -251,6 +251,12 @@ typedef struct _radio {
   gdouble meter_calibration;
   gdouble panadapter_calibration;
   gdouble swr_alarm_value;
+  // What an SWR above swr_alarm_value DOES (SWR_PROTECT_*), and whether a Tune
+  // carrier is exempt (an ATU tunes exactly while the SWR is high).
+  gint swr_protect;
+  gboolean swr_protect_ignore_tune;
+  gboolean swr_tripped;    // BLOCK fired: drive is zero and keying refused until reset
+  gboolean swr_reduced;    // REDUCE fired: drive cut for the rest of this over
   gint temperature_alarm_value;
   double ppm_correction_value;  // oscillator error, parts-per-million (fractional)
   int ppm_ref_station;     // index into the ppm_cal.c reference-station table
@@ -542,6 +548,13 @@ extern void radio_save_state(RADIO *radio);
 // Repaint the bottom-bar Record button from recorder_active(). GTK thread only.
 extern void radio_record_button_sync(void);
 extern void radio_power_readout_sync(RADIO *r);
+
+enum { SWR_PROTECT_INDICATE=0, SWR_PROTECT_REDUCE, SWR_PROTECT_BLOCK, SWR_PROTECT_MODES };
+#define SWR_TRIP_HOLD_US   300000   // SWR must stay over the alarm this long to act
+#define SWR_REDUCE_FACTOR  0.25     // REDUCE: power scale (-6 dB)
+extern void radio_swr_protect_check(RADIO *r);
+extern void radio_swr_reset(RADIO *r);
+extern double radio_swr_drive_scale(RADIO *r);
 extern void radio_restore_state(RADIO *radio);
 extern void radio_refresh_skin(RADIO *radio);
 extern void delete_wideband(WIDEBAND *w);
