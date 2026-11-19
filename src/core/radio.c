@@ -2767,25 +2767,43 @@ static void pwr_format_watts(char *buf, size_t n, double w) {
   else g_snprintf(buf,n,"%.0f W",w);
 }
 
-// Called from the transmitter's fps timer (GTK thread), right after the meter
-// values are recomputed. Forward is the PEAK-held value, so speech reads as
-// the envelope rather than flickering; on a steady carrier it equals tx->fwd,
-// which is what the PA page's Match button calibrates against. The SWR shown
-// is the same average the TX monitor prints, and only once there is power to
-// form it from (below 0.1 W it is noise over noise).
+// Fast attack, PWR_DECAY_S release: speech reads as its envelope without the
+// figure sitting on one syllable for seconds (tx->fwd_peak holds 40 frames,
+// 4 s at the default TX fps -- right for the meter's peak marker, far too slow
+// for a number). On a steady carrier it settles on tx->fwd, which is what the
+// PA page's Match button calibrates against.
+#define PWR_DECAY_S 0.25
+
+static double pwr_hold(double held, double now, double dt) {
+  double decayed=held*exp(-dt/PWR_DECAY_S);
+  return now>decayed ? now : decayed;
+}
+
+// Called from the transmitter's meter timer (GTK thread, every 1/tx->fps),
+// right after the meter values and the SWR average are recomputed. The SWR is
+// shown only once there is power to form it from (below 0.1 W it is noise
+// over noise).
 void radio_power_readout_sync(RADIO *r) {
+  static double fwd_held, ref_held;
+  static gint64 last_us;
   if(pwr_fwd_lbl==NULL || r==NULL || r->transmitter==NULL) return;
   TRANSMITTER *tx=r->transmitter;
   char text[32];
   gboolean keyed=isTransmitting(r);
   gboolean swr_valid=keyed && tx->fwd>1E-1;
+  gint64 now_us=g_get_monotonic_time();
+  double dt=last_us ? (now_us-last_us)/1e6 : 0.0;
+  last_us=now_us;
 
   if(keyed) {
-    pwr_format_watts(text,sizeof(text),tx->fwd_peak);
+    fwd_held=pwr_hold(fwd_held,tx->fwd,dt);
+    ref_held=pwr_hold(ref_held,tx->rev,dt);
+    pwr_format_watts(text,sizeof(text),fwd_held);
     pwr_set(pwr_fwd_lbl,text);
-    pwr_format_watts(text,sizeof(text),tx->rev);
+    pwr_format_watts(text,sizeof(text),ref_held);
     pwr_set(pwr_ref_lbl,text);
   } else {
+    fwd_held=ref_held=0.0;
     pwr_set(pwr_fwd_lbl,"\342\200\224");
     pwr_set(pwr_ref_lbl,"\342\200\224");
   }
@@ -3403,7 +3421,7 @@ static void create_visual(RADIO *r) {
       gtk_grid_set_column_spacing(GTK_GRID(pwr_grid),8);
       gtk_grid_set_row_spacing(GTK_GRID(pwr_grid),4);
       pwr_fwd_lbl=pwr_row(pwr_grid,0,"FWD",
-          "Forward power (peak-held) from the radio's tandem match\n"
+          "Forward power from the radio's tandem match (peak, quarter-second release)\n"
           "Calibrate in Configure \342\206\222 PA / Linearity");
       pwr_ref_lbl=pwr_row(pwr_grid,1,"REF",
           "Reflected power from the radio's tandem match\n"

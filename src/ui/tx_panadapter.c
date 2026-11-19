@@ -173,21 +173,13 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
   return tx->panadapter;
 }
 
-// Per-frame STATE (fps timer / event callers): update the SWR exponential
-// average while transmitting, then queue a redraw. All drawing is in tx_pana_build.
+// Queue a redraw; all drawing is in tx_pana_build. The SWR average it prints
+// is kept by the transmitter's meter timer, not here: this runs only when the
+// analyzer has a frame ready, which left the SWR alarm and the bottom-bar
+// readout updating every few seconds.
 void update_tx_panadapter(RADIO *r) {
   TRANSMITTER *tx=r->transmitter;
   if(tx==NULL || tx->panadapter==NULL) return;
-
-  if(isTransmitting(radio) && tx->fwd > 1E-1) {
-    double reflection_coefficient = sqrt(tx->rev/tx->fwd);
-    double this_swr;
-    if (1 - reflection_coefficient == 0.0) this_swr = 9999.9;
-    else this_swr = (1 + reflection_coefficient) / (1 - reflection_coefficient);
-    if (this_swr < 0.0) this_swr=1.0;
-    double alpha = 0.7;                 // exponential moving average
-    tx->swr = (alpha * this_swr) + (1 - alpha) * tx->swr;
-  }
 
   tx->updated=TRUE;
   gtk_widget_queue_draw(tx->panadapter);
