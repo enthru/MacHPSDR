@@ -78,6 +78,7 @@
 #include "ft8_decoder.h"
 #include "ft8_qso.h"
 #include "ft8_dxcc.h"
+#include "ft8_udp.h"
 #endif
 #ifdef FREEDV
 #include "freedv_decoder.h"
@@ -197,6 +198,9 @@ static gboolean main_restore_geometry_tick(GtkWidget *widget,GdkFrameClock *cloc
 gboolean main_delete (GtkWidget *widget) {
   if(radio!=NULL) {
     radio_save_state(radio);
+#ifdef FT8
+    ft8_udp_shutdown();
+#endif
     switch(radio->discovered->protocol) {
       case PROTOCOL_1:
         protocol1_stop();
@@ -1196,6 +1200,8 @@ int main(int argc, char **argv) {
   ft8_decoder_init();
   // Start the auto-QSO poll timer (idle until a QSO/CQ is started from the panel).
   ft8_qso_init();
+  // Heartbeat/Status to a WSJT-X-protocol logger (idle unless enabled).
+  ft8_udp_init();
 #endif
 #ifdef FREEDV
   // The modem/LPCNet work stays off the real-time receiver thread.

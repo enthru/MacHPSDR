@@ -68,6 +68,7 @@
 
 #include "ft8_decoder.h"
 #include "ft8_pskreporter.h"
+#include "wsjtx_wire.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -366,6 +367,134 @@ static void run_noise_control(void) {
   check(n_seen == 0, "%d decodes from 45 s of noise", n_seen);
 }
 
+// ---- WSJT-X UDP wire format ------------------------------------------------
+// The logger side (RUMlogNG, JTAlert, Log4OM) is a QDataStream reader of
+// NetworkMessage.hpp: one byte out of place and every field after it is read
+// as something else, silently.  The heartbeat is pinned byte for byte against
+// a datagram written out by hand from that header; the longer messages are read
+// back field by field in its order, so a field added, dropped or reordered in
+// wsjtx_wire.c is caught.
+typedef struct { const uint8_t *p; int len, off, bad; } RD;
+static uint32_t rd_u32(RD *r) {
+  if (r->off + 4 > r->len) { r->bad = 1; return 0; }
+  const uint8_t *b = r->p + r->off; r->off += 4;
+  return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+}
+static uint64_t rd_u64(RD *r) { uint64_t hi = rd_u32(r); return (hi << 32) | rd_u32(r); }
+static unsigned rd_u8(RD *r) {
+  if (r->off + 1 > r->len) { r->bad = 1; return 0; }
+  return r->p[r->off++];
+}
+static void rd_str(RD *r, char *out, size_t cap) {
+  uint32_t n = rd_u32(r);
+  out[0] = '\0';
+  if (r->bad || n > (uint32_t)(r->len - r->off) || n >= cap) { r->bad = 1; return; }
+  memcpy(out, r->p + r->off, n); out[n] = '\0'; r->off += n;
+}
+static void rd_header(RD *r, uint32_t want_type) {
+  char id[32];
+  check(rd_u32(r) == WSJTX_MAGIC, "magic");
+  check(rd_u32(r) == WSJTX_SCHEMA, "schema 2");
+  uint32_t t = rd_u32(r);
+  check(t == want_type, "message type %u (want %u)", t, want_type);
+  rd_str(r, id, sizeof(id));
+  check(strcmp(id, "MacHPSDR") == 0, "id \"%s\"", id);
+}
+
+static void run_wsjtx_wire(void) {
+  printf("\n== WSJT-X UDP wire format ==\n");
+  uint8_t buf[1024];
+  char s[64];
+
+  static const uint8_t hb_expect[] = {
+    0xad,0xbc,0xcb,0xda, 0,0,0,2, 0,0,0,0,              // magic, schema 2, Heartbeat
+    0,0,0,8, 'M','a','c','H','P','S','D','R',           // id
+    0,0,0,3,                                            // max schema
+    0,0,0,3, '4','.','7',                               // version
+    0,0,0,0,                                            // revision ""
+  };
+  int n = wsjtx_heartbeat(buf, sizeof(buf), "MacHPSDR", "4.7", NULL);
+  check(n == (int)sizeof(hb_expect) && memcmp(buf, hb_expect, sizeof(hb_expect)) == 0,
+        "heartbeat is byte-exact (%d bytes)", n);
+  check(wsjtx_heartbeat(buf, sizeof(hb_expect) - 1, "MacHPSDR", "4.7", NULL) == -1,
+        "a buffer one byte short is refused, not overrun");
+
+  // 2000-01-01 is JD 2451545 (the J2000 epoch's date); 1970-01-01 is 2440588.
+  check(wsjtx_julian_day(946684800) == 2451545, "JD of 2000-01-01");
+  check(wsjtx_julian_day(0) == 2440588 && wsjtx_julian_day(86399) == 2440588,
+        "JD of 1970-01-01 holds the whole day");
+
+  WSJTX_STATUS_INFO st = {
+    .dial_hz = 14074000, .mode = "FT8", .dx_call = "OH3AD", .report = NULL,
+    .tx_mode = "FT8", .tx_enabled = 1, .transmitting = 0, .decoding = 1,
+    .rx_df = 1500, .tx_df = 1500, .de_call = "UW2N", .de_grid = "KN49",
+    .dx_grid = "", .tx_message = "OH3AD UW2N KN49",
+  };
+  n = wsjtx_status(buf, sizeof(buf), "MacHPSDR", &st);
+  RD r = { buf, n, 0, n < 0 };
+  rd_header(&r, WSJTX_STATUS);
+  check(rd_u64(&r) == 14074000ULL, "status dial frequency");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "FT8") == 0, "status mode \"%s\"", s);
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "OH3AD") == 0, "status DX call \"%s\"", s);
+  rd_str(&r, s, sizeof(s)); check(s[0] == '\0', "status NULL report written empty");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "FT8") == 0, "status Tx mode");
+  unsigned txe = rd_u8(&r), txing = rd_u8(&r), dec = rd_u8(&r);
+  check(txe == 1 && txing == 0 && dec == 1, "status Tx enabled / transmitting / decoding");
+  uint32_t rxdf = rd_u32(&r), txdf = rd_u32(&r);
+  check(rxdf == 1500 && txdf == 1500, "status Rx/Tx DF");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "UW2N") == 0, "status DE call");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "KN49") == 0, "status DE grid");
+  rd_str(&r, s, sizeof(s));                          // DX grid
+  rd_u8(&r); rd_str(&r, s, sizeof(s)); rd_u8(&r);    // watchdog, sub-mode, fast
+  rd_u8(&r); rd_u32(&r); rd_u32(&r);                 // special op, tolerance, T/R
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "Default") == 0, "status configuration name");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "OH3AD UW2N KN49") == 0, "status Tx message");
+  check(!r.bad && r.off == n, "status read back to its last byte (%d of %d)", r.off, n);
+
+  time_t on = 946684800 + 3600 + 61;   // 2000-01-01 01:01:01 UTC
+  WSJTX_QSO_INFO q = {
+    .time_on = on, .time_off = on + 60, .dx_call = "OH3AD", .dx_grid = "KP20",
+    .tx_hz = 14075500, .mode = "FT8", .rst_sent = "-07", .rst_rcvd = "+02",
+    .my_call = "UW2N", .my_grid = "KN49",
+  };
+  n = wsjtx_qso_logged(buf, sizeof(buf), "MacHPSDR", &q);
+  r = (RD){ buf, n, 0, n < 0 };
+  rd_header(&r, WSJTX_QSO_LOGGED);
+  // Read each part into its own variable: a short-circuited && would skip the
+  // rest of a failed QDateTime and desynchronise every field after it.
+  uint64_t jd = rd_u64(&r); uint32_t ms = rd_u32(&r); unsigned spec = rd_u8(&r);
+  check(jd == 2451545ULL && ms == 3721000U && spec == 1,
+        "time off as QDateTime (JD %llu, %u ms of day, timespec %u)",
+        (unsigned long long)jd, ms, spec);
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "OH3AD") == 0, "QSO DX call");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "KP20") == 0, "QSO DX grid");
+  check(rd_u64(&r) == 14075500ULL, "QSO Tx frequency");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "FT8") == 0, "QSO mode");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "-07") == 0, "QSO report sent");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "+02") == 0, "QSO report received");
+  rd_str(&r, s, sizeof(s)); rd_str(&r, s, sizeof(s)); rd_str(&r, s, sizeof(s));   // power, comments, name
+  jd = rd_u64(&r); ms = rd_u32(&r); spec = rd_u8(&r);
+  check(jd == 2451545ULL && ms == 3661000U && spec == 1,
+        "time on as QDateTime (JD %llu, %u ms of day, timespec %u)",
+        (unsigned long long)jd, ms, spec);
+  rd_str(&r, s, sizeof(s));                                                       // operator
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "UW2N") == 0, "QSO my call");
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "KN49") == 0, "QSO my grid");
+  rd_str(&r, s, sizeof(s)); rd_str(&r, s, sizeof(s)); rd_str(&r, s, sizeof(s));   // exch x2, propagation
+  check(!r.bad && r.off == n, "QSO logged read back to its last byte (%d of %d)", r.off, n);
+
+  n = wsjtx_logged_adif(buf, sizeof(buf), "MacHPSDR", "<CALL:5>OH3AD <EOR>");
+  r = (RD){ buf, n, 0, n < 0 };
+  rd_header(&r, WSJTX_LOGGED_ADIF);
+  rd_str(&r, s, sizeof(s)); check(strcmp(s, "<CALL:5>OH3AD <EOR>") == 0, "logged ADIF text");
+  check(!r.bad && r.off == n, "logged ADIF read back to its last byte");
+
+  n = wsjtx_close(buf, sizeof(buf), "MacHPSDR");
+  r = (RD){ buf, n, 0, n < 0 };
+  rd_header(&r, WSJTX_CLOSE);
+  check(!r.bad && r.off == n, "close is the header alone");
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--selftest") != 0) {
     fprintf(stderr, "usage: %s --selftest\n", argv[0]);
@@ -414,6 +543,7 @@ int main(int argc, char **argv) {
                "CQ TF1A HP94", 1000.0f, 0.12f, NULL, 0.0f, 0.0f)) return 1;
 
   run_noise_control();
+  run_wsjtx_wire();
 
   printf("\n%s\n", failures ? "ft8_offline: FAILED" : "ft8_offline: all checks passed");
   return failures ? 1 : 0;

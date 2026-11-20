@@ -334,7 +334,16 @@ static void log_qso(void) {
   snprintf(path, sizeof(path), "%s/.local/share/machpsdr/ft8_log.adi", g_get_home_dir());
   FILE *f = fopen(path, "a");
   if (f) { fputs(rec, f); fclose(f); }
-  ft8_udp_log(rec);   // also push to a network logger (JTDX-style), if enabled
+  // Also push to a network logger (WSJT-X protocol), if enabled.
+  WSJTX_QSO_INFO q = {
+    .time_on = now, .time_off = now,
+    .dx_call = dx_call, .dx_grid = dx_grid,
+    .tx_hz = dial > 0 ? dial + (radio ? radio->ft8_tx_offset : 0) : 0,
+    .mode = (radio && radio->ft8_proto) ? "FT4" : "FT8",
+    .rst_sent = rs, .rst_rcvd = rr,
+    .my_call = my_call, .my_grid = my_grid,
+  };
+  ft8_udp_log(&q, rec);
   worked_add(dx_call, band);
   log_info("ft8-qso: logged %s on %dm\n", dx_call, band);
 }

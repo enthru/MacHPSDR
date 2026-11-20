@@ -255,7 +255,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
 
   GtkWidget *linfo=gtk_label_new("Send completed QSOs to a logger over the network, using the\n"
                                  "WSJT-X UDP protocol (as JTDX does). Point a logger such as\n"
-                                 "Log4OM, N1MM+, JTAlert or GridTracker at the host/port below.");
+                                 "RUMlogNG, Log4OM, N1MM+, JTAlert or GridTracker at the host/port below.");
   gtk_widget_set_halign(linfo,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(linfo,12);
   gtk_grid_attach(GTK_GRID(lgrid),linfo,0,0,2,1);

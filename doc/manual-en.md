@@ -290,8 +290,12 @@ MacHPSDR has a built-in FT8/FT4 engine (no external WSJT-X needed): pick **FT8**
   Left-click it to set the TX offset on a clear frequency.
 - **Station identity** — callsign and grid are set in **Configure → FT8**; Enable
   Tx is greyed out until both are filled in.
-- **Network logging** — completed QSOs can be sent to a logger (Log4OM, N1MM+,
-  JTAlert, GridTracker) as WSJT-X-compatible UDP ADIF messages (Configure → FT8).
+- **Network logging** — MacHPSDR speaks the WSJT-X UDP protocol to a logger
+  (RUMlogNG, Log4OM, N1MM+, JTAlert, GridTracker; Configure → FT8, default
+  127.0.0.1:2237). It sends a heartbeat every 15 s, so the logger lists it as a
+  client, and its dial frequency and FT8/FT4 while that decoder runs; each
+  completed QSO goes out as QSO Logged plus Logged ADIF, as WSJT-X sends it. In
+  RUMlogNG: Preferences → UDP → WSJT-X, tick "Save QSO to log", Data Port 2237.
 - **PSK Reporter** — every decoded station can be reported to the PSK Reporter
   map. It only transmits once both callsign and grid are set (Configure → FT8).
 - **DXCC** — the "new one" highlight uses AD1C's `cty.dat`; a **Reload cty.dat**

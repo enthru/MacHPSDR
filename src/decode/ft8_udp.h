@@ -20,17 +20,26 @@
 /*
  * Network logging of completed FT8 QSOs, WSJT-X/JTDX compatible.
  *
- * Sends the WSJT-X UDP "ADIF" message (schema 2, type 12) to a logger
- * (Log4OM, N1MM+, JTAlert, GridTracker, ...) so QSOs made in MacHPSDR appear
- * in the operator's logbook over the network, exactly as JTDX does.
+ * Speaks the WSJT-X UDP protocol to a logger (RUMlogNG, Log4OM, N1MM+, JTAlert,
+ * GridTracker, ...): a Heartbeat every 15 s so the logger lists us as a client,
+ * Status (dial frequency, FT8/FT4, Tx state) while an FT8/FT4 decoder runs, and
+ * for each completed QSO the pair WSJT-X sends -- QSO Logged and Logged ADIF.
+ * Close when the option is switched off or the app exits.
  */
 
 #ifndef _FT8_UDP_H
 #define _FT8_UDP_H
 
-// Broadcast one ADIF record (a single "<CALL:..>...<EOR>" line, as written to
-// ft8_log.adi) to the configured host:port if radio->ft8_log_udp is enabled.
-// Safe to call from the GTK main thread; never blocks meaningfully.
-extern void ft8_udp_log(const char *adif_record);
+#include "wsjtx_wire.h"
+
+// Start the 1 s tick that sends Heartbeat/Status while radio->ft8_log_udp is on.
+extern void ft8_udp_init(void);
+
+// Tell the logger we are gone (WSJT-X "Close") and drop the socket.
+extern void ft8_udp_shutdown(void);
+
+// Send one completed QSO: its fields, and the ADIF record (a single
+// "<CALL:..>...<EOR>" line, as written to ft8_log.adi).  GTK thread only.
+extern void ft8_udp_log(const WSJTX_QSO_INFO *qso, const char *adif_record);
 
 #endif

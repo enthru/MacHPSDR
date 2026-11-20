@@ -138,13 +138,13 @@ ifeq ($(FT8_INCLUDE),FT8)
 FT8_OPTIONS=-D FT8
 FT8_INCLUDES=-Ift8_lib
 FT8_SOURCES= \
-ft8_decoder.c ft8_encoder.c ft8_qso.c ft8_panel.c ft8_dialog.c ft8_udp.c ft8_pskreporter.c ft8_waterfall.c ft8_dxcc.c \
+ft8_decoder.c ft8_encoder.c ft8_qso.c ft8_panel.c ft8_dialog.c ft8_udp.c wsjtx_wire.c ft8_pskreporter.c ft8_waterfall.c ft8_dxcc.c \
 ft8_lib/ft8/constants.c ft8_lib/ft8/crc.c ft8_lib/ft8/decode.c \
 ft8_lib/ft8/encode.c ft8_lib/ft8/ldpc.c ft8_lib/ft8/message.c ft8_lib/ft8/text.c \
 ft8_lib/fft/kiss_fft.c ft8_lib/fft/kiss_fftr.c \
 ft8_lib/common/monitor.c
 FT8_HEADERS= \
-ft8_decoder.h ft8_encoder.h ft8_qso.h ft8_panel.h ft8_dialog.h ft8_udp.h ft8_pskreporter.h ft8_waterfall.h ft8_dxcc.h
+ft8_decoder.h ft8_encoder.h ft8_qso.h ft8_panel.h ft8_dialog.h ft8_udp.h wsjtx_wire.h ft8_pskreporter.h ft8_waterfall.h ft8_dxcc.h
 # The vendored half on its own: tools/ft8_offline.c links the decoder against
 # ft8_lib without any of the app's FT8 objects (they reach GTK and the global
 # RADIO through ft8_encoder/qso/panel).
@@ -154,7 +154,7 @@ ft8_lib/ft8/encode.o ft8_lib/ft8/ldpc.o ft8_lib/ft8/message.o ft8_lib/ft8/text.o
 ft8_lib/fft/kiss_fft.o ft8_lib/fft/kiss_fftr.o \
 ft8_lib/common/monitor.o
 FT8_OBJS= \
-ft8_decoder.o ft8_encoder.o ft8_qso.o ft8_panel.o ft8_dialog.o ft8_udp.o ft8_pskreporter.o ft8_waterfall.o ft8_dxcc.o \
+ft8_decoder.o ft8_encoder.o ft8_qso.o ft8_panel.o ft8_dialog.o ft8_udp.o wsjtx_wire.o ft8_pskreporter.o ft8_waterfall.o ft8_dxcc.o \
 $(FT8_LIB_OBJS)
 endif
 
@@ -979,10 +979,10 @@ sstv_offline$(EXE): tools/sstv_offline.c sstv_encoder.o sstv_decoder.o image_sav
 #   make ft8-offline && ./ft8_offline --selftest
 .PHONY: ft8-offline
 ft8-offline: ft8_offline$(EXE)
-ft8_offline$(EXE): tools/ft8_offline.c ft8_decoder.o log.o $(FT8_LIB_OBJS)
+ft8_offline$(EXE): tools/ft8_offline.c ft8_decoder.o wsjtx_wire.o log.o $(FT8_LIB_OBJS)
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(GTKINCLUDES) $(BREW_INCLUDES) \
 	  $(FT8_INCLUDES) $(shell pkg-config --cflags glib-2.0) -o $@ tools/ft8_offline.c \
-	  ft8_decoder.o log.o $(FT8_LIB_OBJS) \
+	  ft8_decoder.o wsjtx_wire.o log.o $(FT8_LIB_OBJS) \
 	  $(shell pkg-config --libs glib-2.0) -lm
 
 # Headless CW harness: the encoder's audio straight back into the decoder, plus
