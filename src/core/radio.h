@@ -136,6 +136,11 @@ typedef struct _radio {
   gint ft8_tx_offset;      // FT8 audio TX offset (Hz)
   gboolean ft8_tx_even;    // TX in even (TRUE) vs odd (FALSE) UTC slot
   char ft8_cq_dir[8];      // directed-CQ modifier ("" = plain CQ; "DX"/"EU"/... or nnn)
+  // FT8 decode-list colours, "#rrggbb" (defaults FT8_COL_*_DEFAULT in ft8_panel.h)
+  char ft8_col_cq[8];       // CQ message text
+  char ft8_col_new_dxcc[8]; // row background: DXCC entity never worked
+  char ft8_col_new_band[8]; // row background: entity new on this band
+  char ft8_col_hl_text[8];  // text on a highlighted (new DXCC / new band) row
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   gint decode_mode;        // decode_mode_t: which decoder taps DIGU/DIGL audio (OFF by default)

@@ -1103,7 +1103,7 @@ static const char css_body[]=
 "    background-color: @SURFACE;\n"
 "    color: @OFF_WHITE;\n"
 "    }\n"
-/* Rows stay transparent so the FT8 new-DXCC highlight (.ft8-gold/.ft8-blue,
+/* Rows stay transparent so the FT8 new-DXCC highlight (.ft8-new-dxcc/-band,
    installed by ft8_panel.c) still shows through. */
 "  .decode-panel columnview > listview > row,\n"
 "  .decode-panel listview > row {\n"

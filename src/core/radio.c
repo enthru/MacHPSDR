@@ -2028,6 +2028,12 @@ void add_receivers(RADIO *r) {
   if(value!=NULL) r->ft8_tx_even=atoi(value);
   value=getProperty("radio.ft8_cq_dir");
   if(value!=NULL) { strncpy(r->ft8_cq_dir,value,sizeof(r->ft8_cq_dir)-1); r->ft8_cq_dir[sizeof(r->ft8_cq_dir)-1]='\0'; }
+#ifdef FT8
+  ft8_color_set(r->ft8_col_cq,getProperty("radio.ft8_col_cq"),FT8_COL_CQ_DEFAULT);
+  ft8_color_set(r->ft8_col_new_dxcc,getProperty("radio.ft8_col_new_dxcc"),FT8_COL_NEW_DXCC_DEFAULT);
+  ft8_color_set(r->ft8_col_new_band,getProperty("radio.ft8_col_new_band"),FT8_COL_NEW_BAND_DEFAULT);
+  ft8_color_set(r->ft8_col_hl_text,getProperty("radio.ft8_col_hl_text"),FT8_COL_HL_TEXT_DEFAULT);
+#endif
   value=getProperty("radio.ft8_log_udp");
   if(value!=NULL) r->ft8_log_udp=atoi(value);
   value=getProperty("radio.ft8_log_udp_host");
@@ -3193,7 +3199,7 @@ static gboolean rds_update_cb(gpointer data) {
           gboolean new_ever = d[i].call_de[0] && ft8_qso_new_dxcc(d[i].call_de);
           gboolean new_band = d[i].call_de[0] && !new_ever &&
                               ft8_qso_new_dxcc_band(d[i].call_de, dial);
-          const char *fg = new_ever ? "#b8860b" : (new_band ? "#2f6fb0" : NULL);
+          const char *fg = new_ever ? r->ft8_col_new_dxcc : (new_band ? r->ft8_col_new_band : NULL);
           gchar *msg = g_markup_escape_text(d[i].text, -1);
           int w;
           if(fg)
@@ -4181,6 +4187,12 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->ft8_tx_offset = 1500;
   r->ft8_tx_even = TRUE;
   r->ft8_cq_dir[0] = '\0';     // plain CQ by default
+#ifdef FT8
+  ft8_color_set(r->ft8_col_cq, NULL, FT8_COL_CQ_DEFAULT);
+  ft8_color_set(r->ft8_col_new_dxcc, NULL, FT8_COL_NEW_DXCC_DEFAULT);
+  ft8_color_set(r->ft8_col_new_band, NULL, FT8_COL_NEW_BAND_DEFAULT);
+  ft8_color_set(r->ft8_col_hl_text, NULL, FT8_COL_HL_TEXT_DEFAULT);
+#endif
   r->ft8_panel = NULL;
   r->ft8_panel_open = FALSE;   // start collapsed to the bottom-bar decode block
   r->sstv_panel = NULL;

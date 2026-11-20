@@ -35,4 +35,16 @@
 // Build the FT8 panel widget (self-refreshing while realized).
 extern GtkWidget *ft8_panel_create(void);
 
+// Decode-list colours (Configure -> FT8). A highlighted row carries its own
+// text colour, so the CQ green never lands on the gold/blue background.
+#define FT8_COL_CQ_DEFAULT       "#40b840"
+#define FT8_COL_NEW_DXCC_DEFAULT "#b8860b"
+#define FT8_COL_NEW_BAND_DEFAULT "#5b9bd5"
+#define FT8_COL_HL_TEXT_DEFAULT  "#000000"
+
+// Store `src` in dst as "#rrggbb" if GDK can parse it, else `fallback`.
+extern void ft8_color_set(char dst[8], const char *src, const char *fallback);
+// Re-read radio->ft8_col_* into the panel's stylesheet (live, no rebuild).
+extern void ft8_panel_colors_changed(void);
+
 #endif

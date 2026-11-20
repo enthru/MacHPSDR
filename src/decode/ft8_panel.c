@@ -17,6 +17,7 @@
 *
 */
 
+#include <math.h>
 #include <string.h>
 #include <gtk/gtk.h>
 
@@ -37,25 +38,29 @@
 // GTK4: GtkTreeView/GtkListStore/GtkTreeModelFilter are deprecated. The band-
 // activity list is a GtkColumnView over a GListStore of Ft8Item GObjects, with a
 // GtkFilterListModel for the "CQ only" view. Per-row styling (bold to-me,
-// strikethrough worked-before, green CQ message, gold/blue new-DXCC background)
-// is applied in the cell bind via Pango attributes + CSS classes.
+// strikethrough worked-before, CQ message colour, new-DXCC row background) is
+// applied in the cell bind via Pango attributes + CSS classes; the colours are
+// the operator's (radio->ft8_col_*), loaded into one provider by ft8_load_css().
 enum { VCOL_UTC, VCOL_DB, VCOL_DT, VCOL_FREQ, VCOL_MSG };   // visible columns
 
 #define MAX_ROWS 1000   // rolling band-activity cap
+
+enum { HL_NONE, HL_NEW_DXCC, HL_NEW_BAND };
 
 #define FT8_TYPE_ITEM (ft8_item_get_type())
 G_DECLARE_FINAL_TYPE(Ft8Item, ft8_item, FT8, ITEM, GObject)
 struct _Ft8Item {
   GObject parent_instance;
-  char *utc, *dt, *msg, *country, *callde, *extra, *bg;  // bg = NULL / "#rrggbb"
+  char *utc, *dt, *msg, *country, *callde, *extra;
   int db, freq;
+  int hl;                  // HL_NONE / HL_NEW_DXCC / HL_NEW_BAND
   gboolean tome, cq, b4;
 };
 G_DEFINE_TYPE(Ft8Item, ft8_item, G_TYPE_OBJECT)
 static void ft8_item_finalize(GObject *o) {
   Ft8Item *it = FT8_ITEM(o);
   g_free(it->utc); g_free(it->dt); g_free(it->msg); g_free(it->country);
-  g_free(it->callde); g_free(it->extra); g_free(it->bg);
+  g_free(it->callde); g_free(it->extra);
   G_OBJECT_CLASS(ft8_item_parent_class)->finalize(o);
 }
 static void ft8_item_class_init(Ft8ItemClass *k){ G_OBJECT_CLASS(k)->finalize = ft8_item_finalize; }
@@ -151,27 +156,52 @@ static void erase_clicked(GtkButton *b, gpointer data) {
   snprintf(disp_utc, sizeof(disp_utc), "%s", utc);
 }
 
-// One display-wide provider defining the two new-DXCC cell backgrounds.
-static void ft8_install_css(void) {
-  static gboolean done = FALSE;
-  if (done) return;
-  done = TRUE;
-  GtkCssProvider *p = gtk_css_provider_new();
-  gtk_css_provider_load_from_string(p,
-      ".ft8-gold{background-color:#b8860b;} .ft8-blue{background-color:#2f6fb0;}"
+void ft8_color_set(char dst[8], const char *src, const char *fallback) {
+  GdkRGBA c;
+  if (src == NULL || !gdk_rgba_parse(&c, src)) gdk_rgba_parse(&c, fallback);
+  snprintf(dst, 8, "#%02x%02x%02x", (int)lround(c.red * 255.0),
+           (int)lround(c.green * 255.0), (int)lround(c.blue * 255.0));
+}
+
+// One display-wide provider for the decode list: row metrics and the operator's
+// colours. Reloaded in place when a colour changes, so the open list repaints.
+// The colour rules name columnview.ft8-activity so they outrank css.c's
+// ".decode-panel label" text colour; the highlight rules come after the CQ one,
+// so a highlighted CQ row takes the highlight text colour, never CQ-on-gold.
+static GtkCssProvider *ft8_css = NULL;
+
+static void ft8_load_css(void) {
+  if (ft8_css == NULL) {
+    ft8_css = gtk_css_provider_new();
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+        GTK_STYLE_PROVIDER(ft8_css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  }
+  char cq[8], dxcc[8], band[8], text[8];
+  ft8_color_set(cq,   radio ? radio->ft8_col_cq       : NULL, FT8_COL_CQ_DEFAULT);
+  ft8_color_set(dxcc, radio ? radio->ft8_col_new_dxcc : NULL, FT8_COL_NEW_DXCC_DEFAULT);
+  ft8_color_set(band, radio ? radio->ft8_col_new_band : NULL, FT8_COL_NEW_BAND_DEFAULT);
+  ft8_color_set(text, radio ? radio->ft8_col_hl_text  : NULL, FT8_COL_HL_TEXT_DEFAULT);
+  char *css = g_strdup_printf(
       // Compact the activity list: GTK4's theme gives columnview rows/cells a
       // tall min-height + padding, which spreads the decoded-station rows far
       // apart. Scope tight metrics to this view only via the .ft8-activity class.
-      " columnview.ft8-activity row{min-height:0;}"
+      "columnview.ft8-activity row{min-height:0;}"
       " columnview.ft8-activity cell{min-height:0;padding-top:0px;padding-bottom:0px;}"
-      " columnview.ft8-activity label{margin-top:0px;margin-bottom:0px;}");
-  gtk_style_context_add_provider_for_display(gdk_display_get_default(),
-      GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  g_object_unref(p);
+      " columnview.ft8-activity label{margin-top:0px;margin-bottom:0px;}"
+      " columnview.ft8-activity label.ft8-cq{color:%s;}"
+      " columnview.ft8-activity label.ft8-new-dxcc{background-color:%s;color:%s;}"
+      " columnview.ft8-activity label.ft8-new-band{background-color:%s;color:%s;}",
+      cq, dxcc, text, band, text);
+  gtk_css_provider_load_from_string(ft8_css, css);
+  g_free(css);
+}
+
+void ft8_panel_colors_changed(void) {
+  if (ft8_css) ft8_load_css();   // nothing to repaint until a panel is built
 }
 
 // Cell factory: a left-aligned, cell-filling label; the bind applies the text
-// and the per-row styling (bold/strikethrough/green + gold/blue background).
+// and the per-row styling (bold/strikethrough + CQ / new-DXCC CSS classes).
 static void ft8_setup(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
   GtkWidget *lbl = gtk_label_new(NULL);
   gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
@@ -193,20 +223,21 @@ static void ft8_bind(GtkSignalListItemFactory *f, GtkListItem *li, gpointer u) {
   }
   gtk_label_set_text(GTK_LABEL(lbl), text);
 
-  // Pango attributes: bold (to-me), strikethrough (worked-before), green CQ msg.
+  // Pango attributes: bold (to-me), strikethrough (worked-before).
   PangoAttrList *al = pango_attr_list_new();
   if (it->tome) pango_attr_list_insert(al, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
   if (it->b4)   pango_attr_list_insert(al, pango_attr_strikethrough_new(TRUE));
-  if (vc == VCOL_MSG && it->cq)
-    pango_attr_list_insert(al, pango_attr_foreground_new(0x3333, 0xaaaa, 0x3333));
   gtk_label_set_attributes(GTK_LABEL(lbl), al);
   pango_attr_list_unref(al);
 
-  // New-DXCC background: gold = new entity ever, blue = new on this band.
-  gtk_widget_remove_css_class(lbl, "ft8-gold");
-  gtk_widget_remove_css_class(lbl, "ft8-blue");
-  if (it->bg)
-    gtk_widget_add_css_class(lbl, strcmp(it->bg, "#b8860b") == 0 ? "ft8-gold" : "ft8-blue");
+  // Colours are CSS (ft8_load_css): CQ message text, and the new-DXCC row
+  // background -- one colour for an entity never worked, one for new on this band.
+  gtk_widget_remove_css_class(lbl, "ft8-cq");
+  gtk_widget_remove_css_class(lbl, "ft8-new-dxcc");
+  gtk_widget_remove_css_class(lbl, "ft8-new-band");
+  if (vc == VCOL_MSG && it->cq) gtk_widget_add_css_class(lbl, "ft8-cq");
+  if (it->hl == HL_NEW_DXCC) gtk_widget_add_css_class(lbl, "ft8-new-dxcc");
+  if (it->hl == HL_NEW_BAND) gtk_widget_add_css_class(lbl, "ft8-new-band");
 
   // Country tooltip (from cty.dat), shown on any cell of the row.
   gtk_widget_set_tooltip_text(lbl, (it->country && it->country[0]) ? it->country : NULL);
@@ -254,12 +285,11 @@ static gboolean refresh(gpointer data) {
                       g_ascii_strcasecmp(d[i].call_to, mycall) == 0;
       gboolean iscq = strncmp(d[i].call_to, "CQ", 2) == 0;
       gboolean b4 = d[i].call_de[0] && ft8_qso_worked(d[i].call_de);
-      // Two-level "new one" highlight: a brand-new DXCC (any band) is gold; a
-      // country worked elsewhere but new on THIS band is blue.
+      // Two-level "new one" highlight: a brand-new DXCC (any band), and a
+      // country worked elsewhere but new on THIS band.
       gboolean new_ever = d[i].call_de[0] && ft8_qso_new_dxcc(d[i].call_de);
       gboolean new_band = d[i].call_de[0] && !new_ever &&
                           ft8_qso_new_dxcc_band(d[i].call_de, dial);
-      const char *bg = new_ever ? "#b8860b" : (new_band ? "#2f6fb0" : NULL);
       const char *country = d[i].call_de[0] ? ft8_qso_country(d[i].call_de) : NULL;
       char dt[8];
       snprintf(dt, sizeof(dt), "%+.1f", d[i].dt);
@@ -272,7 +302,7 @@ static gboolean refresh(gpointer data) {
       it->tome    = tome;
       it->cq      = iscq;
       it->b4      = b4;
-      it->bg      = bg ? g_strdup(bg) : NULL;
+      it->hl      = new_ever ? HL_NEW_DXCC : (new_band ? HL_NEW_BAND : HL_NONE);
       it->country = g_strdup(country ? country : "");
       it->callde  = g_strdup(d[i].call_de);
       it->extra   = g_strdup(d[i].extra);
@@ -409,7 +439,7 @@ GtkWidget *ft8_panel_create(void) {
   // in this panel — see receiver_ft8_waterfall_sync().)
 
   // --- decode list ---
-  ft8_install_css();
+  ft8_load_css();
   store = g_list_store_new(FT8_TYPE_ITEM);
   cq_filter = GTK_FILTER(gtk_custom_filter_new(cq_match, NULL, NULL));
   filter_model = gtk_filter_list_model_new(G_LIST_MODEL(store), cq_filter);  // takes store+filter

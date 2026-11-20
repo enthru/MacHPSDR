@@ -31,6 +31,7 @@
 #include "settings_ui.h"
 #include "ft8_dialog.h"
 #include "ft8_dxcc.h"
+#include "ft8_panel.h"
 
 // Copy src into dst uppercased (callsigns and grids are conventionally upper).
 static void upper_copy(char *dst, size_t dstsz, const char *src) {
@@ -75,6 +76,39 @@ static void udp_port_cb(GtkWidget *w, gpointer data) {
 static void pskr_enable_cb(GtkWidget *w, gpointer data) {
   RADIO *r=(RADIO *)data;
   r->ft8_pskr=gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
+}
+
+// ---- Decode-list colours ----
+// Each button writes "#rrggbb" into its radio->ft8_col_* field (the field is the
+// signal's user data) and the open panel repaints at once.
+#define FT8_NCOLORS 4
+typedef struct { GtkWidget *btn[FT8_NCOLORS]; const char *def[FT8_NCOLORS]; } ft8_colors_ctx;
+
+static void color_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
+  (void)pspec;
+  const GdkRGBA *c=gtk_color_dialog_button_get_rgba(GTK_COLOR_DIALOG_BUTTON(obj));
+  char *s=gdk_rgba_to_string(c);
+  ft8_color_set((char *)data,s,"#000000");
+  g_free(s);
+  ft8_panel_colors_changed();
+}
+static GtkWidget *color_button(char *field) {
+  GdkRGBA c;
+  if(!gdk_rgba_parse(&c,field)) gdk_rgba_parse(&c,"#000000");
+  GtkWidget *b=gtk_color_dialog_button_new(gtk_color_dialog_new());  // takes ownership
+  gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(b),&c);
+  gtk_widget_set_halign(b,GTK_ALIGN_START);
+  g_signal_connect(b,"notify::rgba",G_CALLBACK(color_cb),field);
+  return b;
+}
+// Reset goes through the buttons, so each one's notify handler stores the value.
+static void colors_reset_cb(GtkButton *b, gpointer data) {
+  ft8_colors_ctx *c=data;
+  for(int i=0;i<FT8_NCOLORS;i++) {
+    GdkRGBA rgba;
+    gdk_rgba_parse(&rgba,c->def[i]);
+    gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(c->btn[i]),&rgba);
+  }
 }
 
 // One-line-ish status of the loaded DXCC country file.
@@ -304,8 +338,46 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
   gtk_grid_attach(GTK_GRID(pgrid),pen,0,1,2,1);
   g_signal_connect(pen,"toggled",G_CALLBACK(pskr_enable_cb),r);
 
+  // ---- Decode list colours ----
+  GtkWidget *cframe=gtk_frame_new("Decode List Colours");
+  GtkWidget *cgrid=gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(cgrid),5);
+  gtk_grid_set_row_spacing(GTK_GRID(cgrid),5);
+  sui_style_group(cgrid);
+  gtk_frame_set_child(GTK_FRAME(cframe),cgrid);
+
+  GtkWidget *cinfo=gtk_label_new("Colours of the FT8 panel's band-activity list. A station from a DXCC\n"
+                                 "entity never worked, or new on this band, gets a row background; its\n"
+                                 "text then uses the highlighted-row text colour. The bottom-bar readout\n"
+                                 "shows the two highlight colours as text.");
+  gtk_widget_set_halign(cinfo,GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(cinfo,12);
+  gtk_grid_attach(GTK_GRID(cgrid),cinfo,0,0,2,1);
+
+  ft8_colors_ctx *cctx=g_new0(ft8_colors_ctx,1);
+  struct { const char *label; char *field; const char *def; } crow[FT8_NCOLORS]={
+    { "CQ message text:",          r->ft8_col_cq,       FT8_COL_CQ_DEFAULT },
+    { "New DXCC (never worked):",  r->ft8_col_new_dxcc, FT8_COL_NEW_DXCC_DEFAULT },
+    { "New DXCC on this band:",    r->ft8_col_new_band, FT8_COL_NEW_BAND_DEFAULT },
+    { "Highlighted-row text:",     r->ft8_col_hl_text,  FT8_COL_HL_TEXT_DEFAULT },
+  };
+  for(int i=0;i<FT8_NCOLORS;i++) {
+    GtkWidget *l=gtk_label_new(crow[i].label);
+    gtk_widget_set_halign(l,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(cgrid),l,0,i+1,1,1);
+    cctx->btn[i]=color_button(crow[i].field);
+    cctx->def[i]=crow[i].def;
+    gtk_grid_attach(GTK_GRID(cgrid),cctx->btn[i],1,i+1,1,1);
+  }
+  GtkWidget *creset=gtk_button_new_with_label("Reset to defaults");
+  gtk_widget_set_halign(creset,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(cgrid),creset,1,FT8_NCOLORS+1,1,1);
+  g_signal_connect_data(creset,"clicked",G_CALLBACK(colors_reset_cb),cctx,
+                        free_closure_data,0);
+
   GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,10);
   gtk_box_append(GTK_BOX(vbox),frame);
+  gtk_box_append(GTK_BOX(vbox),cframe);
   gtk_box_append(GTK_BOX(vbox),dframe);
   gtk_box_append(GTK_BOX(vbox),lframe);
   gtk_box_append(GTK_BOX(vbox),pframe);
