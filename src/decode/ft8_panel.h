@@ -36,11 +36,14 @@
 extern GtkWidget *ft8_panel_create(void);
 
 // Decode-list colours (Configure -> FT8). A highlighted row carries its own
-// text colour, so the CQ green never lands on the gold/blue background.
+// two text colours (other / CQ), so the CQ green never lands on the gold/blue
+// background and a CQ still stands apart there. Both backgrounds are mid-tone,
+// so black and white both read on them (contrast >= 3.9:1).
 #define FT8_COL_CQ_DEFAULT       "#40b840"
-#define FT8_COL_NEW_DXCC_DEFAULT "#b8860b"
-#define FT8_COL_NEW_BAND_DEFAULT "#5b9bd5"
+#define FT8_COL_NEW_DXCC_DEFAULT "#a87a00"
+#define FT8_COL_NEW_BAND_DEFAULT "#3d7cc9"
 #define FT8_COL_HL_TEXT_DEFAULT  "#000000"
+#define FT8_COL_HL_CQ_DEFAULT    "#ffffff"
 
 // Store `src` in dst as "#rrggbb" if GDK can parse it, else `fallback`.
 extern void ft8_color_set(char dst[8], const char *src, const char *fallback);

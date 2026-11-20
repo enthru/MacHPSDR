@@ -220,6 +220,7 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.ft8_col_new_dxcc",radio->ft8_col_new_dxcc);
   setProperty("radio.ft8_col_new_band",radio->ft8_col_new_band);
   setProperty("radio.ft8_col_hl_text",radio->ft8_col_hl_text);
+  setProperty("radio.ft8_col_hl_cq",radio->ft8_col_hl_cq);
   sprintf(value,"%d",radio->ft8_log_udp);
   setProperty("radio.ft8_log_udp",value);
   setProperty("radio.ft8_log_udp_host",radio->ft8_log_udp_host);

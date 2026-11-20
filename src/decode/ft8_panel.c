@@ -167,7 +167,7 @@ void ft8_color_set(char dst[8], const char *src, const char *fallback) {
 // colours. Reloaded in place when a colour changes, so the open list repaints.
 // The colour rules name columnview.ft8-activity so they outrank css.c's
 // ".decode-panel label" text colour; the highlight rules come after the CQ one,
-// so a highlighted CQ row takes the highlight text colour, never CQ-on-gold.
+// so a highlighted row takes its own text colours, never CQ-green-on-gold.
 static GtkCssProvider *ft8_css = NULL;
 
 static void ft8_load_css(void) {
@@ -176,22 +176,27 @@ static void ft8_load_css(void) {
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
         GTK_STYLE_PROVIDER(ft8_css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   }
-  char cq[8], dxcc[8], band[8], text[8];
+  char cq[8], dxcc[8], band[8], text[8], hlcq[8];
   ft8_color_set(cq,   radio ? radio->ft8_col_cq       : NULL, FT8_COL_CQ_DEFAULT);
   ft8_color_set(dxcc, radio ? radio->ft8_col_new_dxcc : NULL, FT8_COL_NEW_DXCC_DEFAULT);
   ft8_color_set(band, radio ? radio->ft8_col_new_band : NULL, FT8_COL_NEW_BAND_DEFAULT);
   ft8_color_set(text, radio ? radio->ft8_col_hl_text  : NULL, FT8_COL_HL_TEXT_DEFAULT);
+  ft8_color_set(hlcq, radio ? radio->ft8_col_hl_cq    : NULL, FT8_COL_HL_CQ_DEFAULT);
   char *css = g_strdup_printf(
       // Compact the activity list: GTK4's theme gives columnview rows/cells a
       // tall min-height + padding, which spreads the decoded-station rows far
       // apart. Scope tight metrics to this view only via the .ft8-activity class.
       "columnview.ft8-activity row{min-height:0;}"
-      " columnview.ft8-activity cell{min-height:0;padding-top:0px;padding-bottom:0px;}"
-      " columnview.ft8-activity label{margin-top:0px;margin-bottom:0px;}"
+      // A highlight is the LABEL's background, so the cell's side padding would
+      // cut a row into stripes; the label carries that padding instead.
+      " columnview.ft8-activity cell{min-height:0;padding:0px;}"
+      " columnview.ft8-activity label{margin:0px;padding:0px 6px;}"
       " columnview.ft8-activity label.ft8-cq{color:%s;}"
       " columnview.ft8-activity label.ft8-new-dxcc{background-color:%s;color:%s;}"
-      " columnview.ft8-activity label.ft8-new-band{background-color:%s;color:%s;}",
-      cq, dxcc, text, band, text);
+      " columnview.ft8-activity label.ft8-new-band{background-color:%s;color:%s;}"
+      " columnview.ft8-activity label.ft8-new-dxcc.ft8-cq,"
+      " columnview.ft8-activity label.ft8-new-band.ft8-cq{color:%s;}",
+      cq, dxcc, text, band, text, hlcq);
   gtk_css_provider_load_from_string(ft8_css, css);
   g_free(css);
 }

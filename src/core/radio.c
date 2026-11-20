@@ -2033,6 +2033,7 @@ void add_receivers(RADIO *r) {
   ft8_color_set(r->ft8_col_new_dxcc,getProperty("radio.ft8_col_new_dxcc"),FT8_COL_NEW_DXCC_DEFAULT);
   ft8_color_set(r->ft8_col_new_band,getProperty("radio.ft8_col_new_band"),FT8_COL_NEW_BAND_DEFAULT);
   ft8_color_set(r->ft8_col_hl_text,getProperty("radio.ft8_col_hl_text"),FT8_COL_HL_TEXT_DEFAULT);
+  ft8_color_set(r->ft8_col_hl_cq,getProperty("radio.ft8_col_hl_cq"),FT8_COL_HL_CQ_DEFAULT);
 #endif
   value=getProperty("radio.ft8_log_udp");
   if(value!=NULL) r->ft8_log_udp=atoi(value);
@@ -4192,6 +4193,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   ft8_color_set(r->ft8_col_new_dxcc, NULL, FT8_COL_NEW_DXCC_DEFAULT);
   ft8_color_set(r->ft8_col_new_band, NULL, FT8_COL_NEW_BAND_DEFAULT);
   ft8_color_set(r->ft8_col_hl_text, NULL, FT8_COL_HL_TEXT_DEFAULT);
+  ft8_color_set(r->ft8_col_hl_cq, NULL, FT8_COL_HL_CQ_DEFAULT);
 #endif
   r->ft8_panel = NULL;
   r->ft8_panel_open = FALSE;   // start collapsed to the bottom-bar decode block

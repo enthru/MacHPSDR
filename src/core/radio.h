@@ -141,6 +141,7 @@ typedef struct _radio {
   char ft8_col_new_dxcc[8]; // row background: DXCC entity never worked
   char ft8_col_new_band[8]; // row background: entity new on this band
   char ft8_col_hl_text[8];  // text on a highlighted (new DXCC / new band) row
+  char ft8_col_hl_cq[8];    // CQ message text on a highlighted row
   GtkWidget *ft8_panel;    // embedded FT8 QSO panel (NULL unless open in DIGU)
   gboolean ft8_panel_open; // user toggled the big FT8 panel on (in place of RX2)
   gint decode_mode;        // decode_mode_t: which decoder taps DIGU/DIGL audio (OFF by default)

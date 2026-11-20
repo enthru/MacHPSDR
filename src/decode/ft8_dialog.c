@@ -81,7 +81,7 @@ static void pskr_enable_cb(GtkWidget *w, gpointer data) {
 // ---- Decode-list colours ----
 // Each button writes "#rrggbb" into its radio->ft8_col_* field (the field is the
 // signal's user data) and the open panel repaints at once.
-#define FT8_NCOLORS 4
+#define FT8_NCOLORS 5
 typedef struct { GtkWidget *btn[FT8_NCOLORS]; const char *def[FT8_NCOLORS]; } ft8_colors_ctx;
 
 static void color_cb(GObject *obj, GParamSpec *pspec, gpointer data) {
@@ -348,8 +348,9 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
 
   GtkWidget *cinfo=gtk_label_new("Colours of the FT8 panel's band-activity list. A station from a DXCC\n"
                                  "entity never worked, or new on this band, gets a row background; its\n"
-                                 "text then uses the highlighted-row text colour. The bottom-bar readout\n"
-                                 "shows the two highlight colours as text.");
+                                 "text then uses the highlighted-row colours (a CQ keeps its own, so it\n"
+                                 "still stands out). The bottom-bar readout shows the two highlight\n"
+                                 "colours as text.");
   gtk_widget_set_halign(cinfo,GTK_ALIGN_START);
   gtk_widget_set_margin_bottom(cinfo,12);
   gtk_grid_attach(GTK_GRID(cgrid),cinfo,0,0,2,1);
@@ -360,6 +361,7 @@ GtkWidget *create_ft8_dialog(RADIO *r) {
     { "New DXCC (never worked):",  r->ft8_col_new_dxcc, FT8_COL_NEW_DXCC_DEFAULT },
     { "New DXCC on this band:",    r->ft8_col_new_band, FT8_COL_NEW_BAND_DEFAULT },
     { "Highlighted-row text:",     r->ft8_col_hl_text,  FT8_COL_HL_TEXT_DEFAULT },
+    { "Highlighted-row CQ text:",  r->ft8_col_hl_cq,    FT8_COL_HL_CQ_DEFAULT },
   };
   for(int i=0;i<FT8_NCOLORS;i++) {
     GtkWidget *l=gtk_label_new(crow[i].label);
