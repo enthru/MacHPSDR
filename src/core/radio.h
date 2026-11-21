@@ -553,7 +553,6 @@ extern void add_transmitter(RADIO *r);
 extern void radio_save_state(RADIO *radio);
 // Repaint the bottom-bar Record button from recorder_active(). GTK thread only.
 extern void radio_record_button_sync(void);
-extern void radio_power_readout_sync(RADIO *r);
 
 enum { SWR_PROTECT_INDICATE=0, SWR_PROTECT_REDUCE, SWR_PROTECT_BLOCK, SWR_PROTECT_MODES };
 #define SWR_TRIP_HOLD_US   300000   // SWR must stay over the alarm this long to act

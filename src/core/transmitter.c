@@ -1001,7 +1001,6 @@ static gboolean update_timer_cb(void *data) {
   }
 
   radio_swr_protect_check(radio);
-  radio_power_readout_sync(radio);
 
   return TRUE;
 }

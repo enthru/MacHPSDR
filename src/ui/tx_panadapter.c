@@ -19,8 +19,7 @@
 
 /*
  * TX "monitor" panadapter — GPU-rendered via GSK render nodes (PanaView),
- * matching the RX panadapter.  update_tx_panadapter() keeps the one piece of
- * per-frame STATE (the SWR exponential average) and queues a redraw; the
+ * matching the RX panadapter.  update_tx_panadapter() queues a redraw; the
  * tx_pana_build() snapshot builder emits the nodes.
  */
 
@@ -102,11 +101,14 @@ static void txn_text_top(GtkSnapshot *s,GtkWidget *w,double x,double top_y,doubl
   g_object_unref(l);
 }
 // text whose RIGHT edge sits at right_x (baseline at base_y). Used for the
-// W/SWR/ALC readouts so an extra digit grows the text leftward.
-static void txn_text_right(GtkSnapshot *s,GtkWidget *w,double right_x,double base_y,double size,const GdkRGBA *c,const char *txt) {
+// W/SWR/ALC readouts so an extra digit grows the text leftward. A non-NULL bg
+// is painted under the text first, so the trace and graticule behind it do
+// not run through the digits.
+static void txn_text_right(GtkSnapshot *s,GtkWidget *w,double right_x,double base_y,double size,const GdkRGBA *c,const GdkRGBA *bg,const char *txt) {
   PangoLayout *l=txn_layout(w,size,txt);
   int pw=0,ph=0; pango_layout_get_pixel_size(l,&pw,&ph);
   double top=base_y-(double)pango_layout_get_baseline(l)/PANGO_SCALE;
+  if(bg!=NULL) txn_rect(s,right_x-(double)pw-3.0,top,(double)pw+6.0,(double)ph,bg);
   gtk_snapshot_save(s);
   graphene_point_t pt=GRAPHENE_POINT_INIT((float)(right_x-(double)pw),(float)top);
   gtk_snapshot_translate(s,&pt);
@@ -175,8 +177,8 @@ GtkWidget *create_tx_panadapter(TRANSMITTER *tx) {
 
 // Queue a redraw; all drawing is in tx_pana_build. The SWR average it prints
 // is kept by the transmitter's meter timer, not here: this runs only when the
-// analyzer has a frame ready, which left the SWR alarm and the bottom-bar
-// readout updating every few seconds.
+// analyzer has a frame ready, which left the SWR alarm updating every few
+// seconds.
 void update_tx_panadapter(RADIO *r) {
   TRANSMITTER *tx=r->transmitter;
   if(tx==NULL || tx->panadapter==NULL) return;
@@ -267,18 +269,18 @@ static void tx_pana_build(GtkSnapshot *snapshot, int width, int height, gpointer
     // Right-aligned readouts to the pane edge.
     double readout_right=(double)width-4.0;
     sprintf(text,"%.1f W",tx->fwd);
-    txn_text_right(snapshot,widget,readout_right,34,16,&ta,text);
+    txn_text_right(snapshot,widget,readout_right,34,16,&ta,&surf,text);
 
-    if (tx->fwd > 1E-1) {   // SWR (tx->swr is the EMA maintained in update_tx_panadapter)
+    if (tx->fwd > 1E-1) {   // SWR (tx->swr is the EMA kept by the meter timer)
       sprintf(text,"SWR: %1.1f:1", tx->swr);
-      txn_text_right(snapshot,widget,readout_right,56,16,&ta,text);
+      txn_text_right(snapshot,widget,readout_right,56,16,&ta,&surf,text);
     }
     if(tx->rx->mode_a!=CWU && tx->rx->mode_a!=CWL) {
       sprintf(text,"ALC: %2.1f dB",tx->alc);
-      txn_text_right(snapshot,widget,readout_right,80,16,&ta,text);
-      if(tx->leveler)    { sprintf(text,"LVL: %2.1f dB",tx->lvlr_gain); txn_text_right(snapshot,widget,readout_right,104,16,&ta,text); }
-      if(tx->cfc_run)    { sprintf(text,"CFC: %2.1f dB",tx->cfc_gain);  txn_text_right(snapshot,widget,readout_right,128,16,&ta,text); }
-      if(tx->compressor) { sprintf(text,"COMP: %2.1f dB",tx->comp_pk);  txn_text_right(snapshot,widget,readout_right,152,16,&ta,text); }
+      txn_text_right(snapshot,widget,readout_right,80,16,&ta,&surf,text);
+      if(tx->leveler)    { sprintf(text,"LVL: %2.1f dB",tx->lvlr_gain); txn_text_right(snapshot,widget,readout_right,104,16,&ta,&surf,text); }
+      if(tx->cfc_run)    { sprintf(text,"CFC: %2.1f dB",tx->cfc_gain);  txn_text_right(snapshot,widget,readout_right,128,16,&ta,&surf,text); }
+      if(tx->compressor) { sprintf(text,"COMP: %2.1f dB",tx->comp_pk);  txn_text_right(snapshot,widget,readout_right,152,16,&ta,&surf,text); }
     }
   }
 
