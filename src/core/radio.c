@@ -128,13 +128,6 @@ static GtkWidget *fe_qo100_col;   // occupant: QO-100
 static GtkWidget *qo100_cal_b;    // ...its Calibrate TX button
 static GtkWidget *qo100_cal_lbl;  // ...and the one line it reports through
 
-// The bottom-bar POWER readout: forward / reflected watts and SWR off the
-// radio's own detectors. Built only for protocol 1/2 -- a SoapySDR device has
-// no forward/reflected detector, so there would be nothing to show.
-static GtkWidget *pwr_fwd_lbl;
-static GtkWidget *pwr_ref_lbl;
-static GtkWidget *pwr_swr_lbl;
-
 // The bottom-bar Record button. Held here because a recording can also be
 // stopped from outside its own callback (delete_receiver closes the receiver it
 // was started on), and a button still reading "Stop" over an idle recorder is
@@ -2861,85 +2854,6 @@ void radio_swr_reset(RADIO *r) {
   swr_push_drive(r);
 }
 
-// --- the POWER readout ---------------------------------------------------
-
-static void pwr_set(GtkWidget *label, const char *text) {
-  if(strcmp(gtk_label_get_text(GTK_LABEL(label)),text)!=0)
-    gtk_label_set_text(GTK_LABEL(label),text);
-}
-
-static void pwr_format_watts(char *buf, size_t n, double w) {
-  if(w<10.0) g_snprintf(buf,n,"%.2f W",w);
-  else if(w<1000.0) g_snprintf(buf,n,"%.1f W",w);
-  else g_snprintf(buf,n,"%.0f W",w);
-}
-
-// Fast attack, PWR_DECAY_S release: speech reads as its envelope without the
-// figure sitting on one syllable for seconds (tx->fwd_peak holds 40 frames,
-// 4 s at the default TX fps -- right for the meter's peak marker, far too slow
-// for a number). On a steady carrier it settles on tx->fwd, which is what the
-// PA page's Match button calibrates against.
-#define PWR_DECAY_S 0.25
-
-static double pwr_hold(double held, double now, double dt) {
-  double decayed=held*exp(-dt/PWR_DECAY_S);
-  return now>decayed ? now : decayed;
-}
-
-// Called from the transmitter's meter timer (GTK thread, every 1/tx->fps),
-// right after the meter values and the SWR average are recomputed. The SWR is
-// shown only once there is power to form it from (below 0.1 W it is noise
-// over noise).
-void radio_power_readout_sync(RADIO *r) {
-  static double fwd_held, ref_held;
-  static gint64 last_us;
-  if(pwr_fwd_lbl==NULL || r==NULL || r->transmitter==NULL) return;
-  TRANSMITTER *tx=r->transmitter;
-  char text[32];
-  gboolean keyed=isTransmitting(r);
-  gboolean swr_valid=keyed && tx->fwd>1E-1;
-  gint64 now_us=g_get_monotonic_time();
-  double dt=last_us ? (now_us-last_us)/1e6 : 0.0;
-  last_us=now_us;
-
-  if(keyed) {
-    fwd_held=pwr_hold(fwd_held,tx->fwd,dt);
-    ref_held=pwr_hold(ref_held,tx->rev,dt);
-    pwr_format_watts(text,sizeof(text),fwd_held);
-    pwr_set(pwr_fwd_lbl,text);
-    pwr_format_watts(text,sizeof(text),ref_held);
-    pwr_set(pwr_ref_lbl,text);
-  } else {
-    fwd_held=ref_held=0.0;
-    pwr_set(pwr_fwd_lbl,"\342\200\224");
-    pwr_set(pwr_ref_lbl,"\342\200\224");
-  }
-  if(swr_valid) {
-    g_snprintf(text,sizeof(text),"%.1f:1",tx->swr);
-    pwr_set(pwr_swr_lbl,text);
-  } else {
-    pwr_set(pwr_swr_lbl,"\342\200\224");
-  }
-  if(swr_valid && tx->swr>r->swr_alarm_value) gtk_widget_add_css_class(pwr_swr_lbl,"alarm");
-  else gtk_widget_remove_css_class(pwr_swr_lbl,"alarm");
-}
-
-static GtkWidget *pwr_row(GtkWidget *grid, int y, const char *caption, const char *tip) {
-  GtkWidget *cap=gtk_label_new(caption);
-  gtk_widget_set_name(cap,"power-caption");
-  gtk_widget_set_halign(cap,GTK_ALIGN_START);
-  gtk_widget_set_tooltip_text(cap,tip);
-  gtk_grid_attach(GTK_GRID(grid),cap,0,y,1,1);
-  GtkWidget *val=gtk_label_new("\342\200\224");
-  gtk_widget_set_name(val,"power-value");
-  // A fixed width, so the bar does not shuffle sideways as the digits change.
-  gtk_label_set_width_chars(GTK_LABEL(val),8);
-  gtk_label_set_xalign(GTK_LABEL(val),1.0);
-  gtk_widget_set_tooltip_text(val,tip);
-  gtk_grid_attach(GTK_GRID(grid),val,1,y,1,1);
-  return val;
-}
-
 // --- bottom-bar "console" helpers (Option A: labelled modules + hairline rails) ---
 
 // Wrap a control column under a small uppercase section label -> one module.
@@ -3520,25 +3434,6 @@ static void create_visual(RADIO *r) {
     gtk_box_append(GTK_BOX(r->bottom_bar),
                        bar_module("TX MONITOR",mon_frame));
     gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
-
-    // Module: POWER - forward / reflected / SWR from the radio's detectors.
-    if(r->discovered!=NULL && (r->discovered->protocol==PROTOCOL_1 ||
-                               r->discovered->protocol==PROTOCOL_2)) {
-      GtkWidget *pwr_grid=gtk_grid_new();
-      gtk_grid_set_column_spacing(GTK_GRID(pwr_grid),8);
-      gtk_grid_set_row_spacing(GTK_GRID(pwr_grid),4);
-      pwr_fwd_lbl=pwr_row(pwr_grid,0,"FWD",
-          "Forward power from the radio's tandem match (peak, quarter-second release)\n"
-          "Calibrate in Configure \342\206\222 PA / Linearity");
-      pwr_ref_lbl=pwr_row(pwr_grid,1,"REF",
-          "Reflected power from the radio's tandem match\n"
-          "Calibrate in Configure \342\206\222 PA / Linearity");
-      pwr_swr_lbl=pwr_row(pwr_grid,2,"SWR",
-          "SWR from forward and reflected power\n"
-          "Turns to the warning colour above the SWR alarm (Configure \342\206\222 Radio)");
-      gtk_box_append(GTK_BOX(r->bottom_bar),bar_module("POWER",pwr_grid));
-      gtk_box_append(GTK_BOX(r->bottom_bar),bar_rail(FALSE));
-    }
 
     // Module: MIC & DRIVE - three stacked meters.
     GtkWidget *slider_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
