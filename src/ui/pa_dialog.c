@@ -64,95 +64,107 @@ static void pa_disable_changed_cb(GtkWidget *widget, gpointer data) {
   //}
 }
 
-// Power-meter calibration. One row per direction: the factor itself, and a
-// "match" helper that sets it from what an external wattmeter reads while a
+// Power-meter calibration: a forward and a reflected factor per frequency
+// segment (tx_meter_cal.h), and a "match" helper that sets the factor of the
+// segment being transmitted on from what an external wattmeter reads while a
 // steady carrier (Tune) is on the air.
-typedef struct {
-  gboolean reverse;
-  GtkWidget *factor;     // spin: the factor
-  GtkWidget *reading;    // spin: what the external meter reads (W)
-  GtkWidget *status;
-} METER_CAL_ROW;
+static GtkWidget *meter_cal_spin[2][TX_METER_CAL_SEGMENTS];   // [reverse][segment]
+static GtkWidget *meter_cal_reading;
+static GtkWidget *meter_cal_status;
 
-static METER_CAL_ROW meter_cal_rows[2];
-
-static gdouble *meter_cal_field(METER_CAL_ROW *row) {
-  return row->reverse ? &radio->transmitter->rev_cal : &radio->transmitter->fwd_cal;
+static gdouble *meter_cal_field(gboolean reverse, int seg) {
+  return reverse ? &radio->transmitter->rev_cal[seg] : &radio->transmitter->fwd_cal[seg];
 }
 
 static void meter_cal_factor_cb(GtkWidget *widget, gpointer data) {
-  METER_CAL_ROW *row=(METER_CAL_ROW *)data;
-  *meter_cal_field(row)=transmitter_meter_cal_clamp(gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget)));
-  log_info("PA: %s power calibration x%.3f\n",row->reverse?"reflected":"forward",*meter_cal_field(row));
+  int id=GPOINTER_TO_INT(data);
+  gboolean reverse=id/TX_METER_CAL_SEGMENTS;
+  int seg=id%TX_METER_CAL_SEGMENTS;
+  *meter_cal_field(reverse,seg)=tx_meter_cal_clamp(gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget)));
+  log_info("PA: %s %s power calibration x%.3f\n",tx_meter_cal_segment_name(seg),
+           reverse?"reflected":"forward",*meter_cal_field(reverse,seg));
 }
 
 static void meter_cal_match_cb(GtkWidget *widget, gpointer data) {
-  METER_CAL_ROW *row=(METER_CAL_ROW *)data;
+  gboolean reverse=GPOINTER_TO_INT(data);
   TRANSMITTER *tx=radio->transmitter;
-  double shown=row->reverse ? tx->rev : tx->fwd;
-  double actual=gtk_spin_button_get_value(GTK_SPIN_BUTTON(row->reading));
+  double shown=reverse ? tx->rev : tx->fwd;
+  double actual=gtk_spin_button_get_value(GTK_SPIN_BUTTON(meter_cal_reading));
 
   // The meter is only live while keyed, and a near-zero reading would turn
   // into an absurd factor -- refuse rather than guess.
   if(!isTransmitting(radio)) {
-    gtk_label_set_text(GTK_LABEL(row->status),"Key a carrier (Tune) first");
+    gtk_label_set_text(GTK_LABEL(meter_cal_status),"Key a carrier (Tune) first");
     return;
   }
   if(!(shown > 0.1) || !(actual > 0.0)) {
-    gtk_label_set_text(GTK_LABEL(row->status),"Too little power to match");
+    gtk_label_set_text(GTK_LABEL(meter_cal_status),"Too little power to match");
     return;
   }
 
-  gdouble *cal=meter_cal_field(row);
+  // The segment the meter is reading with right now, so `shown` divides
+  // back to the raw watts.
+  int seg=tx_meter_cal_segment(transmitter_get_frequency(tx));
+  gdouble *cal=meter_cal_field(reverse,seg);
   double raw=shown/(*cal);
   double want=actual/raw;
-  double got=transmitter_meter_cal_clamp(want);
+  double got=tx_meter_cal_clamp(want);
   *cal=got;
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(row->factor),got);   // emits factor_cb, same value
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(meter_cal_spin[reverse][seg]),got);   // emits factor_cb, same value
 
-  char text[64];
-  if(got!=want) g_snprintf(text,sizeof(text),"Clamped to x%.3f",got);
-  else g_snprintf(text,sizeof(text),"Set x%.3f",got);
-  gtk_label_set_text(GTK_LABEL(row->status),text);
-  log_info("PA: %s power matched: showed %.2f W, meter %.2f W -> x%.3f\n",
-           row->reverse?"reflected":"forward",shown,actual,got);
+  char text[96];
+  g_snprintf(text,sizeof(text),"%s %s: %s x%.3f",tx_meter_cal_segment_name(seg),
+             reverse?"reflected":"forward",got!=want?"clamped to":"set",got);
+  gtk_label_set_text(GTK_LABEL(meter_cal_status),text);
+  log_info("PA: %s %s power matched: showed %.2f W, meter %.2f W -> x%.3f\n",
+           tx_meter_cal_segment_name(seg),reverse?"reflected":"forward",shown,actual,got);
 }
 
-static void meter_cal_add_row(GtkWidget *grid, int y, METER_CAL_ROW *row, gboolean reverse) {
-  TRANSMITTER *tx=radio->transmitter;
-  row->reverse=reverse;
+static void meter_cal_build(GtkWidget *grid) {
+  GtkWidget *fwd_head=gtk_label_new("Forward ×");
+  gtk_grid_attach(GTK_GRID(grid),fwd_head,1,0,1,1);
+  GtkWidget *rev_head=gtk_label_new("Reflected ×");
+  gtk_grid_attach(GTK_GRID(grid),rev_head,2,0,1,1);
 
-  GtkWidget *label=gtk_label_new(reverse ? "Reflected ×" : "Forward ×");
-  sui_label_left(label);
-  gtk_grid_attach(GTK_GRID(grid),label,0,y,1,1);
+  for(int seg=0;seg<TX_METER_CAL_SEGMENTS;seg++) {
+    GtkWidget *label=gtk_label_new(tx_meter_cal_segment_name(seg));
+    sui_label_left(label);
+    gtk_grid_attach(GTK_GRID(grid),label,0,seg+1,1,1);
+    for(int reverse=0;reverse<2;reverse++) {
+      GtkWidget *spin=gtk_spin_button_new_with_range(TX_METER_CAL_MIN,TX_METER_CAL_MAX,0.01);
+      gtk_spin_button_set_digits(GTK_SPIN_BUTTON(spin),3);
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin),*meter_cal_field(reverse,seg));
+      gtk_widget_set_tooltip_text(spin,reverse
+          ? "Multiplies the reflected power the radio reports while transmitting in this segment (1.000 = uncalibrated). SWR follows from forward and reflected together."
+          : "Multiplies the forward power the radio reports while transmitting in this segment (1.000 = uncalibrated). A tandem match's coupling is not flat across HF.");
+      gtk_grid_attach(GTK_GRID(grid),spin,reverse+1,seg+1,1,1);
+      g_signal_connect(spin,"value_changed",G_CALLBACK(meter_cal_factor_cb),
+                       GINT_TO_POINTER(reverse*TX_METER_CAL_SEGMENTS+seg));
+      meter_cal_spin[reverse][seg]=spin;
+    }
+  }
 
-  row->factor=gtk_spin_button_new_with_range(TX_METER_CAL_MIN,TX_METER_CAL_MAX,0.01);
-  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(row->factor),3);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(row->factor),reverse ? tx->rev_cal : tx->fwd_cal);
-  gtk_widget_set_tooltip_text(row->factor,reverse
-      ? "Multiplies the reflected power the radio reports (1.000 = uncalibrated). SWR follows from forward and reflected together."
-      : "Multiplies the forward power the radio reports (1.000 = uncalibrated). The tandem match and detector ADC differ between radios.");
-  gtk_grid_attach(GTK_GRID(grid),row->factor,1,y,1,1);
-  g_signal_connect(row->factor,"value_changed",G_CALLBACK(meter_cal_factor_cb),row);
-
+  int y=TX_METER_CAL_SEGMENTS+1;
   GtkWidget *meter_label=gtk_label_new("External meter reads (W)");
   sui_label_left(meter_label);
-  gtk_grid_attach(GTK_GRID(grid),meter_label,2,y,1,1);
+  gtk_grid_attach(GTK_GRID(grid),meter_label,0,y,1,1);
 
-  row->reading=gtk_spin_button_new_with_range(0.0,2000.0,0.1);
-  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(row->reading),1);
-  gtk_grid_attach(GTK_GRID(grid),row->reading,3,y,1,1);
+  meter_cal_reading=gtk_spin_button_new_with_range(0.0,2000.0,0.1);
+  gtk_spin_button_set_digits(GTK_SPIN_BUTTON(meter_cal_reading),1);
+  gtk_grid_attach(GTK_GRID(grid),meter_cal_reading,1,y,1,1);
 
-  GtkWidget *match=gtk_button_new_with_label("Match");
-  gtk_widget_set_tooltip_text(match,reverse
-      ? "While transmitting into a known mismatch, set the factor so the reflected power shown equals the external meter"
-      : "While transmitting a steady carrier (Tune), set the factor so the forward power shown equals the external meter");
-  gtk_grid_attach(GTK_GRID(grid),match,4,y,1,1);
-  g_signal_connect(match,"clicked",G_CALLBACK(meter_cal_match_cb),row);
+  for(int reverse=0;reverse<2;reverse++) {
+    GtkWidget *match=gtk_button_new_with_label(reverse ? "Match reflected" : "Match forward");
+    gtk_widget_set_tooltip_text(match,reverse
+        ? "While transmitting into a known mismatch, set the reflected factor of the segment being transmitted on so the reflected power shown equals the external meter"
+        : "While transmitting a steady carrier (Tune), set the forward factor of the segment being transmitted on so the forward power shown equals the external meter");
+    gtk_grid_attach(GTK_GRID(grid),match,2+reverse,y,1,1);
+    g_signal_connect(match,"clicked",G_CALLBACK(meter_cal_match_cb),GINT_TO_POINTER(reverse));
+  }
 
-  row->status=gtk_label_new("");
-  sui_label_left(row->status);
-  gtk_grid_attach(GTK_GRID(grid),row->status,5,y,1,1);
+  meter_cal_status=gtk_label_new("");
+  sui_label_left(meter_cal_status);
+  gtk_grid_attach(GTK_GRID(grid),meter_cal_status,0,y+1,4,1);
 }
 
 static void swr_protect_cb(GtkDropDown *dd, GParamSpec *pspec, gpointer data) {
@@ -248,8 +260,7 @@ GtkWidget *create_pa_dialog(RADIO *r) {
   sui_style_group(cal_grid);
   gtk_frame_set_child(GTK_FRAME(cal_frame),cal_grid);
   gtk_grid_attach(GTK_GRID(grid),cal_frame,col,row++,1,1);
-  meter_cal_add_row(cal_grid,0,&meter_cal_rows[0],FALSE);
-  meter_cal_add_row(cal_grid,1,&meter_cal_rows[1],TRUE);
+  meter_cal_build(cal_grid);
 
   GtkWidget *swr_frame=gtk_frame_new("SWR Protection");
   GtkWidget *swr_grid=gtk_grid_new();

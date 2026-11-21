@@ -37,6 +37,7 @@
 #include "property.h"
 #include "mode.h"
 #include "filter.h"
+#include "tx_meter_cal.h"
 
 static int fails = 0;
 static int checks = 0;
@@ -399,6 +400,71 @@ static void test_filter_vars(void) {
   g_free(path);
 }
 
+/* ---- power-meter calibration by HF segment ----------------------------- */
+
+static void test_meter_cal(void) {
+  printf("\n-- power-meter calibration: three HF segments --\n");
+
+  /* Every amateur HF band falls in the segment its label names; the edges
+     are inclusive at the bottom, and past either end of HF the nearest
+     segment answers. */
+  expect(tx_meter_cal_segment(1810000)  == TX_METER_CAL_HF_LOW,  "160 m is HF low");
+  expect(tx_meter_cal_segment(7200000)  == TX_METER_CAL_HF_LOW,  "40 m is HF low");
+  expect(tx_meter_cal_segment(10120000) == TX_METER_CAL_HF_MID,  "30 m is HF mid");
+  expect(tx_meter_cal_segment(18100000) == TX_METER_CAL_HF_MID,  "17 m is HF mid");
+  expect(tx_meter_cal_segment(21200000) == TX_METER_CAL_HF_HIGH, "15 m is HF high");
+  expect(tx_meter_cal_segment(29600000) == TX_METER_CAL_HF_HIGH, "10 m FM is HF high");
+  expect(tx_meter_cal_segment(8000000)  == TX_METER_CAL_HF_MID,  "8 MHz itself is HF mid");
+  expect(tx_meter_cal_segment(20000000) == TX_METER_CAL_HF_HIGH, "20 MHz itself is HF high");
+  expect(tx_meter_cal_segment(30000000) == TX_METER_CAL_HF_HIGH, "30 MHz itself is HF high");
+  expect(tx_meter_cal_segment(472000)   == TX_METER_CAL_HF_LOW,  "630 m takes HF low");
+  expect(tx_meter_cal_segment(50100000) == TX_METER_CAL_HF_HIGH, "6 m takes HF high");
+
+  /* Round trip: each segment keeps its own pair. */
+  char *path = tmp_path("machpsdr_metercal_selftest.props");
+  double fwd[TX_METER_CAL_SEGMENTS], rev[TX_METER_CAL_SEGMENTS];
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) { fwd[s] = 1.1 + s; rev[s] = 0.6 + 0.1 * s; }
+  initProperties();
+  setProperty("property_version", "2.0");
+  tx_meter_cal_save(0, fwd, rev);
+  saveProperties(path);
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) fwd[s] = rev[s] = 1.0;
+  initProperties();
+  loadProperties(path);
+  tx_meter_cal_restore(0, fwd, rev);
+  int lost = 0;
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++)
+    if (fabs(fwd[s] - (1.1 + s)) > 1e-9 || fabs(rev[s] - (0.6 + 0.1 * s)) > 1e-9) lost++;
+  expect(lost == 0, "all three forward/reflected pairs round-trip");
+  expect(getProperty("transmitter[0].fwd_cal") == NULL,
+         "the pre-split single factor is not written back");
+
+  /* A file from before the split: its one factor must still calibrate HF. */
+  initProperties();
+  setProperty("transmitter[0].fwd_cal", "1.25");
+  setProperty("transmitter[0].rev_cal", "0.8");
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) fwd[s] = rev[s] = 1.0;
+  tx_meter_cal_restore(0, fwd, rev);
+  int seeded = 1;
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++)
+    if (fabs(fwd[s] - 1.25) > 1e-9 || fabs(rev[s] - 0.8) > 1e-9) seeded = 0;
+  expect(seeded, "an old single factor seeds every segment");
+
+  /* Nothing read back is trusted with a factor. */
+  initProperties();
+  setProperty("transmitter[0].fwd_cal_hf[1]", "nan");
+  setProperty("transmitter[0].rev_cal_hf[2]", "1e9");
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) fwd[s] = rev[s] = 1.0;
+  tx_meter_cal_restore(0, fwd, rev);
+  expect(fwd[1] >= TX_METER_CAL_MIN && fwd[1] <= TX_METER_CAL_MAX, "a NaN factor is clamped");
+  expect(rev[2] <= TX_METER_CAL_MAX, "an absurd factor is clamped");
+  expect_near(fwd[0], 1.0, "a missing key leaves the factor alone");
+
+  g_remove(path);
+  { char *b = g_strdup_printf("%s.bak", path); g_remove(b); g_free(b); }
+  g_free(path);
+}
+
 int main(int argc, char *argv[]) {
   int selftest = 0;
   for (int i = 1; i < argc; i++) {
@@ -416,6 +482,7 @@ int main(int argc, char *argv[]) {
   test_retain();
   test_locale();
   test_filter_vars();
+  test_meter_cal();
 
   printf("\n%d checks, %d failures\n", checks, fails);
   return fails == 0 ? 0 : 1;
