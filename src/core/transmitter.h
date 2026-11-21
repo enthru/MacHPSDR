@@ -27,6 +27,7 @@
 #include "peak_detect.h"
 #include "tx_info_meter.h"
 #include "puresignal.h"
+#include "tx_meter_cal.h"
 
 #define CTCSS_FREQUENCIES 38
 extern double ctcss_frequencies[CTCSS_FREQUENCIES];
@@ -96,9 +97,10 @@ typedef struct _transmitter {
   // Power-meter calibration: the forward/reflected watts the per-model
   // constants give are multiplied by these. The tandem match's coupling and
   // the detector ADC differ from one transceiver to the next, so the stock
-  // constants are only a starting point. 1.0 = uncalibrated.
-  gdouble fwd_cal;
-  gdouble rev_cal;
+  // constants are only a starting point. 1.0 = uncalibrated. Indexed by
+  // TX_METER_CAL_* (tx_meter_cal.h): the coupling is not flat across HF.
+  gdouble fwd_cal[TX_METER_CAL_SEGMENTS];
+  gdouble rev_cal[TX_METER_CAL_SEGMENTS];
   
 
   GtkWidget *window;
@@ -291,8 +293,5 @@ extern void transmitter_set_eer_pdelay(TRANSMITTER *tx,gdouble delay);
 extern void transmitter_set_eer_mgain(TRANSMITTER *tx,gdouble gain);
 extern void transmitter_set_eer_mdelay(TRANSMITTER *tx,gdouble delay);
 
-#define TX_METER_CAL_MIN 0.05
-#define TX_METER_CAL_MAX 20.0
-extern double transmitter_meter_cal_clamp(double v);
 
 #endif
