@@ -44,6 +44,13 @@ static void apply_label(const gchar *text, char *store, gsize store_size,
   if(check!=NULL)  gtk_button_set_label(GTK_BUTTON(check),store);
 }
 
+static void preamp_label_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio=(RADIO *)data;
+  apply_label(gtk_editable_get_text(GTK_EDITABLE(widget)),
+              radio->preamp_label,sizeof(radio->preamp_label),"Preamp",
+              radio->preamp_button,radio->preamp_check);
+}
+
 static void att10_label_cb(GtkWidget *widget, gpointer data) {
   RADIO *radio=(RADIO *)data;
   apply_label(gtk_editable_get_text(GTK_EDITABLE(widget)),
@@ -280,34 +287,38 @@ GtkWidget *create_labels_dialog(RADIO *r) {
   sui_style_group(grid);
   gtk_frame_set_child(GTK_FRAME(frame),grid);
 
-  GtkWidget *info=gtk_label_new("Custom labels for the RX front-end attenuator buttons.\n"
+  GtkWidget *info=gtk_label_new("Custom labels for the RX front-end buttons. In brackets is what\n"
+                                "each one switches on an original HPSDR radio, whatever it is called.\n"
                                 "Leave a field empty to restore the default.\n"
                                 "This setting applies only to HPSDR devices.");
   sui_label_desc(info);
   gtk_widget_set_margin_bottom(info,12); // gap between the description and the fields below
   gtk_grid_attach(GTK_GRID(grid),info,0,0,2,1);
 
-  GtkWidget *att10_lbl=gtk_label_new("Att10 button:");
-  gtk_widget_set_halign(att10_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),att10_lbl,0,1,1,1);
-  GtkWidget *att10_entry=gtk_entry_new();
-  gtk_entry_set_max_length(GTK_ENTRY(att10_entry),sizeof(r->att10_label)-1);
-  gtk_editable_set_text(GTK_EDITABLE(att10_entry),r->att10_label);
-  gtk_editable_set_width_chars(GTK_EDITABLE(att10_entry),16);
-  gtk_widget_set_halign(att10_entry,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),att10_entry,1,1,1,1);
-  g_signal_connect(att10_entry,"changed",G_CALLBACK(att10_label_cb),r);
-
-  GtkWidget *att20_lbl=gtk_label_new("Att20 button:");
-  gtk_widget_set_halign(att20_lbl,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),att20_lbl,0,2,1,1);
-  GtkWidget *att20_entry=gtk_entry_new();
-  gtk_entry_set_max_length(GTK_ENTRY(att20_entry),sizeof(r->att20_label)-1);
-  gtk_editable_set_text(GTK_EDITABLE(att20_entry),r->att20_label);
-  gtk_editable_set_width_chars(GTK_EDITABLE(att20_entry),16);
-  gtk_widget_set_halign(att20_entry,GTK_ALIGN_START);
-  gtk_grid_attach(GTK_GRID(grid),att20_entry,1,2,1,1);
-  g_signal_connect(att20_entry,"changed",G_CALLBACK(att20_label_cb),r);
+  // One row per button. The caption names the SIGNAL, not the label, so an
+  // operator who renamed a button still sees which protocol bit it drives.
+  static const struct {
+    const char *caption;
+    size_t off;
+    GCallback cb;
+  } rows[]={
+    {"Preamp (LTC2208 ADC gain, ~3.5 dB):", G_STRUCT_OFFSET(RADIO,preamp_label), G_CALLBACK(preamp_label_cb)},
+    {"Att10 (Alex 10 dB RX attenuator):",   G_STRUCT_OFFSET(RADIO,att10_label),  G_CALLBACK(att10_label_cb)},
+    {"Att20 (Alex 20 dB RX attenuator):",   G_STRUCT_OFFSET(RADIO,att20_label),  G_CALLBACK(att20_label_cb)},
+  };
+  for(guint i=0;i<G_N_ELEMENTS(rows);i++) {
+    char *store=G_STRUCT_MEMBER_P(r,rows[i].off);
+    GtkWidget *lbl=gtk_label_new(rows[i].caption);
+    gtk_widget_set_halign(lbl,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid),lbl,0,1+(int)i,1,1);
+    GtkWidget *entry=gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(entry),sizeof(r->att10_label)-1);
+    gtk_editable_set_text(GTK_EDITABLE(entry),store);
+    gtk_editable_set_width_chars(GTK_EDITABLE(entry),16);
+    gtk_widget_set_halign(entry,GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid),entry,1,1+(int)i,1,1);
+    g_signal_connect(entry,"changed",rows[i].cb,r);
+  }
 
   // ---- Broadcast FM (WFM) options ----
   GtkWidget *fm_frame=gtk_frame_new("Broadcast FM (WFM)");

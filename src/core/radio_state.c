@@ -355,6 +355,7 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.mic_linein",value);
   sprintf(value,"%d",radio->linein_gain);
   setProperty("radio.linein_gain",value);
+  setProperty("radio.preamp_label",radio->preamp_label);
   setProperty("radio.att10_label",radio->att10_label);
   setProperty("radio.att20_label",radio->att20_label);
   sprintf(value,"%d",radio->theme);
@@ -745,6 +746,8 @@ void radio_restore_state(RADIO *radio) {
   if(value!=NULL) radio->mic_linein=atoi(value);
   value=getProperty("radio.linein_gain");
   if(value!=NULL) radio->linein_gain=atoi(value);
+  value=getProperty("radio.preamp_label");
+  if(value!=NULL && value[0]!='\0') g_strlcpy(radio->preamp_label,value,sizeof(radio->preamp_label));
   value=getProperty("radio.att10_label");
   if(value!=NULL && value[0]!='\0') g_strlcpy(radio->att10_label,value,sizeof(radio->att10_label));
   value=getProperty("radio.att20_label");

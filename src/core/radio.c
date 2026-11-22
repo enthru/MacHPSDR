@@ -3479,13 +3479,14 @@ static void create_visual(RADIO *r) {
   // Module: RX FRONT-END - Preamp / Att10 / Att20 (ADC 0).
   GtkWidget *adc_col=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
 
-  GtkWidget *preamp_button=gtk_toggle_button_new_with_label("Preamp");
+  GtkWidget *preamp_button=gtk_toggle_button_new_with_label(r->preamp_label);
   gtk_widget_set_name(preamp_button,"toolbar-button");
   gtk_widget_set_tooltip_text(preamp_button,
       "ADC 0 preamp (LT2208 gain)");
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(preamp_button),radio->adc[0].preamp);
   g_signal_connect(preamp_button,"toggled",G_CALLBACK(adc_preamp_cb),&radio->adc[0]);
   gtk_box_append(GTK_BOX(adc_col),preamp_button);
+  r->preamp_button=preamp_button;
 
   GtkWidget *att10_button=gtk_toggle_button_new_with_label(r->att10_label);
   gtk_widget_set_name(att10_button,"toolbar-button");
@@ -3996,6 +3997,7 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   r->adc[0].attenuation=0;
   r->adc_overload = 0;
 
+  strcpy(r->preamp_label,"Preamp");
   strcpy(r->att10_label,"Att10");
   strcpy(r->att20_label,"Att20");
   r->theme=0;   // Charcoal

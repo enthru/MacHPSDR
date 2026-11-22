@@ -1254,22 +1254,26 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc0_grid),random_b,1,1,1,1);
       g_signal_connect(random_b,"toggled",G_CALLBACK(random_cb),&radio->adc[0]);
 
-      preamp_b=gtk_check_button_new_with_label("Preamp");
+      preamp_b=gtk_check_button_new_with_label(radio->preamp_label);
       gtk_check_button_set_active (GTK_CHECK_BUTTON (preamp_b), radio->adc[0].preamp);
       gtk_grid_attach(GTK_GRID(adc0_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[0]);
+      radio->preamp_check=preamp_b;
+      g_object_add_weak_pointer(G_OBJECT(preamp_b),(gpointer *)&radio->preamp_check);
 
       att10_b=gtk_check_button_new_with_label(radio->att10_label);
       gtk_check_button_set_active (GTK_CHECK_BUTTON (att10_b), radio->adc[0].att10);
       gtk_grid_attach(GTK_GRID(adc0_grid),att10_b,3,1,1,1);
       g_signal_connect(att10_b,"toggled",G_CALLBACK(att10_cb),&radio->adc[0]);
       radio->att10_check=att10_b;
+      g_object_add_weak_pointer(G_OBJECT(att10_b),(gpointer *)&radio->att10_check);
 
       att20_b=gtk_check_button_new_with_label(radio->att20_label);
       gtk_check_button_set_active (GTK_CHECK_BUTTON (att20_b), radio->adc[0].att20);
       gtk_grid_attach(GTK_GRID(adc0_grid),att20_b,4,1,1,1);
       g_signal_connect(att20_b,"toggled",G_CALLBACK(att20_cb),&radio->adc[0]);
       radio->att20_check=att20_b;
+      g_object_add_weak_pointer(G_OBJECT(att20_b),(gpointer *)&radio->att20_check);
 
       attenuation_label=gtk_label_new("Attenuation (dB):");
       gtk_grid_attach(GTK_GRID(adc0_grid),attenuation_label,5,1,1,1);
@@ -1328,7 +1332,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
       gtk_grid_attach(GTK_GRID(adc1_grid),random_b,1,1,1,1);
       g_signal_connect(random_b,"toggled",G_CALLBACK(random_cb),&radio->adc[1]);
 
-      preamp_b=gtk_check_button_new_with_label("Preamp");
+      preamp_b=gtk_check_button_new_with_label(radio->preamp_label);
       gtk_check_button_set_active (GTK_CHECK_BUTTON (preamp_b), radio->adc[1].preamp);
       gtk_grid_attach(GTK_GRID(adc1_grid),preamp_b,2,1,1,1);
       g_signal_connect(preamp_b,"toggled",G_CALLBACK(preamp_cb),&radio->adc[1]);
