@@ -741,9 +741,24 @@ void bandRestoreState(void) {
     if(value) band=atoi(value);
 }
 
+int band_xvtr_containing(gint64 f) {
+  for(int b=BANDS;b<BANDS+XVTRS;b++) {
+    BAND *xb=band_get_band(b);
+    if(xb->title[0]=='\0' || xb->frequencyLO==0) continue;
+    if(xb->frequencyMax<=xb->frequencyMin) continue;     // no range typed yet
+    if(f>=xb->frequencyMin && f<=xb->frequencyMax) return b;
+  }
+  return -1;
+}
+
 int get_band_from_frequency(gint64 f) {
   int b;
-  int found=-1;
+  int found=band_xvtr_containing(f);
+  // A transverter first: it is the operator's statement that this stretch of
+  // the dial is received through a converter, and on a SoapySDR device a
+  // built-in VHF row (144, 430, ...) covers the same frequencies and would
+  // otherwise win by coming first in the table.
+  if(found>=0) return found;
 
   for(b=0;b<BANDS+XVTRS;b++) {
     if ((b == band6) && (radio->hl2 != NULL)) continue;

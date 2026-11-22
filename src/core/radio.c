@@ -457,8 +457,9 @@ static gboolean radio_startup_done=FALSE;
 
 /* Keep the converter/transverter honest with what the operator has tuned to.
    A converter LO is a property of the BAND (set_band writes rx->lo_a =
-   b->frequencyLO), but the VFO wheel moves frequency_a without touching it. Two
-   faults come out of that and both are fixed here:
+   b->frequencyLO), but the VFO wheel moves frequency_a without touching it.
+   Three faults come out of that and all are fixed here (the third, a dial put
+   INTO a transverter band without the band menu, is described in the code):
 
    1. Tuning OUT of a transverter band left the converter applied, so the dial
       read the on-air frequency of a signal the hardware was no longer receiving
@@ -474,16 +475,36 @@ static gboolean radio_startup_done=FALSE;
 
    Gated on radio_startup_done so a receiver restored with a converter LO before
    bandRestoreState() has re-populated the XVTR/QO-100 band table is never
-   touched -- only live operator tuning changes a converter. No-op when there is
-   no converter, so plain tuning is untouched. */
+   touched -- only live operator tuning changes a converter. Plain tuning
+   outside every transverter band, with no converter, is untouched. */
 static void receiver_sync_transverter(RECEIVER *rx) {
-  if(rx==NULL || rx->lo_a==0 || !radio_startup_done) return;
+  if(rx==NULL || !radio_startup_done) return;
   // A shared-LO follower does not own its converter -- it inherits the owner's
   // (rx_sync_shared_followers), because the two are one piece of hardware and
   // cannot show different converters (741 MHz on one and 10 GHz on the other).
   // So a follower never self-heals here; only the receiver that owns the LO does.
   if(radio->discovered->protocol==PROTOCOL_SOAPYSDR &&
      !soapy_protocol_rx_owns_hardware(rx)) return;
+  // 3. The other direction: a dial put INSIDE a transverter's band by any route
+  //    but the band menu (typed, CAT, TCI, a bookmark, the wheel) is that
+  //    transverter's frequency. Only set_band() used to apply a converter, so a
+  //    typed 144.300 left the LO at 0 -- band_a said "2m", the hardware was told
+  //    144.3 MHz, and the transverter was never used. The dial is the frequency
+  //    at the antenna; only the converter behind it changes.
+  int xb=band_xvtr_containing(rx->frequency_a);
+  if(xb>=0) {
+    BAND *xvtr=band_get_band(xb);
+    if(rx->lo_a!=xvtr->frequencyLO) {
+      log_info("%s: rx%d dial %lld is on transverter %s -> LO %lld (was %lld)\n",
+               __FUNCTION__,rx->channel,(long long)rx->frequency_a,xvtr->title,
+               (long long)xvtr->frequencyLO,(long long)rx->lo_a);
+      rx->lo_a=xvtr->frequencyLO;
+      rx->error_a=xvtr->errorLO;
+    }
+    rx->band_a=xb;
+    return;
+  }
+  if(rx->lo_a==0) return;
   // Still inside SOME band that uses this converter LO? Then the receiver is
   // legitimately on it (search all bands, not just band_a).
   for(int b=0;b<BANDS+XVTRS;b++) {

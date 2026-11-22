@@ -112,6 +112,9 @@ extern BAND *band_get_band(int b);
 extern const char *band_display_name(int b);
 extern BAND *band_set_current(int b);
 extern int get_band_from_frequency(gint64 f);
+/* The named transverter (with an LO and a range) whose band holds this dial
+   frequency, or -1. */
+extern int band_xvtr_containing(gint64 f);
 
 extern BANDSTACK *bandstack_get_bandstack(int band);
 extern BANDSTACK_ENTRY *bandstack_get_bandstack_entry(int band,int entry);

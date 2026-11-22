@@ -1527,6 +1527,24 @@ void band_cb(GtkWidget *menu_item,gpointer data) {
    and by CAT (FA/ZZFA).  It has to be shared: under ctun/freetune the dial the
    operator reads is the CURSOR, so a setter that assigns frequency_a moves the
    span centre and leaves the receiver listening where it was. */
+/* A TYPED frequency is the frequency at the antenna.  The wheel leaving a
+   converter's band keeps the HARDWARE frequency and lets the dial jump to it
+   (receiver_sync_transverter, case 1) -- right for a knob, wrong for a number:
+   on a 1240 MHz LO, typing 1300.5 landed on 60.5 MHz.  So a typed number
+   outside every band that uses the current converter drops the converter
+   first, and frequency_changed() then picks whatever transverter (or none)
+   owns the number. */
+static void vfo_drop_converter_for(RECEIVER *rx, long long target) {
+  if(rx->lo_a==0) return;
+  for(int b=0;b<BANDS+XVTRS;b++) {
+    BAND *bb=band_get_band(b);
+    if(bb==NULL || bb->title[0]=='\0') continue;
+    if(bb->frequencyLO==rx->lo_a && target>=bb->frequencyMin && target<=bb->frequencyMax) return;
+  }
+  rx->lo_a=0;
+  rx->error_a=0;
+}
+
 void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b) {
   if(rx==NULL || rx->locked) return;
   if(is_b) {
@@ -1534,6 +1552,7 @@ void vfo_apply_frequency(RECEIVER *rx, long long target, gboolean is_b) {
     receiver_move_b(rx,want,FALSE,FALSE);
     frequency_changed(rx);
   } else {
+    vfo_drop_converter_for(rx,target);
     long long f=(rx->ctun || rx->freetune)?rx->ctun_frequency:rx->frequency_a;
     long long want=target-f;
     if(rx->ctun || rx->freetune) receiver_move(rx,want,FALSE);
