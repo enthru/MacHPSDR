@@ -466,6 +466,100 @@ static void test_meter_cal(void) {
   g_free(path);
 }
 
+/* ---- an older build must not erase a newer build's settings ------------- */
+
+static void write_file(const char *path, const char *text) {
+  FILE *f = fopen(path, "w");
+  fputs(text, f);
+  fclose(f);
+}
+
+static void test_pass_through(void) {
+  printf("\n-- keys this build never asks for survive its save --\n");
+  char *path = tmp_path("machpsdr_passthru_selftest.props");
+  char *mpath = tmp_path("machpsdr_passthru_selftest.midi");
+
+  /* A file a NEWER build wrote: "known.a" and "known.gone" are keys this
+     build reads; "newer.x" is one only the newer build has. */
+  write_file(path, "property_version=2.00\nknown.a=1\nknown.gone=7\nnewer.x=42\n");
+
+  initProperties();
+  loadProperties(path);
+  expect_str(getProperty("known.a"), "1", "a known key is read");
+  (void)getProperty("known.gone");
+
+  /* A MIDI export in the middle of the session: its own file, its own keys. */
+  pushPropertyStore();
+  initProperties();
+  setProperty("midi.x", "1");
+  saveProperties(mpath);
+  popPropertyStore();
+
+  /* radio_save_state(): full re-serialisation of what this build knows. It
+     writes known.a, and drops known.gone (a deleted thing). */
+  initProperties();
+  setProperty("known.a", "2");
+  saveProperties(path);
+
+  initProperties();
+  loadProperties(path);
+  expect_str(getProperty("known.a"), "2", "a key this build writes takes its new value");
+  expect_str(getProperty("newer.x"), "42", "a key this build never asked for is written back as read");
+  expect(getProperty("known.gone") == NULL,
+         "a key this build asked for and did not write is dropped (deletion still works)");
+
+  /* The export did not pick up the radio's unknown key. */
+  pushPropertyStore();
+  loadProperties(mpath);
+  expect(getProperty("newer.x") == NULL, "another file does not inherit the radio's unknown keys");
+  popPropertyStore();
+
+  /* Saved under ANOTHER name, the store carries none of this file's unknown
+     keys: they belong to the file they came from. */
+  {
+    char *other = tmp_path("machpsdr_passthru_other.props");
+    initProperties();
+    loadProperties(path);
+    initProperties();
+    setProperty("other.z", "1");
+    saveProperties(other);
+    initProperties();
+    loadProperties(other);
+    expect(getProperty("newer.x") == NULL, "unknown keys are not planted in a different file");
+    g_remove(other);
+    { char *b = g_strdup_printf("%s.bak", other); g_remove(b); g_free(b); }
+    g_free(other);
+  }
+
+  /* Negative control: once asked for, the key is this build's, and a save
+     that does not write it drops it -- the pass-through is not "keep all". */
+  initProperties();
+  loadProperties(path);
+  (void)getProperty("newer.x");
+  initProperties();
+  setProperty("known.a", "3");
+  saveProperties(path);
+  initProperties();
+  loadProperties(path);
+  expect(getProperty("newer.x") == NULL, "control: a key asked for and not written is gone");
+
+  /* A file the version gate discards contributes nothing to pass through. */
+  write_file(path, "property_version=1.0\nold.y=5\n");
+  initProperties();
+  loadProperties(path);
+  initProperties();
+  setProperty("known.a", "4");
+  saveProperties(path);
+  initProperties();
+  loadProperties(path);
+  expect(getProperty("old.y") == NULL, "a file failing the version gate passes nothing through");
+
+  g_remove(path); g_remove(mpath);
+  { char *b = g_strdup_printf("%s.bak", path); g_remove(b); g_free(b); }
+  { char *b = g_strdup_printf("%s.bak", mpath); g_remove(b); g_free(b); }
+  g_free(path); g_free(mpath);
+}
+
 int main(int argc, char *argv[]) {
   int selftest = 0;
   for (int i = 1; i < argc; i++) {
@@ -484,6 +578,7 @@ int main(int argc, char *argv[]) {
   test_locale();
   test_filter_vars();
   test_meter_cal();
+  test_pass_through();
 
   printf("\n%d checks, %d failures\n", checks, fails);
   return fails == 0 ? 0 : 1;

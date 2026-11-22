@@ -43,6 +43,31 @@ static GHashTable* retained=NULL;
 
 static double version=0.0;
 
+/* What an OLDER build must not destroy.  radio_save_state() re-serialises the
+   whole store from the RADIO structs, so a key this build has no field for --
+   one a NEWER build added (a per-segment calibration, a new setting) -- simply
+   was not written, and running yesterday's build once erased today's settings.
+
+   So every key read from the file starts out "foreign", and stops being foreign
+   the moment anything asks for it with getProperty().  A key this build asked
+   for is one it understands: it writes it again or, by not writing it, drops it
+   on purpose (a deleted transverter, a migrated legacy key).  A key nobody
+   asked for all session is one this build does not understand, and
+   saveProperties() writes it back exactly as it was read.
+
+   Being asked for is the test, not a version number: nothing has to be bumped
+   by hand, and it is right for a key that exists in one build configuration
+   and not another (a non-SOAPYSDR build has fewer bands) as much as for one
+   from the future. */
+static GHashTable* foreign=NULL;
+// ...and they belong to the file they were read from: saved anywhere else
+// they would plant one file's settings in another.
+static char* foreign_file=NULL;
+
+static GHashTable* new_table(void) {
+  return g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
+}
+
 static void ensure_store(void) {
   if(properties==NULL) {
     properties=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
@@ -64,6 +89,8 @@ void initProperties(void) {
 // in between.  Not reentrant beyond one level, which is all any caller needs
 // (both are GTK-thread only).
 static GHashTable* parked=NULL;
+static GHashTable* parked_foreign=NULL;
+static char* parked_foreign_file=NULL;
 static double parked_version=0.0;
 
 void pushPropertyStore(void) {
@@ -74,7 +101,14 @@ void pushPropertyStore(void) {
   }
   parked=properties;
   parked_version=version;   // loadProperties leaves it set, and it gates the load
-  properties=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
+  // The pass-through set belongs to the file the store was read from: a MIDI
+  // export must not carry the radio's unknown keys, and the radio's must
+  // survive the export.
+  parked_foreign=foreign;
+  parked_foreign_file=foreign_file;
+  foreign=NULL;
+  foreign_file=NULL;
+  properties=new_table();
 }
 
 void popPropertyStore(void) {
@@ -86,6 +120,12 @@ void popPropertyStore(void) {
   properties=parked;
   version=parked_version;
   parked=NULL;
+  if(foreign!=NULL) g_hash_table_destroy(foreign);
+  foreign=parked_foreign;
+  parked_foreign=NULL;
+  g_free(foreign_file);
+  foreign_file=parked_foreign_file;
+  parked_foreign_file=NULL;
 }
 
 // Move every property whose name begins with prefix out of the active store
@@ -177,6 +217,7 @@ static gboolean load_one(const char* filename) {
             value=strtok(NULL,"\n");
             if (name != NULL && value != NULL) {
                 setProperty(name,value);
+                g_hash_table_insert(foreign,g_strdup(name),g_strdup(value));
                 any=TRUE;
                 if(strcmp(name,"property_version")==0) {
                     version=propToDouble(value);
@@ -196,10 +237,15 @@ void loadProperties(char* filename) {
     // later file with no property_version line (or an older one) was accepted
     // on the strength of its predecessor.
     version=0.0;
+    if(foreign==NULL) foreign=new_table();
+    g_hash_table_remove_all(foreign);
+    g_free(foreign_file);
+    foreign_file=g_strdup(filename);
 
     log_info("loadProperties: %s\n",filename);
 
     if(!load_one(filename)) {
+        g_hash_table_remove_all(foreign);   // an empty main file contributes nothing
         // Missing or empty. On a first run that is simply how it starts, so it
         // is not an error -- but it is also the one window saveProperties()
         // leaves open (between moving the old file aside and moving the new one
@@ -214,8 +260,12 @@ void loadProperties(char* filename) {
         g_free(bak);
     }
 
+    // property_version itself is rewritten on every save.
+    g_hash_table_remove(foreign,"property_version");
+
     if(version!=PROPERTY_VERSION) {
       g_hash_table_remove_all(properties);
+      g_hash_table_remove_all(foreign);
       log_info("loadProperties: version=%f expected version=%f ignoring\n",version,PROPERTY_VERSION);
     }
 }
@@ -287,12 +337,32 @@ gboolean saveProperties(char* filename) {
     }
 
     // Sort the keys so the output file is deterministic (stable across saves,
-    // human-diffable) rather than following the hash bucket order.
+    // human-diffable) rather than following the hash bucket order.  The keys
+    // this build never asked for (see `foreign`) go out beside its own; a key
+    // in both is one this build wrote, and its value wins.
     GList* keys=g_hash_table_get_keys(properties);
+    int passed=0;
+    if(foreign!=NULL && foreign_file!=NULL && strcmp(foreign_file,filename)==0) {
+        GHashTableIter iter;
+        gpointer key;
+        g_hash_table_iter_init(&iter,foreign);
+        while(g_hash_table_iter_next(&iter,&key,NULL)) {
+            if(!g_hash_table_contains(properties,key)) {
+                keys=g_list_prepend(keys,key);
+                passed++;
+                log_debug("saveProperties: kept unknown %s\n",(const char*)key);
+            }
+        }
+    }
+    if(passed>0) {
+        log_info("saveProperties: %s: %d setting(s) this build does not know, kept as read\n",
+                 filename,passed);
+    }
     keys=g_list_sort(keys,(GCompareFunc)strcmp);
     for(GList* k=keys; k!=NULL; k=k->next) {
         const char* name=(const char*)k->data;
         const char* value=(const char*)g_hash_table_lookup(properties,name);
+        if(value==NULL) value=(const char*)g_hash_table_lookup(foreign,name);   // passed through
         // g_strdup_printf, not a 512-byte snprintf: a truncated line loses its
         // newline and therefore MERGES two settings into one malformed key,
         // which is worse than the long value it was guarding against.
@@ -361,6 +431,8 @@ gboolean saveProperties(char* filename) {
 * @return
 */
 char* getProperty(char* name) {
+    // Asking is what makes a key this build's own -- see `foreign`.
+    if(foreign!=NULL) g_hash_table_remove(foreign,name);
     if(properties==NULL) return NULL;
     return (char*)g_hash_table_lookup(properties,name);
 }
