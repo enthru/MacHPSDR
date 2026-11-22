@@ -321,7 +321,7 @@ gboolean qo100_create_transverters(RADIO *r, char *msg, int msgsz) {
   }
   if(rxs<0 || txs<0) {
     if(msg!=NULL) snprintf(msg,msgsz,
-      "No free transverter slots — clear two rows above first");
+      "No free transverter slots — delete two on the Bands page first");
     return FALSE;
   }
 

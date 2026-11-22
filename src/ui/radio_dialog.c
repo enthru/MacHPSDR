@@ -586,8 +586,9 @@ log_info("radio_dialog: audio_backend_cb: row=%d backend=%d\n",row,backend_rows[
 }
 
 static void smeter_calibrate_changed_cb(GtkWidget *widget, gpointer data) {
-  RADIO *radio=(RADIO *)data;
-  radio->meter_calibration=gtk_range_get_value(GTK_RANGE(widget));
+  int seg=GPOINTER_TO_INT(data);
+  if(seg<0 || seg>=TX_METER_CAL_SEGMENTS) return;
+  radio->smeter_cal.hf[seg]=smeter_cal_clamp(gtk_range_get_value(GTK_RANGE(widget)));
 }
 
 static void panadapter_calibrate_changed_cb(GtkWidget *widget, gpointer data) {
@@ -1603,18 +1604,31 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   // with the radio hardware settings.
   gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1);
 
-  GtkWidget *smeter_label=gtk_label_new(" S-Meter:");
-  gtk_grid_attach(GTK_GRID(calibration_grid),smeter_label,0,1,1,1);
+  // One S-meter offset per HF segment (the power meter's three), because a
+  // receiver's gain is not flat across HF. Each transverter has its own, in
+  // its row on the Bands page; a frequency above HF that is not on a
+  // transverter takes the High segment's.
+  for(int seg=0;seg<TX_METER_CAL_SEGMENTS;seg++) {
+    char text[64];
+    snprintf(text,sizeof(text)," S-Meter %s:",tx_meter_cal_segment_name(seg));
+    GtkWidget *smeter_label=gtk_label_new(text);
+    gtk_widget_set_halign(smeter_label,GTK_ALIGN_START);
+    gtk_widget_set_tooltip_text(smeter_label,
+        "Added to the S-meter reading (dB) while the receiver is in this part of HF. "
+        "A transverter's offset is set in its own row on the Bands page.");
+    gtk_grid_attach(GTK_GRID(calibration_grid),smeter_label,0,1+seg,1,1);
 
-  GtkWidget *smeter_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(radio->meter_calibration, -100.0, 100.0, 1.0, 1.0, 1.0));
-  gtk_widget_set_size_request(smeter_scale,200,30);
-  sui_scale_show_value(smeter_scale,0);
-  gtk_widget_set_visible(smeter_scale, TRUE);
-  g_signal_connect(G_OBJECT(smeter_scale),"value_changed",G_CALLBACK(smeter_calibrate_changed_cb),radio);
-  gtk_grid_attach(GTK_GRID(calibration_grid),smeter_scale,1,1,1,1);
+    GtkWidget *smeter_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(radio->smeter_cal.hf[seg], SMETER_CAL_MIN, SMETER_CAL_MAX, 1.0, 1.0, 1.0));
+    gtk_widget_set_size_request(smeter_scale,200,30);
+    sui_scale_show_value(smeter_scale,0);
+    gtk_widget_set_visible(smeter_scale, TRUE);
+    g_signal_connect(G_OBJECT(smeter_scale),"value_changed",G_CALLBACK(smeter_calibrate_changed_cb),GINT_TO_POINTER(seg));
+    gtk_grid_attach(GTK_GRID(calibration_grid),smeter_scale,1,1+seg,1,1);
+  }
 
   GtkWidget *panadapter_label=gtk_label_new(" Panadapter:");
-  gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_label,0,2,1,1);
+  gtk_widget_set_halign(panadapter_label,GTK_ALIGN_START);
+  gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_label,0,1+TX_METER_CAL_SEGMENTS,1,1);
 
   GtkWidget *panadapter_scale=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,gtk_adjustment_new(radio->panadapter_calibration, -100.0, 100.0, 1.0, 1.0, 1.0));
   gtk_widget_set_size_request(panadapter_scale,200,30);
@@ -1622,7 +1636,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   sui_scale_show_value(panadapter_scale,0);
   gtk_widget_set_visible(panadapter_scale, TRUE);
   g_signal_connect(G_OBJECT(panadapter_scale),"value_changed",G_CALLBACK(panadapter_calibrate_changed_cb),radio);
-  gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_scale,1,2,1,1);
+  gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_scale,1,1+TX_METER_CAL_SEGMENTS,1,1);
 
   x=0;
   y=0;

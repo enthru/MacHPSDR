@@ -652,6 +652,7 @@ tx_info_meter.c \
 peak_detect.c \
 dc_block.c \
 tx_meter_cal.c \
+smeter_cal.c \
 subrx.c \
 actions.c\
 keybind.c\
@@ -729,6 +730,7 @@ tx_info_meter.h \
 peak_detect.h \
 dc_block.h \
 tx_meter_cal.h \
+smeter_cal.h \
 subrx.h \
 actions.h\
 dxcluster.h\
@@ -809,6 +811,7 @@ tx_info_meter.o \
 peak_detect.o \
 dc_block.o \
 tx_meter_cal.o \
+smeter_cal.o \
 subrx.o \
 actions.o \
 keybind.o \
@@ -1156,10 +1159,10 @@ ui_layout_offline$(EXE): tools/ui_layout_offline.c keybind_dialog.o keybind.o se
 #   make props-offline && ./props_offline --selftest
 .PHONY: props-offline
 props-offline: props_offline$(EXE)
-props_offline$(EXE): tools/props_offline.c property.o log.o filter.o mode.o tx_meter_cal.o
+props_offline$(EXE): tools/props_offline.c property.o log.o filter.o mode.o tx_meter_cal.o smeter_cal.o
 	$(CC) $(CFLAGS) $(OPTIONS) $(SRC_INCLUDES) $(BREW_INCLUDES) \
 	  $(shell pkg-config --cflags glib-2.0) -o $@ tools/props_offline.c property.o log.o \
-	  filter.o mode.o tx_meter_cal.o $(shell pkg-config --libs glib-2.0) -lm
+	  filter.o mode.o tx_meter_cal.o smeter_cal.o $(shell pkg-config --libs glib-2.0) -lm
 
 # A software HPSDR (Protocol-1) board: tools/metis_emu.c.  Not part of `make
 # check` -- it is a SERVER, not a self-test, and the thing it exists to drive is

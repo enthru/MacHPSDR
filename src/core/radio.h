@@ -46,6 +46,7 @@
 #include "diversity_mixer.h"
 #include "hl2.h"
 #include "band.h"
+#include "smeter_cal.h"
 
 enum {
   ANAN_10=0,
@@ -254,7 +255,9 @@ typedef struct _radio {
   DIVMIXER *divmixer[MAX_DIVERSITY_MIXERS+1];
   gint alex_rx_antenna;
   gint alex_tx_antenna;
-  gdouble meter_calibration;
+  // S-meter offset in dB, per HF segment and per transverter slot
+  // (smeter_cal.h); radio_smeter_calibration() picks a receiver's.
+  SMETER_CAL smeter_cal;
   gdouble panadapter_calibration;
   gdouble swr_alarm_value;
   // What an SWR above swr_alarm_value DOES (SWR_PROTECT_*), and whether a Tune
@@ -544,6 +547,11 @@ extern void frequency_changed(RECEIVER *rx);
 // (dial minus LO offset, Hz). Scales the configured ppm by f_rf in whole MHz,
 // matching the long-standing Protocol-1 formula.
 extern long long radio_ppm_correction(long long f_rf);
+// The S-meter offset (dB) for where this receiver is listening: its
+// transverter's when it is on one, else the HF segment of the RF at the radio.
+extern double radio_smeter_calibration(RECEIVER *rx);
+// What an uncalibrated S-meter offset is on this device (a new transverter).
+extern double radio_smeter_cal_default(void);
 extern void radio_set_wfm_deemphasis(RADIO *radio, int sel);
 extern int add_receiver(void *data, gboolean show_rx);
 extern int add_diversity_mixer(void *data, RECEIVER *rx_visual, RECEIVER *rx_hidden); // TODO - does this *need* a prototype?

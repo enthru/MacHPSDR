@@ -679,6 +679,23 @@ long long radio_ppm_correction(long long f_rf) {
   return llround((double)f_rf * radio->ppm_correction_value / 1.0e6);
 }
 
+_Static_assert(SMETER_CAL_XVTRS==XVTRS,"one S-meter offset per transverter slot");
+
+double radio_smeter_calibration(RECEIVER *rx) {
+  int slot=-1;
+  if(rx->band_a>=BANDS && rx->band_a<BANDS+XVTRS && band_get_band(rx->band_a)->title[0]!='\0') {
+    slot=rx->band_a-BANDS;
+  }
+  return smeter_cal_pick(&radio->smeter_cal,slot,rx->frequency_a-rx->lo_a);
+}
+
+double radio_smeter_cal_default(void) {
+#ifdef SOAPYSDR
+  if(radio!=NULL && radio->discovered!=NULL && radio->discovered->device==DEVICE_SOAPYSDR) return -20.0;
+#endif
+  return 0.0;
+}
+
 gboolean isTransmitting(RADIO *r) {
   return (r->ptt | r->mox | r->vox | r->tune);
 }
@@ -3894,12 +3911,12 @@ log_info("create_radio for %s %d\n",d->name,d->device);
   switch(d->device) {
 #ifdef SOAPYSDR
     case DEVICE_SOAPYSDR:
-      r->meter_calibration=-20.0;
+      smeter_cal_fill(&r->smeter_cal,-20.0);
       r->panadapter_calibration=-20.0;
       break;
 #endif
     default:
-      r->meter_calibration=0.0;
+      smeter_cal_fill(&r->smeter_cal,0.0);
       r->panadapter_calibration=0.0;
       break;
   }

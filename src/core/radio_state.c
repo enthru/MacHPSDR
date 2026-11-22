@@ -296,7 +296,7 @@ log_info("radio_save_state: %s\n",filename);
   setProperty("radio.rec_iq",value);
   sprintf(value,"%d",radio->rec_af);
   setProperty("radio.rec_af",value);
-  setPropertyDouble("radio.meter_calibration",radio->meter_calibration);
+  smeter_cal_save(&radio->smeter_cal);
   setPropertyDouble("radio.panadapter_calibration",radio->panadapter_calibration);
   sprintf(value,"%d",radio->cw_keyer_sidetone_frequency);
   setProperty("radio.cw_keyer_sidetone_frequency",value);
@@ -599,8 +599,7 @@ void radio_restore_state(RADIO *radio) {
     }
   }
 #endif
-  value=getProperty("radio.meter_calibration");
-  if(value) radio->meter_calibration=propToDouble(value);
+  smeter_cal_restore(&radio->smeter_cal);
   value=getProperty("radio.panadapter_calibration");
   if(value) radio->panadapter_calibration=propToDouble(value);
   value=getProperty("radio.cw_keyer_sidetone_frequency");

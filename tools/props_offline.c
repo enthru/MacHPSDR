@@ -38,6 +38,7 @@
 #include "mode.h"
 #include "filter.h"
 #include "tx_meter_cal.h"
+#include "smeter_cal.h"
 
 static int fails = 0;
 static int checks = 0;
@@ -560,6 +561,67 @@ static void test_pass_through(void) {
   g_free(path); g_free(mpath);
 }
 
+/* ---- S-meter calibration: HF segments + transverters -------------------- */
+
+static void test_smeter_cal(void) {
+  printf("\n-- S-meter calibration: HF segments and each transverter --\n");
+  SMETER_CAL c;
+  smeter_cal_fill(&c, -20.0);
+  c.hf[TX_METER_CAL_HF_LOW] = -3.0;
+  c.hf[TX_METER_CAL_HF_MID] = 1.5;
+  c.hf[TX_METER_CAL_HF_HIGH] = 4.0;
+  c.xvtr[2] = -31.0;
+  expect_near(smeter_cal_pick(&c, -1, 3700000), -3.0, "80 m reads the Low offset");
+  expect_near(smeter_cal_pick(&c, -1, 14200000), 1.5, "20 m reads the Mid offset");
+  expect_near(smeter_cal_pick(&c, -1, 28400000), 4.0, "10 m reads the High offset");
+  c.hf[TX_METER_CAL_OTHER] = -8.0;
+  expect_near(smeter_cal_pick(&c, -1, 435000000), -8.0, "above HF, off a transverter: outside HF");
+  expect_near(smeter_cal_pick(&c, -1, 472000), -8.0, "630 m: outside HF");
+  expect_near(smeter_cal_pick(&c, 2, 28400000), -31.0,
+              "on a transverter its own offset wins over the IF's segment");
+  expect_near(smeter_cal_pick(&c, 9, 14200000), 1.5, "an out-of-range slot falls back to HF");
+
+  char *path = tmp_path("machpsdr_smetercal_selftest.props");
+  initProperties();
+  setProperty("property_version", "2.0");
+  smeter_cal_save(&c);
+  saveProperties(path);
+  SMETER_CAL r;
+  smeter_cal_fill(&r, 0.0);
+  initProperties();
+  loadProperties(path);
+  smeter_cal_restore(&r);
+  int lost = 0;
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) if (fabs(r.hf[s] - c.hf[s]) > 1e-9) lost++;
+  for (int i = 0; i < SMETER_CAL_XVTRS; i++) if (fabs(r.xvtr[i] - c.xvtr[i]) > 1e-9) lost++;
+  expect(lost == 0, "every segment and every transverter offset round-trips");
+  expect_near(propToDouble(getProperty("radio.meter_calibration")), -8.0,
+              "the outside-HF offset keeps the old key spelling");
+
+  /* A file from before the split: its one offset calibrates everything. */
+  initProperties();
+  setProperty("radio.meter_calibration", "-12");
+  smeter_cal_fill(&r, 0.0);
+  smeter_cal_restore(&r);
+  int seeded = 1;
+  for (int s = 0; s < TX_METER_CAL_SEGMENTS; s++) if (fabs(r.hf[s] + 12.0) > 1e-9) seeded = 0;
+  for (int i = 0; i < SMETER_CAL_XVTRS; i++) if (fabs(r.xvtr[i] + 12.0) > 1e-9) seeded = 0;
+  expect(seeded, "an old single offset seeds every segment and every transverter");
+
+  initProperties();
+  setProperty("radio.meter_calibration_hf[0]", "nan");
+  setProperty("radio.meter_calibration_xvtr[3]", "-1e9");
+  smeter_cal_fill(&r, 5.0);
+  smeter_cal_restore(&r);
+  expect_near(r.hf[0], 0.0, "a NaN offset reads as 0 dB");
+  expect_near(r.xvtr[3], SMETER_CAL_MIN, "an absurd offset is clamped");
+  expect_near(r.hf[1], 5.0, "a missing key leaves the offset alone");
+
+  g_remove(path);
+  { char *b = g_strdup_printf("%s.bak", path); g_remove(b); g_free(b); }
+  g_free(path);
+}
+
 int main(int argc, char *argv[]) {
   int selftest = 0;
   for (int i = 1; i < argc; i++) {
@@ -579,6 +641,7 @@ int main(int argc, char *argv[]) {
   test_filter_vars();
   test_meter_cal();
   test_pass_through();
+  test_smeter_cal();
 
   printf("\n%d checks, %d failures\n", checks, fails);
   return fails == 0 ? 0 : 1;

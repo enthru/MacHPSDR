@@ -2227,7 +2227,7 @@ static gboolean update_timer_cb(void *data) {
       }
       have_pixels=TRUE;
     }
-    rx->meter_db=GetRXAMeter(rx->channel,rx->smeter) + radio->meter_calibration;
+    rx->meter_db=GetRXAMeter(rx->channel,rx->smeter) + radio_smeter_calibration(rx);
     // Cache the AGC hang/threshold here (under the lock) so the unlocked
     // panadapter render below never calls WDSP while the RX thread runs.
     if(rx->agc!=AGC_OFF) {
