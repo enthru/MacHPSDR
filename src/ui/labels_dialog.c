@@ -302,7 +302,7 @@ GtkWidget *create_labels_dialog(RADIO *r) {
     size_t off;
     GCallback cb;
   } rows[]={
-    {"Preamp (LTC2208 ADC gain, ~3.5 dB):", G_STRUCT_OFFSET(RADIO,preamp_label), G_CALLBACK(preamp_label_cb)},
+    {"Preamp (LTC2208 ADC gain):", G_STRUCT_OFFSET(RADIO,preamp_label), G_CALLBACK(preamp_label_cb)},
     {"Att10 (Alex 10 dB RX attenuator):",   G_STRUCT_OFFSET(RADIO,att10_label),  G_CALLBACK(att10_label_cb)},
     {"Att20 (Alex 20 dB RX attenuator):",   G_STRUCT_OFFSET(RADIO,att20_label),  G_CALLBACK(att20_label_cb)},
   };

@@ -359,7 +359,7 @@ static const Translation translations[] = {
   {"ALEX 20 dB attenuator on ADC 0", "Аттенюатор ALEX 20 dB на ADC 0", "Атенюатор ALEX 20 dB на ADC 0", "Атэнюатар ALEX 20 dB на ADC 0"},
   {"All-pass phase rotator: reduces speech-waveform asymmetry for more average talk power", "Всепропускающий Phase Rotator: уменьшает асимметрию речевой волны для повышения средней мощности", "Всепропускний Phase Rotator: зменшує асиметрію мовної хвилі для підвищення середньої потужності", "Усепрапускальны Phase Rotator: памяншае асіметрыю маўленчай хвалі для павышэння сярэдняй магутнасці"},
   {"Amplitude Modulate IQ", "Амплитудная модуляция IQ", "Амплітудна модулювати IQ", "Амплітудная мадуляцыя IQ"},
-  {"Preamp (LTC2208 ADC gain, ~3.5 dB):", "Preamp (усиление АЦП LTC2208, ~3,5 дБ):", "Preamp (підсилення АЦП LTC2208, ~3,5 дБ):", "Preamp (узмацненне АЦП LTC2208, ~3,5 дБ):"},
+  {"Preamp (LTC2208 ADC gain):", "Preamp (усиление АЦП LTC2208):", "Preamp (підсилення АЦП LTC2208):", "Preamp (узмацненне АЦП LTC2208):"},
   {"Att10 (Alex 10 dB RX attenuator):", "Att10 (аттенюатор Alex 10 дБ на приёме):", "Att10 (атенюатор Alex 10 дБ на прийомі):", "Att10 (атэнюатар Alex 10 дБ на прыёме):"},
   {"Att20 (Alex 20 dB RX attenuator):", "Att20 (аттенюатор Alex 20 дБ на приёме):", "Att20 (атенюатор Alex 20 дБ на прийомі):", "Att20 (атэнюатар Alex 20 дБ на прыёме):"},
   {"Attenuation (dB):", "Ослабление (dB):", "Ослаблення (dB):", "Аслабленне (dB):"},
